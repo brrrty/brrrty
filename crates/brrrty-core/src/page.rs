@@ -60,6 +60,29 @@ fn midnight(date: NaiveDate) -> DateTime<Utc> {
         .and_utc()
 }
 
+/// Parses RFC 3339 or YAML-style timestamps: `T` or space separator,
+/// optional fractional seconds, optional zone (none means UTC).
+fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
+    if let Ok(d) = DateTime::parse_from_rfc3339(text) {
+        return Some(d.with_timezone(&Utc));
+    }
+    let normalized = match text.as_bytes().get(10) {
+        Some(b' ') => format!("{}T{}", &text[..10], text[11..].trim_start()),
+        _ => text.to_string(),
+    };
+    // Allow a space before the zone: `10:00:00 +02:00`.
+    let normalized = match normalized.rfind(" ") {
+        Some(i) => format!("{}{}", &normalized[..i], &normalized[i + 1..]),
+        None => normalized,
+    };
+    if let Ok(d) = DateTime::parse_from_rfc3339(&normalized) {
+        return Some(d.with_timezone(&Utc));
+    }
+    chrono::NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%dT%H:%M:%S%.f")
+        .ok()
+        .map(|d| d.and_utc())
+}
+
 /// Resolves a page's date: front matter `date`, then a filename date prefix,
 /// then `created`.
 pub fn resolve_date(
@@ -76,9 +99,7 @@ pub fn resolve_date(
         if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
             return Ok(midnight(d));
         }
-        return DateTime::parse_from_rfc3339(text)
-            .map(|d| d.with_timezone(&Utc))
-            .map_err(|_| invalid());
+        return parse_timestamp(text).ok_or_else(invalid);
     }
     if let Some((prefix, _)) = split_date_prefix(stem(rel_to_input))
         && let Ok(d) = NaiveDate::parse_from_str(prefix, "%Y-%m-%d")
@@ -145,5 +166,43 @@ mod tests {
                 .code,
             "date-invalid"
         );
+    }
+
+    #[test]
+    fn bad_date_prefix_slug_stripped_date_falls_back() {
+        assert_eq!(file_slug(Path::new("2026-13-45-bad.md")), "bad");
+        let created = SystemTime::UNIX_EPOCH;
+        assert_eq!(
+            resolve_date(&Map::new(), Path::new("2026-13-45-bad.md"), created)
+                .unwrap()
+                .timestamp(),
+            0
+        );
+    }
+
+    #[test]
+    fn timestamps_with_time() {
+        let epoch = SystemTime::UNIX_EPOCH;
+        let date = |s: &str| {
+            let fm: Map<_, _> = serde_json::from_value(serde_json::json!({ "date": s })).unwrap();
+            resolve_date(&fm, Path::new("x.md"), epoch)
+                .unwrap()
+                .to_rfc3339()
+        };
+        assert_eq!(date("2020-01-02 10:00:00"), "2020-01-02T10:00:00+00:00");
+        assert_eq!(date("2020-01-02T10:00:00"), "2020-01-02T10:00:00+00:00");
+        assert_eq!(
+            date("2020-01-02 10:00:00.5"),
+            "2020-01-02T10:00:00.500+00:00"
+        );
+        assert_eq!(
+            date("2020-01-02 10:00:00 +02:00"),
+            "2020-01-02T08:00:00+00:00"
+        );
+        assert_eq!(
+            date("2020-01-02T10:00:00+02:00"),
+            "2020-01-02T08:00:00+00:00"
+        );
+        assert_eq!(date("2020-01-02T10:00:00Z"), "2020-01-02T10:00:00+00:00");
     }
 }

@@ -11,6 +11,7 @@ use crate::problem::Problem;
 /// returned untouched. Without front matter the map is empty and the body is
 /// the whole source.
 pub fn split_front_matter(source: &str) -> Result<(Map<String, Value>, &str), Problem> {
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let Some((first, rest)) = next_line(source) else {
         return Ok((Map::new(), source));
     };
@@ -28,8 +29,12 @@ pub fn split_front_matter(source: &str) -> Result<(Map<String, Value>, &str), Pr
         offset += remaining.len() - after.len();
         remaining = after;
     }
-    // No closing delimiter: not front matter.
-    Ok((Map::new(), source))
+    Err(Problem::error(
+        "front-matter-invalid",
+        "front matter is missing its closing `---` line",
+    )
+    .at(1, 1)
+    .with_help("add a line containing only `---` after the front matter"))
 }
 
 /// Returns the next line (without its line ending) and the text after it.
@@ -55,12 +60,8 @@ fn parse_yaml(yaml: &str) -> Result<Map<String, Value>, Problem> {
     match serde_norway::from_str::<Value>(yaml) {
         Ok(Value::Object(map)) => Ok(map),
         Ok(Value::Null) => Ok(Map::new()),
-        Ok(_) => Err(Problem::error(
-            "front-matter-invalid",
-            "front matter must be a YAML mapping",
-        )
-        .at(2, 1)
-        .with_help("write front matter as `key: value` pairs")),
+        // Lists and scalars are not data; 11ty renders the page with none.
+        Ok(_) => Ok(Map::new()),
         Err(e) => {
             // +1 for the opening `---` line.
             let (line, column) = e.location().map_or((2, 1), |l| (l.line() + 1, l.column()));
@@ -98,7 +99,7 @@ mod tests {
     fn invalid_yaml_reports_file_line() {
         let p = split_front_matter("---\ntitle: [unclosed\n---\nbad\n").unwrap_err();
         assert_eq!(p.code, "front-matter-invalid");
-        assert!(matches!(p.line, Some(2..=3)));
+        assert_eq!(p.line, Some(3));
     }
 
     #[test]
@@ -121,11 +122,31 @@ mod tests {
     }
 
     #[test]
-    fn unclosed_or_non_mapping() {
-        let (m, body) = split_front_matter("---\ntitle: x\n").unwrap();
+    fn unclosed_front_matter_is_an_error() {
+        let p = split_front_matter("---\ntitle: x\n").unwrap_err();
+        assert_eq!(p.code, "front-matter-invalid");
+        assert_eq!(p.line, Some(1));
+        assert!(p.message.contains("closing"));
+    }
+
+    #[test]
+    fn non_mapping_yaml_is_empty_data() {
+        let (m, body) = split_front_matter("---\n- a\n- b\n---\nlist fm\n").unwrap();
         assert!(m.is_empty());
-        assert_eq!(body, "---\ntitle: x\n");
-        assert!(split_front_matter("---\n- a\n---\n").is_err());
+        assert_eq!(body, "list fm\n");
+        let (m, body) = split_front_matter("---\njust a scalar\n---\nx").unwrap();
+        assert!(m.is_empty());
+        assert_eq!(body, "x");
+    }
+
+    #[test]
+    fn bom_is_stripped() {
+        let (m, body) = split_front_matter("\u{feff}---\ntitle: bom\n---\nbom body").unwrap();
+        assert_eq!(m["title"], "bom");
+        assert_eq!(body, "bom body");
+        let (m, body) = split_front_matter("\u{feff}plain").unwrap();
+        assert!(m.is_empty());
+        assert_eq!(body, "plain");
     }
 
     #[test]
