@@ -65,7 +65,7 @@ fn judge(expected: &Expected, result: Result<String, String>, line_re: &Regex) -
 static HOOK_LOCK: Mutex<()> = Mutex::new(());
 
 /// Replaces the panic hook with a silent one until dropped, then restores it.
-struct SilentPanics {
+pub struct SilentPanics {
     _lock: MutexGuard<'static, ()>,
     prev: Option<PanicHook>,
 }
@@ -73,7 +73,8 @@ struct SilentPanics {
 type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
 
 impl SilentPanics {
-    fn new() -> Self {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
         let lock = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
@@ -105,7 +106,7 @@ pub fn render_checked(engine: &dyn Engine, case: &Case) -> Result<String, String
 }
 
 /// Runs `f`, turning a panic into `Err(message)`.
-fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+pub fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     catch_unwind(AssertUnwindSafe(f)).map_err(|p| {
         p.downcast_ref::<&str>()
             .map(|s| s.to_string())

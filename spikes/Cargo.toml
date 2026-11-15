@@ -18,3 +18,8 @@ brrrty-core = { path = "../crates/brrrty-core" }
 liquid = "=0.26.11"
 liquid-core = "=0.26.11"
 minijinja = { version = "=3.0.5", features = ["json", "urlencode", "preserve_order", "serde"] }
+brrrty-compat = { path = "../crates/brrrty-compat" }
+brrrty-markdown = { path = "../crates/brrrty-markdown" }
+comrak = { version = "=0.59.0", default-features = false }
+pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html"] }
+markdown-it = { version = "=0.6.1", default-features = false }

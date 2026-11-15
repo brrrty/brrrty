@@ -88,7 +88,7 @@ pub struct CorpusReport {
 
 const SKIP_DIRS: [&str; 3] = ["node_modules", "_site", ".git"];
 
-fn collect(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
+pub(crate) fn collect(dir: &Path, exts: &[&str], out: &mut Vec<PathBuf>) {
     let Ok(read) = fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = read.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.file_name());

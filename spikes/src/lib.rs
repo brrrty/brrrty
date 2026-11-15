@@ -3,6 +3,7 @@
 pub mod case;
 pub mod corpus;
 pub mod engines;
+pub mod markdown_corpus;
 pub mod reference;
 pub mod score;
 

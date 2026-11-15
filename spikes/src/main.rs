@@ -1,9 +1,12 @@
+use brrrty_markdown::MarkdownRenderer;
 use brrrty_spike::case::{Lang, load_cases};
 use brrrty_spike::corpus::{self, SiteInput};
 use brrrty_spike::engines::liquid_crate::LiquidCrate;
+use brrrty_spike::engines::markdown::{Comrak, MarkdownItRs, Pulldown};
 use brrrty_spike::engines::minijinja::MiniJinja;
 use brrrty_spike::{
-    DEFAULT_ELEVENTY, DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, reference, score,
+    DEFAULT_ELEVENTY, DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, markdown_corpus, reference,
+    score,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use score::{CandidateRun, Engine};
@@ -55,6 +58,8 @@ enum Command {
     Markdown {
         #[arg(long = "site", required = true)]
         sites: Vec<String>,
+        #[arg(long, default_value = DEFAULT_ELEVENTY)]
+        eleventy: PathBuf,
     },
 }
 
@@ -128,6 +133,52 @@ fn run_corpus(kind: Kind, names: &[String]) -> Result<(), String> {
     std::fs::write(&path, body + "\n").map_err(|e| e.to_string())
 }
 
+fn run_markdown(names: &[String], eleventy: &Path) -> Result<(), String> {
+    let sites_dir = dir_from_env("BRRRTY_SITES", DEFAULT_SITES);
+    let settings_dir = dir_from_env("BRRRTY_SETTINGS", DEFAULT_SETTINGS);
+    let sites: Vec<SiteInput> = names
+        .iter()
+        .map(|n| SiteInput::load(&sites_dir, &settings_dir, n))
+        .collect::<Result<_, _>>()?;
+    let (comrak, pulldown, mdit) = (Comrak::new(), Pulldown, MarkdownItRs::new());
+    let candidates: [(&str, &dyn MarkdownRenderer); 3] = [
+        ("comrak", &comrak),
+        ("pulldown-cmark", &pulldown),
+        ("markdown-it", &mdit),
+    ];
+    let out_root = spikes_dir().join("../target/spike");
+    let report = markdown_corpus::run(&sites, eleventy, &out_root, &candidates)?;
+    println!(
+        "markdown corpus: {} bodies ({} front matter errors, {} where 11ty failed, {} with template syntax)",
+        report.bodies,
+        report.front_matter_errors,
+        report.reference_failures,
+        report.template_syntax
+    );
+    println!(
+        "{:<16} {:<22} {:>7} {:>9} {:>11} {:>9} {:>6}",
+        "candidate", "site", "scored", "identical", "equivalent", "mismatch", "panic"
+    );
+    for c in &report.candidates {
+        for (site, n) in &c.per_site {
+            println!(
+                "{:<16} {:<22} {:>7} {:>9} {:>11} {:>9} {:>6}",
+                c.name, site, n.scored, n.identical, n.equivalent, n.mismatch, n.panic
+            );
+        }
+        if let Some(ms) = c.joshtronic_ms {
+            println!("{:<16} joshtronic.com best-of-5: {ms:.2} ms", c.name);
+        }
+        for (tag, g) in &c.groups {
+            println!("  {:<16} mismatch group <{tag}>: {}", c.name, g.count);
+        }
+    }
+    let path = results_path("markdown");
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let body = serde_json::to_string_pretty(&report.to_json()).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body + "\n").map_err(|e| e.to_string())
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Reference { kind, eleventy } => {
@@ -161,9 +212,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 .map_err(|e| e.to_string())
         }
         Command::Corpus { kind, sites } => run_corpus(kind, &sites),
-        Command::Markdown { .. } => {
-            Err("markdown runs need candidate adapters, which a later task adds".into())
-        }
+        Command::Markdown { sites, eleventy } => run_markdown(&sites, &eleventy),
     }
 }
 

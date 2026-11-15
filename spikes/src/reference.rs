@@ -58,7 +58,7 @@ pub fn parse_eleventy_error(stderr: &str) -> Option<String> {
     Some(via.replace(&msg, "").into_owned())
 }
 
-enum Build {
+pub enum Build {
     Ok,
     Failed(String),
 }
@@ -68,7 +68,7 @@ fn tail(stderr: &str) -> String {
     lines[lines.len().saturating_sub(10)..].join("\n")
 }
 
-fn run_11ty(dir: &Path, eleventy: &Path) -> Result<Build, String> {
+pub fn run_11ty(dir: &Path, eleventy: &Path) -> Result<Build, String> {
     let out = Command::new("node")
         .arg(eleventy)
         .args(["--input=.", "--output=_site"])
