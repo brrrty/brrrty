@@ -216,7 +216,7 @@ fn strict_stops_at_first_error() {
 }
 
 #[test]
-fn passthrough_does_not_overwrite_a_page() {
+fn passthrough_overrides_page_with_warning() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(
@@ -229,11 +229,13 @@ fn passthrough_does_not_overwrite_a_page() {
     let p = r
         .problems
         .iter()
-        .find(|p| p.code == "output-collision")
+        .find(|p| p.code == "passthrough-overrides-page")
         .unwrap();
+    assert!(matches!(p.severity, Severity::Warning));
     assert!(p.message.contains("robots.md") && p.message.contains("robots.txt"));
-    assert_eq!(read(root.join("_site/robots.txt")), "<p>page</p>\n");
-    assert_eq!(r.copied, 0);
+    assert_eq!(read(root.join("_site/robots.txt")), "passthrough");
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert_eq!((r.written, r.copied), (0, 1));
 }
 
 #[test]

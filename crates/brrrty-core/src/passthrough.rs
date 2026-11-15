@@ -15,8 +15,9 @@ pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
     copy_passthrough_avoiding(opts, &HashMap::new())
 }
 
-/// Like [`copy_passthrough`], but refuses to overwrite any destination in `pages`
-/// (absolute output path -> template input path), reporting an `output-collision`.
+/// Like [`copy_passthrough`], but lets passthrough files override any destination in `pages`
+/// (absolute output path -> template input path): the file wins and a
+/// `passthrough-overrides-page` warning is reported.
 pub(crate) fn copy_passthrough_avoiding(
     opts: &BuildOptions,
     pages: &HashMap<PathBuf, PathBuf>,
@@ -179,23 +180,24 @@ fn copy_entry(
         }
         return;
     }
-    if let Some(page) = pages.get(dest) {
+    let overrides_page = pages.get(dest);
+    if let Some(page) = overrides_page {
         problems.push(
-            Problem::error(
-                "output-collision",
+            Problem::warning(
+                "passthrough-overrides-page",
                 format!(
-                    "page {} and passthrough file {} both write to {}",
-                    page.display(),
+                    "passthrough file {} replaces the output of template {}",
                     source.display(),
-                    dest.display()
+                    page.display()
                 ),
             )
             .with_path(page)
-            .with_help("change the page permalink or stop passing the file through"),
+            .with_help(
+                "11ty copies passthrough files over rendered pages. Move the file out of the passthrough folder if you meant it to be a template.",
+            ),
         );
-        return;
     }
-    if is_up_to_date(&meta, dest) {
+    if overrides_page.is_none() && is_up_to_date(&meta, dest) {
         *unchanged += 1;
         return;
     }
