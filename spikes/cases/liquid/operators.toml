@@ -1,0 +1,178 @@
+[[case]]
+name = "contains_string"
+group = "core"
+template = "{% if s contains 'ell' %}y{% else %}n{% endif %}"
+data = "{\"s\": \"hello\"}"
+
+[[case]]
+name = "contains_string_no"
+group = "core"
+template = "{% if s contains 'xyz' %}y{% else %}n{% endif %}"
+data = "{\"s\": \"hello\"}"
+
+[[case]]
+name = "contains_array"
+group = "core"
+template = "{% if xs contains 2 %}y{% else %}n{% endif %}"
+data = "{\"xs\": [1, 2, 3]}"
+
+[[case]]
+name = "contains_array_string"
+group = "core"
+template = "{% if xs contains 'b' %}y{% else %}n{% endif %}"
+data = "{\"xs\": [\"a\", \"b\"]}"
+
+[[case]]
+name = "contains_array_type_strict"
+group = "core"
+template = "{% if xs contains '2' %}y{% else %}n{% endif %}"
+data = "{\"xs\": [1, 2, 3]}"
+
+[[case]]
+name = "contains_nil"
+group = "core"
+template = "{% if nothing contains 'a' %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "contains_object_key"
+group = "core"
+template = "{% if o contains 'a' %}y{% else %}n{% endif %}"
+data = "{\"o\": {\"a\": 1}}"
+
+[[case]]
+name = "eq_numbers"
+group = "core"
+template = "{% if 1 == 1 %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "eq_string_number"
+group = "core"
+template = "{% if '1' == 1 %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "neq"
+group = "core"
+template = "{% if a != b %}y{% else %}n{% endif %}"
+data = "{\"a\": 1, \"b\": 2}"
+
+[[case]]
+name = "neq_diamond"
+group = "core"
+template = "{% if a <> b %}y{% else %}n{% endif %}"
+data = "{\"a\": 1, \"b\": 1}"
+
+[[case]]
+name = "cmp_lt_gt"
+group = "core"
+template = "{% if 1 < 2 %}a{% endif %}{% if 2 > 1 %}b{% endif %}{% if 2 <= 2 %}c{% endif %}{% if 3 >= 4 %}d{% endif %}"
+
+[[case]]
+name = "cmp_string_lt"
+group = "core"
+template = "{% if 'a' < 'b' %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "cmp_mixed_string_number"
+group = "core"
+template = "{% if '10' > 9 %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "cmp_nil_number"
+group = "core"
+template = "{% if nothing < 1 %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "cmp_nil_eq_nil"
+group = "core"
+template = "{% if nothing == nil %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "cmp_float_int"
+group = "core"
+template = "{% if 1.0 == 1 %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "eq_empty_array"
+group = "core"
+template = "{% if xs == empty %}y{% else %}n{% endif %}"
+data = "{\"xs\": []}"
+
+[[case]]
+name = "eq_empty_string"
+group = "core"
+template = "{% if s == empty %}y{% else %}n{% endif %}"
+data = "{\"s\": \"\"}"
+
+[[case]]
+name = "eq_blank"
+group = "core"
+template = "{% if s == blank %}y{% else %}n{% endif %}"
+data = "{\"s\": \"  \"}"
+
+[[case]]
+name = "eq_array_literal_vars"
+group = "core"
+template = "{% if a == b %}y{% else %}n{% endif %}"
+data = "{\"a\": [1], \"b\": [1]}"
+
+[[case]]
+name = "eq_bool_string"
+group = "core"
+template = "{% if b == 'true' %}y{% else %}n{% endif %}"
+data = "{\"b\": true}"
+
+[[case]]
+name = "and_or_right_to_left"
+group = "core"
+template = "{% if true or false and false %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "and_or_right_to_left_2"
+group = "core"
+template = "{% if false and false or true %}y{% else %}n{% endif %}"
+
+[[case]]
+name = "and_or_mixed_vars"
+group = "core"
+template = "{% if a or b and c %}y{% else %}n{% endif %}"
+data = "{\"a\": true, \"b\": false, \"c\": false}"
+
+[[case]]
+name = "and_basic"
+group = "core"
+template = "{% if a and b %}y{% else %}n{% endif %}"
+data = "{\"a\": 1, \"b\": 0}"
+
+[[case]]
+name = "or_basic"
+group = "core"
+template = "{% if a or b %}y{% else %}n{% endif %}"
+data = "{\"a\": null, \"b\": \"x\"}"
+
+[[case]]
+name = "unless_and"
+group = "core"
+template = "{% unless a and b %}y{% else %}n{% endunless %}"
+data = "{\"a\": true, \"b\": true}"
+
+[[case]]
+name = "negative_number"
+group = "core"
+template = "{% if n < 0 %}neg{% else %}pos{% endif %}"
+data = "{\"n\": -3}"
+
+[[case]]
+name = "string_quote_forms"
+group = "core"
+template = "{{ \"dq\" }}{{ 'sq' }}"
+
+[[case]]
+name = "range_in_condition"
+group = "core"
+template = "{% assign r = (1..3) %}{{ r | join: '-' }}"
+
+[[case]]
+name = "not_keyword_unsupported"
+group = "core"
+template = "{% if not a %}y{% else %}n{% endif %}"
+data = "{\"a\": false}"

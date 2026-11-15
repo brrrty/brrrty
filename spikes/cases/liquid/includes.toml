@@ -1,0 +1,246 @@
+[[case]]
+name = "inc_quoted_ext"
+group = "core"
+template = "{% include 'part.liquid' %}"
+[case.includes]
+"part.liquid" = "PART"
+
+[[case]]
+name = "inc_quoted_noext"
+group = "core"
+template = "{% include 'part2' %}"
+[case.includes]
+"part2.liquid" = "PART2"
+
+[[case]]
+name = "inc_double_quoted"
+group = "core"
+template = "{% include \"part3.liquid\" %}"
+[case.includes]
+"part3.liquid" = "P3"
+
+[[case]]
+name = "inc_unquoted_noext"
+group = "core"
+template = "{% include part4 %}"
+[case.includes]
+"part4.liquid" = "P4"
+
+[[case]]
+name = "inc_unquoted_ext"
+group = "core"
+template = "{% include part5.liquid %}"
+[case.includes]
+"part5.liquid" = "P5"
+
+[[case]]
+name = "inc_unquoted_variable_name"
+group = "core"
+template = "{% include name %}"
+data = "{\"name\": \"part6\"}"
+[case.includes]
+"part6.liquid" = "P6"
+
+[[case]]
+name = "inc_quoted_md_ext"
+group = "core"
+template = "{% include 'frag.md' %}"
+[case.includes]
+"frag.md" = "MD frag"
+
+[[case]]
+name = "inc_quoted_html_ext"
+group = "core"
+template = "{% include 'frag.html' %}"
+[case.includes]
+"frag.html" = "<b>html</b>"
+
+[[case]]
+name = "inc_unquoted_md"
+group = "core"
+template = "{% include frag2.md %}"
+[case.includes]
+"frag2.md" = "MD2"
+
+[[case]]
+name = "inc_md_noext_missing"
+group = "core"
+template = "{% include 'frag3' %}"
+[case.includes]
+"frag3.md" = "MD3"
+
+[[case]]
+name = "inc_sees_parent_scope"
+group = "core"
+template = "{% assign v = 'outer' %}{% include 'scope.liquid' %}"
+[case.includes]
+"scope.liquid" = "[{{ v }}]"
+
+[[case]]
+name = "inc_sees_data"
+group = "core"
+template = "{% include 'data.liquid' %}"
+data = "{\"who\": \"Ann\"}"
+[case.includes]
+"data.liquid" = "hi {{ who }}"
+
+[[case]]
+name = "inc_with_param"
+group = "core"
+template = "{% include 'param.liquid', title: 'T' %}"
+[case.includes]
+"param.liquid" = "<{{ title }}>"
+
+[[case]]
+name = "inc_with_multi_params"
+group = "core"
+template = "{% include 'multi.liquid', a: 1, b: 'two' %}"
+[case.includes]
+"multi.liquid" = "{{ a }}-{{ b }}"
+
+[[case]]
+name = "inc_param_no_comma"
+group = "core"
+template = "{% include 'nocomma.liquid' title: 'T' %}"
+[case.includes]
+"nocomma.liquid" = "<{{ title }}>"
+
+[[case]]
+name = "inc_param_variable"
+group = "core"
+template = "{% include 'pv.liquid', val: x %}"
+data = "{\"x\": \"XV\"}"
+[case.includes]
+"pv.liquid" = "{{ val }}"
+
+[[case]]
+name = "inc_with_keyword"
+group = "core"
+template = "{% include 'wk.liquid' with 'abc' %}"
+[case.includes]
+"wk.liquid" = "[{{ wk }}]"
+
+[[case]]
+name = "inc_assign_in_include_leaks"
+group = "core"
+template = "{% include 'leak.liquid' %}[{{ made }}]"
+[case.includes]
+"leak.liquid" = "{% assign made = 'yes' %}"
+
+[[case]]
+name = "inc_param_does_not_leak"
+group = "core"
+template = "{% include 'pl.liquid', p: 1 %}[{{ p }}]"
+[case.includes]
+"pl.liquid" = "{{ p }}"
+
+[[case]]
+name = "inc_in_loop"
+group = "core"
+template = "{% for i in xs %}{% include 'item.liquid', n: i %}{% endfor %}"
+data = "{\"xs\": [1, 2, 3]}"
+[case.includes]
+"item.liquid" = "<{{ n }}>"
+
+[[case]]
+name = "inc_nested"
+group = "core"
+template = "{% include 'outer.liquid' %}"
+[case.includes]
+"outer.liquid" = "O({% include 'inner.liquid' %})"
+"inner.liquid" = "I"
+
+[[case]]
+name = "inc_with_whitespace_trim"
+group = "core"
+template = "a {%- include 'trim.liquid' -%} b"
+[case.includes]
+"trim.liquid" = "T"
+
+[[case]]
+name = "inc_with_tags_inside"
+group = "core"
+template = "{% include 'logic.liquid', n: 3 %}"
+[case.includes]
+"logic.liquid" = "{% if n > 2 %}big{% else %}small{% endif %}"
+
+[[case]]
+name = "inc_in_subdir"
+group = "core"
+template = "{% include 'sub/deep.liquid' %}"
+[case.includes]
+"sub/deep.liquid" = "DEEP"
+
+[[case]]
+name = "inc_trailing_newline"
+group = "core"
+template = "[{% include 'nl.liquid' %}]"
+[case.includes]
+"nl.liquid" = "line\n"
+
+[[case]]
+name = "inc_forloop_visible"
+group = "core"
+template = "{% for i in xs %}{% include 'fl.liquid' %}{% endfor %}"
+data = "{\"xs\": [1, 2]}"
+[case.includes]
+"fl.liquid" = "{{ forloop.index }}"
+
+[[case]]
+name = "render_basic"
+group = "core"
+template = "{% render 'rpart.liquid' %}"
+[case.includes]
+"rpart.liquid" = "R"
+
+[[case]]
+name = "render_noext"
+group = "core"
+template = "{% render 'rpart2' %}"
+[case.includes]
+"rpart2.liquid" = "R2"
+
+[[case]]
+name = "render_isolated_scope"
+group = "core"
+template = "{% assign v = 'outer' %}{% render 'riso.liquid' %}"
+data = "{\"d\": \"data\"}"
+[case.includes]
+"riso.liquid" = "[{{ v }}][{{ d }}]"
+
+[[case]]
+name = "render_param"
+group = "core"
+template = "{% render 'rparam.liquid', title: 'T' %}"
+[case.includes]
+"rparam.liquid" = "<{{ title }}>"
+
+[[case]]
+name = "render_with_as"
+group = "core"
+template = "{% render 'rwith.liquid' with item as p %}"
+data = "{\"item\": \"IT\"}"
+[case.includes]
+"rwith.liquid" = "[{{ p }}]"
+
+[[case]]
+name = "render_for_as"
+group = "core"
+template = "{% render 'rfor.liquid' for xs as x %}"
+data = "{\"xs\": [1, 2]}"
+[case.includes]
+"rfor.liquid" = "({{ x }})"
+
+[[case]]
+name = "render_assign_no_leak"
+group = "core"
+template = "{% render 'rleak.liquid' %}[{{ made }}]"
+[case.includes]
+"rleak.liquid" = "{% assign made = 1 %}"
+
+[[case]]
+name = "render_unquoted"
+group = "core"
+template = "{% render rpart3 %}"
+[case.includes]
+"rpart3.liquid" = "R3"

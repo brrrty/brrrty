@@ -1,0 +1,1 @@
+raw "{% raw %}never closed" not closed, file:./cases/err_unclosed_raw.liquid, line:1, col:10

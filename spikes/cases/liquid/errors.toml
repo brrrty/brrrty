@@ -1,0 +1,142 @@
+[[case]]
+name = "err_unknown_filter"
+group = "errors"
+template = "{{ 'x' | nosuchfilter }}"
+
+[[case]]
+name = "err_unknown_filter_in_tag"
+group = "errors"
+template = "{% if 'x' | nosuchfilter %}a{% endif %}"
+
+[[case]]
+name = "err_unknown_filter_second_line"
+group = "errors"
+template = "line1\nline2 {{ 'x' | nosuchfilter }}"
+
+[[case]]
+name = "err_unclosed_if"
+group = "errors"
+template = "{% if true %}yes"
+
+[[case]]
+name = "err_unclosed_for"
+group = "errors"
+template = "{% for i in (1..2) %}x"
+
+[[case]]
+name = "err_unclosed_output"
+group = "errors"
+template = "{{ x "
+
+[[case]]
+name = "err_unclosed_tag"
+group = "errors"
+template = "{% if true "
+
+[[case]]
+name = "err_bad_for_syntax"
+group = "errors"
+template = "{% for i xs %}x{% endfor %}"
+data = "{\"xs\": [1]}"
+
+[[case]]
+name = "err_unknown_tag"
+group = "errors"
+template = "{% nosuchtag %}"
+
+[[case]]
+name = "err_unknown_tag_with_args"
+group = "errors"
+template = "{% frobnicate 1, 2 %}x"
+
+[[case]]
+name = "err_stray_endif"
+group = "errors"
+template = "{% endif %}"
+
+[[case]]
+name = "err_stray_else"
+group = "errors"
+template = "{% else %}"
+
+[[case]]
+name = "err_missing_include"
+group = "errors"
+template = "{% include 'nope.liquid' %}"
+
+[[case]]
+name = "err_missing_include_noext"
+group = "errors"
+template = "{% include 'nope' %}"
+
+[[case]]
+name = "err_missing_render"
+group = "errors"
+template = "{% render 'nope.liquid' %}"
+
+[[case]]
+name = "err_endfor_mismatch"
+group = "errors"
+template = "{% for i in (1..2) %}x{% endif %}"
+
+[[case]]
+name = "err_unbalanced_unless"
+group = "errors"
+template = "{% unless true %}x{% endif %}"
+
+[[case]]
+name = "err_case_without_endcase"
+group = "errors"
+template = "{% case 1 %}{% when 1 %}x"
+
+[[case]]
+name = "err_bad_assign"
+group = "errors"
+template = "{% assign = 5 %}"
+
+[[case]]
+name = "err_bad_capture"
+group = "errors"
+template = "{% capture %}x{% endcapture %}"
+
+[[case]]
+name = "err_filter_missing_arg"
+group = "errors"
+template = "{{ 'abc' | append }}"
+
+[[case]]
+name = "err_unterminated_string"
+group = "errors"
+template = "{{ 'abc }}"
+
+[[case]]
+name = "err_bad_operator"
+group = "errors"
+template = "{% if 1 === 1 %}x{% endif %}"
+
+[[case]]
+name = "err_bad_range"
+group = "errors"
+template = "{% for i in (1..) %}x{% endfor %}"
+
+[[case]]
+name = "err_include_error_inside"
+group = "errors"
+template = "{% include 'bad.liquid' %}"
+[case.includes]
+"bad.liquid" = "{{ 'x' | nosuchfilter }}"
+
+[[case]]
+name = "err_unclosed_comment"
+group = "errors"
+template = "{% comment %}never closed"
+
+[[case]]
+name = "err_unclosed_raw"
+group = "errors"
+template = "{% raw %}never closed"
+
+[[case]]
+name = "err_second_line_unclosed"
+group = "errors"
+template = "ok\nok\n{% if x %}broken"

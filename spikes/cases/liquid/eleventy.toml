@@ -1,0 +1,99 @@
+[[case]]
+name = "e_slug"
+group = "eleventy"
+template = "{{ 'Hello World! Foo_Bar' | slug }}"
+
+[[case]]
+name = "e_slugify"
+group = "eleventy"
+template = "{{ 'Hello World! Foo_Bar' | slugify }}"
+
+[[case]]
+name = "e_slugify_accents"
+group = "eleventy"
+template = "{{ 'Café Über' | slugify }}"
+
+[[case]]
+name = "e_slugify_symbols"
+group = "eleventy"
+template = "{{ 'C++ & Rust: 100% fun?' | slugify }}"
+
+[[case]]
+name = "e_slug_dollars"
+group = "eleventy"
+template = "{{ 'Price $5 and 10%' | slug }}"
+
+[[case]]
+name = "e_slugify_number"
+group = "eleventy"
+template = "{{ 2024 | slugify }}"
+
+[[case]]
+name = "e_url_plain"
+group = "eleventy"
+template = "{{ '/blog/post/' | url }}"
+
+[[case]]
+name = "e_url_relative"
+group = "eleventy"
+template = "{{ 'img/a.png' | url }}"
+
+[[case]]
+name = "e_url_absolute"
+group = "eleventy"
+template = "{{ 'https://example.com/x' | url }}"
+
+[[case]]
+name = "e_url_empty"
+group = "eleventy"
+template = "[{{ '' | url }}]"
+
+[[case]]
+name = "e_url_hash"
+group = "eleventy"
+template = "{{ '#top' | url }}"
+
+[[case]]
+name = "e_log_output"
+group = "eleventy"
+template = "a{{ 'logged' | log }}b"
+
+[[case]]
+name = "e_get_page_url_absent"
+group = "eleventy"
+template = "{{ 'x' | htmlBaseUrl }}"
+
+[[case]]
+name = "e_inputPathToUrl_absent"
+group = "eleventy"
+template = "{{ 'x' | inputPathToUrl }}"
+
+[[case]]
+name = "e_page_url_var"
+group = "eleventy"
+template = "[{{ page.url }}]"
+
+[[case]]
+name = "e_page_filePathStem_var"
+group = "eleventy"
+template = "[{{ page.fileSlug }}]"
+
+[[case]]
+name = "e_eleventy_var"
+group = "eleventy"
+template = "[{{ eleventy.generator }}]"
+
+[[case]]
+name = "e_collections_var"
+group = "eleventy"
+template = "[{{ collections.all | size }}]"
+
+[[case]]
+name = "e_getNewestCollectionItemDate"
+group = "eleventy"
+template = "{{ collections.all | getNewestCollectionItemDate | date: '%Y' }}"
+
+[[case]]
+name = "e_absoluteUrl_absent"
+group = "eleventy"
+template = "{{ '/x' | absoluteUrl }}"

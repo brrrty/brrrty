@@ -1,0 +1,1 @@
+tag "{% if true " not closed, file:./cases/err_unclosed_tag.liquid, line:1, col:1

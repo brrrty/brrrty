@@ -1,0 +1,415 @@
+[[case]]
+name = "if_basic"
+group = "core"
+template = "{% if a %}yes{% endif %}"
+data = "{\"a\": true}"
+
+[[case]]
+name = "if_else"
+group = "core"
+template = "{% if a %}yes{% else %}no{% endif %}"
+data = "{\"a\": false}"
+
+[[case]]
+name = "if_elsif"
+group = "core"
+template = "{% if n == 1 %}one{% elsif n == 2 %}two{% else %}many{% endif %}"
+data = "{\"n\": 2}"
+
+[[case]]
+name = "if_elsif_chain_else"
+group = "core"
+template = "{% if n == 1 %}one{% elsif n == 2 %}two{% else %}many{% endif %}"
+data = "{\"n\": 9}"
+
+[[case]]
+name = "if_nested"
+group = "core"
+template = "{% if a %}{% if b %}ab{% else %}a{% endif %}{% endif %}"
+data = "{\"a\": true, \"b\": false}"
+
+[[case]]
+name = "elseif_spelling"
+group = "core"
+template = "{% if n == 1 %}one{% elseif n == 2 %}two{% endif %}"
+data = "{\"n\": 2}"
+
+[[case]]
+name = "unless_basic"
+group = "core"
+template = "{% unless a %}shown{% endunless %}"
+data = "{\"a\": false}"
+
+[[case]]
+name = "unless_else"
+group = "core"
+template = "{% unless a %}shown{% else %}hidden{% endunless %}"
+data = "{\"a\": true}"
+
+[[case]]
+name = "case_basic"
+group = "core"
+template = "{% case x %}{% when 1 %}one{% when 2 %}two{% else %}other{% endcase %}"
+data = "{\"x\": 2}"
+
+[[case]]
+name = "case_else"
+group = "core"
+template = "{% case x %}{% when 1 %}one{% else %}other{% endcase %}"
+data = "{\"x\": 5}"
+
+[[case]]
+name = "case_string"
+group = "core"
+template = "{% case x %}{% when 'a' %}A{% when 'b' %}B{% endcase %}"
+data = "{\"x\": \"b\"}"
+
+[[case]]
+name = "case_when_or"
+group = "core"
+template = "{% case x %}{% when 1 or 2 %}low{% when 3, 4 %}mid{% endcase %}"
+data = "{\"x\": 4}"
+
+[[case]]
+name = "case_when_or_keyword"
+group = "core"
+template = "{% case x %}{% when 1 or 2 %}low{% else %}high{% endcase %}"
+data = "{\"x\": 2}"
+
+[[case]]
+name = "case_no_match"
+group = "core"
+template = "[{% case x %}{% when 1 %}one{% endcase %}]"
+data = "{\"x\": 3}"
+
+[[case]]
+name = "for_basic"
+group = "core"
+template = "{% for i in items %}{{ i }},{% endfor %}"
+data = "{\"items\": [1, 2, 3]}"
+
+[[case]]
+name = "for_limit"
+group = "core"
+template = "{% for i in items limit:2 %}{{ i }},{% endfor %}"
+data = "{\"items\": [1, 2, 3, 4]}"
+
+[[case]]
+name = "for_offset"
+group = "core"
+template = "{% for i in items offset:2 %}{{ i }},{% endfor %}"
+data = "{\"items\": [1, 2, 3, 4]}"
+
+[[case]]
+name = "for_limit_offset"
+group = "core"
+template = "{% for i in items limit:2 offset:1 %}{{ i }},{% endfor %}"
+data = "{\"items\": [1, 2, 3, 4, 5]}"
+
+[[case]]
+name = "for_reversed"
+group = "core"
+template = "{% for i in items reversed %}{{ i }},{% endfor %}"
+data = "{\"items\": [1, 2, 3]}"
+
+[[case]]
+name = "for_else_empty"
+group = "core"
+template = "{% for i in items %}{{ i }}{% else %}none{% endfor %}"
+data = "{\"items\": []}"
+
+[[case]]
+name = "for_else_undefined"
+group = "core"
+template = "{% for i in nothing %}{{ i }}{% else %}none{% endfor %}"
+
+[[case]]
+name = "for_forloop_index"
+group = "core"
+template = "{% for i in items %}{{ forloop.index }}:{{ forloop.index0 }} {% endfor %}"
+data = "{\"items\": [\"a\", \"b\", \"c\"]}"
+
+[[case]]
+name = "for_forloop_rindex"
+group = "core"
+template = "{% for i in items %}{{ forloop.rindex }}:{{ forloop.rindex0 }} {% endfor %}"
+data = "{\"items\": [\"a\", \"b\", \"c\"]}"
+
+[[case]]
+name = "for_forloop_first_last"
+group = "core"
+template = "{% for i in items %}{% if forloop.first %}F{% endif %}{% if forloop.last %}L{% endif %}{{ i }} {% endfor %}"
+data = "{\"items\": [\"a\", \"b\", \"c\"]}"
+
+[[case]]
+name = "for_forloop_length"
+group = "core"
+template = "{% for i in items %}{{ forloop.length }}{% endfor %}"
+data = "{\"items\": [1, 2, 3]}"
+
+[[case]]
+name = "for_forloop_name"
+group = "core"
+template = "{% for i in items %}{{ forloop.name }}{% endfor %}"
+data = "{\"items\": [1]}"
+
+[[case]]
+name = "for_break"
+group = "core"
+template = "{% for i in items %}{% if i == 3 %}{% break %}{% endif %}{{ i }}{% endfor %}"
+data = "{\"items\": [1, 2, 3, 4]}"
+
+[[case]]
+name = "for_continue"
+group = "core"
+template = "{% for i in items %}{% if i == 2 %}{% continue %}{% endif %}{{ i }}{% endfor %}"
+data = "{\"items\": [1, 2, 3]}"
+
+[[case]]
+name = "for_range_literal"
+group = "core"
+template = "{% for i in (1..4) %}{{ i }}{% endfor %}"
+
+[[case]]
+name = "for_range_variable"
+group = "core"
+template = "{% for i in (1..n) %}{{ i }}{% endfor %}"
+data = "{\"n\": 3}"
+
+[[case]]
+name = "for_range_reversed_bounds"
+group = "core"
+template = "[{% for i in (4..1) %}{{ i }}{% endfor %}]"
+
+[[case]]
+name = "for_range_limit"
+group = "core"
+template = "{% for i in (1..10) limit:3 %}{{ i }}{% endfor %}"
+
+[[case]]
+name = "for_nested"
+group = "core"
+template = "{% for a in xs %}{% for b in ys %}{{ a }}{{ b }} {% endfor %}{% endfor %}"
+data = "{\"xs\": [1, 2], \"ys\": [\"a\", \"b\"]}"
+
+[[case]]
+name = "for_nested_parentloop"
+group = "core"
+template = "{% for a in xs %}{% for b in ys %}{{ forloop.parentloop.index }}{{ forloop.index }} {% endfor %}{% endfor %}"
+data = "{\"xs\": [1, 2], \"ys\": [\"a\", \"b\"]}"
+
+[[case]]
+name = "for_objects"
+group = "core"
+template = "{% for p in people %}{{ p.name }}={{ p.age }};{% endfor %}"
+data = "{\"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}]}"
+
+[[case]]
+name = "for_over_string"
+group = "core"
+template = "{% for c in s %}[{{ c }}]{% endfor %}"
+data = "{\"s\": \"abc\"}"
+
+[[case]]
+name = "for_over_object"
+group = "core"
+template = "{% for kv in o %}{{ kv[0] }}={{ kv[1] }};{% endfor %}"
+data = "{\"o\": {\"a\": 1, \"b\": 2}}"
+
+[[case]]
+name = "for_limit_variable"
+group = "core"
+template = "{% for i in items limit:n %}{{ i }}{% endfor %}"
+data = "{\"items\": [1, 2, 3, 4], \"n\": 2}"
+
+[[case]]
+name = "for_var_leaks_not"
+group = "core"
+template = "{% for i in items %}{% endfor %}[{{ i }}]"
+data = "{\"items\": [1, 2]}"
+
+[[case]]
+name = "assign_basic"
+group = "core"
+template = "{% assign x = 'hi' %}{{ x }}"
+
+[[case]]
+name = "assign_filter"
+group = "core"
+template = "{% assign x = 'hi' | upcase %}{{ x }}"
+
+[[case]]
+name = "assign_number"
+group = "core"
+template = "{% assign x = 5 %}{{ x | plus: 2 }}"
+
+[[case]]
+name = "assign_overwrite"
+group = "core"
+template = "{% assign x = 1 %}{% assign x = 2 %}{{ x }}"
+data = "{\"x\": 0}"
+
+[[case]]
+name = "assign_in_for_scope"
+group = "core"
+template = "{% for i in items %}{% assign last = i %}{% endfor %}{{ last }}"
+data = "{\"items\": [1, 2, 3]}"
+
+[[case]]
+name = "assign_array_filter"
+group = "core"
+template = "{% assign xs = 'a,b,c' | split: ',' %}{{ xs.size }}{{ xs[1] }}"
+
+[[case]]
+name = "assign_bool"
+group = "core"
+template = "{% assign t = true %}{% if t == true %}T{% endif %}"
+
+[[case]]
+name = "capture_basic"
+group = "core"
+template = "{% capture c %}hello {{ n }}{% endcapture %}[{{ c }}]"
+data = "{\"n\": \"w\"}"
+
+[[case]]
+name = "capture_filter"
+group = "core"
+template = "{% capture c %}a-b{% endcapture %}{{ c | split: '-' | last }}"
+
+[[case]]
+name = "capture_nested_tags"
+group = "core"
+template = "{% capture c %}{% for i in xs %}{{ i }}{% endfor %}{% endcapture %}{{ c }}!"
+data = "{\"xs\": [1, 2]}"
+
+[[case]]
+name = "raw_basic"
+group = "core"
+template = "{% raw %}{{ not }} {% parsed %}{% endraw %}"
+
+[[case]]
+name = "raw_whitespace"
+group = "core"
+template = "a {%- raw -%} {{ x }} {%- endraw -%} b"
+
+[[case]]
+name = "comment_basic"
+group = "core"
+template = "a{% comment %}hidden {{ x }}{% endcomment %}b"
+data = "{\"x\": 1}"
+
+[[case]]
+name = "comment_with_tags"
+group = "core"
+template = "a{% comment %}{% if x %}no{% endif %}{% endcomment %}b"
+data = "{\"x\": 1}"
+
+[[case]]
+name = "hash_comment"
+group = "core"
+template = "a{% # inline comment %}b"
+
+[[case]]
+name = "increment_basic"
+group = "core"
+template = "{% increment c %}{% increment c %}{% increment c %}"
+
+[[case]]
+name = "decrement_basic"
+group = "core"
+template = "{% decrement c %}{% decrement c %}"
+
+[[case]]
+name = "increment_separate_from_assign"
+group = "core"
+template = "{% assign c = 5 %}{% increment c %}{{ c }}"
+
+[[case]]
+name = "cycle_basic"
+group = "core"
+template = "{% for i in (1..5) %}{% cycle 'a', 'b', 'c' %}{% endfor %}"
+
+[[case]]
+name = "cycle_named"
+group = "core"
+template = "{% cycle 'g': 'x', 'y' %}{% cycle 'g': 'x', 'y' %}{% cycle 'g': 'x', 'y' %}"
+
+[[case]]
+name = "tablerow_basic"
+group = "core"
+template = "{% tablerow i in items cols:2 %}{{ i }}{% endtablerow %}"
+data = "{\"items\": [1, 2, 3, 4]}"
+
+[[case]]
+name = "tablerow_no_cols"
+group = "core"
+template = "{% tablerow i in items %}{{ i }}{% endtablerow %}"
+data = "{\"items\": [1, 2]}"
+
+[[case]]
+name = "tablerow_limit"
+group = "core"
+template = "{% tablerow i in items cols:2 limit:3 %}{{ i }}{% endtablerow %}"
+data = "{\"items\": [1, 2, 3, 4, 5]}"
+
+[[case]]
+name = "echo_tag"
+group = "core"
+template = "{% echo 'hi' | upcase %}"
+
+[[case]]
+name = "liquid_tag"
+group = "core"
+template = "{% liquid\nassign x = 'a'\nif x == 'a'\n echo 'yes'\nendif\n%}"
+
+[[case]]
+name = "layout_none_ok"
+group = "core"
+template = "{{ 'plain' }}"
+
+[[case]]
+name = "object_output_string"
+group = "core"
+template = "{{ s }}"
+data = "{\"s\": \"a <b> & c\"}"
+
+[[case]]
+name = "output_number_float"
+group = "core"
+template = "{{ n }} {{ m }}"
+data = "{\"n\": 1.5, \"m\": 3.0}"
+
+[[case]]
+name = "output_array"
+group = "core"
+template = "{{ xs }}"
+data = "{\"xs\": [1, 2, 3]}"
+
+[[case]]
+name = "output_object"
+group = "core"
+template = "{{ o }}"
+data = "{\"o\": {\"a\": 1}}"
+
+[[case]]
+name = "output_nil"
+group = "core"
+template = "[{{ nothing }}]"
+
+[[case]]
+name = "output_true_false"
+group = "core"
+template = "{{ t }} {{ f }}"
+data = "{\"t\": true, \"f\": false}"
+
+[[case]]
+name = "output_null_data"
+group = "core"
+template = "[{{ n }}]"
+data = "{\"n\": null}"
+
+[[case]]
+name = "output_unicode"
+group = "core"
+template = "{{ s }}"
+data = "{\"s\": \"café ☃\"}"

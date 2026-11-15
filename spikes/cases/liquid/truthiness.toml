@@ -1,0 +1,97 @@
+[[case]]
+name = "truthy_nil"
+group = "core"
+template = "{% if nothing %}T{% else %}F{% endif %}"
+
+[[case]]
+name = "truthy_false"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": false}"
+
+[[case]]
+name = "truthy_empty_string"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": \"\"}"
+
+[[case]]
+name = "truthy_zero"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": 0}"
+
+[[case]]
+name = "truthy_empty_array"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": []}"
+
+[[case]]
+name = "truthy_empty_object"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": {}}"
+
+[[case]]
+name = "truthy_null"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": null}"
+
+[[case]]
+name = "truthy_string_false"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": \"false\"}"
+
+[[case]]
+name = "truthy_nonempty_array"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": [0]}"
+
+[[case]]
+name = "truthy_negative"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": -1}"
+
+[[case]]
+name = "truthy_whitespace_string"
+group = "core"
+template = "{% if v %}T{% else %}F{% endif %}"
+data = "{\"v\": \" \"}"
+
+[[case]]
+name = "unless_empty_string"
+group = "core"
+template = "{% unless v %}T{% else %}F{% endunless %}"
+data = "{\"v\": \"\"}"
+
+[[case]]
+name = "default_filter_falsy"
+group = "core"
+template = "{{ v | default: 'd' }}|{{ z | default: 'd' }}|{{ f | default: 'd' }}|{{ e | default: 'd' }}"
+data = "{\"v\": \"\", \"z\": 0, \"f\": false, \"e\": []}"
+
+[[case]]
+name = "default_allow_false"
+group = "core"
+template = "{{ f | default: 'd', allow_false: true }}"
+data = "{\"f\": false}"
+
+[[case]]
+name = "undefined_nested"
+group = "core"
+template = "[{{ a.b.c }}]"
+
+[[case]]
+name = "undefined_in_if_chain"
+group = "core"
+template = "{% if a.b.c %}T{% else %}F{% endif %}"
+
+[[case]]
+name = "undefined_plus_filter"
+group = "core"
+template = "[{{ nothing | append: 'x' }}]"

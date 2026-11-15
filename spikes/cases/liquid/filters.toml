@@ -1,0 +1,779 @@
+[[case]]
+name = "f_upcase"
+group = "filters"
+template = "{{ s | upcase }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_downcase"
+group = "filters"
+template = "{{ s | downcase }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_capitalize"
+group = "filters"
+template = "{{ 'hello world' | capitalize }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_append"
+group = "filters"
+template = "{{ s | append: '!' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_prepend"
+group = "filters"
+template = "{{ s | prepend: '>> ' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_replace"
+group = "filters"
+template = "{{ s | replace: 'l', 'L' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_replace_first"
+group = "filters"
+template = "{{ s | replace_first: 'l', 'L' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_replace_last"
+group = "filters"
+template = "{{ s | replace_last: 'l', 'L' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_remove"
+group = "filters"
+template = "{{ s | remove: 'l' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_remove_first"
+group = "filters"
+template = "{{ s | remove_first: 'l' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_remove_last"
+group = "filters"
+template = "{{ s | remove_last: 'l' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_truncate"
+group = "filters"
+template = "{{ s | truncate: 8 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_truncate_custom"
+group = "filters"
+template = "{{ s | truncate: 8, '--' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_truncate_short"
+group = "filters"
+template = "{{ s | truncate: 50 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_truncatewords"
+group = "filters"
+template = "{{ 'a b c d e' | truncatewords: 3 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_truncatewords_custom"
+group = "filters"
+template = "{{ 'a b c d e' | truncatewords: 2, '...' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_strip"
+group = "filters"
+template = "[{{ '  x  ' | strip }}]"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_lstrip"
+group = "filters"
+template = "[{{ '  x  ' | lstrip }}]"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_rstrip"
+group = "filters"
+template = "[{{ '  x  ' | rstrip }}]"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_strip_html"
+group = "filters"
+template = "{{ '<p>Hi <b>there</b></p>' | strip_html }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_strip_newlines"
+group = "filters"
+template = "{{ 'a\nb\nc' | strip_newlines }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_newline_to_br"
+group = "filters"
+template = "{{ 'a\nb' | newline_to_br }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_escape"
+group = "filters"
+template = "{{ '<a href=\"x\">T&C</a>' | escape }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_escape_once"
+group = "filters"
+template = "{{ '&lt;b&gt; <i>' | escape_once }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_size_string"
+group = "filters"
+template = "{{ s | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_split_join"
+group = "filters"
+template = "{{ 'a,b,c' | split: ',' | join: '+' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_split_no_sep"
+group = "filters"
+template = "{{ 'abc' | split: '' | join: '-' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_slice_string"
+group = "filters"
+template = "{{ s | slice: 1, 3 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_slice_negative"
+group = "filters"
+template = "{{ s | slice: -3, 2 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_slice_single"
+group = "filters"
+template = "{{ s | slice: 4 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_url_encode"
+group = "filters"
+template = "{{ 'a b&c=d/e' | url_encode }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_url_decode"
+group = "filters"
+template = "{{ 'a%20b%26c' | url_decode }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_base64_encode"
+group = "filters"
+template = "{{ 'hello' | base64_encode }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_base64_decode"
+group = "filters"
+template = "{{ 'aGVsbG8=' | base64_decode }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_uri_escape"
+group = "filters"
+template = "{{ 'a b/c?d=é' | uri_escape }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_cgi_escape"
+group = "filters"
+template = "{{ 'a b&c' | cgi_escape }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_normalize_whitespace"
+group = "filters"
+template = "{{ 'a   b \n c' | normalize_whitespace }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_number_of_words"
+group = "filters"
+template = "{{ 'one two three' | number_of_words }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_json"
+group = "filters"
+template = "{{ o | json }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_jsonify"
+group = "filters"
+template = "{{ o | jsonify }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_md5_absent"
+group = "filters"
+template = "{{ 'x' | md5 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sha1_absent"
+group = "filters"
+template = "{{ 'x' | sha1 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sha256_filter"
+group = "filters"
+template = "{{ 'x' | sha256 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_array_to_sentence_string"
+group = "filters"
+template = "{{ xs | array_to_sentence_string }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_xml_escape"
+group = "filters"
+template = "{{ '<a>&' | xml_escape }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_last_char_negative_index"
+group = "filters"
+template = "{{ s | slice: -1 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_abs"
+group = "filters"
+template = "{{ -5 | abs }} {{ n | abs }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_ceil"
+group = "filters"
+template = "{{ 1.2 | ceil }} {{ 2.0 | ceil }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_floor"
+group = "filters"
+template = "{{ 1.8 | floor }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_round"
+group = "filters"
+template = "{{ 1.5 | round }} {{ 1.2345 | round: 2 }} {{ 2.5 | round }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_plus"
+group = "filters"
+template = "{{ 1 | plus: 2 }} {{ '1' | plus: '2' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_minus"
+group = "filters"
+template = "{{ 5 | minus: 2 }} {{ 5.5 | minus: 1 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_times"
+group = "filters"
+template = "{{ 3 | times: 4 }} {{ 1.1 | times: 3 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_divided_by"
+group = "filters"
+template = "{{ 10 | divided_by: 4 }} {{ 10 | divided_by: 4.0 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_divided_by_floor"
+group = "filters"
+template = "{{ 10 | divided_by: 4, true }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_divided_by_zero"
+group = "filters"
+template = "{{ 10 | divided_by: 0 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_modulo"
+group = "filters"
+template = "{{ 10 | modulo: 3 }} {{ -7 | modulo: 3 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_at_least"
+group = "filters"
+template = "{{ 3 | at_least: 5 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_at_most"
+group = "filters"
+template = "{{ 3 | at_most: 5 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_plus_float_precision"
+group = "filters"
+template = "{{ 0.1 | plus: 0.2 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_plus_string_concat"
+group = "filters"
+template = "{{ 'a' | plus: 'b' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_size_array"
+group = "filters"
+template = "{{ xs | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_first"
+group = "filters"
+template = "{{ xs | first }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_last"
+group = "filters"
+template = "{{ xs | last }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_join_default"
+group = "filters"
+template = "{{ xs | join }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_join_sep"
+group = "filters"
+template = "{{ xs | join: ', ' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_reverse"
+group = "filters"
+template = "{{ xs | reverse | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sort"
+group = "filters"
+template = "{{ ys | sort | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sort_natural"
+group = "filters"
+template = "{{ words | sort_natural | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sort_case_sensitive"
+group = "filters"
+template = "{{ words | sort | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sort_by_key"
+group = "filters"
+template = "{% assign s = people | sort: 'age' %}{% for p in s %}{{ p.name }} {% endfor %}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_uniq"
+group = "filters"
+template = "{{ dups | uniq | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_compact"
+group = "filters"
+template = "{{ withnil | compact | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_map"
+group = "filters"
+template = "{{ people | map: 'name' | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_where"
+group = "filters"
+template = "{% assign r = people | where: 'age', 30 %}{{ r | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_where_truthy"
+group = "filters"
+template = "{% assign r = people | where: 'age' %}{{ r | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_find"
+group = "filters"
+template = "{% assign r = people | find: 'name', 'Bo' %}{{ r.age }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_find_index"
+group = "filters"
+template = "{{ people | find_index: 'name', 'Bo' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_has"
+group = "filters"
+template = "{{ people | has: 'name', 'Bo' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_reject"
+group = "filters"
+template = "{% assign r = people | reject: 'age', 30 %}{{ r | map: 'name' | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_concat"
+group = "filters"
+template = "{{ xs | concat: ys | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sum"
+group = "filters"
+template = "{{ xs | sum }} {{ people | sum: 'age' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_push"
+group = "filters"
+template = "{{ xs | push: 9 | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_pop"
+group = "filters"
+template = "{{ xs | pop | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_shift"
+group = "filters"
+template = "{{ xs | shift | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_unshift"
+group = "filters"
+template = "{{ xs | unshift: 0 | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_slice_array"
+group = "filters"
+template = "{{ xs | slice: 1, 2 | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sample_size"
+group = "filters"
+template = "{{ xs | sample: 2 | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_shuffle_absent"
+group = "filters"
+template = "{{ xs | shuffle | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_group_by"
+group = "filters"
+template = "{% assign g = people | group_by: 'age' %}{{ g | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_group_by_exp"
+group = "filters"
+template = "{% assign g = people | group_by_exp: 'p', 'p.age | at_least: 28' %}{{ g | size }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_where_exp"
+group = "filters"
+template = "{% assign r = people | where_exp: 'p', 'p.age > 26' %}{{ r | map: 'name' | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_find_exp"
+group = "filters"
+template = "{% assign r = people | find_exp: 'p', 'p.age < 28' %}{{ r.name }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_reject_exp"
+group = "filters"
+template = "{% assign r = people | reject_exp: 'p', 'p.age > 26' %}{{ r | map: 'name' | join: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_sort_stability"
+group = "filters"
+template = "{% assign s = dupsort | sort: 'k' %}{% for x in s %}{{ x.v }}{% endfor %}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_ymd"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '%Y-%m-%d' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_B"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '%B %-d, %Y' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_b_a"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '%b %a %A' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_e"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '[%e]' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_s"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '%s' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_hms"
+group = "filters"
+template = "{{ '2024-03-05T12:34:56Z' | date: '%H:%M:%S' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_12h"
+group = "filters"
+template = "{{ '2024-03-05T15:04:05Z' | date: '%I:%M %p' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_j_y"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '%j %y %u %w' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_percent_literal"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date: '100%% %Y' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_from_number"
+group = "filters"
+template = "{{ 86400 | date: '%Y-%m-%d' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_default_format"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_invalid_string"
+group = "filters"
+template = "[{{ 'not a date' | date: '%Y' }}]"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_nil"
+group = "filters"
+template = "[{{ nothing | date: '%Y' }}]"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_js_iso"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date_to_xmlschema }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_to_rfc822"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date_to_rfc822 }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_to_string"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date_to_string }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_date_to_long_string"
+group = "filters"
+template = "{{ '2024-03-05T12:00:00Z' | date_to_long_string }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_filter_chain"
+group = "filters"
+template = "{{ s | downcase | replace: ' ', '-' | remove: ',' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_filter_arg_variable"
+group = "filters"
+template = "{{ s | append: suffix }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_filter_empty_string_arg"
+group = "filters"
+template = "{{ s | truncate: 5, '' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_filter_on_nil_default"
+group = "filters"
+template = "{{ nothing | default: 'fallback' | upcase }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_filter_whitespace_around_colon"
+group = "filters"
+template = "{{ s|append : '!' }}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_filter_no_space_pipe"
+group = "filters"
+template = "{{s|upcase}}"
+data = "{\"s\": \"Hello, World\", \"xs\": [1, 2, 3], \"ys\": [3, 1, 2], \"dups\": [1, 2, 2, 3, 1], \"withnil\": [1, null, 2], \"words\": [\"banana\", \"Apple\", \"cherry\"], \"o\": {\"a\": 1, \"b\": [1, 2]}, \"n\": -4, \"suffix\": \"!!\", \"people\": [{\"name\": \"Ann\", \"age\": 30}, {\"name\": \"Bo\", \"age\": 25}, {\"name\": \"Cy\", \"age\": 30}], \"dupsort\": [{\"k\": 1, \"v\": \"a\"}, {\"k\": 0, \"v\": \"b\"}, {\"k\": 1, \"v\": \"c\"}, {\"k\": 0, \"v\": \"d\"}]}"
+
+[[case]]
+name = "f_array_first_last_dot"
+group = "filters"
+template = "{{ xs.first }}{{ xs.last }}{{ xs.size }}"
+data = "{\"xs\": [7, 8, 9]}"
+
+[[case]]
+name = "f_string_size_dot"
+group = "filters"
+template = "{{ s.size }}"
+data = "{\"s\": \"abcd\"}"
+
+[[case]]
+name = "f_where_nested_key"
+group = "filters"
+template = "{% assign r = items | where: 'meta.ok', true %}{{ r | size }}"
+data = "{\"items\": [{\"meta\": {\"ok\": true}}, {\"meta\": {\"ok\": false}}]}"
+
+[[case]]
+name = "f_map_missing_key"
+group = "filters"
+template = "[{{ items | map: 'x' | join: ',' }}]"
+data = "{\"items\": [{\"a\": 1}]}"
+
+[[case]]
+name = "f_sort_numbers_strings"
+group = "filters"
+template = "{{ xs | sort | join: ',' }}"
+data = "{\"xs\": [10, 9, 2, 1]}"
+
+[[case]]
+name = "f_join_nested"
+group = "filters"
+template = "{{ xs | join: ',' }}"
+data = "{\"xs\": [[1, 2], [3]]}"
+
+[[case]]
+name = "f_split_regexish"
+group = "filters"
+template = "{{ 'a1b2c' | split: '1' | size }}"
+
+[[case]]
+name = "f_replace_special"
+group = "filters"
+template = "{{ 'a.b.c' | replace: '.', '-' }}"
+
+[[case]]
+name = "f_replace_dollar"
+group = "filters"
+template = "{{ 'abc' | replace: 'b', '$&' }}"
+
+[[case]]
+name = "f_inspect_object"
+group = "filters"
+template = "{{ o | inspect }}"
+data = "{\"o\": {\"a\": 1}}"
+
+[[case]]
+name = "f_append_number"
+group = "filters"
+template = "{{ 'a' | append: 5 }}"
+
+[[case]]
+name = "f_money_style"
+group = "filters"
+template = "{{ 1234.5 | round: 1 }} {{ 3 | times: 1.5 }}"
+
+[[case]]
+name = "f_escape_nil"
+group = "filters"
+template = "[{{ nothing | escape }}]"

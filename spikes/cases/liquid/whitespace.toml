@@ -1,0 +1,92 @@
+[[case]]
+name = "ws_tag_both"
+group = "core"
+template = "a  {%- if true -%}  b  {%- endif -%}  c"
+
+[[case]]
+name = "ws_tag_left"
+group = "core"
+template = "a  \n  {%- if true %}b{% endif %}"
+
+[[case]]
+name = "ws_tag_right"
+group = "core"
+template = "{% if true -%}  \n  b{% endif %}c"
+
+[[case]]
+name = "ws_output_both"
+group = "core"
+template = "a   {{- x -}}   b"
+data = "{\"x\": \"X\"}"
+
+[[case]]
+name = "ws_output_left"
+group = "core"
+template = "a   {{- x }}   b"
+data = "{\"x\": \"X\"}"
+
+[[case]]
+name = "ws_output_right"
+group = "core"
+template = "a   {{ x -}}   b"
+data = "{\"x\": \"X\"}"
+
+[[case]]
+name = "ws_loop_lines"
+group = "core"
+template = "{% for i in xs -%}\n  {{ i }}\n{% endfor -%}\ndone"
+data = "{\"xs\": [1, 2]}"
+
+[[case]]
+name = "ws_loop_trim_all"
+group = "core"
+template = "{%- for i in xs -%}\n  {{ i }}\n{%- endfor -%}\n!"
+data = "{\"xs\": [1, 2]}"
+
+[[case]]
+name = "ws_newlines_kept"
+group = "core"
+template = "line1\n{% assign a = 1 %}\nline2\n"
+
+[[case]]
+name = "ws_if_block_newlines"
+group = "core"
+template = "a\n{% if true %}\nb\n{% endif %}\nc\n"
+
+[[case]]
+name = "ws_newline_only_trim"
+group = "core"
+template = "x\n\n\n{{- y }}\n"
+data = "{\"y\": \"Y\"}"
+
+[[case]]
+name = "ws_comment_trim"
+group = "core"
+template = "a\n{%- comment -%}\nnote\n{%- endcomment -%}\nb"
+
+[[case]]
+name = "ws_assign_trim"
+group = "core"
+template = "a\n  {%- assign x = 1 -%}\n  b{{ x }}"
+
+[[case]]
+name = "ws_raw_inner_untrimmed"
+group = "core"
+template = "{% raw %}  {{ x }}  {% endraw %}!"
+
+[[case]]
+name = "ws_dash_inside_expr"
+group = "core"
+template = "{{ n | minus: 1 }}{{ -1 }}"
+data = "{\"n\": 5}"
+
+[[case]]
+name = "ws_tab_chars"
+group = "core"
+template = "a\t{{- x -}}\t\tb"
+data = "{\"x\": 1}"
+
+[[case]]
+name = "ws_liquid_tag_trim"
+group = "core"
+template = "a  {%- liquid\n echo 'x'\n-%}  b"

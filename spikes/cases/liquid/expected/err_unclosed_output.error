@@ -1,0 +1,1 @@
+output "{{ x " not closed, file:./cases/err_unclosed_output.liquid, line:1, col:1
