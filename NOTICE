@@ -1,0 +1,7 @@
+Brrrty is a Rust port inspired by and derived from Eleventy (11ty),
+https://www.11ty.dev/, which is MIT licensed:
+
+  Copyright (c) 2017–2024 Zach Leatherman @zachleat
+
+Thank you to Zach and the Eleventy community for the model this project
+builds on.
