@@ -1,0 +1,10 @@
+[package]
+name = "brrty"
+version = "0.0.1"
+description = "Did you mean brrrty? (three Rs, like \"go brrr\")"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"

@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/brrrty/brrrty"
+homepage = "https://brrrty.com"
