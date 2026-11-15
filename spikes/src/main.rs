@@ -1,6 +1,7 @@
 use brrrty_spike::case::{Lang, load_cases};
 use brrrty_spike::corpus::{self, SiteInput};
 use brrrty_spike::engines::liquid_crate::LiquidCrate;
+use brrrty_spike::engines::minijinja::MiniJinja;
 use brrrty_spike::{
     DEFAULT_ELEVENTY, DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, reference, score,
 };
@@ -71,7 +72,7 @@ fn results_path(name: &str) -> PathBuf {
 fn candidates(kind: Kind) -> Vec<Box<dyn Engine>> {
     match kind {
         Kind::Liquid => vec![Box::new(LiquidCrate::new())],
-        Kind::Nunjucks => Vec::new(),
+        Kind::Nunjucks => vec![Box::new(MiniJinja::new())],
     }
 }
 
@@ -100,6 +101,23 @@ fn run_corpus(kind: Kind, names: &[String]) -> Result<(), String> {
         for (k, g) in &e.groups {
             println!("  {:>5}x {k}", g.count);
         }
+    }
+    for p in &report.pass_through {
+        println!(
+            "pass-through {}: {} ({} bytes) {}{}",
+            p.engine,
+            p.file,
+            p.bytes,
+            if p.identical {
+                "identical"
+            } else {
+                "NOT identical"
+            },
+            p.detail
+                .as_ref()
+                .map(|d| format!(": {d}"))
+                .unwrap_or_default()
+        );
     }
     let path = results_path(&format!("{}-corpus", kind.lang().dir()));
     if let Some(parent) = path.parent() {

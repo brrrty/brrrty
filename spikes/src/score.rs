@@ -98,6 +98,12 @@ pub fn parse_checked(engine: &dyn Engine, source: &str) -> Result<(), String> {
     guarded(|| engine.parse(source)).unwrap_or_else(|msg| Err(format!("panic: {msg}")))
 }
 
+/// `Engine::render` with the same panic protection as scoring a render.
+pub fn render_checked(engine: &dyn Engine, case: &Case) -> Result<String, String> {
+    let _quiet = SilentPanics::new();
+    guarded(|| engine.render(case)).unwrap_or_else(|msg| Err(format!("panic: {msg}")))
+}
+
 /// Runs `f`, turning a panic into `Err(message)`.
 fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     catch_unwind(AssertUnwindSafe(f)).map_err(|p| {

@@ -56,7 +56,7 @@ impl LiquidCrate {
     }
 }
 
-fn slugify_npm(input: &str) -> String {
+pub(crate) fn slugify_npm(input: &str) -> String {
     // Mirrors the npm `slugify` package with `{ lower: true }`: map a few symbols to words,
     // drop characters outside its allowed set, join whitespace with '-'.
     let mut mapped = String::new();
@@ -83,7 +83,7 @@ fn slugify_npm(input: &str) -> String {
     out.to_lowercase()
 }
 
-fn slugify_modern(input: &str) -> String {
+pub(crate) fn slugify_modern(input: &str) -> String {
     // Approximates @sindresorhus/slugify: lowercase, "&" becomes "and", runs of
     // non-alphanumerics become one '-'. Non-ASCII letters are dropped (no transliteration).
     let lowered = input.replace('&', " and ").to_lowercase();
@@ -103,7 +103,7 @@ fn slugify_modern(input: &str) -> String {
     out
 }
 
-fn url_filter(input: &str) -> String {
+pub(crate) fn url_filter(input: &str) -> String {
     if input.is_empty() {
         ".".to_string()
     } else {
@@ -115,10 +115,10 @@ macro_rules! simple_filter {
     ($parser:ident, $parsed:ident, $name:literal, $f:expr) => {
         #[derive(Clone, ParseFilter, FilterReflection)]
         #[filter(
-                                            name = $name,
-                                            description = "11ty filter approximation",
-                                            parsed($parsed)
-                                        )]
+                                                    name = $name,
+                                                    description = "11ty filter approximation",
+                                                    parsed($parsed)
+                                                )]
         pub struct $parser;
 
         #[derive(Debug, Default, Display_filter)]
