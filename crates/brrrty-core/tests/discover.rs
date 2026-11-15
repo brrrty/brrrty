@@ -78,3 +78,60 @@ fn output_overlapping_source_is_refused() {
         assert_eq!(p.code, "output-overlaps-source");
     }
 }
+
+#[test]
+fn relative_root_and_default_input_work() {
+    // Cargo runs tests with the crate dir as cwd, which exists and is readable.
+    let o = opts(Path::new("."), ".", "_site");
+    o.validate().unwrap();
+    assert!(discover(&o).is_ok());
+    assert!(discover(&opts(Path::new("."), "src", "_site")).is_ok());
+}
+
+#[test]
+fn input_path_spellings_are_equivalent() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "x");
+    for input in ["src", "./src", "src/"] {
+        let d = discover(&opts(root, input, "_site")).unwrap();
+        assert_eq!(d.templates, paths(&["a.md"]), "input {input}");
+    }
+}
+
+#[test]
+fn absolute_output_inside_input_is_excluded() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "x");
+    write(root, "src/out/old.html", "x");
+    let abs = root.join("src/out");
+    let d = discover(&opts(root, "src", abs.to_str().unwrap())).unwrap();
+    assert_eq!(d.templates, paths(&["a.md"]));
+}
+
+#[test]
+fn output_that_is_an_ancestor_of_input_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let p = opts(t.path(), "site/src", "site").validate().unwrap_err();
+    assert_eq!(p.code, "output-overlaps-source");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_output_is_still_refused_and_excluded() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "x");
+    write(root, "src/out/old.html", "x");
+    std::os::unix::fs::symlink(root.join("src"), root.join("link")).unwrap();
+    // output reaches the input dir through a symlink
+    let p = opts(root, "src", root.join("link").to_str().unwrap())
+        .validate()
+        .unwrap_err();
+    assert_eq!(p.code, "output-overlaps-source");
+    // output inside input via a symlink is excluded from discovery
+    let via = root.join("link/out");
+    let d = discover(&opts(root, "src", via.to_str().unwrap())).unwrap();
+    assert_eq!(d.templates, paths(&["a.md"]));
+}

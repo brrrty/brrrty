@@ -28,7 +28,7 @@ pub struct Discovery {
 
 /// Find input templates, following 11ty's default ignore rules.
 pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
-    let root = crate::options::normalize(&opts.root);
+    let root = opts.root_dir();
     let input = opts.input_dir();
     let output = opts.output_dir();
 
@@ -80,7 +80,13 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         let rel = entry
             .path()
             .strip_prefix(&input)
-            .expect("walked path is under the input dir")
+            .map_err(|_| {
+                Problem::error(
+                    "discover-failed",
+                    "found a file outside the input folder while walking it",
+                )
+                .with_path(entry.path())
+            })?
             .to_path_buf();
         let name = entry.file_name().to_string_lossy().to_lowercase();
         if UNSUPPORTED_EXTS.iter().any(|x| name.ends_with(x)) {
