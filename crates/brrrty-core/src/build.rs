@@ -1,6 +1,6 @@
 //! The build pipeline: discover, parse, resolve, render, write, copy.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -12,7 +12,7 @@ use crate::discover::discover;
 use crate::frontmatter::split_front_matter;
 use crate::options::BuildOptions;
 use crate::page::{Page, file_slug, resolve_date};
-use crate::passthrough::copy_passthrough;
+use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Permalink, resolve_permalink};
 use crate::problem::{Problem, Severity};
 
@@ -193,6 +193,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                         list.join(", ")
                     ),
                 )
+                .with_path(inputs[0])
                 .with_help("give each page a unique permalink"),
             );
             colliding.push(output.to_path_buf());
@@ -247,7 +248,11 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
         return finish(report, strict, start);
     }
 
-    let (copied, unchanged, problems) = copy_passthrough(opts);
+    let pages: HashMap<PathBuf, PathBuf> = prepared
+        .iter()
+        .map(|p| (out.join(&p.output_rel), p.page.input_path.clone()))
+        .collect();
+    let (copied, unchanged, problems) = copy_passthrough_avoiding(opts, &pages);
     report.copied = copied;
     report.unchanged = unchanged;
     report.problems.extend(problems);

@@ -1,5 +1,6 @@
 //! Copying passthrough files and folders into the output folder.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -11,6 +12,15 @@ use crate::problem::Problem;
 /// Returns `(copied, unchanged, problems)`. A file is `unchanged` when the destination
 /// already has the same length and a modification time at least as new as the source.
 pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
+    copy_passthrough_avoiding(opts, &HashMap::new())
+}
+
+/// Like [`copy_passthrough`], but refuses to overwrite any destination in `pages`
+/// (absolute output path -> template input path), reporting an `output-collision`.
+pub(crate) fn copy_passthrough_avoiding(
+    opts: &BuildOptions,
+    pages: &HashMap<PathBuf, PathBuf>,
+) -> (usize, usize, Vec<Problem>) {
     let root = opts.root_dir();
     let input = opts.input_dir();
     let out = opts.output_dir();
@@ -57,6 +67,20 @@ pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
             Ok(rel) => out.join(rel),
             Err(_) => out.join(&clean),
         };
+        if dest == out {
+            problems.push(
+                Problem::error(
+                    "passthrough-is-input",
+                    format!(
+                        "passthrough path {} is the input or project folder itself",
+                        entry.display()
+                    ),
+                )
+                .with_path(entry)
+                .with_help("Pass through specific folders inside it instead (like src/images)."),
+            );
+            continue;
+        }
         if !crate::build::is_inside(&out, &dest) {
             problems.push(
                 Problem::error(
@@ -74,6 +98,7 @@ pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
             &source,
             &dest,
             &out,
+            pages,
             &mut copied,
             &mut unchanged,
             &mut problems,
@@ -86,6 +111,7 @@ fn copy_entry(
     source: &Path,
     dest: &Path,
     out: &Path,
+    pages: &HashMap<PathBuf, PathBuf>,
     copied: &mut usize,
     unchanged: &mut usize,
     problems: &mut Vec<Problem>,
@@ -94,12 +120,18 @@ fn copy_entry(
     if source == out {
         return;
     }
-    let Ok(meta) = fs::metadata(source) else {
-        problems.push(
-            Problem::error("passthrough-copy-failed", "cannot read passthrough source")
+    let meta = match fs::metadata(source) {
+        Ok(m) => m,
+        Err(e) => {
+            problems.push(
+                Problem::error(
+                    "passthrough-copy-failed",
+                    format!("cannot read passthrough source: {e}"),
+                )
                 .with_path(source),
-        );
-        return;
+            );
+            return;
+        }
     };
     if meta.is_dir() {
         let entries = match fs::read_dir(source) {
@@ -115,7 +147,19 @@ fn copy_entry(
                 return;
             }
         };
-        let mut children: Vec<_> = entries.filter_map(Result::ok).collect();
+        let mut children = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(c) => children.push(c),
+                Err(e) => problems.push(
+                    Problem::error(
+                        "passthrough-copy-failed",
+                        format!("cannot read folder entry: {e}"),
+                    )
+                    .with_path(source),
+                ),
+            }
+        }
         children.sort_by_key(|c| c.file_name());
         for child in children {
             let path = child.path();
@@ -127,11 +171,28 @@ fn copy_entry(
                 &path,
                 &dest.join(child.file_name()),
                 out,
+                pages,
                 copied,
                 unchanged,
                 problems,
             );
         }
+        return;
+    }
+    if let Some(page) = pages.get(dest) {
+        problems.push(
+            Problem::error(
+                "output-collision",
+                format!(
+                    "page {} and passthrough file {} both write to {}",
+                    page.display(),
+                    source.display(),
+                    dest.display()
+                ),
+            )
+            .with_path(page)
+            .with_help("change the page permalink or stop passing the file through"),
+        );
         return;
     }
     if is_up_to_date(&meta, dest) {

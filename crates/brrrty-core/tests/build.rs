@@ -214,3 +214,40 @@ fn strict_stops_at_first_error() {
     assert_eq!(error_count(&r), 1);
     assert!(!root.join("_site").exists());
 }
+
+#[test]
+fn passthrough_does_not_overwrite_a_page() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/robots.md",
+        "---\npermalink: /robots.txt\n---\npage\n",
+    );
+    write(root, "robots.txt", "passthrough");
+    let r = build(&opts_with_passthrough(root, &["robots.txt"]), &Provisional);
+    let p = r
+        .problems
+        .iter()
+        .find(|p| p.code == "output-collision")
+        .unwrap();
+    assert!(p.message.contains("robots.md") && p.message.contains("robots.txt"));
+    assert_eq!(read(root.join("_site/robots.txt")), "<p>page</p>\n");
+    assert_eq!(r.copied, 0);
+}
+
+#[test]
+fn passthrough_of_input_or_root_is_refused_clearly() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "a\n");
+    let r = build(&opts_with_passthrough(root, &["src", "."]), &Provisional);
+    assert_eq!(
+        r.problems
+            .iter()
+            .filter(|p| p.code == "passthrough-is-input")
+            .count(),
+        2
+    );
+    assert!(r.problems.iter().all(|p| p.code != "output-escapes"));
+}
