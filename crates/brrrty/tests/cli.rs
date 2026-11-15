@@ -110,3 +110,26 @@ fn issue_url_is_encoded() {
         "https://github.com/brrrty/brrrty/issues/new?title=a%20b&body=c%26d"
     );
 }
+
+#[test]
+fn top_level_args_with_subcommand_is_usage_error() {
+    let dir = site(&[("src/index.md", "# Hi\n")]);
+    let out = run_in(dir.path(), &["--input", "src", "build"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn problem_location_appears_once_and_counts_are_singular() {
+    let dir = site(&[("src/bad.md", "---\ntitle: [oops\n---\nbody\n")]);
+    let out = run_in(dir.path(), &["--input", "src"]);
+    let err = stderr(&out);
+    assert_eq!(err.matches("bad.md:3:1").count(), 1, "{err}");
+    assert!(err.contains("1 error, 0 warnings"), "{err}");
+}
+
+#[test]
+fn unsupported_without_snippet_keeps_path_in_message() {
+    let dir = site(&[("src/c.njk", "x\n")]);
+    let err = stderr(&run_in(dir.path(), &["--input", "src"]));
+    assert!(err.contains("c.njk: "), "{err}");
+}

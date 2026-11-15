@@ -53,6 +53,31 @@ fn is_delimiter(line: &str) -> bool {
         .is_some_and(|tail| tail.chars().all(char::is_whitespace))
 }
 
+/// Remove the parser's own ` at line N column M` fragments; they are relative to the
+/// front matter and would disagree with the file position carried by the Problem.
+fn strip_positions(msg: &str) -> String {
+    let mut out = String::new();
+    let mut rest = msg;
+    while let Some(i) = rest.find(" at line ") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + " at line ".len()..];
+        let digits = tail.chars().take_while(char::is_ascii_digit).count();
+        let after = &tail[digits..];
+        match after.strip_prefix(" column ") {
+            Some(t) if digits > 0 => {
+                let d2 = t.chars().take_while(char::is_ascii_digit).count();
+                rest = &t[d2..];
+            }
+            _ => {
+                out.push_str(" at line ");
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn parse_yaml(yaml: &str) -> Result<Map<String, Value>, Problem> {
     if yaml.trim().is_empty() {
         return Ok(Map::new());
@@ -67,7 +92,10 @@ fn parse_yaml(yaml: &str) -> Result<Map<String, Value>, Problem> {
             let (line, column) = e.location().map_or((2, 1), |l| (l.line() + 1, l.column()));
             Err(Problem::error(
                 "front-matter-invalid",
-                format!("invalid YAML front matter: {}", e.to_string().trim()),
+                format!(
+                    "invalid YAML front matter: {}",
+                    strip_positions(e.to_string().trim())
+                ),
             )
             .at(line, column))
         }
@@ -77,6 +105,13 @@ fn parse_yaml(yaml: &str) -> Result<Map<String, Value>, Problem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_yaml_message_has_no_relative_positions() {
+        let p = split_front_matter("---\ntitle: [oops\n---\nbody\n").unwrap_err();
+        assert!(!p.message.contains("at line"), "{}", p.message);
+        assert!(p.line.is_some() && p.column.is_some());
+    }
 
     #[test]
     fn splits_lf_and_crlf_identically() {

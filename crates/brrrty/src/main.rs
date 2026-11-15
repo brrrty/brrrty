@@ -8,7 +8,12 @@ use brrrty_markdown::Provisional;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "brrrty", version, about = "Eleventy, but make it go brrr.")]
+#[command(
+    name = "brrrty",
+    version,
+    about = "Eleventy, but make it go brrr.",
+    args_conflicts_with_subcommands = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

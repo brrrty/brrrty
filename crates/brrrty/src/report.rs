@@ -85,12 +85,6 @@ fn to_rendered(p: &Problem, input_dir: &Path) -> Rendered {
     let mut source = None;
     let mut span = None;
     if let Some(path) = &p.path {
-        let location = match (p.line, p.column) {
-            (Some(l), Some(c)) => format!("{}:{l}:{c}", path.display()),
-            (Some(l), None) => format!("{}:{l}", path.display()),
-            _ => path.display().to_string(),
-        };
-        message = format!("{location}: {message}");
         if let Some(line) = p.line {
             let full = input_dir.join(path);
             if let Ok(text) = std::fs::read_to_string(&full)
@@ -99,6 +93,15 @@ fn to_rendered(p: &Problem, input_dir: &Path) -> Rendered {
                 source = Some(NamedSource::new(path.display().to_string(), text));
                 span = Some(s);
             }
+        }
+        // miette prints the location with the snippet; otherwise put it in the message.
+        if source.is_none() {
+            let location = match (p.line, p.column) {
+                (Some(l), Some(c)) => format!("{}:{l}:{c}", path.display()),
+                (Some(l), None) => format!("{}:{l}", path.display()),
+                _ => path.display().to_string(),
+            };
+            message = format!("{location}: {message}");
         }
     }
     Rendered {
@@ -156,5 +159,9 @@ pub fn print_problems(problems: &[Problem], input_dir: &Path, color: bool) {
         .filter(|p| matches!(p.severity, Severity::Error))
         .count();
     let warnings = problems.len() - errors;
-    eprintln!("{errors} errors, {warnings} warnings");
+    eprintln!(
+        "{errors} {}, {warnings} {}",
+        if errors == 1 { "error" } else { "errors" },
+        if warnings == 1 { "warning" } else { "warnings" }
+    );
 }

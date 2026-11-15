@@ -30,6 +30,14 @@ pub fn environment() -> String {
     )
 }
 
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    }
+}
+
 /// Replace the default panic output with a friendly message, then exit 101.
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
@@ -44,15 +52,25 @@ pub fn install_panic_hook() {
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "unknown location".to_string());
-        let title: String = format!("Crash: {}", message.chars().take(60).collect::<String>());
-        let body = format!("{}\n\nPanic: {message}\nAt: {location}", environment());
+        let mut keep = 500;
+        let url = loop {
+            let short = truncate_chars(&message, keep);
+            let title = format!("Crash: {}", short.chars().take(60).collect::<String>());
+            let body = format!("{}\n\nPanic: {short}\nAt: {location}", environment());
+            let url = issue_url(&title, &body);
+            if url.len() <= 6000 || keep <= 20 {
+                break url;
+            }
+            keep /= 2;
+        };
+        let message = truncate_chars(&message, keep);
         eprintln!("Brrrty hit an internal bug. This is never your fault.");
         eprintln!("  {message}");
         eprintln!("  at {location}");
         if std::env::var_os("RUST_BACKTRACE").is_some() {
             eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
-        eprintln!("Please report it: {}", issue_url(&title, &body));
+        eprintln!("Please report it: {url}");
         std::process::exit(101);
     }));
 }
