@@ -21,10 +21,11 @@ pub struct Page {
     pub body: String,
 }
 
+// JavaScript's `\d` is ASCII-only; Rust's is Unicode-aware, so spell the digits out.
 static SLUG_DATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d{4}-\d{2}-\d{2}-(.*)").expect("valid regex"));
+    LazyLock::new(|| Regex::new(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-(.*)").expect("valid regex"));
 static PATH_DATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\d{4}-\d{2}-\d{2})").expect("valid regex"));
+    LazyLock::new(|| Regex::new(r"([0-9]{4}-[0-9]{2}-[0-9]{2})").expect("valid regex"));
 
 fn stem(path: &Path) -> &str {
     path.file_stem().and_then(|s| s.to_str()).unwrap_or("")
@@ -226,6 +227,22 @@ mod tests {
             codes::DATE_INVALID
         );
         assert_eq!(d("src/plain.md").unwrap(), "1970-01-01T00:00:00+00:00");
+    }
+
+    #[test]
+    fn only_ascii_digits_make_a_date() {
+        let t = SystemTime::UNIX_EPOCH;
+        let none = Map::new();
+        // Arabic-Indic and fullwidth digits are not `\d` in JavaScript.
+        for p in [
+            "posts/\u{662}\u{660}\u{662}\u{666}-\u{660}\u{661}-\u{660}\u{662}-hello.md",
+            "posts/\u{ff12}\u{ff10}\u{ff12}\u{ff16}-\u{ff10}\u{ff11}-\u{ff10}\u{ff12}-hello.md",
+        ] {
+            let d = resolve_date(&none, Path::new(p), t, t).unwrap();
+            assert_eq!(d.to_rfc3339(), "1970-01-01T00:00:00+00:00", "{p}");
+            let stem = Path::new(p).file_stem().unwrap().to_str().unwrap();
+            assert_eq!(file_slug(Path::new(p)), stem, "{p}");
+        }
     }
 
     #[test]
