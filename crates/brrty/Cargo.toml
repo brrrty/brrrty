@@ -7,6 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["static-site-generator", "eleventy", "11ty", "ssg"]
+keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
 categories = ["command-line-utilities", "web-programming"]
 readme = "README.md"

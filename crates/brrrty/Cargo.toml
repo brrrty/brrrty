@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["static-site-generator", "eleventy", "11ty", "ssg"]
+keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
 categories = ["command-line-utilities", "web-programming"]
 readme = "../../README.md"
 exclude = ["tests/fixtures.rs"]
@@ -29,5 +29,5 @@ percent-encoding = "2.3.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-toml = "0.9"
+toml = "1.2.1"
 brrrty-compat = { path = "../brrrty-compat", version = "0.0.1" }
