@@ -31,6 +31,7 @@ pub fn resolve_permalink(
         )
         .with_path(rel_to_input)
         .with_help("Did you mean `permalink: false`?")),
+        Some(Value::Null) => Ok(default_permalink(rel_to_input)),
         Some(Value::String(s)) if s.is_empty() => Ok(default_permalink(rel_to_input)),
         Some(Value::String(s)) => explicit_permalink(rel_to_input, s),
         Some(other) => Err(Problem::error(
@@ -94,6 +95,20 @@ fn explicit_permalink(rel: &Path, raw: &str) -> Result<Permalink, Problem> {
         )
         .with_path(rel)
         .with_help("Coming in a future release. Use a plain path for now."));
+    }
+    let is_drive = |seg: &str| {
+        let b = seg.as_bytes();
+        b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+    };
+    if raw.contains('\\') || raw.split('/').any(is_drive) {
+        return Err(Problem::error(
+            "permalink-invalid",
+            format!("Permalink `{raw}` contains a backslash or drive letter"),
+        )
+        .with_path(rel)
+        .with_help(
+            "Permalinks use forward slashes and can't contain backslashes or drive letters.",
+        ));
     }
     let last = raw.rsplit('/').next().unwrap_or("");
     let mut trailing_slash = last.is_empty() || last == "." || last == "..";
@@ -242,6 +257,33 @@ mod tests {
         assert_eq!(e.code, "permalink-invalid");
         assert_eq!(e.help.as_deref(), Some("Did you mean `permalink: false`?"));
         assert_eq!(r(Value::from(5)).unwrap_err().code, "permalink-invalid");
-        assert_eq!(r(Value::Null).unwrap_err().code, "permalink-invalid");
+    }
+
+    #[test]
+    fn null_and_empty_use_the_default() {
+        assert_eq!(r(Value::Null).unwrap(), w("/c/", "c/index.html"));
+        assert_eq!(r("".into()).unwrap(), w("/c/", "c/index.html"));
+    }
+
+    #[test]
+    fn trailing_dot_dot_is_a_directory() {
+        assert_eq!(r("/a/..".into()).unwrap(), w("/", "index.html"));
+    }
+
+    #[test]
+    fn backslashes_and_drive_letters_are_rejected() {
+        let help = "Permalinks use forward slashes and can't contain backslashes or drive letters.";
+        for bad in [
+            "/..\\..\\x.html",
+            "/a\\b.html",
+            "/C:/x.html",
+            "c:/x.html",
+            "/a/z:/x.html",
+        ] {
+            let e = r(bad.into()).unwrap_err();
+            assert_eq!(e.code, "permalink-invalid", "{bad}");
+            assert_eq!(e.help.as_deref(), Some(help), "{bad}");
+        }
+        assert!(r("/a:b/x.html".into()).is_ok());
     }
 }
