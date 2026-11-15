@@ -173,6 +173,7 @@ dependencies = [
 name = "brrrty-core"
 version = "0.0.2"
 dependencies = [
+ "brrrty-js",
  "brrrty-markdown",
  "chrono",
  "globset",
@@ -182,6 +183,15 @@ dependencies = [
  "serde_json",
  "serde_norway",
  "tempfile",
+]
+
+[[package]]
+name = "brrrty-js"
+version = "0.0.2"
+dependencies = [
+ "chrono",
+ "indexmap",
+ "serde_json",
 ]
 
 [[package]]

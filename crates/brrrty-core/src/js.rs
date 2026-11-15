@@ -4,14 +4,10 @@ use serde_json::Value;
 
 /// True when JavaScript would treat `v` as truthy: `false`, `0`, `""` and `null` are falsy,
 /// and every other value, including empty arrays and objects, is truthy.
+///
+/// The logic lives in [`brrrty_js::Value::js_truthy`]; this converts and delegates.
 pub fn js_truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
+    brrrty_js::Value::from_json(v).js_truthy()
 }
 
 #[cfg(test)]

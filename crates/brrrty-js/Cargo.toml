@@ -1,0 +1,17 @@
+[package]
+name = "brrrty-js"
+version = "0.0.2"
+description = "JavaScript-semantics values shared by Brrrty's template engines, for an Eleventy-compatible static site generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
+indexmap = "2"
+serde_json = { version = "1", features = ["preserve_order"] }
