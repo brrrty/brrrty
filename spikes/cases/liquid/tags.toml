@@ -413,3 +413,21 @@ name = "output_unicode"
 group = "core"
 template = "{{ s }}"
 data = "{\"s\": \"café ☃\"}"
+
+[[case]]
+name = "bracket_string_key"
+group = "core"
+template = "{{ o['a'] }}|{{ o[\"a b\"] }}"
+data = "{\"o\": {\"a\": 1, \"a b\": 2}}"
+
+[[case]]
+name = "bracket_missing_key"
+group = "core"
+template = "[{{ o['missing'] }}]"
+data = "{\"o\": {\"a\": 1}}"
+
+[[case]]
+name = "bracket_variable_key"
+group = "core"
+template = "{% assign k = 'a' %}{{ o[k] }}"
+data = "{\"o\": {\"a\": 1}}"

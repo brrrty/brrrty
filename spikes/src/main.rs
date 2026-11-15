@@ -1,7 +1,9 @@
 use brrrty_spike::case::{Lang, load_cases};
 use brrrty_spike::corpus::{self, SiteInput};
 use brrrty_spike::engines::liquid_crate::LiquidCrate;
-use brrrty_spike::{DEFAULT_ELEVENTY, reference, score};
+use brrrty_spike::{
+    DEFAULT_ELEVENTY, DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, reference, score,
+};
 use clap::{Parser, Subcommand, ValueEnum};
 use score::{CandidateRun, Engine};
 use std::path::{Path, PathBuf};
@@ -68,18 +70,17 @@ fn results_path(name: &str) -> PathBuf {
 /// Candidate adapters are registered here by later tasks.
 fn candidates(kind: Kind) -> Vec<Box<dyn Engine>> {
     match kind {
-        Kind::Liquid => vec![Box::new(LiquidCrate)],
+        Kind::Liquid => vec![Box::new(LiquidCrate::new())],
         Kind::Nunjucks => Vec::new(),
     }
 }
 
-const DEFAULT_SITES: &str = "/Users/josh/Code/brrrty/sites";
-const DEFAULT_SETTINGS: &str = "/Users/josh/Code/brrrty/planning/compat";
-
 fn run_corpus(kind: Kind, names: &[String]) -> Result<(), String> {
+    let sites_dir = dir_from_env("BRRRTY_SITES", DEFAULT_SITES);
+    let settings_dir = dir_from_env("BRRRTY_SETTINGS", DEFAULT_SETTINGS);
     let sites: Vec<SiteInput> = names
         .iter()
-        .map(|n| SiteInput::load(Path::new(DEFAULT_SITES), Path::new(DEFAULT_SETTINGS), n))
+        .map(|n| SiteInput::load(&sites_dir, &settings_dir, n))
         .collect::<Result<_, _>>()?;
     let boxed = candidates(kind);
     let engines: Vec<&dyn Engine> = boxed.iter().map(|b| b.as_ref()).collect();

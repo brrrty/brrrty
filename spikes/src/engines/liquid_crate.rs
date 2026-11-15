@@ -7,14 +7,54 @@
 
 use crate::case::Case;
 use crate::score::Engine;
-use liquid::ParserBuilder;
 use liquid::partials::{EagerCompiler, InMemorySource};
+use liquid::{Parser, ParserBuilder};
 use liquid_core::{
     Display_filter, Filter, FilterReflection, ParseFilter, Result as LResult, Runtime, Value,
     ValueView,
 };
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 
-pub struct LiquidCrate;
+type PartialsKey = Vec<(String, String)>;
+
+/// Parsers are built once per distinct set of partials: the stdlib and custom filters are
+/// registered once per parser, and cases without includes (the majority) share one parser.
+/// The partial source is baked into a parser at build time (public API), so cases that differ
+/// in their includes get their own cached parser.
+#[derive(Default)]
+pub struct LiquidCrate {
+    parsers: Mutex<HashMap<PartialsKey, Arc<Parser>>>,
+}
+
+impl LiquidCrate {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn parser_for(&self, includes: &BTreeMap<String, String>) -> Result<Arc<Parser>, String> {
+        let key: Vec<(String, String)> = includes
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let mut cache = self.parsers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(p) = cache.get(&key) {
+            return Ok(p.clone());
+        }
+        let mut partials = Partials::empty();
+        for (name, content) in includes {
+            partials.add(name.clone(), content.clone());
+        }
+        let parser = Arc::new(
+            builder()
+                .partials(partials)
+                .build()
+                .map_err(|e| e.to_string())?,
+        );
+        cache.insert(key, parser.clone());
+        Ok(parser)
+    }
+}
 
 fn slugify_npm(input: &str) -> String {
     // Mirrors the npm `slugify` package with `{ lower: true }`: map a few symbols to words,
@@ -75,10 +115,10 @@ macro_rules! simple_filter {
     ($parser:ident, $parsed:ident, $name:literal, $f:expr) => {
         #[derive(Clone, ParseFilter, FilterReflection)]
         #[filter(
-                    name = $name,
-                    description = "11ty filter approximation",
-                    parsed($parsed)
-                )]
+                                            name = $name,
+                                            description = "11ty filter approximation",
+                                            parsed($parsed)
+                                        )]
         pub struct $parser;
 
         #[derive(Debug, Default, Display_filter)]
@@ -115,21 +155,14 @@ impl Engine for LiquidCrate {
     }
 
     fn render(&self, case: &Case) -> Result<String, String> {
-        let mut partials = Partials::empty();
-        for (name, content) in &case.includes {
-            partials.add(name.clone(), content.clone());
-        }
-        let parser = builder()
-            .partials(partials)
-            .build()
-            .map_err(|e| e.to_string())?;
+        let parser = self.parser_for(&case.includes)?;
         let template = parser.parse(&case.template).map_err(|e| e.to_string())?;
         let globals = liquid::to_object(&case.data).map_err(|e| e.to_string())?;
         template.render(&globals).map_err(|e| e.to_string())
     }
 
     fn parse(&self, source: &str) -> Result<(), String> {
-        let parser = builder().build().map_err(|e| e.to_string())?;
+        let parser = self.parser_for(&BTreeMap::new())?;
         parser.parse(source).map(|_| ()).map_err(|e| e.to_string())
     }
 }

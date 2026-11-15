@@ -9,7 +9,7 @@ fn liquid_crate_runs_all_cases() {
     let cases = load_cases(&dir).unwrap();
     assert!(cases.len() >= 150, "need at least 150 cases");
     assert_eq!(unreferenced(&cases), 0, "run `reference liquid` first");
-    let outcomes = score(&LiquidCrate, &cases);
+    let outcomes = score(&LiquidCrate::new(), &cases);
     assert_eq!(outcomes.len(), cases.len());
     let panics: Vec<_> = outcomes
         .iter()
