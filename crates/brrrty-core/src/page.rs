@@ -1,9 +1,11 @@
 //! A discovered template file: its slug, date, data, and body.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use chrono::{DateTime, NaiveDate, Utc};
+use regex::Regex;
 use serde_json::{Map, Value};
 
 use crate::problem::{Problem, codes};
@@ -19,39 +21,37 @@ pub struct Page {
     pub body: String,
 }
 
-/// Splits a leading `YYYY-MM-DD-` off `stem`, returning the date text and the rest.
-fn split_date_prefix(stem: &str) -> Option<(&str, &str)> {
-    let prefix = stem.get(..11)?;
-    let b = prefix.as_bytes();
-    let shaped = b[10] == b'-'
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && b[..10]
-            .iter()
-            .enumerate()
-            .all(|(i, c)| matches!(i, 4 | 7) || c.is_ascii_digit());
-    shaped.then(|| (&prefix[..10], &stem[11..]))
-}
+static SLUG_DATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d{4}-\d{2}-\d{2}-(.*)").expect("valid regex"));
+static PATH_DATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\d{4}-\d{2}-\d{2})").expect("valid regex"));
 
 fn stem(path: &Path) -> &str {
     path.file_stem().and_then(|s| s.to_str()).unwrap_or("")
 }
 
-/// The slug of a file: its stem without a leading date, or the parent folder
-/// name for `index.*` files (`""` at the input root).
+/// 11ty's date strip: the text after the first `YYYY-MM-DD-` anywhere in `name`.
+fn strip_date(name: &str) -> &str {
+    SLUG_DATE
+        .captures(name)
+        .and_then(|c| c.get(1))
+        .map_or(name, |m| m.as_str())
+}
+
+/// The slug of a file like 11ty: its stem with everything up to and including the first
+/// `YYYY-MM-DD-` removed, or the parent folder name (same strip) for `index.*` files
+/// (`""` at the input root).
 pub fn file_slug(rel_to_input: &Path) -> String {
-    let stem = stem(rel_to_input);
+    let stem = strip_date(stem(rel_to_input));
     if stem == "index" {
         return rel_to_input
             .parent()
             .and_then(Path::file_name)
             .and_then(|n| n.to_str())
-            .unwrap_or("")
+            .map_or("", strip_date)
             .to_string();
     }
-    split_date_prefix(stem)
-        .map_or(stem, |(_, rest)| rest)
-        .to_string()
+    stem.to_string()
 }
 
 fn midnight(date: NaiveDate) -> DateTime<Utc> {
@@ -84,10 +84,12 @@ fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
 }
 
 /// Resolves a page's date: front matter `date` (a date, a timestamp, or one of 11ty's
-/// `Last Modified` / `Created` keywords), then a filename date prefix, then `created`.
+/// `Last Modified` / `Created` keywords), then the first `YYYY-MM-DD` anywhere in the
+/// project-root-relative `input_path`, then `created`. A path date that is not a real
+/// date is a `date-invalid` problem for this page (11ty aborts the whole build).
 pub fn resolve_date(
     front_matter: &Map<String, Value>,
-    rel_to_input: &Path,
+    input_path: &Path,
     created: SystemTime,
     modified: SystemTime,
 ) -> Result<DateTime<Utc>, Problem> {
@@ -108,10 +110,21 @@ pub fn resolve_date(
         }
         return parse_timestamp(text).ok_or_else(invalid);
     }
-    if let Some((prefix, _)) = split_date_prefix(stem(rel_to_input))
-        && let Ok(d) = NaiveDate::parse_from_str(prefix, "%Y-%m-%d")
-    {
-        return Ok(midnight(d));
+    let joined = input_path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    if let Some(m) = PATH_DATE.find(&joined) {
+        return NaiveDate::parse_from_str(m.as_str(), "%Y-%m-%d")
+            .map(midnight)
+            .map_err(|_| {
+                Problem::error(
+                    codes::DATE_INVALID,
+                    format!("date `{}` in the file path is not a real date", m.as_str()),
+                )
+                .with_help("add a date: to the front matter, or rename the file")
+            });
     }
     Ok(created.into())
 }
@@ -176,20 +189,51 @@ mod tests {
     }
 
     #[test]
-    fn bad_date_prefix_slug_stripped_date_falls_back() {
-        assert_eq!(file_slug(Path::new("2026-13-45-bad.md")), "bad");
-        let created = SystemTime::UNIX_EPOCH;
+    fn slugs_match_11ty() {
+        assert_eq!(file_slug(Path::new("posts/foo2024-03-04-bar.md")), "bar");
         assert_eq!(
-            resolve_date(
-                &Map::new(),
-                Path::new("2026-13-45-bad.md"),
-                created,
-                created
-            )
-            .unwrap()
-            .timestamp(),
-            0
+            file_slug(Path::new("blog/2025-05-05-trip/index.md")),
+            "trip"
         );
+        assert_eq!(file_slug(Path::new("posts/2026-01-01-index.md")), "posts");
+        assert_eq!(file_slug(Path::new("2026-01-01-index.md")), "");
+        assert_eq!(file_slug(Path::new("2026-13-45-bad.md")), "bad");
+        assert_eq!(
+            file_slug(Path::new("posts/2026/2026-11-08-introducing-cuppa.md")),
+            "introducing-cuppa"
+        );
+    }
+
+    #[test]
+    fn dates_from_anywhere_in_path() {
+        let t = SystemTime::UNIX_EPOCH;
+        let none = Map::new();
+        let d = |p: &str| resolve_date(&none, Path::new(p), t, t).map(|d| d.to_rfc3339());
+        assert_eq!(
+            d("src/posts/2026-01-02/hello.md").unwrap(),
+            "2026-01-02T00:00:00+00:00"
+        );
+        assert_eq!(
+            d("src/posts/foo2024-03-04-bar.md").unwrap(),
+            "2024-03-04T00:00:00+00:00"
+        );
+        assert_eq!(
+            d("src/2020-01-01/b/2021-02-02-x.md").unwrap(),
+            "2020-01-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            d("src/bad/2026-13-45-x/page.md").unwrap_err().code,
+            codes::DATE_INVALID
+        );
+        assert_eq!(d("src/plain.md").unwrap(), "1970-01-01T00:00:00+00:00");
+    }
+
+    #[test]
+    fn front_matter_date_beats_bad_path_date() {
+        let t = SystemTime::UNIX_EPOCH;
+        let fm: Map<_, _> = serde_json::from_str(r#"{"date":"2020-01-01"}"#).unwrap();
+        let d = resolve_date(&fm, Path::new("src/2026-13-45-x/page.md"), t, t).unwrap();
+        assert_eq!(d.to_rfc3339(), "2020-01-01T00:00:00+00:00");
     }
 
     #[test]

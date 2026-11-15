@@ -64,14 +64,14 @@ fn with_path_if_missing(p: Problem, rel: &Path) -> Problem {
 
 /// Load one template. Problems carry paths relative to the project root.
 fn load(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
-    load_page(input, rel).map_err(|mut p| {
+    load_page(input, input_rel, rel).map_err(|mut p| {
         // Problems from here are relative to the input folder.
         p.path = Some(input_rel.join(p.path.as_deref().unwrap_or(rel)));
         p
     })
 }
 
-fn load_page(input: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
+fn load_page(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
     let full = input.join(rel);
     let bytes = fs::read(&full).map_err(|e| {
         Problem::error(codes::TEMPLATE_UNREADABLE, format!("cannot read file: {e}")).with_path(rel)
@@ -91,8 +91,8 @@ fn load_page(input: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
         .as_ref()
         .and_then(|m| m.created().ok())
         .unwrap_or(modified);
-    let date =
-        resolve_date(&data, rel, created, modified).map_err(|p| with_path_if_missing(p, rel))?;
+    let date = resolve_date(&data, &input_rel.join(rel), created, modified)
+        .map_err(|p| with_path_if_missing(p, rel))?;
     let permalink = resolve_permalink(rel, &data).map_err(|p| with_path_if_missing(p, rel))?;
     let Permalink::Write { output_rel, .. } = permalink else {
         return Ok(None);
