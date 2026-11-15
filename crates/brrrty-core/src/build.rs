@@ -228,6 +228,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             return finish(report, strict, start);
         }
     };
+    report.problems.extend(discovery.warnings.iter().cloned());
     for path in &discovery.unsupported {
         report.problems.push(
             Problem::error(

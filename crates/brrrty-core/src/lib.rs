@@ -6,6 +6,7 @@
 pub mod build;
 pub mod discover;
 pub mod frontmatter;
+pub mod ignore_files;
 pub mod options;
 pub mod page;
 pub mod passthrough;

@@ -563,3 +563,83 @@ fn write_failures_report_root_relative_paths() {
     assert!(paths.contains(&PathBuf::from("src/a.md")), "{paths:?}");
     assert!(paths.contains(&PathBuf::from("src/b.md")), "{paths:?}");
 }
+
+#[test]
+fn ignore_rules_match_11ty_probe() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    for f in [
+        "src/deep.md",
+        "src/top.md",
+        "src/sub/deep.md",
+        "src/sub/top.md",
+        "src/sub/keep.md",
+        "src/sub/deeper/x.md",
+        "src/drafts/a.md",
+        "src/sub/drafts/b.md",
+        "src/index.md",
+    ] {
+        write(root, f, "x\n");
+    }
+    write(root, ".gitignore", "deep.md\ndrafts\n");
+    write(root, "src/.eleventyignore", "*.md\n");
+    write(root, ".eleventyignore", "sub/deeper\n");
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    let mut pages = Vec::new();
+    collect(&root.join("_site"), &root.join("_site"), &mut pages);
+    pages.sort();
+    assert_eq!(
+        pages,
+        [
+            "drafts/a/index.html",
+            "sub/deep/index.html",
+            "sub/deeper/x/index.html",
+            "sub/drafts/b/index.html",
+            "sub/keep/index.html",
+            "sub/top/index.html",
+        ]
+    );
+
+    let mut warns: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::IGNORE_LINE_ANCHORED)
+        .collect();
+    warns.sort_by_key(|p| p.line);
+    assert_eq!(warns.len(), 2, "{warns:?}");
+    assert_eq!(warns[0].path.as_deref(), Some(Path::new(".gitignore")));
+    assert_eq!(warns[0].line, Some(1));
+    assert!(
+        warns[0].message.contains("src/sub/deep.md"),
+        "{}",
+        warns[0].message
+    );
+    assert!(!warns[0].message.contains("more"));
+    assert_eq!(warns[1].line, Some(2));
+    assert!(matches!(warns[1].severity, Severity::Warning));
+    assert_eq!(
+        warns[1].message,
+        ".gitignore line 2 `drafts` only ignores `drafts` at the project root (11ty reads ignore lines as paths from the file's folder); it does not ignore src/drafts/a.md and 1 more"
+    );
+    assert_eq!(
+        warns[1].help.as_deref(),
+        Some("to ignore it, write the full path, like src/drafts")
+    );
+}
+
+fn collect(base: &Path, dir: &Path, out: &mut Vec<String>) {
+    for e in fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            collect(base, &p, out);
+        } else {
+            out.push(
+                p.strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
+}
