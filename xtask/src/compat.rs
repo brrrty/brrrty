@@ -10,11 +10,23 @@ use sha2::{Digest, Sha256};
 use crate::settings::SiteSettings;
 
 struct SiteRun {
-    counts: Counts,
-    reference_files: usize,
+    eleventy_version: String,
     brrrty_exit: Option<i32>,
+    reference_files: usize,
     report_path: PathBuf,
-    pass: bool,
+    /// Comparison outcome; an Err keeps the brrrty exit visible.
+    compare: Result<(Counts, bool), String>,
+}
+
+impl SiteRun {
+    fn gate_pass(&self) -> bool {
+        matches!(self.compare, Ok((_, p)) if passes(p, self.brrrty_exit))
+    }
+}
+
+/// A run passes only when the comparison is clean and brrrty ran without panicking.
+fn passes(compare_pass: bool, brrrty_exit: Option<i32>) -> bool {
+    compare_pass && matches!(brrrty_exit, Some(c) if c != 101)
 }
 
 fn check_site_name(site: &str) -> Result<(), String> {
@@ -50,17 +62,55 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<Vec<u8>> {
     out.status.success().then_some(out.stdout)
 }
 
-/// HEAD plus a hash of the working-tree status of the site, or None outside git.
-fn compute_stamp(site_dir: &Path) -> String {
-    let head = git_output(site_dir, &["rev-parse", "HEAD"])
-        .map(|b| String::from_utf8_lossy(&b).trim().to_string())
-        .unwrap_or_else(|| "no-git".into());
-    let status = git_output(site_dir, &["status", "--porcelain"]).unwrap_or_default();
-    let digest: String = Sha256::digest(&status)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
+/// Hash every input that can change the reference output. Each part is
+/// length-prefixed so parts can't run into each other.
+fn stamp_from_parts(
+    head: &str,
+    diff: &[u8],
+    untracked: &[(String, Vec<u8>)],
+    lockfile: Option<&[u8]>,
+) -> String {
+    let mut h = Sha256::new();
+    let mut part = |tag: &str, bytes: &[u8]| {
+        h.update(tag.as_bytes());
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(bytes);
+    };
+    part("diff", diff);
+    let mut sorted: Vec<&(String, Vec<u8>)> = untracked.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, content) in sorted {
+        part("untracked-name", name.as_bytes());
+        part("untracked-content", content);
+    }
+    match lockfile {
+        Some(l) => part("lock", l),
+        None => part("nolock", b""),
+    }
+    let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     format!("{head}\n{digest}\n")
+}
+
+/// The reference stamp for a site, or None when it isn't in a working git
+/// repo (then the reference is never reused).
+fn compute_stamp(site_dir: &Path) -> Option<String> {
+    let head = String::from_utf8_lossy(&git_output(site_dir, &["rev-parse", "HEAD"])?)
+        .trim()
+        .to_string();
+    let diff = git_output(site_dir, &["diff", "HEAD", "--", "."])?;
+    let list = git_output(
+        site_dir,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+    )?;
+    let mut untracked = Vec::new();
+    for name in list.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+        let name = String::from_utf8_lossy(name).into_owned();
+        // Unreadable (e.g. a broken symlink) still changes the stamp.
+        let content = fs::read(site_dir.join(&name)).unwrap_or_default();
+        untracked.push((name, content));
+    }
+    let lock = fs::read(site_dir.join("package-lock.json")).ok();
+    Some(stamp_from_parts(&head, &diff, &untracked, lock.as_deref()))
 }
 
 fn first_lines(bytes: &[u8], n: usize) -> String {
@@ -81,13 +131,31 @@ fn count_files(dir: &Path) -> usize {
         .sum()
 }
 
-fn ensure_reference(site_dir: &Path, work: &Path, refresh: bool) -> Result<PathBuf, String> {
+/// The installed Eleventy version, from the site's own node_modules.
+fn eleventy_version(site_dir: &Path) -> String {
+    let pkg = site_dir.join("node_modules/@11ty/eleventy/package.json");
+    fs::read_to_string(pkg)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("version")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn ensure_reference(
+    site_dir: &Path,
+    work: &Path,
+    refresh: bool,
+) -> Result<(PathBuf, String), String> {
     let reference = work.join("reference");
     let stamp_path = work.join("reference.stamp");
     let stamp = compute_stamp(site_dir);
-    if !refresh && reference.is_dir() && fs::read_to_string(&stamp_path).is_ok_and(|s| s == stamp) {
+    if !refresh
+        && reference.is_dir()
+        && let Some(stamp) = &stamp
+        && fs::read_to_string(&stamp_path).is_ok_and(|s| &s == stamp)
+    {
         println!("reference: reusing {}", reference.display());
-        return Ok(reference);
+        return Ok((reference, eleventy_version(site_dir)));
     }
     if !site_dir.join("node_modules").is_dir() {
         println!("reference: running npm ci in {}", site_dir.display());
@@ -104,18 +172,28 @@ fn ensure_reference(site_dir: &Path, work: &Path, refresh: bool) -> Result<PathB
             ));
         }
     }
+    let bin = site_dir.join("node_modules/.bin/eleventy");
+    if !bin.exists() {
+        return Err(format!(
+            "Eleventy is not installed in the site: {} is missing (is @11ty/eleventy in its package.json and lockfile?)",
+            bin.display()
+        ));
+    }
+    let version = eleventy_version(site_dir);
     if reference.exists() {
         fs::remove_dir_all(&reference)
             .map_err(|e| format!("cannot delete {}: {e}", reference.display()))?;
     }
+    // Make sure a stale stamp can't outlive a failed build.
+    let _ = fs::remove_file(&stamp_path);
     fs::create_dir_all(work).map_err(|e| format!("cannot create {}: {e}", work.display()))?;
-    println!("reference: building with Eleventy");
-    let out = Command::new("npx")
-        .args(["@11ty/eleventy", "--quiet"])
+    println!("reference: building with Eleventy {version}");
+    let out = Command::new(&bin)
+        .arg("--quiet")
         .arg(format!("--output={}", reference.display()))
         .current_dir(site_dir)
         .output()
-        .map_err(|e| format!("cannot run npx: {e}"))?;
+        .map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
     if !out.status.success() {
         return Err(format!(
             "reference build (Eleventy) failed ({}), first lines of stderr:\n{}",
@@ -123,9 +201,11 @@ fn ensure_reference(site_dir: &Path, work: &Path, refresh: bool) -> Result<PathB
             first_lines(&out.stderr, 20)
         ));
     }
-    fs::write(&stamp_path, stamp)
-        .map_err(|e| format!("cannot write {}: {e}", stamp_path.display()))?;
-    Ok(reference)
+    if let Some(stamp) = stamp {
+        fs::write(&stamp_path, stamp)
+            .map_err(|e| format!("cannot write {}: {e}", stamp_path.display()))?;
+    }
+    Ok((reference, version))
 }
 
 fn run_site(
@@ -157,14 +237,15 @@ fn run_site(
         .map_err(|e| format!("cannot resolve {}: {e}", site_dir.display()))?;
 
     let work = root.join("target").join("compat").join(site);
-    let reference = ensure_reference(&site_dir, &work, refresh)?;
+    let (reference, eleventy_version) = ensure_reference(&site_dir, &work, refresh)?;
 
     let actual = work.join("brrrty");
     if actual.exists() {
         fs::remove_dir_all(&actual)
             .map_err(|e| format!("cannot delete {}: {e}", actual.display()))?;
     }
-    fs::create_dir_all(&work).map_err(|e| format!("cannot create {}: {e}", work.display()))?;
+    // A panicking brrrty may create nothing; the comparison still needs a folder.
+    fs::create_dir_all(&actual).map_err(|e| format!("cannot create {}: {e}", actual.display()))?;
     let mut cmd = Command::new(root.join("target").join("release").join("brrrty"));
     cmd.args(["build", "--input", &settings.input, "--output"])
         .arg(&actual);
@@ -180,17 +261,20 @@ fn run_site(
         eprintln!("!!! BRRRTY PANICKED (exit 101) while building {site} !!!");
     }
 
-    let report =
-        compare_dirs(&reference, &actual, &allow).map_err(|e| format!("comparison failed: {e}"))?;
     let report_path = work.join("report.md");
-    fs::write(&report_path, report.to_markdown(200))
-        .map_err(|e| format!("cannot write {}: {e}", report_path.display()))?;
+    let compare = compare_dirs(&reference, &actual, &allow)
+        .map_err(|e| format!("comparison failed: {e}"))
+        .and_then(|report| {
+            fs::write(&report_path, report.to_markdown(200))
+                .map_err(|e| format!("cannot write {}: {e}", report_path.display()))?;
+            Ok((report.counts(), report.is_pass()))
+        });
     Ok(SiteRun {
-        counts: report.counts(),
-        reference_files: count_files(&reference),
+        eleventy_version,
         brrrty_exit,
+        reference_files: count_files(&reference),
         report_path,
-        pass: report.is_pass(),
+        compare,
     })
 }
 
@@ -220,23 +304,28 @@ pub fn run_one(
     }
     build_release(root)?;
     let run = run_site(root, site, sites_dir, settings_dir, refresh)?;
-    let c = run.counts;
-    println!(
-        "identical {} | equivalent {} | different {} | missing {} | extra {}",
-        c.identical, c.equivalent, c.different, c.missing, c.extra
-    );
-    let pct = if run.reference_files == 0 {
-        0.0
-    } else {
-        c.identical as f64 * 100.0 / run.reference_files as f64
-    };
-    println!(
-        "byte-identical: {pct:.1}% ({} of {} reference files)",
-        c.identical, run.reference_files
-    );
+    println!("11ty {}", run.eleventy_version);
     println!("brrrty exit: {}", exit_label(run.brrrty_exit));
-    println!("report: {}", run.report_path.display());
-    Ok(run.pass)
+    match &run.compare {
+        Ok((c, _)) => {
+            println!(
+                "identical {} | equivalent {} | different {} | missing {} | extra {}",
+                c.identical, c.equivalent, c.different, c.missing, c.extra
+            );
+            let pct = if run.reference_files == 0 {
+                0.0
+            } else {
+                c.identical as f64 * 100.0 / run.reference_files as f64
+            };
+            println!(
+                "byte-identical: {pct:.1}% ({} of {} reference files)",
+                c.identical, run.reference_files
+            );
+            println!("report: {}", run.report_path.display());
+        }
+        Err(e) => eprintln!("error: {e}"),
+    }
+    Ok(run.gate_pass())
 }
 
 pub fn scoreboard(root: &Path, sites_dir: &Path, settings_dir: &Path) -> Result<bool, String> {
@@ -251,27 +340,113 @@ pub fn scoreboard(root: &Path, sites_dir: &Path, settings_dir: &Path) -> Result<
     sites.sort();
     build_release(root)?;
 
-    println!("| site | identical | equivalent | different | missing | extra | brrrty exit |");
-    println!("|---|---|---|---|---|---|---|");
+    println!(
+        "| site | 11ty | identical | equivalent | different | missing | extra | brrrty exit |"
+    );
+    println!("|---|---|---|---|---|---|---|---|");
     for site in sites {
         match run_site(root, &site, sites_dir, settings_dir, false) {
             Ok(r) => {
-                let c = r.counts;
-                println!(
-                    "| {site} | {} | {} | {} | {} | {} | {} |",
-                    c.identical,
-                    c.equivalent,
-                    c.different,
-                    c.missing,
-                    c.extra,
-                    exit_label(r.brrrty_exit)
-                );
+                let exit = exit_label(r.brrrty_exit);
+                match &r.compare {
+                    Ok((c, _)) => println!(
+                        "| {site} | {} | {} | {} | {} | {} | {} | {exit} |",
+                        r.eleventy_version,
+                        c.identical,
+                        c.equivalent,
+                        c.different,
+                        c.missing,
+                        c.extra
+                    ),
+                    Err(e) => println!(
+                        "| {site} | {} | - | - | - | - | - | {exit} (ERROR: {}) |",
+                        r.eleventy_version,
+                        e.lines().next().unwrap_or("error")
+                    ),
+                }
             }
             Err(e) => {
                 let one_line = e.lines().next().unwrap_or("error");
-                println!("| {site} | - | - | - | - | - | ERROR: {one_line} |");
+                println!("| {site} | - | - | - | - | - | - | ERROR: {one_line} |");
             }
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stamp(diff: &[u8], untracked: &[(&str, &[u8])], lock: Option<&[u8]>) -> String {
+        let u: Vec<(String, Vec<u8>)> = untracked
+            .iter()
+            .map(|(n, c)| (n.to_string(), c.to_vec()))
+            .collect();
+        stamp_from_parts("abc", diff, &u, lock)
+    }
+
+    #[test]
+    fn stamp_is_stable_and_order_independent() {
+        let a = stamp(b"d", &[("a", b"1"), ("b", b"2")], Some(b"L"));
+        let b = stamp(b"d", &[("b", b"2"), ("a", b"1")], Some(b"L"));
+        assert_eq!(a, b);
+        assert!(a.starts_with("abc\n"));
+    }
+
+    #[test]
+    fn stamp_changes_with_each_input() {
+        let base = stamp(b"d", &[("a", b"1")], Some(b"L"));
+        assert_ne!(base, stamp(b"d2", &[("a", b"1")], Some(b"L")));
+        assert_ne!(base, stamp(b"d", &[("a", b"changed")], Some(b"L")));
+        assert_ne!(base, stamp(b"d", &[("renamed", b"1")], Some(b"L")));
+        assert_ne!(base, stamp(b"d", &[("a", b"1")], Some(b"L2")));
+        assert_ne!(base, stamp(b"d", &[("a", b"1")], None));
+        assert_ne!(
+            base,
+            stamp_from_parts("other", b"d", &[("a".into(), b"1".to_vec())], Some(b"L"))
+        );
+    }
+
+    #[test]
+    fn stamp_parts_cannot_run_together() {
+        assert_ne!(stamp(b"ab", &[], None), stamp(b"a", &[("b", b"")], None));
+    }
+
+    #[test]
+    fn panic_or_signal_fails_the_gate() {
+        assert!(passes(true, Some(0)));
+        assert!(passes(true, Some(1)));
+        assert!(!passes(true, Some(101)));
+        assert!(!passes(true, None));
+        assert!(!passes(false, Some(0)));
+    }
+
+    #[test]
+    fn exit_labels() {
+        assert_eq!(exit_label(Some(0)), "0");
+        assert_eq!(exit_label(Some(1)), "1");
+        assert_eq!(exit_label(Some(101)), "101 PANIC");
+        assert_eq!(exit_label(None), "killed by signal");
+    }
+
+    #[test]
+    fn compute_stamp_is_none_outside_git() {
+        let d = std::env::temp_dir().join(format!("xtask-nogit-{}", std::process::id()));
+        fs::create_dir_all(&d).unwrap();
+        // A temp dir is not inside a git repo on CI or dev machines.
+        assert!(compute_stamp(&d).is_none());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn eleventy_version_reads_package_json() {
+        let d = std::env::temp_dir().join(format!("xtask-ver-{}", std::process::id()));
+        let pkg = d.join("node_modules/@11ty/eleventy");
+        fs::create_dir_all(&pkg).unwrap();
+        assert_eq!(eleventy_version(&d), "unknown");
+        fs::write(pkg.join("package.json"), r#"{"version":"3.1.8"}"#).unwrap();
+        assert_eq!(eleventy_version(&d), "3.1.8");
+        fs::remove_dir_all(&d).unwrap();
+    }
 }

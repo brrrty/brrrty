@@ -42,22 +42,39 @@ pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
     for n in names {
         let fixture = dir.join(&n);
         let expected = fixture.join("expected");
-        if expected.exists() {
-            fs::remove_dir_all(&expected)
-                .map_err(|e| format!("cannot delete {}: {e}", expected.display()))?;
+        let tmp = fixture.join("expected.tmp");
+        if tmp.exists() {
+            fs::remove_dir_all(&tmp)
+                .map_err(|e| format!("cannot delete {}: {e}", tmp.display()))?;
         }
         println!("refreshing fixture {n}");
         let out = Command::new("npx")
             .args(["--yes", ELEVENTY, "--quiet"])
-            .arg(format!("--output={}", expected.display()))
+            .arg(format!("--output={}", tmp.display()))
             .current_dir(fixture.join("site"))
             .output()
             .map_err(|e| format!("cannot run npx: {e}"))?;
         if !out.status.success() {
-            eprintln!("fixture {n}: eleventy failed ({})", out.status);
+            eprintln!(
+                "fixture {n}: eleventy failed ({}), keeping old expected/",
+                out.status
+            );
             eprintln!("{}", String::from_utf8_lossy(&out.stderr));
+            let _ = fs::remove_dir_all(&tmp);
             all_ok = false;
+            continue;
         }
+        if expected.exists() {
+            fs::remove_dir_all(&expected)
+                .map_err(|e| format!("cannot delete {}: {e}", expected.display()))?;
+        }
+        // 11ty writes nothing for a site with no output; keep expected/ present.
+        if !tmp.exists() {
+            fs::create_dir_all(&tmp)
+                .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+        }
+        fs::rename(&tmp, &expected)
+            .map_err(|e| format!("cannot move {} into place: {e}", tmp.display()))?;
     }
     Ok(all_ok)
 }

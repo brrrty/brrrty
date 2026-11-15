@@ -1140,6 +1140,7 @@ dependencies = [
  "brrrty-compat",
  "clap",
  "serde",
+ "serde_json",
  "sha2",
  "toml",
 ]
