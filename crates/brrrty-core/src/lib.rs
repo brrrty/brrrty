@@ -1,5 +1,8 @@
 //! Core build pipeline for Brrrty.
 
+// `Problem` is the crate-wide diagnostic type; boxing it would burden every caller.
+#![allow(clippy::result_large_err)]
+
 pub mod discover;
 pub mod options;
 pub mod problem;
