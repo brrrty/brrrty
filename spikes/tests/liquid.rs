@@ -5,7 +5,7 @@ use std::path::Path;
 
 #[test]
 fn liquid_crate_runs_all_cases() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("cases/liquid");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/conformance/liquid");
     let cases = load_cases(&dir).unwrap();
     assert!(cases.len() >= 150, "need at least 150 cases");
     assert_eq!(unreferenced(&cases), 0, "run `reference liquid` first");

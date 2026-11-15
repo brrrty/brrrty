@@ -17,7 +17,7 @@ impl Lang {
             Lang::Nunjucks => "njk",
         }
     }
-    /// Directory name under `spikes/cases/` and the permalink prefix.
+    /// Directory name of the case set and the permalink prefix.
     pub fn dir(self) -> &'static str {
         match self {
             Lang::Liquid => "liquid",

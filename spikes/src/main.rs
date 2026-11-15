@@ -72,6 +72,14 @@ fn spikes_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Liquid cases live with the repo's conformance tests; Nunjucks cases stay in this crate.
+fn cases_dir(lang: Lang) -> PathBuf {
+    match lang {
+        Lang::Liquid => spikes_dir().join("../tests/conformance/liquid"),
+        Lang::Nunjucks => spikes_dir().join("cases/nunjucks"),
+    }
+}
+
 fn results_path(name: &str) -> PathBuf {
     spikes_dir()
         .join("../target/spike")
@@ -199,7 +207,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Reference { kind, eleventy } => {
             let lang = kind.lang();
-            let dir = spikes_dir().join("cases").join(lang.dir());
+            let dir = cases_dir(lang);
             let cases: Vec<_> = load_cases(&dir)?.into_iter().map(|(c, _)| c).collect();
             let eleventy = eleventy_path(eleventy, None)?;
             reference::reference(lang, &cases, &eleventy, &dir.join("expected"))?;
@@ -212,7 +220,7 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Command::Score { kind } => {
-            let dir = spikes_dir().join("cases").join(kind.lang().dir());
+            let dir = cases_dir(kind.lang());
             let cases = load_cases(&dir)?;
             let skipped = score::unreferenced(&cases);
             let runs: Vec<CandidateRun> = candidates(kind)
