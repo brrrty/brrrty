@@ -130,10 +130,10 @@ fn explicit_permalink(
     if segments.is_empty() {
         trailing_slash = true;
     }
-    let allow_missing = matches!(
-        front_matter.get("eleventyAllowMissingExtension"),
-        Some(Value::Bool(true))
-    );
+    // 11ty checks this flag with JavaScript truthiness, so `"yes"` and `1` count too.
+    let allow_missing = front_matter
+        .get("eleventyAllowMissingExtension")
+        .is_some_and(crate::js::js_truthy);
     if !trailing_slash
         && !allow_missing
         && !matches!(
@@ -159,6 +159,7 @@ fn explicit_permalink(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn w(url: &str, out: &str) -> Permalink {
         Permalink::Write {
@@ -273,6 +274,25 @@ mod tests {
     #[test]
     fn allow_missing_extension_flag_permits_extensionless() {
         assert_eq!(r_flag("/feed", true.into()).unwrap(), w("/feed", "feed"));
+    }
+
+    #[test]
+    fn allow_missing_extension_flag_is_truthy_like_javascript() {
+        for flag in [
+            json!("yes"),
+            json!(1),
+            json!([1]),
+            json!({"a": 1}),
+            json!([]),
+        ] {
+            assert_eq!(r_flag("/feed", flag).unwrap(), w("/feed", "feed"));
+        }
+        for flag in [json!(false), json!(0), json!(""), json!(null)] {
+            assert_eq!(
+                r_flag("/feed", flag).unwrap_err().code,
+                codes::PERMALINK_NO_EXTENSION
+            );
+        }
     }
 
     #[test]
