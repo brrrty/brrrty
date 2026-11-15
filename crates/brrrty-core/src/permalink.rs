@@ -150,7 +150,7 @@ fn explicit_permalink(
         )
         .with_path(rel)
         .with_help(
-            "Add a file extension (like /dir/noext.html) or end it with / to write an index.html.",
+            "Add a file extension (like /dir/noext.html), end it with / to write an index.html, or set `eleventyAllowMissingExtension: true` to write the file as named.",
         ));
     }
     Ok(build(&segments, trailing_slash))
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(
             e.help.as_deref(),
             Some(
-                "Add a file extension (like /dir/noext.html) or end it with / to write an index.html."
+                "Add a file extension (like /dir/noext.html), end it with / to write an index.html, or set `eleventyAllowMissingExtension: true` to write the file as named."
             )
         );
     }
