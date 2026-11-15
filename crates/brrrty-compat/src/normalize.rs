@@ -36,12 +36,15 @@ fn open_tag_name(b: &[u8], start: usize) -> Option<String> {
     Some(String::from_utf8_lossy(&rest[..len]).to_ascii_lowercase())
 }
 
-/// Index of the case-insensitive `</name` at or after `from`, or the end of input.
+/// Index of the case-insensitive `</name` (followed by `>`, whitespace or `/`) at or after `from`, or the end of input.
 fn find_close(b: &[u8], from: usize, name: &str) -> usize {
     let pat = format!("</{name}").into_bytes();
     let mut i = from;
     while i + pat.len() <= b.len() {
-        if b[i..i + pat.len()].eq_ignore_ascii_case(&pat) {
+        if b[i..i + pat.len()].eq_ignore_ascii_case(&pat)
+            && b.get(i + pat.len())
+                .is_none_or(|c| is_ws(*c) || matches!(c, b'>' | b'/'))
+        {
             return i;
         }
         i += 1;
@@ -68,6 +71,12 @@ pub fn normalize_markup(input: &str) -> String {
                 i = end;
                 continue;
             }
+            if b[i..].starts_with(b"<![CDATA[") {
+                let end = input[i..].find("]]>").map_or(b.len(), |p| i + p + 3);
+                out.push_str(&input[i..end]);
+                i = end;
+                continue;
+            }
             let next = b.get(i + 1).copied().unwrap_or(0);
             if next.is_ascii_alphabetic() || matches!(next, b'/' | b'!' | b'?') {
                 let end = tag_end(b, i);
@@ -75,7 +84,6 @@ pub fn normalize_markup(input: &str) -> String {
                 if let Some(name) = open_tag_name(b, i)
                     && RAW_ELEMENTS.contains(&name.as_str())
                     && b[end - 1] == b'>'
-                    && b.get(end.wrapping_sub(2)) != Some(&b'/')
                 {
                     let close = find_close(b, end, &name);
                     out.push_str(&input[end..close]);
@@ -129,5 +137,83 @@ mod tests {
     fn comments_and_attributes_are_untouched() {
         let s = "<!--  x  y  --><a  href=\"x  y\">t</a>";
         assert_eq!(normalize_markup(s), s);
+    }
+
+    fn same(s: &str) {
+        assert_eq!(normalize_markup(s), s);
+    }
+    #[test]
+    fn cdata_is_untouched() {
+        same("<![CDATA[<p>a  b</p>]]>");
+        assert_eq!(
+            normalize_markup("<![CDATA[a  b]]>\n\n x"),
+            "<![CDATA[a  b]]> x"
+        );
+    }
+    #[test]
+    fn gt_in_quoted_attribute() {
+        same("<a title=\"x > y  z\">t</a>");
+        same("<a title='x > y  z'>t</a>");
+    }
+    #[test]
+    fn self_closing_elements() {
+        assert_eq!(
+            normalize_markup("<br/>  <img  src=x />\n a"),
+            "<br/> <img  src=x /> a"
+        );
+    }
+    #[test]
+    fn lone_lt_in_text() {
+        assert_eq!(normalize_markup("a <  b  < c"), "a < b < c");
+        assert_eq!(normalize_markup("a<"), "a<");
+    }
+    #[test]
+    fn unclosed_tag_kept() {
+        same("<a href=\"x  y");
+        same("<div  class=a");
+    }
+    #[test]
+    fn unclosed_raw_element_kept() {
+        same("<pre>a\n  b  <p>  x");
+        same("<script>a  b");
+    }
+    #[test]
+    fn prefix_tag_is_not_pre() {
+        assert_eq!(
+            normalize_markup("<prefix>a\n  b</prefix>"),
+            "<prefix>a b</prefix>"
+        );
+    }
+    #[test]
+    fn uppercase_close_and_prefix_close() {
+        same("<pre>a\n  b</PRE>");
+        assert_eq!(
+            normalize_markup("<PRE>a  </prefix>  b</pre>  c"),
+            "<PRE>a  </prefix>  b</pre> c"
+        );
+    }
+    #[test]
+    fn comment_containing_gt() {
+        same("<!-- a > b  c -->");
+        assert_eq!(
+            normalize_markup("<!-- a > b -->\n\n  x"),
+            "<!-- a > b --> x"
+        );
+    }
+    #[test]
+    fn non_ascii_text() {
+        assert_eq!(
+            normalize_markup("<p>héllo  wörld ✓</p>"),
+            "<p>héllo wörld ✓</p>"
+        );
+        assert_eq!(normalize_markup("日本  語 <"), "日本 語 <");
+    }
+    #[test]
+    fn raw_elements_never_self_closing() {
+        same("<script src=/a.js/>a  <  b</script>");
+        assert_eq!(
+            normalize_markup("<script src=/a.js/>a  b</script>\n\n x"),
+            "<script src=/a.js/>a  b</script> x"
+        );
     }
 }

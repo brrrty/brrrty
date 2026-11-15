@@ -1,7 +1,7 @@
 //! Approved allow-list of known, accepted differences.
 
 use crate::CompatError;
-use globset::{Glob, GlobMatcher};
+use globset::{GlobBuilder, GlobMatcher};
 use regex::Regex;
 use serde::Deserialize;
 use std::borrow::Cow;
@@ -54,7 +54,10 @@ impl AllowList {
                 return Err(CompatError::Unapproved { id: r.id });
             }
             rules.push(Rule {
-                files: Glob::new(&r.files)?.compile_matcher(),
+                files: GlobBuilder::new(&r.files)
+                    .literal_separator(true)
+                    .build()?
+                    .compile_matcher(),
                 pattern: Regex::new(&r.pattern)?,
                 id: r.id,
             });
@@ -114,5 +117,69 @@ approved_on = "2026-11-15"
         assert!(
             matches!(AllowList::from_toml(&src), Err(CompatError::Unapproved { id }) if id == "build-timestamp")
         );
+    }
+
+    #[test]
+    fn empty_or_missing_approval_rejected() {
+        let empty = TOML.replace("approved_by = \"Josh\"", "approved_by = \"\"");
+        assert!(matches!(
+            AllowList::from_toml(&empty),
+            Err(CompatError::Unapproved { .. })
+        ));
+        let missing = TOML.replace("approved_on = \"2026-11-15\"\n", "");
+        assert!(
+            matches!(AllowList::from_toml(&missing), Err(CompatError::Unapproved { id }) if id == "build-timestamp")
+        );
+    }
+    #[test]
+    fn invalid_regex_and_glob() {
+        let bad_re = TOML.replace(
+            "'<meta name=\"build-timestamp\" content=\"[^\"]*\">'",
+            "'('",
+        );
+        assert!(matches!(
+            AllowList::from_toml(&bad_re),
+            Err(CompatError::Regex(_))
+        ));
+        let bad_glob = TOML.replace("**/*.html", "[");
+        assert!(matches!(
+            AllowList::from_toml(&bad_glob),
+            Err(CompatError::Glob(_))
+        ));
+    }
+    #[test]
+    fn multiple_rules_and_literal_dollar_id() {
+        let src = r#"
+[[allow]]
+id = "a$1"
+files = "*.txt"
+pattern = 'x+'
+reason = "r"
+approved_by = "J"
+approved_on = "d"
+[[allow]]
+id = "b"
+files = "*.txt"
+pattern = 'y'
+reason = "r"
+approved_by = "J"
+approved_on = "d"
+"#;
+        let list = AllowList::from_toml(src).unwrap();
+        assert_eq!(
+            list.apply(Path::new("f.txt"), "xxy"),
+            "⟨allowed:a$1⟩⟨allowed:b⟩"
+        );
+    }
+    #[test]
+    fn star_does_not_cross_separators() {
+        let src = TOML.replace("**/*.html", "sub/*.html");
+        let list = AllowList::from_toml(&src).unwrap();
+        let html = r#"<meta name="build-timestamp" content="x">"#;
+        assert_ne!(list.apply(Path::new("sub/a.html"), html), html);
+        assert_eq!(list.apply(Path::new("sub/x/y.html"), html), html);
+        let deep = AllowList::from_toml(TOML).unwrap();
+        assert_ne!(deep.apply(Path::new("a/b/c.html"), html), html);
+        assert_ne!(deep.apply(Path::new("c.html"), html), html);
     }
 }

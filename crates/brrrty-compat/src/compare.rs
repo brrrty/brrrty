@@ -71,18 +71,15 @@ fn compare_file(rel: &Path, a: &[u8], b: &[u8], allow: &AllowList) -> Outcome {
     let (Ok(a), Ok(b)) = (std::str::from_utf8(a), std::str::from_utf8(b)) else {
         return binary_diff(a, b);
     };
-    let (mut a, mut b) = (
+    let (a, b) = (
         allow.apply(rel, a).into_owned(),
         allow.apply(rel, b).into_owned(),
     );
     if a == b {
         return Outcome::Equivalent;
     }
-    if k == Kind::Markup {
-        (a, b) = (normalize_markup(&a), normalize_markup(&b));
-        if a == b {
-            return Outcome::Equivalent;
-        }
+    if k == Kind::Markup && normalize_markup(&a) == normalize_markup(&b) {
+        return Outcome::Equivalent;
     }
     let diff = TextDiff::from_lines(&a, &b)
         .unified_diff()

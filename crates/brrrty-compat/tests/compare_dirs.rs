@@ -86,3 +86,59 @@ approved_on = "2026-11-15"
     assert_eq!(report.results[0].outcome, Outcome::Equivalent);
     assert!(report.is_pass());
 }
+
+fn one(name: &str, r: &[u8], a: &[u8], allow: &AllowList) -> Outcome {
+    let (rd, ad) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    both(&rd, &ad, name, r, a);
+    compare_dirs(rd.path(), ad.path(), allow)
+        .unwrap()
+        .results
+        .remove(0)
+        .outcome
+}
+
+#[test]
+fn differing_css_is_different() {
+    assert!(matches!(
+        one("a.css", b"a{}", b"b{}", &AllowList::empty()),
+        Outcome::Different { .. }
+    ));
+}
+
+#[test]
+fn non_utf8_text_difference_is_different() {
+    let o = one("a.txt", &[0xff, 1], &[0xff, 2], &AllowList::empty());
+    assert!(matches!(o, Outcome::Different { .. }));
+}
+
+#[test]
+fn partial_allow_match_still_different() {
+    let toml = r#"
+[[allow]]
+id = "t"
+files = "*.html"
+pattern = 'T[0-9]+'
+reason = "r"
+approved_by = "J"
+approved_on = "d"
+"#;
+    let allow = AllowList::from_toml(toml).unwrap();
+    assert!(matches!(
+        one("a.html", b"<p>T1 one</p>", b"<p>T2 two</p>", &allow),
+        Outcome::Different { .. }
+    ));
+}
+
+#[test]
+fn markup_diff_is_line_based_and_pre_normalization() {
+    let r = b"<ul>\n<li>a</li>\n<li>b</li>\n<li>c</li>\n</ul>\n";
+    let a = b"<ul>\n<li>a</li>\n<li>X</li>\n<li>c</li>\n</ul>\n";
+    let Outcome::Different { diff } = one("a.html", r, a, &AllowList::empty()) else {
+        panic!("expected different")
+    };
+    assert!(diff.lines().count() > 1, "{diff}");
+    assert!(
+        diff.contains("-<li>b</li>") && diff.contains("+<li>X</li>"),
+        "{diff}"
+    );
+}
