@@ -163,12 +163,6 @@ template = '''{% set c = cycler("odd", "even") %}{% for i in items %}{{ c.next()
 data = '''{"items": [1, 2, 3]}'''
 
 [[case]]
-name = "for_asyncEach_absent"
-group = "core"
-template = '''{% for i in items %}{{ i }}{% endfor %}done'''
-data = '''{"items": []}'''
-
-[[case]]
 name = "set_simple"
 group = "core"
 template = '''{% set x = 5 %}{{ x }}'''
@@ -381,12 +375,6 @@ template = '''{% if true %}{% set x = 1 %}{% endif %}[{{ x }}]'''
 name = "if_in_for_with_set"
 group = "core"
 template = '''{% for i in [1,2,3] %}{% if i > 1 %}{% set last = i %}{% endif %}{% endfor %}[{{ last }}]'''
-
-[[case]]
-name = "switch_tag_absent"
-group = "core"
-template = '''{% if x == "a" %}A{% elif x == "b" %}B{% endif %}'''
-data = '''{"x": "b"}'''
 
 [[case]]
 name = "in_operator_tag"

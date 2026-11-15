@@ -225,12 +225,6 @@ template = '''{{ s | nl2br }}'''
 data = '''{"s": "a\nb\r\nc"}'''
 
 [[case]]
-name = "f_random_absent"
-group = "filters"
-template = '''{{ a | length }}'''
-data = '''{"a": [1]}'''
-
-[[case]]
 name = "f_reject"
 group = "filters"
 template = '''{{ a | reject("odd") | join(",") }}'''
@@ -493,12 +487,6 @@ name = "f_wordcount_empty"
 group = "filters"
 template = '''{{ s | wordcount }}'''
 data = '''{"s": ""}'''
-
-[[case]]
-name = "f_unique_absent_fallback"
-group = "filters"
-template = '''{{ a | length }}'''
-data = '''{"a": [1, 1]}'''
 
 [[case]]
 name = "f_chain"

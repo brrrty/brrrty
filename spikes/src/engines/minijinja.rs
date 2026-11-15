@@ -18,10 +18,78 @@ use crate::case::Case;
 use crate::engines::liquid_crate::{slugify_modern, slugify_npm, url_filter};
 use crate::score::Engine;
 use minijinja::syntax::SyntaxConfig;
-use minijinja::value::{Serde, Value};
+use minijinja::value::{Enumerator, Object, ObjectRepr, Value};
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
+
+/// A JSON array as a custom `Object`: JS truthiness (an empty array is true) and `.length`.
+#[derive(Debug)]
+struct JsSeq(Vec<Value>);
+
+impl Object for JsSeq {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Seq
+    }
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        if key.as_str() == Some("length") {
+            return Some(Value::from(self.0.len()));
+        }
+        self.0.get(key.as_usize()?).cloned()
+    }
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Seq(self.0.len())
+    }
+    fn is_true(self: &Arc<Self>) -> bool {
+        true
+    }
+}
+
+/// A JSON object as a custom `Object`: insertion order and JS truthiness (an empty object is true).
+#[derive(Debug)]
+struct JsMap(Vec<(String, Value)>);
+
+impl Object for JsMap {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        let k = key.as_str()?;
+        self.0.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+    }
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        let keys: Vec<Value> = self
+            .0
+            .iter()
+            .map(|(k, _)| Value::from(k.as_str()))
+            .collect();
+        Enumerator::Iter(Box::new(keys.into_iter()))
+    }
+    fn is_true(self: &Arc<Self>) -> bool {
+        true
+    }
+}
+
+fn js_value(v: &serde_json::Value) -> Value {
+    use serde_json::Value as J;
+    match v {
+        J::Null => Value::from(()),
+        J::Bool(b) => Value::from(*b),
+        J::Number(n) => match (n.as_i64(), n.as_f64()) {
+            (Some(i), _) => Value::from(i),
+            (None, Some(f)) => Value::from(f),
+            _ => Value::from(n.to_string()),
+        },
+        J::String(s) => Value::from(s.as_str()),
+        J::Array(a) => Value::from_object(JsSeq(a.iter().map(js_value).collect())),
+        J::Object(m) => Value::from_object(JsMap(
+            m.iter().map(|(k, v)| (k.clone(), js_value(v))).collect(),
+        )),
+    }
+}
+
+fn js_context(data: &serde_json::Map<String, serde_json::Value>) -> Value {
+    Value::from_object(JsMap(
+        data.iter().map(|(k, v)| (k.clone(), js_value(v))).collect(),
+    ))
+}
 
 type IncludesKey = Vec<(String, String)>;
 
@@ -88,7 +156,7 @@ impl Engine for MiniJinja {
 
     fn render(&self, case: &Case) -> Result<String, String> {
         let env = self.env_for(&case.includes)?;
-        env.render_str(&case.template, Value::from(Serde(&case.data)))
+        env.render_str(&case.template, js_context(&case.data))
             .map_err(|e| describe(&e))
     }
 
