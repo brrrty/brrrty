@@ -1,12 +1,15 @@
 [package]
 name = "brrrty-core"
 version = "0.0.1"
-description = "Core build pipeline for Brrrty."
+description = "Core build pipeline for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords = ["static-site-generator", "eleventy", "11ty", "ssg"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }

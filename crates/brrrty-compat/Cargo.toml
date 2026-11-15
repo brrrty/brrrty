@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords = ["static-site-generator", "eleventy", "11ty", "ssg"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
 
 [dependencies]
 globset = "0.4.19"
