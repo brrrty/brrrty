@@ -25,3 +25,5 @@ percent-encoding = "2.3.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+toml = "0.9"
+brrrty-compat = { path = "../brrrty-compat" }

@@ -1,0 +1,2 @@
+tests/fixtures/**/crlf.md -text
+tests/fixtures/**/expected/** -text
