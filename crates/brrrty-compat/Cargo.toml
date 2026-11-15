@@ -1,0 +1,20 @@
+[package]
+name = "brrrty-compat"
+version = "0.0.1"
+description = "Compare Brrrty output folders against Eleventy output."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+globset = "0.4.19"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+similar = "3.2.1"
+thiserror = "2.0.21"
+toml = "1.2.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
