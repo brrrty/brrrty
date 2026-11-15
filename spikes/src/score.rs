@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
 
 pub trait Engine: Send + Sync {
     fn name(&self) -> String;
     fn render(&self, case: &Case) -> Result<String, String>;
-    #[allow(dead_code)] // used by the candidate adapters added in later tasks
     fn parse(&self, source: &str) -> Result<(), String>;
 }
 
@@ -34,6 +34,7 @@ pub fn score(
     engine: &dyn Engine,
     cases: &[(Case, Option<Expected>)],
 ) -> Vec<(String, String, Outcome)> {
+    let _quiet = SilentPanics::new();
     let line_re = Regex::new(r"(?i)line\s*\d+|\d+:\d+").unwrap();
     cases
         .iter()
@@ -61,6 +62,43 @@ fn judge(expected: &Expected, result: Result<String, String>, line_re: &Regex) -
     }
 }
 
+static HOOK_LOCK: Mutex<()> = Mutex::new(());
+
+/// Replaces the panic hook with a silent one until dropped, then restores it.
+struct SilentPanics {
+    _lock: MutexGuard<'static, ()>,
+    prev: Option<PanicHook>,
+}
+
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+impl SilentPanics {
+    fn new() -> Self {
+        let lock = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        SilentPanics {
+            _lock: lock,
+            prev: Some(prev),
+        }
+    }
+}
+
+impl Drop for SilentPanics {
+    fn drop(&mut self) {
+        if let Some(prev) = self.prev.take() {
+            std::panic::set_hook(prev);
+        }
+    }
+}
+
+/// `Engine::parse` with the same panic protection as scoring a render.
+#[allow(dead_code)] // used by the candidate adapters added in later tasks
+pub fn parse_checked(engine: &dyn Engine, source: &str) -> Result<(), String> {
+    let _quiet = SilentPanics::new();
+    guarded(|| engine.parse(source)).unwrap_or_else(|msg| Err(format!("panic: {msg}")))
+}
+
 /// Runs `f`, turning a panic into `Err(message)`.
 fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
     catch_unwind(AssertUnwindSafe(f)).map_err(|p| {
@@ -79,6 +117,7 @@ pub fn unreferenced(cases: &[(Case, Option<Expected>)]) -> usize {
 /// Best of 5 runs, each rendering every referenced case 20 times, in milliseconds.
 /// Errors and panics are ignored; they still cost time but are scored elsewhere.
 pub fn time_render(engine: &dyn Engine, cases: &[(Case, Option<Expected>)]) -> f64 {
+    let _quiet = SilentPanics::new();
     let mut best = f64::MAX;
     for _ in 0..5 {
         let start = Instant::now();
@@ -221,6 +260,23 @@ mod tests {
         assert!(matches!(get("panic"), Outcome::Panic { msg } if msg.contains("kaboom")));
         assert_eq!(get("after"), Outcome::Pass);
         assert_eq!(unreferenced(&cases), 1);
+    }
+
+    #[test]
+    fn parse_panic_is_caught() {
+        struct P;
+        impl Engine for P {
+            fn name(&self) -> String {
+                "p".into()
+            }
+            fn render(&self, _: &Case) -> Result<String, String> {
+                Ok(String::new())
+            }
+            fn parse(&self, _: &str) -> Result<(), String> {
+                panic!("parse boom")
+            }
+        }
+        assert!(parse_checked(&P, "x").unwrap_err().contains("parse boom"));
     }
 
     #[test]

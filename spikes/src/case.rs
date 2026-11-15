@@ -143,6 +143,11 @@ pub fn load_cases(dir: &Path) -> Result<Vec<(Case, Option<Expected>)>, String> {
 
 fn read_expected(dir: &Path, name: &str) -> Result<Option<Expected>, String> {
     let base = dir.join("expected");
+    if base.join(format!("{name}.out")).exists() && base.join(format!("{name}.error")).exists() {
+        return Err(format!(
+            "case {name}: has both .out and .error expected files"
+        ));
+    }
     for (ext, make) in [
         ("out", Expected::Output as fn(String) -> Expected),
         ("error", Expected::Error),
@@ -204,6 +209,16 @@ template = "hi"
         let cases = load_cases(d.path()).unwrap();
         assert_eq!(cases[0].1, Some(Expected::Output("1".into())));
         assert_eq!(cases[1].1, Some(Expected::Error("boom".into())));
+    }
+
+    #[test]
+    fn both_expected_files_fail() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("c.toml"), TWO).unwrap();
+        fs::create_dir(d.path().join("expected")).unwrap();
+        fs::write(d.path().join("expected/a.out"), "1").unwrap();
+        fs::write(d.path().join("expected/a.error"), "1").unwrap();
+        assert!(load_cases(d.path()).unwrap_err().contains("both"));
     }
 
     #[test]
