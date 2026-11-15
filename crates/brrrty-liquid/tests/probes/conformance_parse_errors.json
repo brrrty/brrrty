@@ -1,0 +1,134 @@
+[
+ {
+  "name": "err_unclosed_if",
+  "msg": "tag {% if true %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_unclosed_for",
+  "msg": "tag {% for i in (1..2) %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_unclosed_output",
+  "msg": "output \"{{ x \" not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_unclosed_tag",
+  "msg": "tag \"{% if true \" not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_bad_for_syntax",
+  "msg": "illegal tag: {% for i xs %}",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_unknown_tag",
+  "msg": "tag \"nosuchtag\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_unknown_tag_with_args",
+  "msg": "tag \"frobnicate\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_stray_endif",
+  "msg": "tag \"endif\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_stray_else",
+  "msg": "tag \"else\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_endfor_mismatch",
+  "msg": "tag \"endif\" not found",
+  "line": 1,
+  "col": 23
+ },
+ {
+  "name": "err_unbalanced_unless",
+  "msg": "tag \"endif\" not found",
+  "line": 1,
+  "col": 19
+ },
+ {
+  "name": "err_case_without_endcase",
+  "msg": "tag {% case 1 %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_bad_assign",
+  "msg": "expected variable name",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "name": "err_bad_capture",
+  "msg": "invalid capture name",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "name": "err_unterminated_string",
+  "msg": "output \"{{ 'abc }}\" not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_bad_operator",
+  "msg": "expected \"|\" before filter",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "name": "err_bad_range",
+  "msg": "unexpected token \")\", value expected",
+  "line": 1,
+  "col": 17
+ },
+ {
+  "name": "err_unclosed_comment",
+  "msg": "tag {% comment %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "name": "err_unclosed_raw",
+  "msg": "raw \"{% raw %}never closed\" not closed",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "name": "err_second_line_unclosed",
+  "msg": "tag {% if x %} not closed",
+  "line": 3,
+  "col": 1
+ },
+ {
+  "name": "elseif_spelling",
+  "msg": "tag \"elseif\" not found",
+  "line": 1,
+  "col": 19
+ },
+ {
+  "name": "raw_whitespace",
+  "msg": "raw \"{%- raw -%} {{ x }} {%- endra...\" not closed",
+  "line": 1,
+  "col": 14
+ }
+]

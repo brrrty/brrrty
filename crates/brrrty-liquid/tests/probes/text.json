@@ -1,0 +1,82 @@
+[
+ {
+  "src": "a  {{- 'x' -}}  b",
+  "out": "axb"
+ },
+ {
+  "src": "a \n\t {{- 'x' }} \n b",
+  "out": "ax \n b"
+ },
+ {
+  "src": "a {{ 'x' -}}\n\n b",
+  "out": "a xb"
+ },
+ {
+  "src": "a {%- comment -%} z {%- endcomment -%} b",
+  "out": "ab"
+ },
+ {
+  "src": "a {%- raw -%} {{ x }} {% endraw -%} b",
+  "out": "a {{ x }} b"
+ },
+ {
+  "src": "{% raw %}{% endraw {% endraw %}",
+  "out": ""
+ },
+ {
+  "src": "{% raw %}{% endrawx %}{% endraw %}",
+  "out": "{% endrawx %}"
+ },
+ {
+  "src": "{% raw %}{%- endraw %}{% endraw %}",
+  "out": "{%- endraw %}"
+ },
+ {
+  "src": "{% raw %}{{ {% endraw %}",
+  "out": "{{ "
+ },
+ {
+  "src": "{% raw %}a{%endraw%}b",
+  "out": "ab"
+ },
+ {
+  "src": "{% raw %}{%  endraw  %}c",
+  "out": "c"
+ },
+ {
+  "src": "x {%- # c -%} y",
+  "out": "xy"
+ },
+ {
+  "src": "x {{- 'm' -}} y",
+  "out": "xmy"
+ },
+ {
+  "src": "  {{- 'a' -}}    {{- 'b' -}}  ",
+  "out": "ab"
+ },
+ {
+  "src": "{{ 'a' }}{%- comment %}{% endcomment -%}{{ 'b' }}",
+  "out": "ab"
+ },
+ {
+  "src": "p\n  {%- raw %}r{% endraw -%}\n  q",
+  "out": "prq"
+ },
+ {
+  "src": "{% comment %}{% raw %}{% endcomment %}{% endraw %}{% endcomment %}t",
+  "out": "t"
+ },
+ {
+  "src": " {%- liquid -%} ",
+  "out": ""
+ },
+ {
+  "src": "a {% raw -%}  x  {% endraw -%} b",
+  "out": "a   x  b"
+ },
+ {
+  "src": "a {%- raw %}  x  {% endraw -%}  b",
+  "out": "a  x  b"
+ }
+]

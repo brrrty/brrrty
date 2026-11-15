@@ -1,0 +1,921 @@
+[
+ {
+  "src": "{% %}",
+  "ok": false,
+  "msg": "illegal tag syntax, tag name expected",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{{ }}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% if %}x{% endif %}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{% liquid\nif x\necho 1\n %}",
+  "ok": false,
+  "msg": "tag if x\n not closed",
+  "line": 2,
+  "col": 1
+ },
+ {
+  "src": "{% if a %}{% else %}{% elsif b %}{% endif %}",
+  "ok": false,
+  "msg": "unexpected elsif after else",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% if a %}{% else %}{% else %}{% endif %}",
+  "ok": false,
+  "msg": "duplicated else",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% if a %}{% endif x %}",
+  "ok": false,
+  "msg": "unexpected \"x\"",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% for i in xs %}{% endfor x %}",
+  "ok": false,
+  "msg": "unexpected \"x\"",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% for i in xs %}{% else x %}{% endfor %}",
+  "ok": false,
+  "msg": "unexpected \"x\"",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{%# a\n b %}",
+  "ok": false,
+  "msg": "every line of an inline comment must start with a '#' character",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{%# a\n # b %}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}{% endraw {% endraw %}",
+  "ok": true
+ },
+ {
+  "src": "{% cycle %}",
+  "ok": false,
+  "msg": "empty candidates: \"{% cycle %}\"",
+  "line": 1,
+  "col": 9
+ },
+ {
+  "src": "{% assign x %}",
+  "ok": false,
+  "msg": "expected \"=\"",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "src": "{{ a | }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a | f: }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a | f x }}",
+  "ok": false,
+  "msg": "expected \":\" after filter name",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{{ a[0 }}",
+  "ok": false,
+  "msg": "[ not closed",
+  "line": 1,
+  "col": 7
+ },
+ {
+  "src": "{% for i in (1..3 %}",
+  "ok": false,
+  "msg": "invalid range syntax",
+  "line": 1,
+  "col": 19
+ },
+ {
+  "src": "{% for i in (a) %}",
+  "ok": false,
+  "msg": "invalid range syntax",
+  "line": 1,
+  "col": 15
+ },
+ {
+  "src": "{% capture 'x' %}..{% endcapture %}",
+  "ok": true
+ },
+ {
+  "src": "{% include %}",
+  "ok": false,
+  "msg": "illegal file path",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "src": "{% include 'a{{ b' %}",
+  "ok": false,
+  "msg": "output \"{{ b\" not closed",
+  "line": 1,
+  "col": 2
+ },
+ {
+  "src": "{% tablerow i xs %}",
+  "ok": false,
+  "msg": "illegal tag: {% tablerow i xs %}",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{{ \"a\" \"b\" }}",
+  "ok": true
+ },
+ {
+  "src": "{% if a == %}x{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% when 1 %}",
+  "ok": false,
+  "msg": "tag \"when\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% comment %}{% nosuch %}{% endcomment %}",
+  "ok": true
+ },
+ {
+  "src": "{% comment %}{{ x {% endcomment %}",
+  "ok": false,
+  "msg": "output \"{{ x {% endcomment %}\" not closed",
+  "line": 1,
+  "col": 14
+ },
+ {
+  "src": "a\r\nb{% nosuch %}",
+  "ok": false,
+  "msg": "tag \"nosuch\" not found",
+  "line": 2,
+  "col": 2
+ },
+ {
+  "src": "é{% nosuch %}",
+  "ok": false,
+  "msg": "tag \"nosuch\" not found",
+  "line": 1,
+  "col": 2
+ },
+ {
+  "src": "😀{% nosuch %}",
+  "ok": false,
+  "msg": "tag \"nosuch\" not found",
+  "line": 1,
+  "col": 3
+ },
+ {
+  "src": "{% echo %}",
+  "ok": true
+ },
+ {
+  "src": "{% increment %}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\n  if x\n    echo 'a'\n  endif\n%}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid %}",
+  "ok": true
+ },
+ {
+  "src": "{% render 'a' with b as c, x: 1 %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a %}{% endunless %}",
+  "ok": false,
+  "msg": "tag \"endunless\" not found",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "src": "{% unless a %}{% else %}{% elsif b %}{% endunless %}",
+  "ok": true
+ },
+ {
+  "src": "{{ a.b.[\"c\"] }}",
+  "ok": true
+ },
+ {
+  "src": "{% decrement %}",
+  "ok": true
+ },
+ {
+  "src": "{% assign x = %}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 1,
+  "col": 14
+ },
+ {
+  "src": "{% for %}",
+  "ok": false,
+  "msg": "illegal tag: {% for %}",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% liquid\nassign = 1\n%}",
+  "ok": false,
+  "msg": "expected variable name",
+  "line": 2,
+  "col": 8
+ },
+ {
+  "src": "{% block %}",
+  "ok": false,
+  "msg": "tag {% block %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% layout 'x' %}",
+  "ok": true
+ },
+ {
+  "src": "{% if-x %}",
+  "ok": false,
+  "msg": "tag \"if-x\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{%if a%}x{%endif%}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}{% endraw %}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}a{%endraw%}",
+  "ok": true
+ },
+ {
+  "src": "{% nosuch %}{{ x",
+  "ok": false,
+  "msg": "output \"{{ x\" not closed",
+  "line": 1,
+  "col": 13
+ },
+ {
+  "src": "{{ \"}}\" }}",
+  "ok": true
+ },
+ {
+  "src": "{% assign x = \"%}\" %}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\nif x\n%}",
+  "ok": false,
+  "msg": "tag if x not closed",
+  "line": 2,
+  "col": 1
+ },
+ {
+  "src": "{% liquid\n  nosuch 1\n%}",
+  "ok": false,
+  "msg": "tag \"nosuch\" not found",
+  "line": 2,
+  "col": 3
+ },
+ {
+  "src": "{% capture %}",
+  "ok": false,
+  "msg": "invalid capture name",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "src": "{% capture x %}",
+  "ok": false,
+  "msg": "tag {% capture x %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% case %}{% endcase %}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{% case x %}{% when %}{% endcase %}",
+  "ok": true
+ },
+ {
+  "src": "{% case x %}{% else %}{% else %}{% when 1 %}{% endcase %}",
+  "ok": true
+ },
+ {
+  "src": "{% case x %}{% when 1 2 %}{% endcase %}",
+  "ok": true
+ },
+ {
+  "src": "{% case x %}junk{% nosuch %}{% when 1 %}{% endcase %}",
+  "ok": false,
+  "msg": "tag \"nosuch\" not found",
+  "line": 1,
+  "col": 17
+ },
+ {
+  "src": "{{ a | f: 1 2 }}",
+  "ok": false,
+  "msg": "unexpected character \"2\"",
+  "line": 1,
+  "col": 13
+ },
+ {
+  "src": "{{ a | f: k: }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a ! b }}",
+  "ok": false,
+  "msg": "expected \"|\" before filter",
+  "line": 1,
+  "col": 7
+ },
+ {
+  "src": "{{ (1..2) }}",
+  "ok": true
+ },
+ {
+  "src": "{{ - }}",
+  "ok": true
+ },
+ {
+  "src": "{{ 'x }}",
+  "ok": false,
+  "msg": "output \"{{ 'x }}\" not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% assign x = 'x %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a %}{% elsif %}{% endif %}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 1,
+  "col": 19
+ },
+ {
+  "src": "{% tablerow i in xs %}",
+  "ok": false,
+  "msg": "tag {% tablerow i in xs %} not closed",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% unless %}{% endunless %}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% cycle 'a': %}",
+  "ok": false,
+  "msg": "empty candidates: \"{% cycle 'a': %}\"",
+  "line": 1,
+  "col": 14
+ },
+ {
+  "src": "{% cycle 'a', %}",
+  "ok": true
+ },
+ {
+  "src": "{%- -%}",
+  "ok": false,
+  "msg": "illegal tag syntax, tag name expected",
+  "line": 1,
+  "col": 5
+ },
+ {
+  "src": "{% include 'x' with %}",
+  "ok": true
+ },
+ {
+  "src": "{{ a.b c }}",
+  "ok": true
+ },
+ {
+  "src": "{% for i in xs reversed limit: %}{% endfor %}",
+  "ok": true
+ },
+ {
+  "src": "{% for i in xs limit:2 junk!! %}{% endfor %}",
+  "ok": true
+ },
+ {
+  "src": "{% echo a b %}",
+  "ok": true
+ },
+ {
+  "src": "{{ a | f: b, }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a[] }}",
+  "ok": true
+ },
+ {
+  "src": "{% if a %}\n\n  {% nosuch %}{% endif %}",
+  "ok": false,
+  "msg": "tag \"nosuch\" not found",
+  "line": 3,
+  "col": 3
+ },
+ {
+  "src": "{% if a %}{% else %}{% elsif b %}",
+  "ok": false,
+  "msg": "unexpected elsif after else",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% raw %}{%- endraw %}{% endraw %}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\n# x\nraw\nfoo\nendraw\n%}",
+  "ok": true
+ },
+ {
+  "src": "{% if a %}{% liquid\nendif\n%}",
+  "ok": false,
+  "msg": "tag \"endif\" not found",
+  "line": 2,
+  "col": 1
+ },
+ {
+  "src": "{%}",
+  "ok": false,
+  "msg": "illegal tag syntax, tag name expected",
+  "line": 1,
+  "col": 3
+ },
+ {
+  "src": "{%-%}",
+  "ok": false,
+  "msg": "illegal tag syntax, tag name expected",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% if a %}{% endif %}{% endif %}",
+  "ok": false,
+  "msg": "tag \"endif\" not found",
+  "line": 1,
+  "col": 22
+ },
+ {
+  "src": "{% for i in xs %}{% else %}{% else %}{% endfor %}",
+  "ok": true
+ },
+ {
+  "src": "{% unless a %}{% endunless x %}",
+  "ok": true
+ },
+ {
+  "src": "{% case a %}{% when 1, 2 or 3 %}{% endcase %}",
+  "ok": true
+ },
+ {
+  "src": "{{ a | f: 'x', k: 1, 2 }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a | \"x\" }}",
+  "ok": false,
+  "msg": "expected filter name",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ a | }}x",
+  "ok": true
+ },
+ {
+  "src": "{{ a, b }}",
+  "ok": true
+ },
+ {
+  "src": "{% if (1..2) contains 1 %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{{ (a..b }}",
+  "ok": false,
+  "msg": "invalid range syntax",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{{ (..2) }}",
+  "ok": false,
+  "msg": "unexpected token \"..2)\", value expected",
+  "line": 1,
+  "col": 5
+ },
+ {
+  "src": "{% raw %}{% endrawx %}{% endraw %}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}{%endraw%}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}{{ {% endraw %}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}{%  endraw  %}",
+  "ok": true
+ },
+ {
+  "src": "{% raw %}{% endraw",
+  "ok": false,
+  "msg": "raw \"{% raw %}{% endraw\" not closed",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% comment %}{% raw %}{% endcomment %}{% endraw %}{% endcomment %}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\n  if a\n    echo 'x'\n  elsif b\n    echo 'y'\n  else\n    echo 'z'\n  endif\n%}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\n  for i in (1..3)\n    echo i\n  endfor\n  case x\n    when 1\n      echo 'one'\n  endcase\n  comment\n    nope\n  endcomment\n%}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\ncapture x\necho 1\nendcapture\n%}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\nunless a\n%}",
+  "ok": false,
+  "msg": "tag unless a not closed",
+  "line": 2,
+  "col": 1
+ },
+ {
+  "src": "{%- liquid -%}",
+  "ok": true
+ },
+ {
+  "src": "{% render %}",
+  "ok": false,
+  "msg": "illegal file path",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% render 'a' for xs as x, y: 2 %}",
+  "ok": true
+ },
+ {
+  "src": "{% render 'a' with: 1 %}",
+  "ok": true
+ },
+ {
+  "src": "{% render none %}",
+  "ok": true
+ },
+ {
+  "src": "{% include none %}",
+  "ok": true
+ },
+ {
+  "src": "{% include 'a' with b c: 1 %}",
+  "ok": true
+ },
+ {
+  "src": "{% include 'a' with: 1 %}",
+  "ok": true
+ },
+ {
+  "src": "{% layout none %}x",
+  "ok": true
+ },
+ {
+  "src": "{% block a %}x{% endblock %}",
+  "ok": true
+ },
+ {
+  "src": "{% block %}x{% endblock %}",
+  "ok": true
+ },
+ {
+  "src": "{% cycle 'g': 'a', 'b' %}",
+  "ok": true
+ },
+ {
+  "src": "{% cycle a, b | upcase %}",
+  "ok": true
+ },
+ {
+  "src": "{% tablerow i in xs cols:2 limit:3 offset:1 %}{% endtablerow %}",
+  "ok": true
+ },
+ {
+  "src": "{% tablerow in xs %}{% endtablerow %}",
+  "ok": false,
+  "msg": "illegal tag: {% tablerow in xs %}",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% increment x y %}",
+  "ok": true
+ },
+ {
+  "src": "{% assign x.y = 1 %}",
+  "ok": false,
+  "msg": "expected \"=\"",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "src": "{% assign x=1 %}",
+  "ok": true
+ },
+ {
+  "src": "{% assign x = 1 | plus: 2 %}",
+  "ok": true
+ },
+ {
+  "src": "{% echo 'a' | upcase %}",
+  "ok": true
+ },
+ {
+  "src": "{%# hi %}",
+  "ok": true
+ },
+ {
+  "src": "{% # hi %}",
+  "ok": true
+ },
+ {
+  "src": "{%#hi\n#there %}",
+  "ok": true
+ },
+ {
+  "src": "{% liquid\n# a\n# b\n%}",
+  "ok": true
+ },
+ {
+  "src": "{{ a[b[c]] }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a.b[\"c\"].d }}",
+  "ok": true
+ },
+ {
+  "src": "{{ [\"a b\"] }}",
+  "ok": true
+ },
+ {
+  "src": "{{ 'x'.size }}",
+  "ok": true
+ },
+ {
+  "src": "{{ (1..3).last }}",
+  "ok": true
+ },
+ {
+  "src": "{{ nil.x }}",
+  "ok": true
+ },
+ {
+  "src": "{{ true }}{{ empty }}{{ blank }}{{ null }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a.b. }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a .b }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a. b }}",
+  "ok": true
+ },
+ {
+  "src": "{{ 1.foo }}",
+  "ok": true
+ },
+ {
+  "src": "{{ 1.2.3 }}",
+  "ok": true
+ },
+ {
+  "src": "{{ -1.5 }}",
+  "ok": true
+ },
+ {
+  "src": "{{ +x }}",
+  "ok": false,
+  "msg": "invalid value expression: \"+x\"",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{{ a-b }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a? }}",
+  "ok": true
+ },
+ {
+  "src": "{% if a<b %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a<>b %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a = b %}{% endif %}",
+  "ok": false,
+  "msg": "expected \"|\" before filter",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% if aand b %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a andb %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a contains'b' %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a containsb %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% for i in xs offset:continue %}{% endfor %}",
+  "ok": true
+ },
+ {
+  "src": "{% for i  in  xs %}{% endfor %}",
+  "ok": true
+ },
+ {
+  "src": "{% for i in %}{% endfor %}",
+  "ok": false,
+  "msg": "illegal tag: {% for i in %}",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% break %}{% continue %}",
+  "ok": true
+ },
+ {
+  "src": "{% elsif x %}",
+  "ok": false,
+  "msg": "tag \"elsif\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% endraw %}",
+  "ok": false,
+  "msg": "tag \"endraw\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% endcomment %}",
+  "ok": false,
+  "msg": "tag \"endcomment\" not found",
+  "line": 1,
+  "col": 1
+ },
+ {
+  "src": "{% if a %}{% raw %}{% endif %}{% endraw %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{{ \"\\u00e9\" }}",
+  "ok": true
+ },
+ {
+  "src": "{{ a | f: k: v }}",
+  "ok": true
+ },
+ {
+  "src": "{{ x | f: 'a' 'b' }}",
+  "ok": false,
+  "msg": "unexpected character \"'b'\"",
+  "line": 1,
+  "col": 15
+ },
+ {
+  "src": "{{ x | f: 'a', }}",
+  "ok": true
+ },
+ {
+  "src": "{{ x | f: , 'a' }}",
+  "ok": true
+ },
+ {
+  "src": "{{ x | f g }}",
+  "ok": false,
+  "msg": "expected \":\" after filter name",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% capture \"q r\" %}{% endcapture %}",
+  "ok": true
+ },
+ {
+  "src": "{% capture x y %}{% endcapture %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a %}{% elsif b %}{% else %}{% endif %}",
+  "ok": true
+ },
+ {
+  "src": "{% if a %}{% endif -%}",
+  "ok": true
+ },
+ {
+  "src": "{{- x -}}",
+  "ok": true
+ },
+ {
+  "src": "line1\nline2\n{% if %}",
+  "ok": false,
+  "msg": "invalid value expression: \"\"",
+  "line": 3,
+  "col": 6
+ },
+ {
+  "src": "{% if a %}x\n{% for i in xs %}\ny",
+  "ok": false,
+  "msg": "tag {% for i in xs %} not closed",
+  "line": 2,
+  "col": 1
+ }
+]
