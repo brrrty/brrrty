@@ -743,3 +743,38 @@ fn dangling_symlink_warns_and_finishes() {
     assert!(w[0].message.contains("nowhere.md"));
     assert!(root.join("_site/index.html").exists());
 }
+
+#[test]
+fn duplicate_passthrough_destination_is_an_error() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "a\n");
+    write(root, "src/assets/same.txt", "from src");
+    write(root, "src/assets/one.txt", "one");
+    write(root, "assets/same.txt", "from root");
+    write(root, "assets/two.txt", "two");
+    // Both entries land in _site/assets: one input-relative, one root-relative.
+    let r = build(
+        &opts_with_passthrough(root, &["src/assets/", "assets/"]),
+        &Provisional,
+    );
+    let errs: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::PASSTHROUGH_COLLISION)
+        .collect();
+    assert_eq!(errs.len(), 1, "{:?}", r.problems);
+    assert!(matches!(errs[0].severity, Severity::Error));
+    let m = &errs[0].message;
+    assert!(m.contains("src/assets/same.txt"), "{m}");
+    assert!(m.contains("assets/same.txt"), "{m}");
+    assert!(m.contains("_site/assets/same.txt"), "{m}");
+    assert_eq!(
+        errs[0].help.as_deref(),
+        Some("remove one of the passthrough entries, or rename one of the files")
+    );
+    assert!(!root.join("_site/assets/same.txt").exists());
+    assert_eq!(read(root.join("_site/assets/one.txt")), "one");
+    assert_eq!(read(root.join("_site/assets/two.txt")), "two");
+    assert_eq!(error_count(&r), 1);
+}

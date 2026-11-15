@@ -15,6 +15,7 @@ pub mod codes {
     pub const OUTPUT_COLLISION: &str = "output-collision";
     pub const OUTPUT_ESCAPES: &str = "output-escapes";
     pub const OUTPUT_OVERLAPS_SOURCE: &str = "output-overlaps-source";
+    pub const PASSTHROUGH_COLLISION: &str = "passthrough-collision";
     pub const PASSTHROUGH_COPY_FAILED: &str = "passthrough-copy-failed";
     pub const PASSTHROUGH_ESCAPES: &str = "passthrough-escapes";
     pub const PASSTHROUGH_IS_INPUT: &str = "passthrough-is-input";

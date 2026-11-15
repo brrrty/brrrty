@@ -33,7 +33,7 @@ pub fn resolve_permalink(
         .with_help("Did you mean `permalink: false`?")),
         Some(Value::Null) => Ok(default_permalink(rel_to_input)),
         Some(Value::String(s)) if s.is_empty() => Ok(default_permalink(rel_to_input)),
-        Some(Value::String(s)) => explicit_permalink(rel_to_input, s),
+        Some(Value::String(s)) => explicit_permalink(rel_to_input, s, front_matter),
         Some(other) => Err(Problem::error(
             codes::PERMALINK_INVALID,
             format!(
@@ -87,7 +87,11 @@ fn default_permalink(rel: &Path) -> Permalink {
     build(&segments, true)
 }
 
-fn explicit_permalink(rel: &Path, raw: &str) -> Result<Permalink, Problem> {
+fn explicit_permalink(
+    rel: &Path,
+    raw: &str,
+    front_matter: &Map<String, Value>,
+) -> Result<Permalink, Problem> {
     if raw.contains("{{") || raw.contains("{%") {
         return Err(Problem::error(
             codes::PERMALINK_TEMPLATED,
@@ -126,7 +130,16 @@ fn explicit_permalink(rel: &Path, raw: &str) -> Result<Permalink, Problem> {
     if segments.is_empty() {
         trailing_slash = true;
     }
+    let allow_missing = matches!(
+        front_matter.get("eleventyAllowMissingExtension"),
+        Some(Value::Bool(true))
+    );
     if !trailing_slash
+        && !allow_missing
+        && !matches!(
+            segments[segments.len() - 1].as_str(),
+            "_redirects" | ".htaccess" | "_headers"
+        )
         && Path::new(&segments[segments.len() - 1])
             .extension()
             .is_none()
@@ -248,6 +261,46 @@ mod tests {
             Some(
                 "Add a file extension (like /dir/noext.html) or end it with / to write an index.html."
             )
+        );
+    }
+
+    fn r_flag(permalink: &str, flag: Value) -> Result<Permalink, Problem> {
+        let mut m = fm(permalink.into());
+        m.insert("eleventyAllowMissingExtension".into(), flag);
+        resolve_permalink(Path::new("c.md"), &m)
+    }
+
+    #[test]
+    fn allow_missing_extension_flag_permits_extensionless() {
+        assert_eq!(r_flag("/feed", true.into()).unwrap(), w("/feed", "feed"));
+    }
+
+    #[test]
+    fn extensionless_without_flag_is_an_error() {
+        assert_eq!(
+            r("/CNAME".into()).unwrap_err().code,
+            codes::PERMALINK_NO_EXTENSION
+        );
+        assert_eq!(
+            r_flag("/CNAME", false.into()).unwrap_err().code,
+            codes::PERMALINK_NO_EXTENSION
+        );
+    }
+
+    #[test]
+    fn well_known_extensionless_files_need_no_flag() {
+        assert_eq!(
+            r("/_redirects".into()).unwrap(),
+            w("/_redirects", "_redirects")
+        );
+        assert_eq!(
+            r("/.htaccess".into()).unwrap(),
+            w("/.htaccess", ".htaccess")
+        );
+        assert_eq!(r("/_headers".into()).unwrap(), w("/_headers", "_headers"));
+        assert_eq!(
+            r("/sub/.htaccess".into()).unwrap(),
+            w("/sub/.htaccess", "sub/.htaccess")
         );
     }
 

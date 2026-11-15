@@ -30,8 +30,8 @@ struct Copier<'a> {
     root: &'a Path,
     out: &'a Path,
     pages: &'a HashMap<PathBuf, PathBuf>,
-    /// Destinations already handled, so repeated entries copy and count once.
-    seen: HashSet<PathBuf>,
+    /// Every `(source file, destination)` pair found while walking, in walk order.
+    plan: Vec<(PathBuf, PathBuf)>,
     copied: usize,
     unchanged: usize,
     overridden: HashSet<PathBuf>,
@@ -61,7 +61,7 @@ pub(crate) fn copy_passthrough_avoiding(
         root: &root,
         out: &out,
         pages,
-        seen: HashSet::new(),
+        plan: Vec::new(),
         copied: 0,
         unchanged: 0,
         overridden: HashSet::new(),
@@ -136,8 +136,9 @@ pub(crate) fn copy_passthrough_avoiding(
             );
             continue;
         }
-        copy_entry(&source, &dest, &mut c);
+        collect_entry(&source, &dest, &mut c);
     }
+    copy_planned(&mut c);
     PassthroughResult {
         copied: c.copied,
         unchanged: c.unchanged,
@@ -146,7 +147,7 @@ pub(crate) fn copy_passthrough_avoiding(
     }
 }
 
-fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
+fn collect_entry(source: &Path, dest: &Path, c: &mut Copier) {
     // Never copy the output folder into itself.
     if source == c.out {
         return;
@@ -198,14 +199,67 @@ fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
             if child.file_type().is_ok_and(|t| t.is_symlink()) && path.is_dir() {
                 continue;
             }
-            copy_entry(&path, &dest.join(child.file_name()), c);
+            collect_entry(&path, &dest.join(child.file_name()), c);
         }
         return;
     }
-    // Another entry already covered this destination.
-    if !c.seen.insert(dest.to_path_buf()) {
-        return;
+    c.plan.push((source.to_path_buf(), dest.to_path_buf()));
+}
+
+/// Copy the collected files. Destinations claimed by two different sources are reported once
+/// and skipped, so the result never depends on entry order; everything else is still copied.
+fn copy_planned(c: &mut Copier) {
+    let mut sources: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    for (source, dest) in &c.plan {
+        let list = sources.entry(dest.clone()).or_default();
+        if !list.contains(source) {
+            list.push(source.clone());
+        }
     }
+    let plan = std::mem::take(&mut c.plan);
+    let mut done: HashSet<PathBuf> = HashSet::new();
+    for (source, dest) in plan {
+        if !done.insert(dest.clone()) {
+            continue;
+        }
+        let srcs = &sources[&dest];
+        if srcs.len() > 1 {
+            let names: Vec<String> = srcs
+                .iter()
+                .map(|s| root_relative(c.root, s).display().to_string())
+                .collect();
+            c.problems.push(
+                Problem::error(
+                    codes::PASSTHROUGH_COLLISION,
+                    format!(
+                        "passthrough files {} both write to {}",
+                        names.join(" and "),
+                        root_relative(c.root, &dest).display()
+                    ),
+                )
+                .with_path(root_relative(c.root, &srcs[0]))
+                .with_help("remove one of the passthrough entries, or rename one of the files"),
+            );
+            continue;
+        }
+        copy_file(&source, &dest, c);
+    }
+}
+
+fn copy_file(source: &Path, dest: &Path, c: &mut Copier) {
+    let meta = match fs::metadata(source) {
+        Ok(m) => m,
+        Err(e) => {
+            c.problems.push(
+                Problem::error(
+                    codes::PASSTHROUGH_COPY_FAILED,
+                    format!("cannot read passthrough source: {e}"),
+                )
+                .with_path(root_relative(c.root, source)),
+            );
+            return;
+        }
+    };
     let overrides_page = c.pages.get(dest);
     if let Some(page) = overrides_page {
         c.overridden.insert(dest.to_path_buf());
