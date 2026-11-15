@@ -73,6 +73,7 @@ fn run_11ty(dir: &Path, eleventy: &Path) -> Result<Build, String> {
         .arg(eleventy)
         .args(["--input=.", "--output=_site"])
         .current_dir(dir)
+        .env("TZ", "UTC")
         .output()
         .map_err(|e| format!("cannot run node: {e}"))?;
     if out.status.success() {
