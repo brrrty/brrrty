@@ -1,0 +1,15 @@
+[package]
+name = "brrrty-core"
+version = "0.0.1"
+description = "Core build pipeline for Brrrty."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+ignore = "0.4.34"
+
+[dev-dependencies]
+tempfile = "3.27.0"
