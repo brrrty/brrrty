@@ -1,6 +1,6 @@
 //! Copying passthrough files and folders into the output folder.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -12,7 +12,29 @@ use crate::problem::Problem;
 /// Returns `(copied, unchanged, problems)`. A file is `unchanged` when the destination
 /// already has the same length and a modification time at least as new as the source.
 pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
-    copy_passthrough_avoiding(opts, &HashMap::new())
+    let result = copy_passthrough_avoiding(opts, &HashMap::new());
+    (result.copied, result.unchanged, result.problems)
+}
+
+/// The outcome of copying passthrough entries next to rendered pages.
+pub(crate) struct PassthroughResult {
+    pub copied: usize,
+    pub unchanged: usize,
+    /// Rendered-page output paths that a passthrough file replaced.
+    pub overridden: HashSet<PathBuf>,
+    pub problems: Vec<Problem>,
+}
+
+/// Running state while walking passthrough entries.
+struct Copier<'a> {
+    out: &'a Path,
+    pages: &'a HashMap<PathBuf, PathBuf>,
+    /// Destinations already handled, so repeated entries copy and count once.
+    seen: HashSet<PathBuf>,
+    copied: usize,
+    unchanged: usize,
+    overridden: HashSet<PathBuf>,
+    problems: Vec<Problem>,
 }
 
 /// Like [`copy_passthrough`], but lets passthrough files override any destination in `pages`
@@ -21,11 +43,19 @@ pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
 pub(crate) fn copy_passthrough_avoiding(
     opts: &BuildOptions,
     pages: &HashMap<PathBuf, PathBuf>,
-) -> (usize, usize, Vec<Problem>) {
+) -> PassthroughResult {
     let root = opts.root_dir();
     let input = opts.input_dir();
     let out = opts.output_dir();
-    let (mut copied, mut unchanged, mut problems) = (0, 0, Vec::new());
+    let mut c = Copier {
+        out: &out,
+        pages,
+        seen: HashSet::new(),
+        copied: 0,
+        unchanged: 0,
+        overridden: HashSet::new(),
+        problems: Vec::new(),
+    };
 
     for entry in &opts.passthrough {
         let escapes = entry.is_absolute()
@@ -36,7 +66,7 @@ pub(crate) fn copy_passthrough_avoiding(
                 )
             });
         if escapes {
-            problems.push(
+            c.problems.push(
                 Problem::error(
                     "passthrough-escapes",
                     format!(
@@ -55,7 +85,7 @@ pub(crate) fn copy_passthrough_avoiding(
             .collect();
         let source = root.join(&clean);
         if !source.exists() {
-            problems.push(
+            c.problems.push(
                 Problem::warning(
                     "passthrough-missing",
                     format!("passthrough path {} does not exist", entry.display()),
@@ -69,7 +99,7 @@ pub(crate) fn copy_passthrough_avoiding(
             Err(_) => out.join(&clean),
         };
         if dest == out {
-            problems.push(
+            c.problems.push(
                 Problem::error(
                     "passthrough-is-input",
                     format!(
@@ -83,7 +113,7 @@ pub(crate) fn copy_passthrough_avoiding(
             continue;
         }
         if !crate::build::is_inside(&out, &dest) {
-            problems.push(
+            c.problems.push(
                 Problem::error(
                     "output-escapes",
                     format!(
@@ -95,36 +125,25 @@ pub(crate) fn copy_passthrough_avoiding(
             );
             continue;
         }
-        copy_entry(
-            &source,
-            &dest,
-            &out,
-            pages,
-            &mut copied,
-            &mut unchanged,
-            &mut problems,
-        );
+        copy_entry(&source, &dest, &mut c);
     }
-    (copied, unchanged, problems)
+    PassthroughResult {
+        copied: c.copied,
+        unchanged: c.unchanged,
+        overridden: c.overridden,
+        problems: c.problems,
+    }
 }
 
-fn copy_entry(
-    source: &Path,
-    dest: &Path,
-    out: &Path,
-    pages: &HashMap<PathBuf, PathBuf>,
-    copied: &mut usize,
-    unchanged: &mut usize,
-    problems: &mut Vec<Problem>,
-) {
+fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
     // Never copy the output folder into itself.
-    if source == out {
+    if source == c.out {
         return;
     }
     let meta = match fs::metadata(source) {
         Ok(m) => m,
         Err(e) => {
-            problems.push(
+            c.problems.push(
                 Problem::error(
                     "passthrough-copy-failed",
                     format!("cannot read passthrough source: {e}"),
@@ -138,7 +157,7 @@ fn copy_entry(
         let entries = match fs::read_dir(source) {
             Ok(e) => e,
             Err(e) => {
-                problems.push(
+                c.problems.push(
                     Problem::error(
                         "passthrough-copy-failed",
                         format!("cannot read folder: {e}"),
@@ -152,7 +171,7 @@ fn copy_entry(
         for entry in entries {
             match entry {
                 Ok(c) => children.push(c),
-                Err(e) => problems.push(
+                Err(e) => c.problems.push(
                     Problem::error(
                         "passthrough-copy-failed",
                         format!("cannot read folder entry: {e}"),
@@ -168,21 +187,24 @@ fn copy_entry(
             if child.file_type().is_ok_and(|t| t.is_symlink()) && path.is_dir() {
                 continue;
             }
-            copy_entry(
-                &path,
-                &dest.join(child.file_name()),
-                out,
-                pages,
-                copied,
-                unchanged,
-                problems,
-            );
+            copy_entry(&path, &dest.join(child.file_name()), c);
         }
         return;
     }
-    let overrides_page = pages.get(dest);
+    // Another entry already covered this destination.
+    if !c.seen.insert(dest.to_path_buf()) {
+        return;
+    }
+    let overrides_page = c.pages.get(dest);
     if let Some(page) = overrides_page {
-        problems.push(
+        c.overridden.insert(dest.to_path_buf());
+        // The same bytes landing on the same path is not worth a warning.
+        let identical = matches!(
+            (fs::read(source), fs::read(dest)),
+            (Ok(a), Ok(b)) if a == b
+        );
+        if !identical {
+            c.problems.push(
             Problem::warning(
                 "passthrough-overrides-page",
                 format!(
@@ -195,10 +217,11 @@ fn copy_entry(
             .with_help(
                 "11ty copies passthrough files over rendered pages. Move the file out of the passthrough folder if you meant it to be a template.",
             ),
-        );
+            );
+        }
     }
     if overrides_page.is_none() && is_up_to_date(&meta, dest) {
-        *unchanged += 1;
+        c.unchanged += 1;
         return;
     }
     let result = dest
@@ -206,8 +229,8 @@ fn copy_entry(
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| fs::copy(source, dest).map(|_| ()));
     match result {
-        Ok(()) => *copied += 1,
-        Err(e) => problems.push(
+        Ok(()) => c.copied += 1,
+        Err(e) => c.problems.push(
             Problem::error("passthrough-copy-failed", format!("cannot copy file: {e}"))
                 .with_path(source),
         ),

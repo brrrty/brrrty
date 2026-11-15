@@ -252,15 +252,12 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
         .iter()
         .map(|p| (out.join(&p.output_rel), p.page.input_path.clone()))
         .collect();
-    let (copied, unchanged, problems) = copy_passthrough_avoiding(opts, &pages);
+    let pt = copy_passthrough_avoiding(opts, &pages);
     // A passthrough file that replaced a page means that page was not really written.
-    report.written -= problems
-        .iter()
-        .filter(|p| p.code == "passthrough-overrides-page")
-        .count();
-    report.copied = copied;
-    report.unchanged = unchanged;
-    report.problems.extend(problems);
+    report.written = report.written.saturating_sub(pt.overridden.len());
+    report.copied = pt.copied;
+    report.unchanged = pt.unchanged;
+    report.problems.extend(pt.problems);
     finish(report, strict, start)
 }
 

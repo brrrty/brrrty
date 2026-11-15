@@ -253,3 +253,71 @@ fn passthrough_of_input_or_root_is_refused_clearly() {
     );
     assert!(r.problems.iter().all(|p| p.code != "output-escapes"));
 }
+
+#[test]
+fn duplicate_passthrough_entries_count_once_and_warn_once() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/games/a.html", "<p>page</p>\n");
+    write(root, "src/games/index.html", "<p>page</p>\n");
+    let o = opts_with_passthrough(root, &["src/games", "src/games", "src/games/a.html"]);
+    let r = build(&o, &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    // games/index.html is overwritten by its identical passthrough copy, so that page is not "written".
+    assert_eq!((r.written, r.copied), (1, 2));
+    let warnings = r
+        .problems
+        .iter()
+        .filter(|p| p.code == "passthrough-overrides-page")
+        .count();
+    assert_eq!(warnings, 0, "identical bytes do not warn");
+}
+
+#[test]
+fn overriding_passthrough_with_different_bytes_warns_once_per_page() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/games/a.html", "<p>page</p>\n");
+    write(root, "src/other.md", "hi\n");
+    let o = opts_with_passthrough(root, &["src/games", "src/games/a.html", "src/games"]);
+    write(
+        root,
+        "src/games/b.md",
+        "---\npermalink: /games/b.txt\n---\n# b\n",
+    );
+    write(root, "src/games/b.txt", "different");
+    let r = build(&o, &Provisional);
+    let warnings = r
+        .problems
+        .iter()
+        .filter(|p| p.code == "passthrough-overrides-page")
+        .count();
+    assert_eq!(warnings, 1, "{:?}", r.problems);
+    assert_eq!(read(root.join("_site/games/b.txt")), "different");
+    // Three pages render; games/b.txt is replaced by the copy. Copied: a.html, b.md, b.txt.
+    assert_eq!(r.written, 2);
+    assert_eq!(r.copied, 3);
+}
+
+#[test]
+fn repeated_overriding_entry_does_not_underflow_written() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/games/b.md",
+        "---\npermalink: /games/b.txt\n---\n# b\n",
+    );
+    write(root, "src/games/b.txt", "different");
+    let o = opts_with_passthrough(root, &["src/games", "src/games"]);
+    let r = build(&o, &Provisional);
+    assert_eq!(r.written, 0);
+    assert_eq!(r.copied, 2);
+    assert_eq!(
+        r.problems
+            .iter()
+            .filter(|p| p.code == "passthrough-overrides-page")
+            .count(),
+        1
+    );
+}
