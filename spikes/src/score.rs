@@ -93,7 +93,6 @@ impl Drop for SilentPanics {
 }
 
 /// `Engine::parse` with the same panic protection as scoring a render.
-#[allow(dead_code)] // used by the candidate adapters added in later tasks
 pub fn parse_checked(engine: &dyn Engine, source: &str) -> Result<(), String> {
     let _quiet = SilentPanics::new();
     guarded(|| engine.parse(source)).unwrap_or_else(|msg| Err(format!("panic: {msg}")))

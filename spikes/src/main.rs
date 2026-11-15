@@ -1,15 +1,11 @@
-mod case;
-mod reference;
-mod score;
-
-use case::{Lang, load_cases};
+use brrrty_spike::case::{Lang, load_cases};
+use brrrty_spike::corpus::{self, SiteInput};
+use brrrty_spike::engines::liquid_crate::LiquidCrate;
+use brrrty_spike::{DEFAULT_ELEVENTY, reference, score};
 use clap::{Parser, Subcommand, ValueEnum};
 use score::{CandidateRun, Engine};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-
-pub const DEFAULT_ELEVENTY: &str =
-    "/Users/josh/Code/brrrty/sites/joshtronic.com/node_modules/@11ty/eleventy/cmd.cjs";
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Kind {
@@ -70,8 +66,47 @@ fn results_path(name: &str) -> PathBuf {
 }
 
 /// Candidate adapters are registered here by later tasks.
-fn candidates(_kind: Kind) -> Vec<Box<dyn Engine>> {
-    Vec::new()
+fn candidates(kind: Kind) -> Vec<Box<dyn Engine>> {
+    match kind {
+        Kind::Liquid => vec![Box::new(LiquidCrate)],
+        Kind::Nunjucks => Vec::new(),
+    }
+}
+
+const DEFAULT_SITES: &str = "/Users/josh/Code/brrrty/sites";
+const DEFAULT_SETTINGS: &str = "/Users/josh/Code/brrrty/planning/compat";
+
+fn run_corpus(kind: Kind, names: &[String]) -> Result<(), String> {
+    let sites: Vec<SiteInput> = names
+        .iter()
+        .map(|n| SiteInput::load(Path::new(DEFAULT_SITES), Path::new(DEFAULT_SETTINGS), n))
+        .collect::<Result<_, _>>()?;
+    let boxed = candidates(kind);
+    let engines: Vec<&dyn Engine> = boxed.iter().map(|b| b.as_ref()).collect();
+    let report = corpus::corpus(kind.lang(), &engines, &sites);
+    println!(
+        "corpus {}: {} files ({} skipped for front matter errors)",
+        kind.lang().dir(),
+        report.files,
+        report.front_matter_errors
+    );
+    println!("{:<24} {:>6} {:>6}", "candidate", "parse", "fail");
+    for e in &report.engines {
+        println!("{:<24} {:>6} {:>6}", e.name, e.pass, e.fail);
+        for (site, (p, f)) in &e.per_site {
+            println!("  {site:<30} {p:>6} {f:>6}");
+        }
+        for (k, g) in &e.groups {
+            println!("  {:>5}x {k}", g.count);
+        }
+    }
+    let path = results_path(&format!("{}-corpus", kind.lang().dir()));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body =
+        serde_json::to_string_pretty(&report.to_json(kind.lang())).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body + "\n").map_err(|e| e.to_string())
 }
 
 fn run(cli: Cli) -> Result<(), String> {
@@ -106,8 +141,9 @@ fn run(cli: Cli) -> Result<(), String> {
             score::write_results(&results_path(kind_name), kind_name, &runs)
                 .map_err(|e| e.to_string())
         }
-        Command::Corpus { .. } | Command::Markdown { .. } => {
-            Err("corpus and markdown runs need candidate adapters, which later tasks add".into())
+        Command::Corpus { kind, sites } => run_corpus(kind, &sites),
+        Command::Markdown { .. } => {
+            Err("markdown runs need candidate adapters, which a later task adds".into())
         }
     }
 }
