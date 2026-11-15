@@ -114,7 +114,8 @@ fn collisions_write_nothing_and_name_both_inputs() {
         .iter()
         .find(|p| p.code == codes::OUTPUT_COLLISION)
         .unwrap();
-    assert!(p.message.contains("a.md") && p.message.contains("b.md"));
+    assert!(p.message.contains("src/a.md") && p.message.contains("src/b.md"));
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/a.md")));
     assert_eq!(
         r.problems
             .iter()
@@ -234,7 +235,8 @@ fn passthrough_overrides_page_with_warning() {
         .find(|p| p.code == codes::PASSTHROUGH_OVERRIDES_PAGE)
         .unwrap();
     assert!(matches!(p.severity, Severity::Warning));
-    assert!(p.message.contains("robots.md") && p.message.contains("robots.txt"));
+    assert!(p.message.contains("src/robots.md") && p.message.contains("robots.txt"));
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/robots.md")));
     assert_eq!(read(root.join("_site/robots.txt")), "passthrough");
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert_eq!((r.written, r.copied), (0, 1));
@@ -538,4 +540,26 @@ fn passthrough_and_discover_problem_paths_are_root_relative() {
     for p in &r.problems {
         assert!(!p.path.as_ref().unwrap().is_absolute(), "{p:?}");
     }
+}
+
+#[test]
+fn write_failures_report_root_relative_paths() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "a\n");
+    write(root, "src/b.md", "b\n");
+    // A folder where a.md's output file belongs makes the write fail.
+    fs::create_dir_all(root.join("_site/a/index.html")).unwrap();
+    // A file where b.md's output folder belongs makes the folder creation fail.
+    write(root, "_site/b", "in the way");
+    let r = build(&opts(root), &Provisional);
+    let paths: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::WRITE_FAILED)
+        .map(|p| p.path.clone().unwrap())
+        .collect();
+    assert_eq!(paths.len(), 2, "{:?}", r.problems);
+    assert!(paths.contains(&PathBuf::from("src/a.md")), "{paths:?}");
+    assert!(paths.contains(&PathBuf::from("src/b.md")), "{paths:?}");
 }

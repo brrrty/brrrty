@@ -270,7 +270,10 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
     let mut colliding: Vec<PathBuf> = Vec::new();
     for (output, inputs) in &by_output {
         if inputs.len() > 1 {
-            let list: Vec<String> = inputs.iter().map(|i| i.display().to_string()).collect();
+            let list: Vec<String> = inputs
+                .iter()
+                .map(|i| input_rel.join(i).display().to_string())
+                .collect();
             report.problems.push(
                 Problem::error(
                     codes::OUTPUT_COLLISION,
@@ -323,7 +326,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             }
             fs::write(&dest, html).map_err(|e| {
                 Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
-                    .with_path(rel)
+                    .with_path(input_rel.join(rel))
             })
         })
         .collect();
@@ -339,7 +342,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
 
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
-        .map(|p| (out.join(&p.output_rel), p.page.input_path.clone()))
+        .map(|p| (out.join(&p.output_rel), input_rel.join(&p.page.input_path)))
         .collect();
     let pt = copy_passthrough_avoiding(opts, &pages);
     // A passthrough file that replaced a page means that page was not really written.
