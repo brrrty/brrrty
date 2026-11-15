@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::{Map, Value};
 
-use crate::problem::Problem;
+use crate::problem::{Problem, codes};
 
 /// A template file with its front matter parsed.
 #[derive(Debug, Clone)]
@@ -93,7 +93,7 @@ pub fn resolve_date(
 ) -> Result<DateTime<Utc>, Problem> {
     if let Some(value) = front_matter.get("date") {
         let invalid = || {
-            Problem::error("date-invalid", format!("cannot parse date {value}"))
+            Problem::error(codes::DATE_INVALID, format!("cannot parse date {value}"))
                 .with_help("use YYYY-MM-DD or an RFC 3339 timestamp")
         };
         let text = value.as_str().ok_or_else(invalid)?.trim();
@@ -171,7 +171,7 @@ mod tests {
             resolve_date(&bad, Path::new("x.md"), epoch, epoch)
                 .unwrap_err()
                 .code,
-            "date-invalid"
+            codes::DATE_INVALID
         );
     }
 

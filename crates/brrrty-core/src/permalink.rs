@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::problem::Problem;
+use crate::problem::{Problem, codes};
 
 /// The outcome of resolving a page's permalink.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,7 @@ pub fn resolve_permalink(
         None => Ok(default_permalink(rel_to_input)),
         Some(Value::Bool(false)) => Ok(Permalink::Skip),
         Some(Value::Bool(true)) => Err(Problem::error(
-            "permalink-invalid",
+            codes::PERMALINK_INVALID,
             "`permalink: true` is not valid",
         )
         .with_path(rel_to_input)
@@ -35,7 +35,7 @@ pub fn resolve_permalink(
         Some(Value::String(s)) if s.is_empty() => Ok(default_permalink(rel_to_input)),
         Some(Value::String(s)) => explicit_permalink(rel_to_input, s),
         Some(other) => Err(Problem::error(
-            "permalink-invalid",
+            codes::PERMALINK_INVALID,
             format!(
                 "`permalink` must be a string or `false`, found {}",
                 kind(other)
@@ -90,7 +90,7 @@ fn default_permalink(rel: &Path) -> Permalink {
 fn explicit_permalink(rel: &Path, raw: &str) -> Result<Permalink, Problem> {
     if raw.contains("{{") || raw.contains("{%") {
         return Err(Problem::error(
-            "permalink-templated",
+            codes::PERMALINK_TEMPLATED,
             "Templated permalinks aren't supported yet",
         )
         .with_path(rel)
@@ -102,7 +102,7 @@ fn explicit_permalink(rel: &Path, raw: &str) -> Result<Permalink, Problem> {
     };
     if raw.contains('\\') || raw.split('/').any(is_drive) {
         return Err(Problem::error(
-            "permalink-invalid",
+            codes::PERMALINK_INVALID,
             format!("Permalink `{raw}` contains a backslash or drive letter"),
         )
         .with_path(rel)
@@ -132,7 +132,7 @@ fn explicit_permalink(rel: &Path, raw: &str) -> Result<Permalink, Problem> {
             .is_none()
     {
         return Err(Problem::error(
-            "permalink-no-extension",
+            codes::PERMALINK_NO_EXTENSION,
             format!("Permalink `{raw}` has no file extension"),
         )
         .with_path(rel)
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn templated_is_rejected() {
         let e = r("/{{ page.fileSlug }}/".into()).unwrap_err();
-        assert_eq!(e.code, "permalink-templated");
+        assert_eq!(e.code, codes::PERMALINK_TEMPLATED);
         assert_eq!(e.message, "Templated permalinks aren't supported yet");
         assert_eq!(
             e.help.as_deref(),
@@ -220,7 +220,7 @@ mod tests {
         );
         assert_eq!(
             r("/{% x %}/".into()).unwrap_err().code,
-            "permalink-templated"
+            codes::PERMALINK_TEMPLATED
         );
     }
 
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn no_extension_is_an_error() {
         let e = r("/dir/noext".into()).unwrap_err();
-        assert_eq!(e.code, "permalink-no-extension");
+        assert_eq!(e.code, codes::PERMALINK_NO_EXTENSION);
         assert!(e.message.contains("/dir/noext"));
         assert_eq!(
             e.help.as_deref(),
@@ -254,9 +254,12 @@ mod tests {
     #[test]
     fn invalid_types_are_errors() {
         let e = r(true.into()).unwrap_err();
-        assert_eq!(e.code, "permalink-invalid");
+        assert_eq!(e.code, codes::PERMALINK_INVALID);
         assert_eq!(e.help.as_deref(), Some("Did you mean `permalink: false`?"));
-        assert_eq!(r(Value::from(5)).unwrap_err().code, "permalink-invalid");
+        assert_eq!(
+            r(Value::from(5)).unwrap_err().code,
+            codes::PERMALINK_INVALID
+        );
     }
 
     #[test]
@@ -281,7 +284,7 @@ mod tests {
             "/a/z:/x.html",
         ] {
             let e = r(bad.into()).unwrap_err();
-            assert_eq!(e.code, "permalink-invalid", "{bad}");
+            assert_eq!(e.code, codes::PERMALINK_INVALID, "{bad}");
             assert_eq!(e.help.as_deref(), Some(help), "{bad}");
         }
         assert!(r("/a:b/x.html".into()).is_ok());

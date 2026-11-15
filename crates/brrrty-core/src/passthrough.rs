@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use crate::options::BuildOptions;
-use crate::problem::Problem;
+use crate::options::{BuildOptions, root_relative};
+use crate::problem::{Problem, codes};
 
 /// Copy every `opts.passthrough` entry into the output folder.
 ///
@@ -27,6 +27,7 @@ pub(crate) struct PassthroughResult {
 
 /// Running state while walking passthrough entries.
 struct Copier<'a> {
+    root: &'a Path,
     out: &'a Path,
     pages: &'a HashMap<PathBuf, PathBuf>,
     /// Destinations already handled, so repeated entries copy and count once.
@@ -57,6 +58,7 @@ pub(crate) fn copy_passthrough_avoiding(
         }
     };
     let mut c = Copier {
+        root: &root,
         out: &out,
         pages,
         seen: HashSet::new(),
@@ -77,7 +79,7 @@ pub(crate) fn copy_passthrough_avoiding(
         if escapes {
             c.problems.push(
                 Problem::error(
-                    "passthrough-escapes",
+                    codes::PASSTHROUGH_ESCAPES,
                     format!(
                         "passthrough path {} must be relative to the project and stay inside it",
                         entry.display()
@@ -96,10 +98,10 @@ pub(crate) fn copy_passthrough_avoiding(
         if !source.exists() {
             c.problems.push(
                 Problem::warning(
-                    "passthrough-missing",
+                    codes::PASSTHROUGH_MISSING,
                     format!("passthrough path {} does not exist", entry.display()),
                 )
-                .with_path(entry),
+                .with_path(&clean),
             );
             continue;
         }
@@ -110,13 +112,13 @@ pub(crate) fn copy_passthrough_avoiding(
         if dest == out {
             c.problems.push(
                 Problem::error(
-                    "passthrough-is-input",
+                    codes::PASSTHROUGH_IS_INPUT,
                     format!(
                         "passthrough path {} is the input or project folder itself",
                         entry.display()
                     ),
                 )
-                .with_path(entry)
+                .with_path(&clean)
                 .with_help("Pass through specific folders inside it instead (like src/images)."),
             );
             continue;
@@ -124,13 +126,13 @@ pub(crate) fn copy_passthrough_avoiding(
         if !crate::build::is_inside(&out, &dest) {
             c.problems.push(
                 Problem::error(
-                    "output-escapes",
+                    codes::OUTPUT_ESCAPES,
                     format!(
                         "{} would be written outside the output folder",
                         dest.display()
                     ),
                 )
-                .with_path(entry),
+                .with_path(&clean),
             );
             continue;
         }
@@ -154,10 +156,10 @@ fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
         Err(e) => {
             c.problems.push(
                 Problem::error(
-                    "passthrough-copy-failed",
+                    codes::PASSTHROUGH_COPY_FAILED,
                     format!("cannot read passthrough source: {e}"),
                 )
-                .with_path(source),
+                .with_path(root_relative(c.root, source)),
             );
             return;
         }
@@ -168,10 +170,10 @@ fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
             Err(e) => {
                 c.problems.push(
                     Problem::error(
-                        "passthrough-copy-failed",
+                        codes::PASSTHROUGH_COPY_FAILED,
                         format!("cannot read folder: {e}"),
                     )
-                    .with_path(source),
+                    .with_path(root_relative(c.root, source)),
                 );
                 return;
             }
@@ -182,10 +184,10 @@ fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
                 Ok(c) => children.push(c),
                 Err(e) => c.problems.push(
                     Problem::error(
-                        "passthrough-copy-failed",
+                        codes::PASSTHROUGH_COPY_FAILED,
                         format!("cannot read folder entry: {e}"),
                     )
-                    .with_path(source),
+                    .with_path(root_relative(c.root, source)),
                 ),
             }
         }
@@ -215,7 +217,7 @@ fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
         if !identical {
             c.problems.push(
             Problem::warning(
-                "passthrough-overrides-page",
+                codes::PASSTHROUGH_OVERRIDES_PAGE,
                 format!(
                     "passthrough file {} replaces the output of template {}",
                     source.display(),
@@ -240,8 +242,11 @@ fn copy_entry(source: &Path, dest: &Path, c: &mut Copier) {
     match result {
         Ok(()) => c.copied += 1,
         Err(e) => c.problems.push(
-            Problem::error("passthrough-copy-failed", format!("cannot copy file: {e}"))
-                .with_path(source),
+            Problem::error(
+                codes::PASSTHROUGH_COPY_FAILED,
+                format!("cannot copy file: {e}"),
+            )
+            .with_path(root_relative(c.root, source)),
         ),
     }
 }

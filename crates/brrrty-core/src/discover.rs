@@ -1,5 +1,5 @@
-use crate::options::BuildOptions;
-use crate::problem::Problem;
+use crate::options::{BuildOptions, root_relative};
+use crate::problem::{Problem, codes};
 use ignore::WalkBuilder;
 use ignore::gitignore::GitignoreBuilder;
 use std::path::PathBuf;
@@ -38,12 +38,13 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         if file.is_file()
             && let Some(err) = gi.add(&file)
         {
-            return Err(Problem::error("ignore-file-invalid", err.to_string()).with_path(file));
+            return Err(Problem::error(codes::IGNORE_FILE_INVALID, err.to_string())
+                .with_path(root_relative(&root, &file)));
         }
     }
     let matcher = gi
         .build()
-        .map_err(|e| Problem::error("ignore-file-invalid", e.to_string()))?;
+        .map_err(|e| Problem::error(codes::IGNORE_FILE_INVALID, e.to_string()))?;
 
     let includes = input.join("_includes");
     let data = input.join("_data");
@@ -69,10 +70,10 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     for entry in walker {
         let entry = entry.map_err(|e| {
             Problem::error(
-                "discover-failed",
+                codes::DISCOVER_FAILED,
                 format!("could not read the input folder: {e}"),
             )
-            .with_path(input.clone())
+            .with_path(root_relative(&root, &input))
         })?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
@@ -82,10 +83,10 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
             .strip_prefix(&input)
             .map_err(|_| {
                 Problem::error(
-                    "discover-failed",
+                    codes::DISCOVER_FAILED,
                     "found a file outside the input folder while walking it",
                 )
-                .with_path(entry.path())
+                .with_path(root_relative(&root, entry.path()))
             })?
             .to_path_buf();
         let name = entry.file_name().to_string_lossy().to_lowercase();

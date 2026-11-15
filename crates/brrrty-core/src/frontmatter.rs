@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::problem::Problem;
+use crate::problem::{Problem, codes};
 
 /// Splits `source` into its front matter map and the body that follows.
 ///
@@ -30,7 +30,7 @@ pub fn split_front_matter(source: &str) -> Result<(Map<String, Value>, &str), Pr
         remaining = after;
     }
     Err(Problem::error(
-        "front-matter-invalid",
+        codes::FRONT_MATTER_INVALID,
         "front matter is missing its closing `---` line",
     )
     .at(1, 1)
@@ -91,7 +91,7 @@ fn parse_yaml(yaml: &str) -> Result<Map<String, Value>, Problem> {
             // +1 for the opening `---` line.
             let (line, column) = e.location().map_or((2, 1), |l| (l.line() + 1, l.column()));
             Err(Problem::error(
-                "front-matter-invalid",
+                codes::FRONT_MATTER_INVALID,
                 format!(
                     "invalid YAML front matter: {}",
                     strip_positions(e.to_string().trim())
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn invalid_yaml_reports_file_line() {
         let p = split_front_matter("---\ntitle: [unclosed\n---\nbad\n").unwrap_err();
-        assert_eq!(p.code, "front-matter-invalid");
+        assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
         assert_eq!(p.line, Some(3));
     }
 
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn unclosed_front_matter_is_an_error() {
         let p = split_front_matter("---\ntitle: x\n").unwrap_err();
-        assert_eq!(p.code, "front-matter-invalid");
+        assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
         assert_eq!(p.line, Some(1));
         assert!(p.message.contains("closing"));
     }

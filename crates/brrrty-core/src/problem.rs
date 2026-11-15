@@ -1,5 +1,34 @@
 use std::path::PathBuf;
 
+/// Stable ids for every [`Problem`] code.
+pub mod codes {
+    pub const CWD_UNAVAILABLE: &str = "cwd-unavailable";
+    pub const DATE_INVALID: &str = "date-invalid";
+    pub const DISCOVER_FAILED: &str = "discover-failed";
+    pub const ELEVENTY_CONFIG_IGNORED: &str = "eleventy-config-ignored";
+    pub const FRONT_MATTER_INVALID: &str = "front-matter-invalid";
+    pub const FRONT_MATTER_UNSUPPORTED: &str = "front-matter-unsupported";
+    pub const IGNORE_FILE_INVALID: &str = "ignore-file-invalid";
+    pub const INPUT_MISSING: &str = "input-missing";
+    pub const INPUT_NOT_A_DIRECTORY: &str = "input-not-a-directory";
+    pub const OUTPUT_COLLISION: &str = "output-collision";
+    pub const OUTPUT_ESCAPES: &str = "output-escapes";
+    pub const OUTPUT_OVERLAPS_SOURCE: &str = "output-overlaps-source";
+    pub const PASSTHROUGH_COPY_FAILED: &str = "passthrough-copy-failed";
+    pub const PASSTHROUGH_ESCAPES: &str = "passthrough-escapes";
+    pub const PASSTHROUGH_IS_INPUT: &str = "passthrough-is-input";
+    pub const PASSTHROUGH_MISSING: &str = "passthrough-missing";
+    pub const PASSTHROUGH_OVERRIDES_PAGE: &str = "passthrough-overrides-page";
+    pub const PERMALINK_INVALID: &str = "permalink-invalid";
+    pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
+    pub const PERMALINK_TEMPLATED: &str = "permalink-templated";
+    pub const TEMPLATE_NOT_UTF8: &str = "template-not-utf8";
+    pub const TEMPLATE_SYNTAX_UNSUPPORTED: &str = "template-syntax-unsupported";
+    pub const TEMPLATE_UNREADABLE: &str = "template-unreadable";
+    pub const TEMPLATE_UNSUPPORTED: &str = "template-unsupported";
+    pub const WRITE_FAILED: &str = "write-failed";
+}
+
 /// How serious a [`Problem`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {

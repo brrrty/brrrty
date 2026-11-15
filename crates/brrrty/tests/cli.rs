@@ -1,3 +1,4 @@
+use brrrty_core::codes;
 use std::process::Command;
 
 #[test]
@@ -83,7 +84,7 @@ fn errors_exit_1_and_show_location_and_issue_link() {
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
-        err.contains("front-matter-invalid") && err.contains("bad.md"),
+        err.contains(codes::FRONT_MATTER_INVALID) && err.contains("bad.md"),
         "{err}"
     );
     assert!(err.contains("title: [oops"), "{err}");
@@ -100,7 +101,7 @@ fn refuses_output_over_source() {
     let dir = site(&[("src/index.md", "# Hi\n")]);
     let out = run_in(dir.path(), &["--input", "src", "--output", "src"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(stderr(&out).contains("output-overlaps-source"));
+    assert!(stderr(&out).contains(codes::OUTPUT_OVERLAPS_SOURCE));
 }
 
 #[test]
@@ -140,7 +141,7 @@ fn missing_input_names_the_path_once() {
     let out = run_in(dir.path(), &["--input", "nope"]);
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
-    assert!(err.contains("input-missing"), "{err}");
+    assert!(err.contains(codes::INPUT_MISSING), "{err}");
     assert_eq!(err.matches("nope").count(), 1, "{err}");
 }
 
@@ -150,7 +151,7 @@ fn file_as_input_names_the_path() {
     let out = run_in(dir.path(), &["--input", "page.md"]);
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
-    assert!(err.contains("input-not-a-directory"), "{err}");
+    assert!(err.contains(codes::INPUT_NOT_A_DIRECTORY), "{err}");
     assert!(err.contains("page.md"), "{err}");
     assert!(!err.contains("× :"), "{err}");
 }
@@ -185,7 +186,7 @@ fn strict_stops_at_the_first_error_but_not_for_warnings() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
-        stderr(&out).contains("passthrough-missing"),
+        stderr(&out).contains(codes::PASSTHROUGH_MISSING),
         "{}",
         stderr(&out)
     );
@@ -198,4 +199,16 @@ fn strict_help_describes_stopping_at_the_first_error() {
         .output()
         .unwrap();
     assert!(stdout(&out).contains("Stop at the first error (for CI)"));
+}
+
+#[test]
+fn error_snippet_uses_root_relative_path() {
+    let dir = site(&[
+        ("src/bad.md", "---\ntitle: [unclosed\n---\nbody\n"),
+        ("src/posts/raw.md", "{{ x }}\n"),
+    ]);
+    let out = run_in(dir.path(), &["build", "--input", "src"]);
+    let err = stderr(&out);
+    assert!(err.contains("src/bad.md:"), "{err}");
+    assert!(err.contains("title: [unclosed"), "{err}");
 }

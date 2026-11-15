@@ -10,11 +10,11 @@ use rayon::prelude::*;
 
 use crate::discover::discover;
 use crate::frontmatter::split_front_matter;
-use crate::options::BuildOptions;
+use crate::options::{BuildOptions, root_relative};
 use crate::page::{Page, file_slug, resolve_date};
 use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Permalink, resolve_permalink};
-use crate::problem::{Problem, Severity};
+use crate::problem::{Problem, Severity, codes};
 
 /// What a build did.
 #[derive(Debug)]
@@ -62,13 +62,22 @@ fn with_path_if_missing(p: Problem, rel: &Path) -> Problem {
     }
 }
 
-fn load(input: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
+/// Load one template. Problems carry paths relative to the project root.
+fn load(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
+    load_page(input, rel).map_err(|mut p| {
+        // Problems from here are relative to the input folder.
+        p.path = Some(input_rel.join(p.path.as_deref().unwrap_or(rel)));
+        p
+    })
+}
+
+fn load_page(input: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
     let full = input.join(rel);
     let bytes = fs::read(&full).map_err(|e| {
-        Problem::error("template-unreadable", format!("cannot read file: {e}")).with_path(rel)
+        Problem::error(codes::TEMPLATE_UNREADABLE, format!("cannot read file: {e}")).with_path(rel)
     })?;
     let text = String::from_utf8(bytes).map_err(|_| {
-        Problem::error("template-not-utf8", "file is not valid UTF-8")
+        Problem::error(codes::TEMPLATE_NOT_UTF8, "file is not valid UTF-8")
             .with_path(rel)
             .with_help("save the file as UTF-8")
     })?;
@@ -123,7 +132,7 @@ fn reject_unsupported_features(
         } else {
             format!("Front matter keys {} aren't supported yet", keys.join(", "))
         };
-        return Err(Problem::error("front-matter-unsupported", message)
+        return Err(Problem::error(codes::FRONT_MATTER_UNSUPPORTED, message)
             .with_path(rel)
             .with_help("Layouts, pagination, and computed data are in progress."));
     }
@@ -134,7 +143,7 @@ fn reject_unsupported_features(
         let line = upto.matches('\n').count() + 1;
         let column = upto.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
         return Err(Problem::error(
-            "template-syntax-unsupported",
+            codes::TEMPLATE_SYNTAX_UNSUPPORTED,
             "Template syntax ({{ or {%) isn't supported yet",
         )
         .with_path(rel)
@@ -191,7 +200,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             if root.join(name).is_file() {
                 report.problems.push(
                     Problem::warning(
-                        "eleventy-config-ignored",
+                        codes::ELEVENTY_CONFIG_IGNORED,
                         "Brrrty doesn't read your 11ty config yet",
                     )
                     .with_path(name)
@@ -202,6 +211,16 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             }
         }
     }
+    let (root, input, out) = match (opts.root_dir(), opts.input_dir(), opts.output_dir()) {
+        (Ok(r), Ok(i), Ok(o)) => (r, i, o),
+        (Err(p), _, _) | (_, Err(p), _) | (_, _, Err(p)) => {
+            report.problems.push(p);
+            return finish(report, strict, start);
+        }
+    };
+    // Pages are tracked relative to the input folder; problems report them relative to the root.
+    let input_rel = root_relative(&root, &input);
+
     let discovery = match discover(opts) {
         Ok(d) => d,
         Err(p) => {
@@ -212,10 +231,10 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
     for path in &discovery.unsupported {
         report.problems.push(
             Problem::error(
-                "template-unsupported",
+                codes::TEMPLATE_UNSUPPORTED,
                 "this template language is not supported yet",
             )
-            .with_path(path)
+            .with_path(input_rel.join(path))
             .with_help("Liquid and Nunjucks support is in progress."),
         );
     }
@@ -223,18 +242,10 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
         return finish(report, strict, start);
     }
 
-    let (input, out) = match (opts.input_dir(), opts.output_dir()) {
-        (Ok(i), Ok(o)) => (i, o),
-        (Err(p), _) | (_, Err(p)) => {
-            report.problems.push(p);
-            return finish(report, strict, start);
-        }
-    };
-
     let loaded: Vec<Result<Option<Prepared>, Problem>> = discovery
         .templates
         .par_iter()
-        .map(|rel| load(&input, rel))
+        .map(|rel| load(&input, &input_rel, rel))
         .collect();
     let mut prepared = Vec::new();
     for item in loaded {
@@ -262,7 +273,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             let list: Vec<String> = inputs.iter().map(|i| i.display().to_string()).collect();
             report.problems.push(
                 Problem::error(
-                    "output-collision",
+                    codes::OUTPUT_COLLISION,
                     format!(
                         "{} pages write to {}: {}",
                         inputs.len(),
@@ -270,7 +281,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                         list.join(", ")
                     ),
                 )
-                .with_path(inputs[0])
+                .with_path(input_rel.join(inputs[0]))
                 .with_help("give each page a unique permalink"),
             );
             colliding.push(output.to_path_buf());
@@ -288,13 +299,13 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             let rel = &p.page.input_path;
             let Some(dest) = contained_output_path(&out, &p.output_rel) else {
                 return Err(Problem::error(
-                    "output-escapes",
+                    codes::OUTPUT_ESCAPES,
                     format!(
                         "{} would be written outside the output folder",
                         p.output_rel.display()
                     ),
                 )
-                .with_path(rel));
+                .with_path(input_rel.join(rel)));
             };
             let is_markdown = rel
                 .extension()
@@ -306,12 +317,13 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             };
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    Problem::error("write-failed", format!("cannot create folder: {e}"))
-                        .with_path(rel)
+                    Problem::error(codes::WRITE_FAILED, format!("cannot create folder: {e}"))
+                        .with_path(input_rel.join(rel))
                 })?;
             }
             fs::write(&dest, html).map_err(|e| {
-                Problem::error("write-failed", format!("cannot write output: {e}")).with_path(rel)
+                Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
+                    .with_path(rel)
             })
         })
         .collect();

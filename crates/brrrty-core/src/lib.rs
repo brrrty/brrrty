@@ -19,4 +19,4 @@ pub use options::BuildOptions;
 pub use page::{Page, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;
 pub use permalink::{Permalink, resolve_permalink};
-pub use problem::{Problem, Severity};
+pub use problem::{Problem, Severity, codes};

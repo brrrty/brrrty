@@ -1,4 +1,4 @@
-use crate::problem::Problem;
+use crate::problem::{Problem, codes};
 use std::path::{Component, Path, PathBuf};
 
 /// Options for one build.
@@ -43,7 +43,7 @@ fn resolve_from(path: &Path, cwd: std::io::Result<PathBuf>) -> Result<PathBuf, P
     } else {
         cwd.map_err(|e| {
             Problem::error(
-                "cwd-unavailable",
+                codes::CWD_UNAVAILABLE,
                 format!("cannot find the current folder: {e}"),
             )
             .with_help("run Brrrty from a folder that exists, or pass an absolute root")
@@ -66,6 +66,11 @@ fn resolve_from(path: &Path, cwd: std::io::Result<PathBuf>) -> Result<PathBuf, P
     }
 }
 
+/// `path` relative to the project `root`, for reporting. A path outside the root is kept as given.
+pub(crate) fn root_relative(root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(root).unwrap_or(path).to_path_buf()
+}
+
 impl BuildOptions {
     pub fn root_dir(&self) -> Result<PathBuf, Problem> {
         resolve(&self.root)
@@ -86,14 +91,14 @@ impl BuildOptions {
         let input = self.input_dir()?;
         if !input.exists() {
             return Err(
-                Problem::error("input-missing", "the input folder doesn't exist")
+                Problem::error(codes::INPUT_MISSING, "the input folder doesn't exist")
                     .with_path(&self.input)
                     .with_help("check the --input folder name, relative to where you ran Brrrty"),
             );
         }
         if !input.is_dir() {
             return Err(Problem::error(
-                "input-not-a-directory",
+                codes::INPUT_NOT_A_DIRECTORY,
                 "the input path is a file, not a folder",
             )
             .with_path(&self.input)
@@ -101,7 +106,7 @@ impl BuildOptions {
         }
         if out == self.root_dir()? || input.starts_with(&out) {
             return Err(Problem::error(
-                "output-overlaps-source",
+                codes::OUTPUT_OVERLAPS_SOURCE,
                 format!(
                     "the output folder {} would overlap the source folder {}",
                     out.display(),
@@ -137,7 +142,7 @@ mod tests {
     fn unavailable_cwd_is_an_error_for_relative_paths_only() {
         let broken = || Err(std::io::Error::other("gone"));
         let p = resolve_from(Path::new("src"), broken()).unwrap_err();
-        assert_eq!(p.code, "cwd-unavailable");
+        assert_eq!(p.code, codes::CWD_UNAVAILABLE);
         assert!(resolve_from(&std::env::temp_dir(), broken()).is_ok());
     }
 }

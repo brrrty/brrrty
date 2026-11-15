@@ -1,4 +1,4 @@
-use brrrty_core::{BuildOptions, discover};
+use brrrty_core::{BuildOptions, codes, discover};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -76,7 +76,7 @@ fn output_overlapping_source_is_refused() {
     write(root, "src/a.md", "x");
     for out in [".", "src"] {
         let p = opts(root, "src", out).validate().unwrap_err();
-        assert_eq!(p.code, "output-overlaps-source");
+        assert_eq!(p.code, codes::OUTPUT_OVERLAPS_SOURCE);
     }
 }
 
@@ -116,7 +116,7 @@ fn output_that_is_an_ancestor_of_input_is_refused() {
     let t = tempfile::tempdir().unwrap();
     write(t.path(), "site/src/a.md", "x");
     let p = opts(t.path(), "site/src", "site").validate().unwrap_err();
-    assert_eq!(p.code, "output-overlaps-source");
+    assert_eq!(p.code, codes::OUTPUT_OVERLAPS_SOURCE);
 }
 
 #[cfg(unix)]
@@ -131,7 +131,7 @@ fn symlinked_output_is_still_refused_and_excluded() {
     let p = opts(root, "src", root.join("link").to_str().unwrap())
         .validate()
         .unwrap_err();
-    assert_eq!(p.code, "output-overlaps-source");
+    assert_eq!(p.code, codes::OUTPUT_OVERLAPS_SOURCE);
     // output inside input via a symlink is excluded from discovery
     let via = root.join("link/out");
     let d = discover(&opts(root, "src", via.to_str().unwrap())).unwrap();

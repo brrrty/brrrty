@@ -1,4 +1,4 @@
-use brrrty_core::{BuildOptions, Severity, build};
+use brrrty_core::{BuildOptions, Severity, build, codes};
 use brrrty_markdown::Provisional;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,8 +72,10 @@ fn bad_page_does_not_stop_the_build() {
     write(root, "src/bin.md", [0xffu8, 0xfe]);
     let r = build(&opts(root), &Provisional);
     assert!(root.join("_site/good/index.html").exists());
-    let codes: Vec<_> = r.problems.iter().map(|p| p.code).collect();
-    assert!(codes.contains(&"front-matter-invalid") && codes.contains(&"template-not-utf8"));
+    let found: Vec<_> = r.problems.iter().map(|p| p.code).collect();
+    assert!(
+        found.contains(&codes::FRONT_MATTER_INVALID) && found.contains(&codes::TEMPLATE_NOT_UTF8)
+    );
     assert!(r.problems.iter().all(|p| p.path.is_some()));
     assert!(r.has_errors());
 }
@@ -88,7 +90,7 @@ fn unsupported_templates_are_errors() {
     let p = r
         .problems
         .iter()
-        .find(|p| p.code == "template-unsupported")
+        .find(|p| p.code == codes::TEMPLATE_UNSUPPORTED)
         .unwrap();
     assert_eq!(
         p.help.as_deref(),
@@ -110,13 +112,13 @@ fn collisions_write_nothing_and_name_both_inputs() {
     let p = r
         .problems
         .iter()
-        .find(|p| p.code == "output-collision")
+        .find(|p| p.code == codes::OUTPUT_COLLISION)
         .unwrap();
     assert!(p.message.contains("a.md") && p.message.contains("b.md"));
     assert_eq!(
         r.problems
             .iter()
-            .filter(|p| p.code == "output-collision")
+            .filter(|p| p.code == codes::OUTPUT_COLLISION)
             .count(),
         1
     );
@@ -133,7 +135,7 @@ fn overlapping_output_writes_nothing() {
     assert!(
         r.problems
             .iter()
-            .any(|p| p.code == "output-overlaps-source")
+            .any(|p| p.code == codes::OUTPUT_OVERLAPS_SOURCE)
     );
     assert!(!root.join("src/a/index.html").exists());
 }
@@ -150,7 +152,7 @@ fn passthrough_cannot_escape_output() {
     assert_eq!(
         r.problems
             .iter()
-            .filter(|p| p.code == "passthrough-escapes")
+            .filter(|p| p.code == codes::PASSTHROUGH_ESCAPES)
             .count(),
         2
     );
@@ -166,7 +168,7 @@ fn passthrough_missing_is_a_warning() {
     let p = r
         .problems
         .iter()
-        .find(|p| p.code == "passthrough-missing")
+        .find(|p| p.code == codes::PASSTHROUGH_MISSING)
         .unwrap();
     assert!(matches!(p.severity, Severity::Warning));
     assert!(!r.has_errors());
@@ -229,7 +231,7 @@ fn passthrough_overrides_page_with_warning() {
     let p = r
         .problems
         .iter()
-        .find(|p| p.code == "passthrough-overrides-page")
+        .find(|p| p.code == codes::PASSTHROUGH_OVERRIDES_PAGE)
         .unwrap();
     assert!(matches!(p.severity, Severity::Warning));
     assert!(p.message.contains("robots.md") && p.message.contains("robots.txt"));
@@ -247,11 +249,11 @@ fn passthrough_of_input_or_root_is_refused_clearly() {
     assert_eq!(
         r.problems
             .iter()
-            .filter(|p| p.code == "passthrough-is-input")
+            .filter(|p| p.code == codes::PASSTHROUGH_IS_INPUT)
             .count(),
         2
     );
-    assert!(r.problems.iter().all(|p| p.code != "output-escapes"));
+    assert!(r.problems.iter().all(|p| p.code != codes::OUTPUT_ESCAPES));
 }
 
 #[test]
@@ -268,7 +270,7 @@ fn duplicate_passthrough_entries_count_once_and_warn_once() {
     let warnings = r
         .problems
         .iter()
-        .filter(|p| p.code == "passthrough-overrides-page")
+        .filter(|p| p.code == codes::PASSTHROUGH_OVERRIDES_PAGE)
         .count();
     assert_eq!(warnings, 0, "identical bytes do not warn");
 }
@@ -290,7 +292,7 @@ fn overriding_passthrough_with_different_bytes_warns_once_per_page() {
     let warnings = r
         .problems
         .iter()
-        .filter(|p| p.code == "passthrough-overrides-page")
+        .filter(|p| p.code == codes::PASSTHROUGH_OVERRIDES_PAGE)
         .count();
     assert_eq!(warnings, 1, "{:?}", r.problems);
     assert_eq!(read(root.join("_site/games/b.txt")), "different");
@@ -316,7 +318,7 @@ fn repeated_overriding_entry_does_not_underflow_written() {
     assert_eq!(
         r.problems
             .iter()
-            .filter(|p| p.code == "passthrough-overrides-page")
+            .filter(|p| p.code == codes::PASSTHROUGH_OVERRIDES_PAGE)
             .count(),
         1
     );
@@ -328,7 +330,7 @@ fn missing_input_folder_is_one_clear_error() {
     let r = build(&opts(t.path()), &Provisional);
     assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
     let p = &r.problems[0];
-    assert_eq!(p.code, "input-missing");
+    assert_eq!(p.code, codes::INPUT_MISSING);
     assert_eq!(p.path.as_deref(), Some(Path::new("src")));
     assert!(!p.message.contains(t.path().to_str().unwrap()), "{p:?}");
 }
@@ -339,7 +341,7 @@ fn input_that_is_a_file_is_a_clear_error() {
     write(t.path(), "src", "not a folder");
     let r = build(&opts(t.path()), &Provisional);
     assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
-    assert_eq!(r.problems[0].code, "input-not-a-directory");
+    assert_eq!(r.problems[0].code, codes::INPUT_NOT_A_DIRECTORY);
     assert_eq!(r.problems[0].path.as_deref(), Some(Path::new("src")));
 }
 
@@ -358,12 +360,12 @@ fn template_syntax_in_body_is_an_error_with_file_position() {
     let all: Vec<_> = r
         .problems
         .iter()
-        .filter(|p| p.code == "template-syntax-unsupported")
+        .filter(|p| p.code == codes::TEMPLATE_SYNTAX_UNSUPPORTED)
         .collect();
     assert_eq!(all.len(), 2, "{:?}", r.problems);
     let a = all
         .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("a.md")))
+        .find(|p| p.path.as_deref() == Some(Path::new("src/a.md")))
         .unwrap();
     assert_eq!((a.line, a.column), (Some(5), Some(3)));
     assert_eq!(a.message, "Template syntax ({{ or {%) isn't supported yet");
@@ -373,7 +375,7 @@ fn template_syntax_in_body_is_an_error_with_file_position() {
     );
     let b = all
         .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("b.html")))
+        .find(|p| p.path.as_deref() == Some(Path::new("src/b.html")))
         .unwrap();
     assert_eq!((b.line, b.column), (Some(1), Some(4)));
     assert!(!root.join("_site/a/index.html").exists());
@@ -400,9 +402,9 @@ fn unsupported_front_matter_keys_are_errors() {
     let a = r
         .problems
         .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("a.md")))
+        .find(|p| p.path.as_deref() == Some(Path::new("src/a.md")))
         .unwrap();
-    assert_eq!(a.code, "front-matter-unsupported");
+    assert_eq!(a.code, codes::FRONT_MATTER_UNSUPPORTED);
     assert!(a.message.contains("`layout`"), "{}", a.message);
     assert_eq!(
         a.help.as_deref(),
@@ -411,7 +413,7 @@ fn unsupported_front_matter_keys_are_errors() {
     let b = r
         .problems
         .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("b.md")))
+        .find(|p| p.path.as_deref() == Some(Path::new("src/b.md")))
         .unwrap();
     assert!(b.message.contains("`pagination`") && b.message.contains("`eleventyComputed`"));
     assert!(!root.join("_site/a/index.html").exists());
@@ -431,7 +433,7 @@ fn eleventy_config_files_warn_once_each() {
     let warned: Vec<_> = r
         .problems
         .iter()
-        .filter(|p| p.code == "eleventy-config-ignored")
+        .filter(|p| p.code == codes::ELEVENTY_CONFIG_IGNORED)
         .collect();
     assert_eq!(warned.len(), 2);
     assert!(matches!(warned[0].severity, Severity::Warning));
@@ -479,4 +481,61 @@ fn date_keywords_build_without_errors() {
     let r = build(&opts(root), &Provisional);
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert_eq!(r.written, 4);
+}
+
+#[test]
+fn problem_paths_are_root_relative() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/bad.md", "---\ntitle: [unclosed\n---\n");
+    write(root, "src/posts/raw.md", "{{ x }}\n");
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.problems.is_empty());
+    for p in &r.problems {
+        let path = p.path.as_deref().expect("every problem has a path");
+        assert!(path.starts_with("src"), "{path:?}");
+        assert!(path.is_relative(), "{path:?}");
+    }
+    assert!(
+        r.problems
+            .iter()
+            .any(|p| p.path.as_deref() == Some(Path::new("src/bad.md"))
+                && p.code == codes::FRONT_MATTER_INVALID)
+    );
+    assert!(
+        r.problems
+            .iter()
+            .any(|p| p.path.as_deref() == Some(Path::new("src/posts/raw.md"))
+                && p.code == codes::TEMPLATE_SYNTAX_UNSUPPORTED)
+    );
+}
+
+#[test]
+fn passthrough_and_discover_problem_paths_are_root_relative() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi\n");
+    write(root, "src/old.njk", "x\n");
+    write(root, "src/a.html", "<p>a</p>\n");
+    write(root, "src/a/index.md", "x\n");
+    write(root, "src/images/a.html", "<p>other</p>\n");
+    let r = build(
+        &opts_with_passthrough(root, &["./src/gone", "../x", "src/images"]),
+        &Provisional,
+    );
+    let path_of = |code: &str| {
+        r.problems
+            .iter()
+            .find(|p| p.code == code)
+            .and_then(|p| p.path.clone())
+    };
+    assert_eq!(
+        path_of(codes::TEMPLATE_UNSUPPORTED),
+        Some("src/old.njk".into())
+    );
+    assert_eq!(path_of(codes::PASSTHROUGH_MISSING), Some("src/gone".into()));
+    assert_eq!(path_of(codes::PASSTHROUGH_ESCAPES), Some("../x".into()));
+    for p in &r.problems {
+        assert!(!p.path.as_ref().unwrap().is_absolute(), "{p:?}");
+    }
 }

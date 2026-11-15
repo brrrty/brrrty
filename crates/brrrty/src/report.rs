@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use brrrty_core::{Problem, Severity};
+use brrrty_core::{Problem, Severity, codes};
 use miette::{
     Diagnostic, GraphicalReportHandler, GraphicalTheme, LabeledSpan, NamedSource, Report,
     SourceCode, SourceSpan,
@@ -80,13 +80,13 @@ fn locate(text: &str, line: usize, column: usize) -> Option<SourceSpan> {
     None
 }
 
-fn to_rendered(p: &Problem, input_dir: &Path) -> Rendered {
+fn to_rendered(p: &Problem, root: &Path) -> Rendered {
     let mut message = p.message.clone();
     let mut source = None;
     let mut span = None;
     if let Some(path) = &p.path {
         if let Some(line) = p.line {
-            let full = input_dir.join(path);
+            let full = root.join(path);
             if let Ok(text) = std::fs::read_to_string(&full)
                 && let Some(s) = locate(&text, line, p.column.unwrap_or(1))
             {
@@ -131,14 +131,14 @@ fn extension_of(p: &Problem) -> Option<String> {
 
 /// Render one problem to a string using a deterministic, colorless handler
 /// unless `color` is set.
-pub fn render_problem(p: &Problem, input_dir: &Path, color: bool) -> String {
+pub fn render_problem(p: &Problem, root: &Path, color: bool) -> String {
     let theme = if color {
         GraphicalTheme::unicode()
     } else {
         GraphicalTheme::unicode_nocolor()
     };
     let handler = GraphicalReportHandler::new_themed(theme);
-    let report = Report::new(to_rendered(p, input_dir));
+    let report = Report::new(to_rendered(p, root));
     let mut out = String::new();
     // Writing to a String cannot fail.
     let _ = handler.render_report(&mut out, report.as_ref());
@@ -146,12 +146,12 @@ pub fn render_problem(p: &Problem, input_dir: &Path, color: bool) -> String {
 }
 
 /// Print every problem, issue links for unsupported templates, and the counts line.
-pub fn print_problems(problems: &[Problem], input_dir: &Path, color: bool) {
+pub fn print_problems(problems: &[Problem], root: &Path, color: bool) {
     let mut extensions = BTreeSet::new();
     for p in problems {
-        eprint!("{}", render_problem(p, input_dir, color));
+        eprint!("{}", render_problem(p, root, color));
         eprintln!();
-        if p.code == "template-unsupported"
+        if p.code == codes::TEMPLATE_UNSUPPORTED
             && let Some(ext) = extension_of(p)
         {
             extensions.insert(ext);
