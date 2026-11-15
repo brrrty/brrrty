@@ -44,7 +44,7 @@ struct BuildArgs {
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
-    /// Treat any problem as a failed build
+    /// Stop at the first error (for CI)
     #[arg(long)]
     strict: bool,
     /// Don't print the summary line

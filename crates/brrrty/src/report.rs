@@ -114,11 +114,19 @@ fn to_rendered(p: &Problem, input_dir: &Path) -> Rendered {
     }
 }
 
+/// Extensions made of two parts, which the plain file extension would cut short.
+const MULTI_PART_EXTENSIONS: &[&str] = &["11ty.js", "11ty.cjs", "11ty.mjs"];
+
 fn extension_of(p: &Problem) -> Option<String> {
-    p.path
-        .as_ref()?
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned())
+    let path = p.path.as_ref()?;
+    let name = path.file_name()?.to_string_lossy().to_lowercase();
+    if let Some(multi) = MULTI_PART_EXTENSIONS
+        .iter()
+        .find(|m| name.ends_with(&format!(".{m}")))
+    {
+        return Some((*multi).to_string());
+    }
+    path.extension().map(|e| e.to_string_lossy().into_owned())
 }
 
 /// Render one problem to a string using a deterministic, colorless handler

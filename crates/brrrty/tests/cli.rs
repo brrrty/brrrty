@@ -154,3 +154,48 @@ fn file_as_input_names_the_path() {
     assert!(err.contains("page.md"), "{err}");
     assert!(!err.contains("× :"), "{err}");
 }
+
+#[test]
+fn issue_link_for_11ty_js_templates_names_the_full_extension() {
+    let dir = site(&[("src/a.11ty.js", "x\n"), ("src/b.liquid", "x\n")]);
+    let err = stderr(&run_in(dir.path(), &["--input", "src"]));
+    assert!(err.contains("%20.11ty.js%20templates"), "{err}");
+    assert!(err.contains("%20.liquid%20templates"), "{err}");
+    assert!(!err.contains("Unsupported%3A%20.js%20"), "{err}");
+}
+
+#[test]
+fn strict_stops_at_the_first_error_but_not_for_warnings() {
+    let dir = site(&[
+        ("src/bad1.md", "---\ntitle: [oops\n---\nx\n"),
+        ("src/bad2.md", "---\ntitle: [oops\n---\nx\n"),
+    ]);
+    let out = run_in(dir.path(), &["--input", "src", "--strict"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("1 error, 0 warnings"),
+        "{}",
+        stderr(&out)
+    );
+
+    let ok = site(&[("src/index.md", "# Hi\n")]);
+    let out = run_in(
+        ok.path(),
+        &["--input", "src", "--strict", "--passthrough", "src/missing"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("passthrough-missing"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn strict_help_describes_stopping_at_the_first_error() {
+    let out = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .args(["build", "--help"])
+        .output()
+        .unwrap();
+    assert!(stdout(&out).contains("Stop at the first error (for CI)"));
+}
