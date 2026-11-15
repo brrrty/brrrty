@@ -192,14 +192,10 @@ mod tests {
             w("/sub/deep/", "sub/deep/index.html")
         );
         assert_eq!(
-            resolve_permalink(
-                Path::new("posts/2026/2026-11-08-introducing-cuppa.md"),
-                &none
-            )
-            .unwrap(),
+            resolve_permalink(Path::new("posts/2026/2026-11-08-hello-world.md"), &none).unwrap(),
             w(
-                "/posts/2026/2026-11-08-introducing-cuppa/",
-                "posts/2026/2026-11-08-introducing-cuppa/index.html"
+                "/posts/2026/2026-11-08-hello-world/",
+                "posts/2026/2026-11-08-hello-world/index.html"
             )
         );
     }

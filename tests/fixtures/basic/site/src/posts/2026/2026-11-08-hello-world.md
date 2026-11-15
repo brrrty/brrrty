@@ -1,6 +1,6 @@
 ---
-title: Introducing Cuppa
+title: Hello World
 ---
-# Introducing Cuppa
+# Hello World
 
 A post about *tea*.

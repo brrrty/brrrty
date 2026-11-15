@@ -137,8 +137,8 @@ mod tests {
     #[test]
     fn slugs() {
         assert_eq!(
-            file_slug(Path::new("posts/2026/2026-11-08-introducing-cuppa.md")),
-            "introducing-cuppa"
+            file_slug(Path::new("posts/2026/2026-11-08-hello-world.md")),
+            "hello-world"
         );
         assert_eq!(file_slug(Path::new("sub/deep/index.html")), "deep");
         assert_eq!(file_slug(Path::new("index.md")), "");
@@ -200,8 +200,8 @@ mod tests {
         assert_eq!(file_slug(Path::new("2026-01-01-index.md")), "");
         assert_eq!(file_slug(Path::new("2026-13-45-bad.md")), "bad");
         assert_eq!(
-            file_slug(Path::new("posts/2026/2026-11-08-introducing-cuppa.md")),
-            "introducing-cuppa"
+            file_slug(Path::new("posts/2026/2026-11-08-hello-world.md")),
+            "hello-world"
         );
     }
 
