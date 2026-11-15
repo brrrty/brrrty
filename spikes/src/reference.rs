@@ -245,10 +245,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs Node and the 11ty install"]
+    #[ignore = "needs Node and BRRRTY_ELEVENTY"]
     fn reference_runs_11ty() {
         let out = tempfile::tempdir().unwrap();
-        let eleventy = Path::new(crate::DEFAULT_ELEVENTY);
+        let eleventy = &crate::eleventy_path(None, None).expect("set BRRRTY_ELEVENTY");
         reference(
             Lang::Liquid,
             &[one("trivial", "{{ a }}", r#"{"a":"hi"}"#)],
@@ -263,10 +263,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs Node and the 11ty install"]
+    #[ignore = "needs Node and BRRRTY_ELEVENTY"]
     fn reference_isolates_failing_case() {
         let out = tempfile::tempdir().unwrap();
-        let eleventy = Path::new(crate::DEFAULT_ELEVENTY);
+        let eleventy = &crate::eleventy_path(None, None).expect("set BRRRTY_ELEVENTY");
         let cases = [
             one("good", "{{ a }}", r#"{"a":"hi"}"#),
             one("bad", "{{ a | nosuchfilter }}", "{}"),

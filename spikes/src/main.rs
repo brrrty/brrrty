@@ -5,8 +5,7 @@ use brrrty_spike::engines::liquid_crate::LiquidCrate;
 use brrrty_spike::engines::markdown::{Comrak, ComrakFormatted, MarkdownItRs, Pulldown};
 use brrrty_spike::engines::minijinja::MiniJinja;
 use brrrty_spike::{
-    DEFAULT_ELEVENTY, DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, markdown_corpus, reference,
-    score,
+    DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, eleventy_path, markdown_corpus, reference, score,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use score::{CandidateRun, Engine};
@@ -43,8 +42,9 @@ enum Command {
     /// Regenerate the expected files with Eleventy.
     Reference {
         kind: Kind,
-        #[arg(long, default_value = DEFAULT_ELEVENTY)]
-        eleventy: PathBuf,
+        /// Path to Eleventy's `cmd.cjs`; defaults to `BRRRTY_ELEVENTY`.
+        #[arg(long)]
+        eleventy: Option<PathBuf>,
     },
     /// Score every candidate against the expected files.
     Score { kind: Kind },
@@ -58,8 +58,10 @@ enum Command {
     Markdown {
         #[arg(long = "site", required = true)]
         sites: Vec<String>,
-        #[arg(long, default_value = DEFAULT_ELEVENTY)]
-        eleventy: PathBuf,
+        /// Path to Eleventy's `cmd.cjs`; defaults to `BRRRTY_ELEVENTY`, then the first
+        /// --site's own install.
+        #[arg(long)]
+        eleventy: Option<PathBuf>,
         /// Site whose bodies are timed; defaults to the first --site.
         #[arg(long)]
         time_site: Option<String>,
@@ -199,7 +201,8 @@ fn run(cli: Cli) -> Result<(), String> {
             let lang = kind.lang();
             let dir = spikes_dir().join("cases").join(lang.dir());
             let cases: Vec<_> = load_cases(&dir)?.into_iter().map(|(c, _)| c).collect();
-            reference::reference(lang, &cases, Path::new(&eleventy), &dir.join("expected"))?;
+            let eleventy = eleventy_path(eleventy, None)?;
+            reference::reference(lang, &cases, &eleventy, &dir.join("expected"))?;
             println!(
                 "reference: {} {} cases written to {}",
                 cases.len(),
@@ -230,7 +233,10 @@ fn run(cli: Cli) -> Result<(), String> {
             sites,
             eleventy,
             time_site,
-        } => run_markdown(&sites, &eleventy, time_site),
+        } => {
+            let eleventy = eleventy_path(eleventy, sites.first().map(String::as_str))?;
+            run_markdown(&sites, &eleventy, time_site)
+        }
     }
 }
 
