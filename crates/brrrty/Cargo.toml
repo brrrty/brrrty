@@ -10,6 +10,7 @@ homepage.workspace = true
 keywords = ["static-site-generator", "eleventy", "11ty", "ssg"]
 categories = ["command-line-utilities", "web-programming"]
 readme = "../../README.md"
+exclude = ["tests/fixtures.rs"]
 
 [lib]
 name = "brrrty"
