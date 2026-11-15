@@ -321,3 +321,24 @@ fn repeated_overriding_entry_does_not_underflow_written() {
         1
     );
 }
+
+#[test]
+fn missing_input_folder_is_one_clear_error() {
+    let t = tempfile::tempdir().unwrap();
+    let r = build(&opts(t.path()), &Provisional);
+    assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
+    let p = &r.problems[0];
+    assert_eq!(p.code, "input-missing");
+    assert_eq!(p.path.as_deref(), Some(Path::new("src")));
+    assert!(!p.message.contains(t.path().to_str().unwrap()), "{p:?}");
+}
+
+#[test]
+fn input_that_is_a_file_is_a_clear_error() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "src", "not a folder");
+    let r = build(&opts(t.path()), &Provisional);
+    assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
+    assert_eq!(r.problems[0].code, "input-not-a-directory");
+    assert_eq!(r.problems[0].path.as_deref(), Some(Path::new("src")));
+}

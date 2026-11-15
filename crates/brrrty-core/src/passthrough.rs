@@ -44,9 +44,18 @@ pub(crate) fn copy_passthrough_avoiding(
     opts: &BuildOptions,
     pages: &HashMap<PathBuf, PathBuf>,
 ) -> PassthroughResult {
-    let root = opts.root_dir();
-    let input = opts.input_dir();
-    let out = opts.output_dir();
+    let dirs = (|| Ok::<_, Problem>((opts.root_dir()?, opts.input_dir()?, opts.output_dir()?)))();
+    let (root, input, out) = match dirs {
+        Ok(d) => d,
+        Err(p) => {
+            return PassthroughResult {
+                copied: 0,
+                unchanged: 0,
+                overridden: HashSet::new(),
+                problems: vec![p],
+            };
+        }
+    };
     let mut c = Copier {
         out: &out,
         pages,

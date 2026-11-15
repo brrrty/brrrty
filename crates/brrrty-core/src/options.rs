@@ -33,13 +33,22 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
 
 /// Make `path` absolute and resolve symlinks. The path may not exist yet: the longest
 /// existing ancestor is canonicalized and the remainder is appended.
-pub(crate) fn resolve(path: &Path) -> PathBuf {
+pub(crate) fn resolve(path: &Path) -> Result<PathBuf, Problem> {
+    resolve_from(path, std::env::current_dir())
+}
+
+fn resolve_from(path: &Path, cwd: std::io::Result<PathBuf>) -> Result<PathBuf, Problem> {
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from(std::path::MAIN_SEPARATOR_STR))
-            .join(path)
+        cwd.map_err(|e| {
+            Problem::error(
+                "cwd-unavailable",
+                format!("cannot find the current folder: {e}"),
+            )
+            .with_help("run Brrrty from a folder that exists, or pass an absolute root")
+        })?
+        .join(path)
     };
     let abs = normalize(&abs);
     let mut existing = abs.clone();
@@ -48,33 +57,49 @@ pub(crate) fn resolve(path: &Path) -> PathBuf {
         if let Ok(c) = existing.canonicalize() {
             let mut out = c;
             out.extend(rest.iter().rev());
-            return out;
+            return Ok(out);
         }
         match existing.file_name().map(|n| n.to_os_string()) {
             Some(name) if existing.pop() => rest.push(name),
-            _ => return abs,
+            _ => return Ok(abs),
         }
     }
 }
 
 impl BuildOptions {
-    pub fn root_dir(&self) -> PathBuf {
+    pub fn root_dir(&self) -> Result<PathBuf, Problem> {
         resolve(&self.root)
     }
 
-    pub fn input_dir(&self) -> PathBuf {
-        resolve(&self.root_dir().join(&self.input))
+    pub fn input_dir(&self) -> Result<PathBuf, Problem> {
+        resolve(&self.root_dir()?.join(&self.input))
     }
 
-    pub fn output_dir(&self) -> PathBuf {
-        resolve(&self.root_dir().join(&self.output))
+    pub fn output_dir(&self) -> Result<PathBuf, Problem> {
+        resolve(&self.root_dir()?.join(&self.output))
     }
 
-    /// Refuse an output folder that is the root, the input dir, or an ancestor of the input dir.
+    /// Refuse a missing input folder, and an output folder that is the root, the input dir,
+    /// or an ancestor of the input dir.
     pub fn validate(&self) -> Result<(), Problem> {
-        let out = self.output_dir();
-        let input = self.input_dir();
-        if out == self.root_dir() || input.starts_with(&out) {
+        let out = self.output_dir()?;
+        let input = self.input_dir()?;
+        if !input.exists() {
+            return Err(
+                Problem::error("input-missing", "the input folder doesn't exist")
+                    .with_path(&self.input)
+                    .with_help("check the --input folder name, relative to where you ran Brrrty"),
+            );
+        }
+        if !input.is_dir() {
+            return Err(Problem::error(
+                "input-not-a-directory",
+                "the input path is a file, not a folder",
+            )
+            .with_path(&self.input)
+            .with_help("pass the folder that holds your source files, like --input src"));
+        }
+        if out == self.root_dir()? || input.starts_with(&out) {
             return Err(Problem::error(
                 "output-overlaps-source",
                 format!(
@@ -97,14 +122,22 @@ mod tests {
 
     #[test]
     fn resolve_makes_dot_absolute_and_nonempty() {
-        let r = resolve(Path::new("."));
+        let r = resolve(Path::new(".")).unwrap();
         assert!(r.is_absolute());
         assert_eq!(r, std::env::current_dir().unwrap().canonicalize().unwrap());
     }
 
     #[test]
     fn resolve_handles_missing_tail() {
-        let r = resolve(Path::new("./nope/../_site"));
-        assert_eq!(r, resolve(Path::new(".")).join("_site"));
+        let r = resolve(Path::new("./nope/../_site")).unwrap();
+        assert_eq!(r, resolve(Path::new(".")).unwrap().join("_site"));
+    }
+
+    #[test]
+    fn unavailable_cwd_is_an_error_for_relative_paths_only() {
+        let broken = || Err(std::io::Error::other("gone"));
+        let p = resolve_from(Path::new("src"), broken()).unwrap_err();
+        assert_eq!(p.code, "cwd-unavailable");
+        assert!(resolve_from(&std::env::temp_dir(), broken()).is_ok());
     }
 }

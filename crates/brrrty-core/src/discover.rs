@@ -28,9 +28,9 @@ pub struct Discovery {
 
 /// Find input templates, following 11ty's default ignore rules.
 pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
-    let root = opts.root_dir();
-    let input = opts.input_dir();
-    let output = opts.output_dir();
+    let root = opts.root_dir()?;
+    let input = opts.input_dir()?;
+    let output = opts.output_dir()?;
 
     let mut gi = GitignoreBuilder::new(&root);
     for name in [".gitignore", ".eleventyignore"] {

@@ -78,8 +78,11 @@ fn run_build(args: BuildArgs) -> ExitCode {
         );
     }
     if !report.problems.is_empty() {
+        let input_dir = opts
+            .input_dir()
+            .unwrap_or_else(|_| opts.root.join(&opts.input));
         let color = std::io::stderr().is_terminal();
-        report::print_problems(&report.problems, &opts.input_dir(), color);
+        report::print_problems(&report.problems, &input_dir, color);
     }
     if report.has_errors() {
         ExitCode::from(1)

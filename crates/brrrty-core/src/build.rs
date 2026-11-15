@@ -151,8 +151,13 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
         return finish(report, strict, start);
     }
 
-    let input = opts.input_dir();
-    let out = opts.output_dir();
+    let (input, out) = match (opts.input_dir(), opts.output_dir()) {
+        (Ok(i), Ok(o)) => (i, o),
+        (Err(p), _) | (_, Err(p)) => {
+            report.problems.push(p);
+            return finish(report, strict, start);
+        }
+    };
 
     let loaded: Vec<Result<Option<Prepared>, Problem>> = discovery
         .templates

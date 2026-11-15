@@ -73,6 +73,7 @@ fn output_inside_input_is_not_discovered() {
 fn output_overlapping_source_is_refused() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
+    write(root, "src/a.md", "x");
     for out in [".", "src"] {
         let p = opts(root, "src", out).validate().unwrap_err();
         assert_eq!(p.code, "output-overlaps-source");
@@ -113,6 +114,7 @@ fn absolute_output_inside_input_is_excluded() {
 #[test]
 fn output_that_is_an_ancestor_of_input_is_refused() {
     let t = tempfile::tempdir().unwrap();
+    write(t.path(), "site/src/a.md", "x");
     let p = opts(t.path(), "site/src", "site").validate().unwrap_err();
     assert_eq!(p.code, "output-overlaps-source");
 }

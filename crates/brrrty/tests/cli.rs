@@ -133,3 +133,24 @@ fn unsupported_without_snippet_keeps_path_in_message() {
     let err = stderr(&run_in(dir.path(), &["--input", "src"]));
     assert!(err.contains("c.njk: "), "{err}");
 }
+
+#[test]
+fn missing_input_names_the_path_once() {
+    let dir = site(&[("other/index.md", "x\n")]);
+    let out = run_in(dir.path(), &["--input", "nope"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(err.contains("input-missing"), "{err}");
+    assert_eq!(err.matches("nope").count(), 1, "{err}");
+}
+
+#[test]
+fn file_as_input_names_the_path() {
+    let dir = site(&[("page.md", "x\n")]);
+    let out = run_in(dir.path(), &["--input", "page.md"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(err.contains("input-not-a-directory"), "{err}");
+    assert!(err.contains("page.md"), "{err}");
+    assert!(!err.contains("× :"), "{err}");
+}
