@@ -212,3 +212,14 @@ fn error_snippet_uses_root_relative_path() {
     assert!(err.contains("src/bad.md:"), "{err}");
     assert!(err.contains("title: [unclosed"), "{err}");
 }
+
+#[test]
+fn plugin_only_extensions_exit_zero() {
+    let dir = site(&[
+        ("src/a.webc", "x"),
+        ("src/b.pug", "x"),
+        ("src/i.md", "hi\n"),
+    ]);
+    let out = run_in(dir.path(), &["build", "--input", "src"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}

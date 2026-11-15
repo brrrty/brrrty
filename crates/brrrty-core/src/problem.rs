@@ -23,8 +23,10 @@ pub mod codes {
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
     pub const PERMALINK_TEMPLATED: &str = "permalink-templated";
+    pub const SYMLINK_LOOP: &str = "symlink-loop";
     pub const TEMPLATE_NOT_UTF8: &str = "template-not-utf8";
     pub const TEMPLATE_SYNTAX_UNSUPPORTED: &str = "template-syntax-unsupported";
+    pub const TEMPLATE_PLUGIN_ONLY: &str = "template-plugin-only";
     pub const TEMPLATE_UNREADABLE: &str = "template-unreadable";
     pub const TEMPLATE_UNSUPPORTED: &str = "template-unsupported";
     pub const WRITE_FAILED: &str = "write-failed";

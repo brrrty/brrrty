@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use brrrty_markdown::MarkdownRenderer;
 use rayon::prelude::*;
 
-use crate::discover::discover;
+use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::split_front_matter;
 use crate::options::{BuildOptions, root_relative};
 use crate::page::{Page, file_slug, resolve_date};
@@ -237,6 +237,30 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             )
             .with_path(input_rel.join(path))
             .with_help("Liquid and Nunjucks support is in progress."),
+        );
+    }
+    // 11ty skips these silently unless a plugin adds them; say so once per extension.
+    let mut by_ext: std::collections::BTreeMap<String, Vec<&PathBuf>> = Default::default();
+    for path in &discovery.plugin_only {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        if let Some(ext) = PLUGIN_ONLY_EXTS.iter().find(|x| name.ends_with(*x)) {
+            by_ext.entry((*ext).to_string()).or_default().push(path);
+        }
+    }
+    for (ext, paths) in by_ext {
+        report.problems.push(
+            Problem::warning(
+                codes::TEMPLATE_PLUGIN_ONLY,
+                format!(
+                    "{} `{ext}` files skipped: in 11ty these are templates only when a plugin adds them",
+                    paths.len()
+                ),
+            )
+            .with_path(input_rel.join(paths[0])),
         );
     }
     if strict && has_error(&report) {

@@ -643,3 +643,76 @@ fn collect(base: &Path, dir: &Path, out: &mut Vec<String>) {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn symlinked_file_builds_at_link_path() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/real/target.md", "hi\n");
+    fs::create_dir_all(root.join("src/posts")).unwrap();
+    std::os::unix::fs::symlink("../real/target.md", root.join("src/posts/link.md")).unwrap();
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert!(root.join("_site/real/target/index.html").exists());
+    assert!(root.join("_site/posts/link/index.html").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_dir_is_followed() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/real/target.md", "hi\n");
+    std::os::unix::fs::symlink("real", root.join("src/linkdir")).unwrap();
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert!(root.join("_site/linkdir/target/index.html").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_loop_warns_and_finishes() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi\n");
+    write(root, "src/sub/page.md", "hi\n");
+    std::os::unix::fs::symlink(".", root.join("src/loop")).unwrap();
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    let loops: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::SYMLINK_LOOP)
+        .collect();
+    assert_eq!(loops.len(), 1, "{:?}", r.problems);
+    assert!(loops[0].path.as_ref().unwrap().starts_with("src"));
+    assert!(matches!(loops[0].severity, Severity::Warning));
+    assert!(root.join("_site/index.html").exists());
+    assert!(root.join("_site/sub/page/index.html").exists());
+}
+
+#[test]
+fn plugin_only_extensions_warn_once_per_extension() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.webc", "x");
+    write(root, "src/b.webc", "x");
+    write(root, "src/c.pug", "x");
+    write(root, "src/ok.md", "ok\n");
+    let r = build(&opts(root), &Provisional);
+    assert_eq!(error_count(&r), 0, "{:?}", r.problems);
+    let w: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::TEMPLATE_PLUGIN_ONLY)
+        .collect();
+    assert_eq!(w.len(), 2, "{:?}", r.problems);
+    let webc = w.iter().find(|p| p.message.contains(".webc")).unwrap();
+    assert_eq!(
+        webc.message,
+        "2 `.webc` files skipped: in 11ty these are templates only when a plugin adds them"
+    );
+    assert_eq!(webc.path.as_deref(), Some(Path::new("src/a.webc")));
+    assert!(root.join("_site/ok/index.html").exists());
+}
