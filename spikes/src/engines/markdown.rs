@@ -3,6 +3,7 @@
 //! Each adapter uses only its crate's public API.
 
 use brrrty_markdown::MarkdownRenderer;
+use std::fmt::Write as _;
 use std::sync::Mutex;
 
 /// comrak 0.59.0 with `default-features = false` (no syntect, no CLI).
@@ -33,6 +34,102 @@ impl Default for Comrak {
 impl MarkdownRenderer for Comrak {
     fn render(&self, source: &str) -> String {
         comrak::markdown_to_html(source, &self.options)
+    }
+}
+
+comrak::create_formatter!(MarkdownItForms, {
+    comrak::nodes::NodeValue::ThematicBreak => |context, entering| {
+        if entering {
+            context.cr()?;
+            context.write_str("<hr>")?;
+            context.lf()?;
+        }
+    },
+    comrak::nodes::NodeValue::LineBreak => |context, entering| {
+        if entering {
+            context.write_str("<br>")?;
+            context.lf()?;
+        }
+    },
+    comrak::nodes::NodeValue::Strikethrough => |context, entering| {
+        context.write_str(if entering { "<s>" } else { "</s>" })?;
+    },
+    comrak::nodes::NodeValue::Image(ref link) => |context, entering| {
+        if entering {
+            context.write_str("<img src=\"")?;
+            context.escape_href(&link.url)?;
+            context.write_str("\" alt=\"")?;
+            return Ok(comrak::html::ChildRendering::Plain);
+        }
+        if !link.title.is_empty() {
+            context.write_str("\" title=\"")?;
+            context.escape(&link.title)?;
+        }
+        context.write_str("\">")?;
+    },
+    comrak::nodes::NodeValue::TableCell => |context, node, entering| {
+        use comrak::nodes::{NodeValue, TableAlignment};
+        let in_header = node
+            .parent()
+            .is_some_and(|row| matches!(row.data().value, NodeValue::TableRow(true)));
+        let tag = if in_header { "th" } else { "td" };
+        if !entering {
+            context.write_str(&format!("</{tag}>"))?;
+            return Ok(comrak::html::ChildRendering::HTML);
+        }
+        // The cell's column is its position among its siblings; the table holds the alignments.
+        let column = std::iter::successors(node.previous_sibling(), |n| n.previous_sibling()).count();
+        let align = node
+            .parent()
+            .and_then(|row| row.parent())
+            .and_then(|table| match &table.data().value {
+                NodeValue::Table(t) => t.alignments.get(column).copied(),
+                _ => None,
+            })
+            .unwrap_or(TableAlignment::None);
+        context.cr()?;
+        context.write_str(&format!("<{tag}"))?;
+        match align {
+            TableAlignment::Left => context.write_str(" style=\"text-align:left\"")?,
+            TableAlignment::Right => context.write_str(" style=\"text-align:right\"")?,
+            TableAlignment::Center => context.write_str(" style=\"text-align:center\"")?,
+            TableAlignment::None => {}
+        }
+        context.write_str(">")?;
+    },
+});
+
+/// comrak with the same options as [`Comrak`], plus a public-API formatter
+/// (`create_formatter!`) that overrides the five node types whose HTML is hard-coded:
+/// thematic break (`<hr>`), line break (`<br>`), strikethrough (`<s>`), image (markdown-it's
+/// `<img src alt title>` form without the self-closing slash) and table cells
+/// (`style="text-align:..."` instead of `align=`). All other nodes use `format_node_default`.
+pub struct ComrakFormatted {
+    options: comrak::Options<'static>,
+}
+
+impl ComrakFormatted {
+    pub fn new() -> Self {
+        ComrakFormatted {
+            options: Comrak::new().options,
+        }
+    }
+}
+
+impl Default for ComrakFormatted {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MarkdownRenderer for ComrakFormatted {
+    fn render(&self, source: &str) -> String {
+        let arena = comrak::Arena::new();
+        let root = comrak::parse_document(&arena, source, &self.options);
+        let mut out = String::new();
+        MarkdownItForms::format_document(root, &self.options, &mut out)
+            .expect("writing to a String cannot fail");
+        out
     }
 }
 

@@ -73,6 +73,7 @@ pub struct SilentPanics {
 type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
 
 impl SilentPanics {
+    // Taking the global hook lock is a side effect, so a `Default` impl would hide it.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let lock = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());

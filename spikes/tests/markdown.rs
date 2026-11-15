@@ -1,9 +1,10 @@
 use brrrty_markdown::MarkdownRenderer;
-use brrrty_spike::engines::markdown::{Comrak, MarkdownItRs, Pulldown};
+use brrrty_spike::engines::markdown::{Comrak, ComrakFormatted, MarkdownItRs, Pulldown};
 
 fn all() -> Vec<(&'static str, Box<dyn MarkdownRenderer>)> {
     vec![
         ("comrak", Box::new(Comrak::new())),
+        ("comrak-formatted", Box::new(ComrakFormatted::new())),
         ("pulldown", Box::new(Pulldown)),
         ("markdown-it", Box::new(MarkdownItRs::new())),
     ]
@@ -68,4 +69,44 @@ fn no_panic_on_edge_inputs() {
             );
         }
     }
+}
+
+/// 11ty disables markdown-it's `code` rule, so an indented line is paragraph text. Only the
+/// markdown-it adapter (which omits `block::code`) can match; comrak and pulldown-cmark
+/// have no public switch for it and render a code block.
+#[test]
+fn indented_code_is_a_paragraph_only_where_the_rule_can_be_disabled() {
+    let src = "para\n\n    indented\n";
+    for (n, r) in all() {
+        let out = r.render(src);
+        if n == "markdown-it" {
+            assert_eq!(out, "<p>para</p>\n<p>indented</p>\n", "{n}");
+        } else {
+            assert_eq!(
+                out, "<p>para</p>\n<pre><code>indented\n</code></pre>\n",
+                "{n}"
+            );
+        }
+    }
+}
+
+#[test]
+fn comrak_formatted_uses_markdown_it_forms() {
+    let r = ComrakFormatted::new();
+    assert_eq!(r.render("a\n\n---\n\nb\n"), "<p>a</p>\n<hr>\n<p>b</p>\n");
+    assert_eq!(r.render("~~x~~\n"), "<p><s>x</s></p>\n");
+    assert_eq!(r.render("a  \nb\n"), "<p>a<br>\nb</p>\n");
+    assert_eq!(
+        r.render("![a b](/i.png \"t\")\n"),
+        "<p><img src=\"/i.png\" alt=\"a b\" title=\"t\"></p>\n"
+    );
+    let table = r.render("a | b\n:-:|--:\n1 | 2\n");
+    assert!(
+        table.contains("<th style=\"text-align:center\">a</th>"),
+        "{table}"
+    );
+    assert!(
+        table.contains("<td style=\"text-align:right\">2</td>"),
+        "{table}"
+    );
 }

@@ -2,7 +2,7 @@ use brrrty_markdown::MarkdownRenderer;
 use brrrty_spike::case::{Lang, load_cases};
 use brrrty_spike::corpus::{self, SiteInput};
 use brrrty_spike::engines::liquid_crate::LiquidCrate;
-use brrrty_spike::engines::markdown::{Comrak, MarkdownItRs, Pulldown};
+use brrrty_spike::engines::markdown::{Comrak, ComrakFormatted, MarkdownItRs, Pulldown};
 use brrrty_spike::engines::minijinja::MiniJinja;
 use brrrty_spike::{
     DEFAULT_ELEVENTY, DEFAULT_SETTINGS, DEFAULT_SITES, dir_from_env, markdown_corpus, reference,
@@ -60,6 +60,9 @@ enum Command {
         sites: Vec<String>,
         #[arg(long, default_value = DEFAULT_ELEVENTY)]
         eleventy: PathBuf,
+        /// Site whose bodies are timed; defaults to the first --site.
+        #[arg(long)]
+        time_site: Option<String>,
     },
 }
 
@@ -133,21 +136,32 @@ fn run_corpus(kind: Kind, names: &[String]) -> Result<(), String> {
     std::fs::write(&path, body + "\n").map_err(|e| e.to_string())
 }
 
-fn run_markdown(names: &[String], eleventy: &Path) -> Result<(), String> {
+fn run_markdown(
+    names: &[String],
+    eleventy: &Path,
+    time_site: Option<String>,
+) -> Result<(), String> {
     let sites_dir = dir_from_env("BRRRTY_SITES", DEFAULT_SITES);
     let settings_dir = dir_from_env("BRRRTY_SETTINGS", DEFAULT_SETTINGS);
     let sites: Vec<SiteInput> = names
         .iter()
         .map(|n| SiteInput::load(&sites_dir, &settings_dir, n))
         .collect::<Result<_, _>>()?;
-    let (comrak, pulldown, mdit) = (Comrak::new(), Pulldown, MarkdownItRs::new());
-    let candidates: [(&str, &dyn MarkdownRenderer); 3] = [
+    let time_site = time_site.unwrap_or_else(|| names[0].clone());
+    let (comrak, formatted, pulldown, mdit) = (
+        Comrak::new(),
+        ComrakFormatted::new(),
+        Pulldown,
+        MarkdownItRs::new(),
+    );
+    let candidates: [(&str, &dyn MarkdownRenderer); 4] = [
         ("comrak", &comrak),
+        ("comrak-formatted", &formatted),
         ("pulldown-cmark", &pulldown),
         ("markdown-it", &mdit),
     ];
     let out_root = spikes_dir().join("../target/spike");
-    let report = markdown_corpus::run(&sites, eleventy, &out_root, &candidates)?;
+    let report = markdown_corpus::run(&sites, eleventy, &out_root, &time_site, &candidates)?;
     println!(
         "markdown corpus: {} bodies ({} front matter errors, {} where 11ty failed, {} with template syntax)",
         report.bodies,
@@ -166,8 +180,8 @@ fn run_markdown(names: &[String], eleventy: &Path) -> Result<(), String> {
                 c.name, site, n.scored, n.identical, n.equivalent, n.mismatch, n.panic
             );
         }
-        if let Some(ms) = c.joshtronic_ms {
-            println!("{:<16} joshtronic.com best-of-5: {ms:.2} ms", c.name);
+        if let Some(ms) = c.timed_ms {
+            println!("{:<16} {} best-of-5: {ms:.2} ms", c.name, report.timed_site);
         }
         for (tag, g) in &c.groups {
             println!("  {:<16} mismatch group <{tag}>: {}", c.name, g.count);
@@ -212,7 +226,11 @@ fn run(cli: Cli) -> Result<(), String> {
                 .map_err(|e| e.to_string())
         }
         Command::Corpus { kind, sites } => run_corpus(kind, &sites),
-        Command::Markdown { sites, eleventy } => run_markdown(&sites, &eleventy),
+        Command::Markdown {
+            sites,
+            eleventy,
+            time_site,
+        } => run_markdown(&sites, &eleventy, time_site),
     }
 }
 

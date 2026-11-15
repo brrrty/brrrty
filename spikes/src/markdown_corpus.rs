@@ -11,9 +11,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-/// The site whose bodies are timed.
-const TIMED_SITE: &str = "joshtronic.com";
-
 pub struct Body {
     pub n: usize,
     pub site: String,
@@ -43,14 +40,17 @@ pub struct CandidateResult {
     pub name: String,
     pub per_site: BTreeMap<String, Counts>,
     pub groups: BTreeMap<String, Group>,
-    /// Best of 5 single-thread passes over the timed site's bodies, in milliseconds.
-    pub joshtronic_ms: Option<f64>,
+    /// Best of 5 single-thread passes over the timed site's bodies (`MarkdownReport::timed_site`), in milliseconds.
+    pub timed_ms: Option<f64>,
 }
 
 #[derive(Debug, Default)]
 pub struct MarkdownReport {
     pub bodies: usize,
     pub front_matter_errors: usize,
+    /// Files that could not be read as UTF-8 text; skipped and counted.
+    pub unreadable: usize,
+    pub timed_site: String,
     pub template_syntax: usize,
     pub template_syntax_per_site: BTreeMap<String, usize>,
     pub reference_failures: usize,
@@ -58,14 +58,17 @@ pub struct MarkdownReport {
 }
 
 /// Every `.md` body (front matter removed) under the sites' inputs.
-pub fn collect_bodies(sites: &[SiteInput]) -> (Vec<Body>, usize) {
+/// Returns the bodies, the front matter error count and the unreadable file count.
+pub fn collect_bodies(sites: &[SiteInput]) -> (Vec<Body>, usize, usize) {
     let mut bodies = Vec::new();
     let mut fm_errors = 0;
+    let mut unreadable = 0;
     for site in sites {
         let mut files = Vec::new();
         collect(&site.input, &["md"], &mut files);
         for file in files {
             let Ok(text) = fs::read_to_string(&file) else {
+                unreadable += 1;
                 continue;
             };
             let Ok((_, body)) = brrrty_core::split_front_matter(&text) else {
@@ -85,7 +88,7 @@ pub fn collect_bodies(sites: &[SiteInput]) -> (Vec<Body>, usize) {
             });
         }
     }
-    (bodies, fm_errors)
+    (bodies, fm_errors, unreadable)
 }
 
 /// Writes `<n>.md` files with `---json` front matter, and `index.json` beside them.
@@ -111,7 +114,12 @@ fn write_one(dir: &Path, b: &Body) -> Result<(), String> {
 }
 
 /// 11ty's output per body, `None` where 11ty itself failed on that body.
-fn reference(dir: &Path, eleventy: &Path, bodies: &[Body]) -> Result<Vec<Option<String>>, String> {
+fn reference(
+    dir: &Path,
+    scratch: &Path,
+    eleventy: &Path,
+    bodies: &[Body],
+) -> Result<Vec<Option<String>>, String> {
     let read = |site: &Path, n: usize| {
         let p = site.join(format!("_site/md/{n}.html"));
         fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
@@ -122,13 +130,16 @@ fn reference(dir: &Path, eleventy: &Path, bodies: &[Body]) -> Result<Vec<Option<
     // 11ty writes nothing when any template fails: retry each body alone.
     let mut out = Vec::new();
     for b in bodies {
-        let solo = tempfile::tempdir().map_err(|e| e.to_string())?;
-        write_one(solo.path(), b)?;
-        out.push(match run_11ty(solo.path(), eleventy)? {
-            Build::Ok => Some(read(solo.path(), b.n)?),
+        // Under `target/spike/`, never the OS temp dir: the bodies are private.
+        let solo = scratch.join(b.n.to_string());
+        fs::create_dir_all(&solo).map_err(|e| format!("{}: {e}", solo.display()))?;
+        write_one(&solo, b)?;
+        out.push(match run_11ty(&solo, eleventy)? {
+            Build::Ok => Some(read(&solo, b.n)?),
             Build::Failed(_) => None,
         });
     }
+    let _ = fs::remove_dir_all(scratch);
     Ok(out)
 }
 
@@ -176,6 +187,7 @@ fn render_guarded(r: &dyn MarkdownRenderer, src: &str) -> Result<String, String>
 fn score(
     r: &dyn MarkdownRenderer,
     name: &str,
+    time_site: &str,
     bodies: &[Body],
     reference: &[Option<String>],
     out_dir: &Path,
@@ -214,7 +226,7 @@ fn score(
             }
         }
     }
-    let timed: Vec<&Body> = bodies.iter().filter(|b| b.site == TIMED_SITE).collect();
+    let timed: Vec<&Body> = bodies.iter().filter(|b| b.site == time_site).collect();
     if !timed.is_empty() {
         let mut best = f64::MAX;
         for _ in 0..5 {
@@ -224,7 +236,7 @@ fn score(
             }
             best = best.min(start.elapsed().as_secs_f64() * 1000.0);
         }
-        res.joshtronic_ms = Some(best);
+        res.timed_ms = Some(best);
     }
     res
 }
@@ -235,20 +247,23 @@ pub fn run(
     sites: &[SiteInput],
     eleventy: &Path,
     out_root: &Path,
+    time_site: &str,
     candidates: &[(&str, &dyn MarkdownRenderer)],
 ) -> Result<MarkdownReport, String> {
     if !eleventy.is_file() {
         return Err(format!("eleventy not found at {}", eleventy.display()));
     }
-    let (bodies, fm_errors) = collect_bodies(sites);
+    let (bodies, fm_errors, unreadable) = collect_bodies(sites);
     let site_dir: PathBuf = out_root.join("md");
     let _ = fs::remove_dir_all(&site_dir);
     let _ = fs::remove_dir_all(out_root.join("md-out"));
     write_site(&site_dir, &bodies)?;
-    let reference = reference(&site_dir, eleventy, &bodies)?;
+    let reference = reference(&site_dir, &out_root.join("md-solo"), eleventy, &bodies)?;
     let mut report = MarkdownReport {
         bodies: bodies.len(),
         front_matter_errors: fm_errors,
+        unreadable,
+        timed_site: time_site.to_string(),
         reference_failures: reference.iter().filter(|r| r.is_none()).count(),
         ..Default::default()
     };
@@ -272,6 +287,7 @@ pub fn run(
                         score(
                             *r,
                             name,
+                            time_site,
                             bodies,
                             reference,
                             &out_root.join("md-out").join(name),
@@ -314,13 +330,15 @@ impl MarkdownReport {
                         )
                     })
                     .collect();
-                json!({ "name": c.name, "joshtronic_ms": c.joshtronic_ms,
+                json!({ "name": c.name, "timed_ms": c.timed_ms,
                         "per_site": per_site, "mismatch_groups": groups })
             })
             .collect();
         json!({
             "bodies": self.bodies,
             "front_matter_errors": self.front_matter_errors,
+            "unreadable": self.unreadable,
+            "timed_site": self.timed_site,
             "reference_failures": self.reference_failures,
             "template_syntax": self.template_syntax,
             "template_syntax_per_site": self.template_syntax_per_site,
@@ -352,13 +370,14 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("a.md"), "---\ntitle: x\n---\nhello {{ y }}\n").unwrap();
         fs::write(src.join("b.txt"), "no").unwrap();
+        fs::write(src.join("bad.md"), [0xff, 0xfe, 0xfd]).unwrap();
         let site = SiteInput {
             name: "s".into(),
             root: d.path().to_path_buf(),
             input: src,
         };
-        let (bodies, errs) = collect_bodies(&[site]);
-        assert_eq!((bodies.len(), errs), (1, 0));
+        let (bodies, errs, unreadable) = collect_bodies(&[site]);
+        assert_eq!((bodies.len(), errs, unreadable), (1, 0, 1));
         assert!(bodies[0].has_template_syntax);
         let out = d.path().join("md");
         write_site(&out, &bodies).unwrap();
@@ -387,7 +406,7 @@ mod tests {
             Some("<p>X</p>\n".to_string()),
         ];
         let d = tempfile::tempdir().unwrap();
-        let r = score(&Pulldown, "pd", &bodies, &reference, d.path());
+        let r = score(&Pulldown, "pd", "s", &bodies, &reference, d.path());
         let c = &r.per_site["s"];
         assert_eq!(
             (c.identical, c.equivalent, c.mismatch, c.panic),
