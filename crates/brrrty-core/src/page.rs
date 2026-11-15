@@ -83,12 +83,13 @@ fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
         .map(|d| d.and_utc())
 }
 
-/// Resolves a page's date: front matter `date`, then a filename date prefix,
-/// then `created`.
+/// Resolves a page's date: front matter `date` (a date, a timestamp, or one of 11ty's
+/// `Last Modified` / `Created` keywords), then a filename date prefix, then `created`.
 pub fn resolve_date(
     front_matter: &Map<String, Value>,
     rel_to_input: &Path,
     created: SystemTime,
+    modified: SystemTime,
 ) -> Result<DateTime<Utc>, Problem> {
     if let Some(value) = front_matter.get("date") {
         let invalid = || {
@@ -96,6 +97,12 @@ pub fn resolve_date(
                 .with_help("use YYYY-MM-DD or an RFC 3339 timestamp")
         };
         let text = value.as_str().ok_or_else(invalid)?.trim();
+        // 11ty keywords. Git history lookups come later, so the `git` forms use file times.
+        match text {
+            "Last Modified" | "git Last Modified" => return Ok(modified.into()),
+            "Created" | "git Created" => return Ok(created.into()),
+            _ => {}
+        }
         if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
             return Ok(midnight(d));
         }
@@ -129,19 +136,19 @@ mod tests {
         let epoch = SystemTime::UNIX_EPOCH;
         let fm: Map<_, _> = serde_json::from_str(r#"{"date":"2020-01-02"}"#).unwrap();
         assert_eq!(
-            resolve_date(&fm, Path::new("2026-11-08-x.md"), epoch)
+            resolve_date(&fm, Path::new("2026-11-08-x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339(),
             "2020-01-02T00:00:00+00:00"
         );
         assert_eq!(
-            resolve_date(&Map::new(), Path::new("2026-11-08-x.md"), epoch)
+            resolve_date(&Map::new(), Path::new("2026-11-08-x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339(),
             "2026-11-08T00:00:00+00:00"
         );
         assert_eq!(
-            resolve_date(&Map::new(), Path::new("x.md"), epoch)
+            resolve_date(&Map::new(), Path::new("x.md"), epoch, epoch)
                 .unwrap()
                 .timestamp(),
             0
@@ -154,14 +161,14 @@ mod tests {
         let fm: Map<_, _> =
             serde_json::from_str(r#"{"date":"2020-01-02T03:04:05+02:00"}"#).unwrap();
         assert_eq!(
-            resolve_date(&fm, Path::new("x.md"), epoch)
+            resolve_date(&fm, Path::new("x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339(),
             "2020-01-02T01:04:05+00:00"
         );
         let bad: Map<_, _> = serde_json::from_str(r#"{"date":"nope"}"#).unwrap();
         assert_eq!(
-            resolve_date(&bad, Path::new("x.md"), epoch)
+            resolve_date(&bad, Path::new("x.md"), epoch, epoch)
                 .unwrap_err()
                 .code,
             "date-invalid"
@@ -173,11 +180,32 @@ mod tests {
         assert_eq!(file_slug(Path::new("2026-13-45-bad.md")), "bad");
         let created = SystemTime::UNIX_EPOCH;
         assert_eq!(
-            resolve_date(&Map::new(), Path::new("2026-13-45-bad.md"), created)
-                .unwrap()
-                .timestamp(),
+            resolve_date(
+                &Map::new(),
+                Path::new("2026-13-45-bad.md"),
+                created,
+                created
+            )
+            .unwrap()
+            .timestamp(),
             0
         );
+    }
+
+    #[test]
+    fn date_keywords_use_file_times() {
+        let created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2000);
+        let secs = |kw: &str| {
+            let fm: Map<_, _> = serde_json::from_value(serde_json::json!({ "date": kw })).unwrap();
+            resolve_date(&fm, Path::new("x.md"), created, modified)
+                .unwrap()
+                .timestamp()
+        };
+        assert_eq!(secs("Last Modified"), 2000);
+        assert_eq!(secs("git Last Modified"), 2000);
+        assert_eq!(secs("Created"), 1000);
+        assert_eq!(secs("git Created"), 1000);
     }
 
     #[test]
@@ -185,7 +213,7 @@ mod tests {
         let epoch = SystemTime::UNIX_EPOCH;
         let date = |s: &str| {
             let fm: Map<_, _> = serde_json::from_value(serde_json::json!({ "date": s })).unwrap();
-            resolve_date(&fm, Path::new("x.md"), epoch)
+            resolve_date(&fm, Path::new("x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339()
         };

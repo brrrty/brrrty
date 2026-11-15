@@ -73,14 +73,22 @@ fn load(input: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
             .with_help("save the file as UTF-8")
     })?;
     let (data, body) = split_front_matter(&text).map_err(|p| with_path_if_missing(p, rel))?;
-    let created = fs::metadata(&full)
-        .and_then(|m| m.created().or_else(|_| m.modified()))
+    let meta = fs::metadata(&full).ok();
+    let modified = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    let date = resolve_date(&data, rel, created).map_err(|p| with_path_if_missing(p, rel))?;
+    let created = meta
+        .as_ref()
+        .and_then(|m| m.created().ok())
+        .unwrap_or(modified);
+    let date =
+        resolve_date(&data, rel, created, modified).map_err(|p| with_path_if_missing(p, rel))?;
     let permalink = resolve_permalink(rel, &data).map_err(|p| with_path_if_missing(p, rel))?;
     let Permalink::Write { output_rel, .. } = permalink else {
         return Ok(None);
     };
+    reject_unsupported_features(&text, &data, body, rel)?;
     Ok(Some(Prepared {
         page: Page {
             input_path: rel.to_path_buf(),
@@ -91,6 +99,49 @@ fn load(input: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
         },
         output_rel,
     }))
+}
+
+/// Front matter keys that change a page's output in ways Brrrty can't reproduce yet.
+const UNSUPPORTED_KEYS: &[&str] = &["layout", "pagination", "eleventyComputed"];
+
+/// Refuse pages that 11ty would process further than Brrrty can yet, instead of writing
+/// output that silently differs.
+fn reject_unsupported_features(
+    text: &str,
+    data: &serde_json::Map<String, serde_json::Value>,
+    body: &str,
+    rel: &Path,
+) -> Result<(), Problem> {
+    let keys: Vec<String> = UNSUPPORTED_KEYS
+        .iter()
+        .filter(|k| data.contains_key(**k))
+        .map(|k| format!("`{k}`"))
+        .collect();
+    if !keys.is_empty() {
+        let message = if keys.len() == 1 {
+            format!("Front matter key {} isn't supported yet", keys[0])
+        } else {
+            format!("Front matter keys {} aren't supported yet", keys.join(", "))
+        };
+        return Err(Problem::error("front-matter-unsupported", message)
+            .with_path(rel)
+            .with_help("Layouts, pagination, and computed data are in progress."));
+    }
+    if let Some(at) = body.find("{{").into_iter().chain(body.find("{%")).min() {
+        // `body` is the tail of the file, so its start is where the file text ends minus its length.
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let upto = &text[..text.len() - body.len() + at];
+        let line = upto.matches('\n').count() + 1;
+        let column = upto.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+        return Err(Problem::error(
+            "template-syntax-unsupported",
+            "Template syntax ({{ or {%) isn't supported yet",
+        )
+        .with_path(rel)
+        .at(line, column)
+        .with_help("Liquid and Nunjucks support is in progress."));
+    }
+    Ok(())
 }
 
 /// Sort by path then code, and in strict mode keep only up to the first error.
@@ -129,6 +180,27 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
     if let Err(p) = opts.validate() {
         report.problems.push(p);
         return finish(report, strict, start);
+    }
+    if let Ok(root) = opts.root_dir() {
+        for name in [
+            "eleventy.config.js",
+            "eleventy.config.cjs",
+            "eleventy.config.mjs",
+            ".eleventy.js",
+        ] {
+            if root.join(name).is_file() {
+                report.problems.push(
+                    Problem::warning(
+                        "eleventy-config-ignored",
+                        "Brrrty doesn't read your 11ty config yet",
+                    )
+                    .with_path(name)
+                    .with_help(
+                        "Pass your input folder and passthrough paths as flags, like --input src --passthrough src/images.",
+                    ),
+                );
+            }
+        }
     }
     let discovery = match discover(opts) {
         Ok(d) => d,

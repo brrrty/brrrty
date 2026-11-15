@@ -342,3 +342,141 @@ fn input_that_is_a_file_is_a_clear_error() {
     assert_eq!(r.problems[0].code, "input-not-a-directory");
     assert_eq!(r.problems[0].path.as_deref(), Some(Path::new("src")));
 }
+
+#[test]
+fn template_syntax_in_body_is_an_error_with_file_position() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/a.md",
+        "---\ntitle: x\n---\nhello\n  {{ name }}\n",
+    );
+    write(root, "src/b.html", "<p>{% if x %}</p>\n");
+    write(root, "src/ok.md", "fine { not syntax }\n");
+    let r = build(&opts(root), &Provisional);
+    let all: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == "template-syntax-unsupported")
+        .collect();
+    assert_eq!(all.len(), 2, "{:?}", r.problems);
+    let a = all
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("a.md")))
+        .unwrap();
+    assert_eq!((a.line, a.column), (Some(5), Some(3)));
+    assert_eq!(a.message, "Template syntax ({{ or {%) isn't supported yet");
+    assert_eq!(
+        a.help.as_deref(),
+        Some("Liquid and Nunjucks support is in progress.")
+    );
+    let b = all
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("b.html")))
+        .unwrap();
+    assert_eq!((b.line, b.column), (Some(1), Some(4)));
+    assert!(!root.join("_site/a/index.html").exists());
+    assert!(!root.join("_site/b/index.html").exists());
+    assert!(root.join("_site/ok/index.html").exists());
+}
+
+#[test]
+fn unsupported_front_matter_keys_are_errors() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/a.md",
+        "---\nlayout: base.njk\ntags: [x]\n---\nbody\n",
+    );
+    write(
+        root,
+        "src/b.md",
+        "---\npagination:\n  data: x\neleventyComputed:\n  y: 1\n---\nbody\n",
+    );
+    write(root, "src/c.md", "---\ntitle: ok\ntags: [x]\n---\nbody\n");
+    let r = build(&opts(root), &Provisional);
+    let a = r
+        .problems
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("a.md")))
+        .unwrap();
+    assert_eq!(a.code, "front-matter-unsupported");
+    assert!(a.message.contains("`layout`"), "{}", a.message);
+    assert_eq!(
+        a.help.as_deref(),
+        Some("Layouts, pagination, and computed data are in progress.")
+    );
+    let b = r
+        .problems
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("b.md")))
+        .unwrap();
+    assert!(b.message.contains("`pagination`") && b.message.contains("`eleventyComputed`"));
+    assert!(!root.join("_site/a/index.html").exists());
+    assert!(root.join("_site/c/index.html").exists());
+    assert_eq!(error_count(&r), 2);
+}
+
+#[test]
+fn eleventy_config_files_warn_once_each() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "a\n");
+    write(root, "eleventy.config.js", "module.exports = () => {};");
+    write(root, ".eleventy.js", "module.exports = () => {};");
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    let warned: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == "eleventy-config-ignored")
+        .collect();
+    assert_eq!(warned.len(), 2);
+    assert!(matches!(warned[0].severity, Severity::Warning));
+    assert_eq!(
+        warned[0].message,
+        "Brrrty doesn't read your 11ty config yet"
+    );
+    assert_eq!(
+        warned[0].help.as_deref(),
+        Some(
+            "Pass your input folder and passthrough paths as flags, like --input src --passthrough src/images."
+        )
+    );
+    assert!(
+        warned
+            .iter()
+            .any(|p| p.path.as_deref() == Some(Path::new("eleventy.config.js")))
+    );
+    assert!(root.join("_site/a/index.html").exists());
+    // no config, no warning
+    let t2 = tempfile::tempdir().unwrap();
+    write(t2.path(), "src/a.md", "a\n");
+    assert!(build(&opts(t2.path()), &Provisional).problems.is_empty());
+}
+
+#[test]
+fn date_keywords_build_without_errors() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    for (i, kw) in [
+        "Last Modified",
+        "Created",
+        "git Last Modified",
+        "git Created",
+    ]
+    .iter()
+    .enumerate()
+    {
+        write(
+            root,
+            &format!("src/p{i}.md"),
+            format!("---\ndate: {kw}\n---\nx\n"),
+        );
+    }
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert_eq!(r.written, 4);
+}
