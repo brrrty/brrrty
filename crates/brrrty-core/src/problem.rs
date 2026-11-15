@@ -10,6 +10,7 @@ pub mod codes {
     pub const FRONT_MATTER_UNSUPPORTED: &str = "front-matter-unsupported";
     pub const IGNORE_FILE_INVALID: &str = "ignore-file-invalid";
     pub const IGNORE_LINE_ANCHORED: &str = "ignore-line-anchored";
+    pub const IGNORE_LINE_INVALID: &str = "ignore-line-invalid";
     pub const INPUT_MISSING: &str = "input-missing";
     pub const INPUT_NOT_A_DIRECTORY: &str = "input-not-a-directory";
     pub const OUTPUT_COLLISION: &str = "output-collision";

@@ -66,6 +66,22 @@ fn resolve_from(path: &Path, cwd: std::io::Result<PathBuf>) -> Result<PathBuf, P
     }
 }
 
+/// `path` relative to `base`, both absolute and normalized, using `..` where `path` is not
+/// under `base`.
+fn lexical_relative(base: &Path, path: &Path) -> PathBuf {
+    let b: Vec<_> = base.components().collect();
+    let p: Vec<_> = path.components().collect();
+    let common = b.iter().zip(&p).take_while(|(x, y)| x == y).count();
+    let mut out = PathBuf::new();
+    for _ in common..b.len() {
+        out.push("..");
+    }
+    for c in &p[common..] {
+        out.push(c.as_os_str());
+    }
+    out
+}
+
 /// `path` relative to the project `root`, for reporting. A path outside the root is kept as given.
 pub(crate) fn root_relative(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
@@ -78,6 +94,24 @@ impl BuildOptions {
 
     pub fn input_dir(&self) -> Result<PathBuf, Problem> {
         resolve(&self.root_dir()?.join(&self.input))
+    }
+
+    /// The input folder relative to the root, spelled the way the user wrote it: symlinks are
+    /// not resolved, so `src -> ../real` stays `src`, and `--input ../x` stays `../x`. 11ty
+    /// matches ignore lines and finds path dates against this spelling, not the real path.
+    pub fn input_rel(&self) -> Result<PathBuf, Problem> {
+        let given_root = normalize(&std::env::current_dir().unwrap_or_default().join(&self.root));
+        let input = normalize(&given_root.join(&self.input));
+        if let Ok(r) = input.strip_prefix(&given_root) {
+            return Ok(r.to_path_buf());
+        }
+        // An absolute input may name the root by its real path.
+        if self.input.is_absolute()
+            && let Ok(r) = self.input_dir()?.strip_prefix(self.root_dir()?)
+        {
+            return Ok(r.to_path_buf());
+        }
+        Ok(lexical_relative(&given_root, &input))
     }
 
     pub fn output_dir(&self) -> Result<PathBuf, Problem> {
@@ -136,6 +170,25 @@ mod tests {
     fn resolve_handles_missing_tail() {
         let r = resolve(Path::new("./nope/../_site")).unwrap();
         assert_eq!(r, resolve(Path::new(".")).unwrap().join("_site"));
+    }
+
+    #[test]
+    fn input_rel_keeps_the_spelling() {
+        let o = |input: &str| BuildOptions {
+            root: PathBuf::from("."),
+            input: PathBuf::from(input),
+            output: PathBuf::from("_site"),
+            passthrough: vec![],
+            strict: false,
+        };
+        assert_eq!(o("./src/").input_rel().unwrap(), PathBuf::from("src"));
+        assert_eq!(o(".").input_rel().unwrap(), PathBuf::new());
+        assert_eq!(o("../x/./y").input_rel().unwrap(), PathBuf::from("../x/y"));
+        assert_eq!(o("a/../../x").input_rel().unwrap(), PathBuf::from("../x"));
+        assert_eq!(
+            lexical_relative(Path::new("/a/b"), Path::new("/a/c/d")),
+            PathBuf::from("../c/d")
+        );
     }
 
     #[test]

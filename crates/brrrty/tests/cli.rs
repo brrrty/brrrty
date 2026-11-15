@@ -232,3 +232,18 @@ fn dangling_symlink_exits_zero() {
     let out = run_in(dir.path(), &["build", "--input", "src"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
+
+#[test]
+fn input_outside_the_root_builds_without_crashing() {
+    let dir = site(&[
+        ("site/.gitignore", "drafts\n"),
+        ("real/index.md", "# Hi\n"),
+        ("real/drafts/a.md", "draft\n"),
+        ("real/.eleventyignore", "drafts\n"),
+    ]);
+    let root = dir.path().join("site");
+    let out = run_in(&root, &["build", "--input", "../real"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(root.join("_site/index.html").exists());
+    assert!(!root.join("_site/drafts").exists());
+}

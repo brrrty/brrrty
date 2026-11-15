@@ -778,3 +778,114 @@ fn duplicate_passthrough_destination_is_an_error() {
     assert_eq!(read(root.join("_site/assets/two.txt")), "two");
     assert_eq!(error_count(&r), 1);
 }
+
+/// Lays out a site whose input folder is `<t>/real`, with a root `.gitignore` line that
+/// matches nothing at the root and an input `.eleventyignore` that skips `drafts`.
+fn outside_input_site(t: &Path) -> PathBuf {
+    let root = t.join("site");
+    write(&root, ".gitignore", "drafts\n");
+    write(t, "real/index.md", "hi\n");
+    write(t, "real/drafts/a.md", "draft\n");
+    write(t, "real/posts/2026-01-02-hello.md", "hi\n");
+    write(t, "real/.eleventyignore", "drafts\n");
+    root
+}
+
+fn check_outside_input_build(root: &Path, input: &str) {
+    let o = BuildOptions {
+        input: PathBuf::from(input),
+        ..opts(root)
+    };
+    let r = build(&o, &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert!(root.join("_site/index.html").exists());
+    assert!(
+        root.join("_site/posts/2026-01-02-hello/index.html")
+            .exists()
+    );
+    // `<input>/.eleventyignore` is honored, so the draft is not built.
+    assert!(!root.join("_site/drafts").exists(), "{:?}", r.problems);
+    // The root `.gitignore` line can't reach the input folder, so there is nothing to warn about.
+    assert!(
+        r.problems
+            .iter()
+            .all(|p| p.code != codes::IGNORE_LINE_ANCHORED),
+        "{:?}",
+        r.problems
+    );
+}
+
+#[test]
+fn input_outside_the_root_builds_and_honors_its_eleventyignore() {
+    let t = tempfile::tempdir().unwrap();
+    let root = outside_input_site(t.path());
+    check_outside_input_build(&root, "../real");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_input_builds_and_honors_its_eleventyignore() {
+    let t = tempfile::tempdir().unwrap();
+    let root = outside_input_site(t.path());
+    std::os::unix::fs::symlink("../real", root.join("src")).unwrap();
+    check_outside_input_build(&root, "src");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_input_reports_paths_and_dates_through_the_link() {
+    let t = tempfile::tempdir().unwrap();
+    // A date in a folder above the root is not part of the page path, so this impossible
+    // one must not turn into a `date-invalid` error.
+    let base = t.path().join("2026-13-45-archive");
+    let root = base.join("site");
+    write(&base, "real/bad.md", "---\npermalink: \"{{ x }}\"\n---\n");
+    write(&base, "real/plain.md", "hi\n");
+    fs::create_dir_all(&root).unwrap();
+    std::os::unix::fs::symlink("../real", root.join("src")).unwrap();
+    let r = build(&opts(&root), &Provisional);
+    let paths: Vec<_> = r.problems.iter().filter_map(|p| p.path.clone()).collect();
+    assert_eq!(paths, [PathBuf::from("src/bad.md")], "{:?}", r.problems);
+    assert!(root.join("_site/plain/index.html").exists());
+}
+
+#[test]
+fn ignore_line_matching_a_root_file_outside_the_input_does_not_warn() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "README.md", "readme\n");
+    write(root, "src/a.md", "a\n");
+    write(root, ".gitignore", "*.md\n");
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert!(
+        r.problems
+            .iter()
+            .all(|p| p.code != codes::IGNORE_LINE_ANCHORED),
+        "{:?}",
+        r.problems
+    );
+    assert!(root.join("_site/a/index.html").exists());
+}
+
+#[test]
+fn invalid_ignore_line_warns_and_the_build_goes_on() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "a\n");
+    write(root, "src/skip.md", "skip\n");
+    write(root, "src/.eleventyignore", "{a,b\nskip.md\n");
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    let w: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::IGNORE_LINE_INVALID)
+        .collect();
+    assert_eq!(w.len(), 1, "{:?}", r.problems);
+    assert_eq!(w[0].path.as_deref(), Some(Path::new("src/.eleventyignore")));
+    assert_eq!(w[0].line, Some(1));
+    assert!(w[0].message.contains("`{a,b`"), "{}", w[0].message);
+    assert!(root.join("_site/a/index.html").exists());
+    assert!(!root.join("_site/skip").exists());
+}

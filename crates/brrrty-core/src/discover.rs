@@ -2,7 +2,7 @@ use crate::ignore_files::IgnoreRules;
 use crate::options::{BuildOptions, root_relative};
 use crate::problem::{Problem, codes};
 use ignore::WalkBuilder;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const TEMPLATE_EXTS: &[&str] = &[".md", ".html"];
@@ -36,13 +36,19 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     let root = opts.root_dir()?;
     let input = opts.input_dir()?;
     let output = opts.output_dir()?;
+    let input_rel = opts.input_rel()?;
 
-    let rules = Arc::new(IgnoreRules::load(&root, &input)?);
+    let rules = IgnoreRules::load(&root, &input, &input_rel)?;
+    let mut found = Discovery {
+        warnings: rules.warnings.clone(),
+        ..Discovery::default()
+    };
+    let rules = Arc::new(rules);
 
     let includes = input.join("_includes");
     let data = input.join("_data");
 
-    let (out_dir, inc_dir, data_dir) = (output.clone(), includes.clone(), data.clone());
+    let out_dir = output.clone();
     let filter_rules = Arc::clone(&rules);
     let walker = WalkBuilder::new(&input)
         .standard_filters(false)
@@ -61,7 +67,8 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         })
         .build();
 
-    let mut found = Discovery::default();
+    // Paths in problems are relative to the root, through the input folder's own spelling.
+    let shown = |p: &std::path::Path| rules.root_rel(p).unwrap_or_else(|| root_relative(&root, p));
     for entry in walker {
         let entry = match entry {
             Err(e) => {
@@ -71,7 +78,7 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
                             codes::SYMLINK_LOOP,
                             "this link points back into a folder that contains it, so it was skipped",
                         )
-                        .with_path(root_relative(&root, link))
+                        .with_path(shown(link))
                         .with_help("Remove the link or point it outside its own folder."),
                     );
                     continue;
@@ -85,7 +92,7 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
                             codes::SYMLINK_BROKEN,
                             format!("this link points to `{target}`, which does not exist"),
                         )
-                        .with_path(root_relative(&root, link))
+                        .with_path(shown(link))
                         .with_help("remove the link or point it at an existing file"),
                     );
                     continue;
@@ -99,7 +106,7 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
                 codes::DISCOVER_FAILED,
                 format!("could not read the input folder: {e}"),
             )
-            .with_path(root_relative(&root, &input))
+            .with_path(&input_rel)
         })?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
@@ -112,7 +119,7 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
                     codes::DISCOVER_FAILED,
                     "found a file outside the input folder while walking it",
                 )
-                .with_path(root_relative(&root, entry.path()))
+                .with_path(shown(entry.path()))
             })?
             .to_path_buf();
         let name = entry.file_name().to_string_lossy().to_lowercase();
@@ -128,29 +135,49 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     found.unsupported.sort();
     found.plugin_only.sort();
 
-    // Only worth a second look when an ignore line exists and templates are being built.
+    // Only worth a second look when an ignore line names a path that doesn't exist.
     let templates: Vec<PathBuf> = found.templates.iter().map(|t| input.join(t)).collect();
-    let entries: Vec<PathBuf> = if rules.is_empty() {
-        Vec::new()
-    } else {
-        WalkBuilder::new(&input)
-            .standard_filters(false)
-            .hidden(false)
-            .follow_links(true)
-            .filter_entry(move |e| {
-                let is_dir = e.file_type().is_some_and(|t| t.is_dir());
-                !(is_dir && (e.path() == out_dir || e.path() == inc_dir || e.path() == data_dir))
-                    && e.file_name() != "node_modules"
-            })
-            .build()
-            .filter_map(Result::ok)
-            .map(|e| e.into_path())
-            .collect()
+    let entries = || {
+        let mut all = list_entries(&root, &root, &out_dir, &rules);
+        if input_rel.starts_with("..") {
+            all.extend(list_entries(&input, &root, &out_dir, &rules));
+        }
+        all
     };
-    found
-        .warnings
-        .extend(rules.anchored_warnings(&entries, &templates));
+    let warnings = rules.anchored_warnings(entries, &templates);
+    found.warnings.extend(warnings);
     Ok(found)
+}
+
+/// Every file and folder under `dir`, before any ignoring, as root-relative strings. Skips
+/// `.git`, `node_modules` and the output folder.
+fn list_entries(dir: &Path, root: &Path, output: &Path, rules: &IgnoreRules) -> Vec<String> {
+    let output = output.to_path_buf();
+    WalkBuilder::new(dir)
+        .standard_filters(false)
+        .hidden(false)
+        .follow_links(true)
+        .filter_entry(move |e| {
+            let is_dir = e.file_type().is_some_and(|t| t.is_dir());
+            !(is_dir && e.path() == output)
+                && e.file_name() != "node_modules"
+                && e.file_name() != ".git"
+        })
+        .build()
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            rules
+                .root_rel(e.path())
+                .or_else(|| e.path().strip_prefix(root).ok().map(Path::to_path_buf))
+        })
+        .filter(|r| !r.as_os_str().is_empty())
+        .map(|r| {
+            r.components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect()
 }
 
 /// The link path of a symlink-loop walk error, looking through path and depth wrappers.

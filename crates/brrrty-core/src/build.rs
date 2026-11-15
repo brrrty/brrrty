@@ -10,7 +10,7 @@ use rayon::prelude::*;
 
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::split_front_matter;
-use crate::options::{BuildOptions, root_relative};
+use crate::options::BuildOptions;
 use crate::page::{Page, file_slug, resolve_date};
 use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Permalink, resolve_permalink};
@@ -211,15 +211,22 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             }
         }
     }
-    let (root, input, out) = match (opts.root_dir(), opts.input_dir(), opts.output_dir()) {
+    let (_, input, out) = match (opts.root_dir(), opts.input_dir(), opts.output_dir()) {
         (Ok(r), Ok(i), Ok(o)) => (r, i, o),
         (Err(p), _, _) | (_, Err(p), _) | (_, _, Err(p)) => {
             report.problems.push(p);
             return finish(report, strict, start);
         }
     };
-    // Pages are tracked relative to the input folder; problems report them relative to the root.
-    let input_rel = root_relative(&root, &input);
+    // Pages are tracked relative to the input folder; problems report them relative to the
+    // root, through the input folder as spelled (11ty finds path dates in that spelling too).
+    let input_rel = match opts.input_rel() {
+        Ok(r) => r,
+        Err(p) => {
+            report.problems.push(p);
+            return finish(report, strict, start);
+        }
+    };
 
     let discovery = match discover(opts) {
         Ok(d) => d,

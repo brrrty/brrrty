@@ -8,7 +8,7 @@ use crate::problem::{Problem, codes};
 use globset::{GlobBuilder, GlobMatcher};
 use ignore::gitignore::GitignoreBuilder;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug)]
 struct Rule {
@@ -27,22 +27,33 @@ struct Rule {
 #[derive(Debug, Default)]
 pub struct IgnoreRules {
     root: PathBuf,
+    /// The input folder's real path, which is what the walker yields paths under.
+    input: PathBuf,
+    /// The input folder as spelled relative to the root; may start with `..`.
+    input_rel: PathBuf,
     rules: Vec<Rule>,
+    /// Lines that could not be read as a pattern and were skipped.
+    pub warnings: Vec<Problem>,
 }
 
 impl IgnoreRules {
-    /// Read the ignore files. `root` and `input` are absolute.
-    pub fn load(root: &Path, input: &Path) -> Result<IgnoreRules, Problem> {
-        let mut files = vec![root.join(".gitignore"), root.join(".eleventyignore")];
-        if input != root {
-            files.push(input.join(".eleventyignore"));
+    /// Read the ignore files. `root` and `input` are absolute real paths; `input_rel` is the
+    /// input folder as spelled relative to the root (see `BuildOptions::input_rel`).
+    pub fn load(root: &Path, input: &Path, input_rel: &Path) -> Result<IgnoreRules, Problem> {
+        let mut files = vec![
+            (root.join(".gitignore"), PathBuf::new()),
+            (root.join(".eleventyignore"), PathBuf::new()),
+        ];
+        if !input_rel.as_os_str().is_empty() {
+            files.push((input.join(".eleventyignore"), input_rel.to_path_buf()));
         }
         let mut rules = Vec::new();
-        for file in files {
+        let mut warnings = Vec::new();
+        for (file, dir) in files {
             if !file.is_file() {
                 continue;
             }
-            let rel_file = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
+            let rel_file = dir.join(file.file_name().unwrap_or_default());
             let body = fs::read(&file).map_err(|e| {
                 Problem::error(
                     codes::IGNORE_FILE_INVALID,
@@ -51,11 +62,6 @@ impl IgnoreRules {
                 .with_path(&rel_file)
             })?;
             let body = String::from_utf8_lossy(&body);
-            let dir_abs = file.parent().unwrap_or(root).to_path_buf();
-            let dir = dir_abs
-                .strip_prefix(root)
-                .unwrap_or(Path::new(""))
-                .to_path_buf();
             for (i, raw) in body.lines().enumerate() {
                 let text = raw.trim();
                 if text.is_empty() || text.starts_with('#') || text.starts_with('!') {
@@ -73,22 +79,29 @@ impl IgnoreRules {
                 if root.join(&anchored).is_dir() {
                     anchored.push_str("/**");
                 }
-                let glob = GlobBuilder::new(&anchored)
-                    .literal_separator(true)
-                    .build()
-                    .map_err(|e| {
-                        Problem::error(
-                            codes::IGNORE_FILE_INVALID,
-                            format!(
-                                "line {} `{}` is not a valid pattern: {}",
-                                i + 1,
-                                text,
-                                e.kind()
+                let glob = match GlobBuilder::new(&anchored).literal_separator(true).build() {
+                    Ok(g) => g,
+                    Err(e) => {
+                        warnings.push(
+                            Problem::warning(
+                                codes::IGNORE_LINE_INVALID,
+                                format!(
+                                    "{} line {} `{}` is not a valid pattern ({}), so it was skipped",
+                                    path_str(&rel_file),
+                                    i + 1,
+                                    text,
+                                    e.kind()
+                                ),
+                            )
+                            .with_path(&rel_file)
+                            .at(i + 1, 1)
+                            .with_help(
+                                "check the brackets and braces on this line, or escape them with a backslash",
                             ),
-                        )
-                        .with_path(&rel_file)
-                        .at(i + 1, 1)
-                    })?;
+                        );
+                        continue;
+                    }
+                };
                 rules.push(Rule {
                     file: rel_file.clone(),
                     dir: dir.clone(),
@@ -101,24 +114,37 @@ impl IgnoreRules {
         }
         Ok(IgnoreRules {
             root: root.to_path_buf(),
+            input: input.to_path_buf(),
+            input_rel: input_rel.to_path_buf(),
             rules,
+            warnings,
         })
+    }
+
+    /// `path` (absolute, as the walker yields it) relative to the root, spelled through the
+    /// input folder's own spelling. `None` for a path outside both.
+    pub fn root_rel(&self, path: &Path) -> Option<PathBuf> {
+        if let Ok(r) = path.strip_prefix(&self.input) {
+            return Some(self.input_rel.join(r));
+        }
+        path.strip_prefix(&self.root).ok().map(Path::to_path_buf)
     }
 
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
 
-    /// True if the path, or any folder above it, matches a rule. `path` is absolute.
+    /// True if the path, or any folder above it, matches a rule. `path` is absolute, under the
+    /// input folder or the root.
     /// A folder is matched by the same rules as a file; `_is_dir` is accepted for callers
     /// that know, but 11ty's globs don't treat the two differently.
     pub fn is_ignored(&self, path: &Path, _is_dir: bool) -> bool {
-        let Ok(rel) = path.strip_prefix(&self.root) else {
-            return false;
-        };
         if self.rules.is_empty() {
             return false;
         }
+        let Some(rel) = self.root_rel(path) else {
+            return false;
+        };
         let mut cur = PathBuf::new();
         for part in rel.components() {
             cur.push(part);
@@ -132,19 +158,26 @@ impl IgnoreRules {
 
     /// Warn about lines that look like gitignore habits: the line matches nothing where 11ty
     /// anchors it, but gitignore would have matched templates Brrrty is building.
-    /// `entries` is every file and folder under the input folder, before any ignoring.
-    /// `templates` is what will be built. Both are absolute. Paths in messages are relative
-    /// to the root.
-    pub fn anchored_warnings(&self, entries: &[PathBuf], templates: &[PathBuf]) -> Vec<Problem> {
+    /// `entries` lists every file and folder under the root (and under the input folder, when
+    /// that is outside the root), relative to the root, before any ignoring. It is only called
+    /// when some line names a path that does not exist. `templates` is what will be built, as
+    /// absolute paths under the input folder. Paths in messages are relative to the root.
+    pub fn anchored_warnings(
+        &self,
+        entries: impl FnOnce() -> Vec<String>,
+        templates: &[PathBuf],
+    ) -> Vec<Problem> {
         let mut out = Vec::new();
+        let mut entries_fn = Some(entries);
+        let mut listed: Option<Vec<String>> = None;
+        let templates: Vec<PathBuf> = templates.iter().filter_map(|t| self.root_rel(t)).collect();
         for rule in &self.rules {
-            let hits_something = self.root.join(&rule.anchored).exists()
-                || entries.iter().any(|e| {
-                    e.strip_prefix(&self.root)
-                        .map(|r| rule.matcher.is_match(path_str(r)))
-                        .unwrap_or(false)
-                });
-            if hits_something {
+            if self.root.join(&rule.anchored).exists() {
+                continue;
+            }
+            let all =
+                listed.get_or_insert_with(|| entries_fn.take().map(|f| f()).unwrap_or_default());
+            if all.iter().any(|e| rule.matcher.is_match(e)) {
                 continue;
             }
             let mut gi = GitignoreBuilder::new(self.root.join(&rule.dir));
@@ -152,10 +185,19 @@ impl IgnoreRules {
                 continue;
             }
             let Ok(gi) = gi.build() else { continue };
+            // Gitignore only reaches templates under the ignore file's own folder.
             let matched: Vec<String> = templates
                 .iter()
-                .filter(|t| gi.matched_path_or_any_parents(t, false).is_ignore())
-                .map(|t| path_str(t.strip_prefix(&self.root).unwrap_or(t)))
+                .filter(|t| {
+                    t.strip_prefix(&rule.dir).is_ok_and(|under| {
+                        !under.as_os_str().is_empty()
+                            && under
+                                .components()
+                                .all(|c| matches!(c, Component::Normal(_)))
+                            && gi.matched_path_or_any_parents(under, false).is_ignore()
+                    })
+                })
+                .map(|t| path_str(t))
                 .collect();
             let Some(first) = matched.first() else {
                 continue;
@@ -227,7 +269,7 @@ mod tests {
         }
         fs::write(t.path().join(".gitignore"), ignore).unwrap();
         let root = t.path().canonicalize().unwrap();
-        let rules = IgnoreRules::load(&root, &root.join("src")).unwrap();
+        let rules = IgnoreRules::load(&root, &root.join("src"), Path::new("src")).unwrap();
         (t, rules)
     }
 
@@ -270,14 +312,26 @@ mod tests {
     }
 
     #[test]
-    fn invalid_glob_names_file_line_and_pattern() {
+    fn invalid_lines_warn_and_are_skipped() {
         let t = tempfile::tempdir().unwrap();
-        fs::write(t.path().join(".gitignore"), "ok\n[abc\n").unwrap();
+        fs::write(t.path().join(".gitignore"), "ok\n[abc\n{a,b\n[]\nend\\\n").unwrap();
+        fs::write(t.path().join("ok"), "x").unwrap();
         let root = t.path().canonicalize().unwrap();
-        let e = IgnoreRules::load(&root, &root.join("src")).unwrap_err();
-        assert_eq!(e.code, codes::IGNORE_FILE_INVALID);
-        assert_eq!(e.line, Some(2));
-        assert!(e.message.contains("[abc"));
-        assert_eq!(e.path.as_deref(), Some(Path::new(".gitignore")));
+        let r = IgnoreRules::load(&root, &root.join("src"), Path::new("src")).unwrap();
+        let lines: Vec<_> = r.warnings.iter().map(|w| w.line.unwrap()).collect();
+        assert_eq!(lines, [2, 3, 4, 5]);
+        let w = &r.warnings[0];
+        assert_eq!(w.code, codes::IGNORE_LINE_INVALID);
+        assert!(matches!(w.severity, crate::problem::Severity::Warning));
+        assert!(
+            w.message
+                .starts_with(".gitignore line 2 `[abc` is not a valid pattern"),
+            "{}",
+            w.message
+        );
+        assert!(w.message.ends_with("so it was skipped"), "{}", w.message);
+        assert_eq!(w.path.as_deref(), Some(Path::new(".gitignore")));
+        // The valid line still works.
+        assert!(r.is_ignored(&root.join("ok"), false));
     }
 }
