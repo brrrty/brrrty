@@ -1,0 +1,411 @@
+[[case]]
+name = "if_basic"
+group = "core"
+template = '''{% if x %}yes{% endif %}'''
+data = '''{"x": true}'''
+
+[[case]]
+name = "if_false"
+group = "core"
+template = '''[{% if x %}yes{% endif %}]'''
+data = '''{"x": false}'''
+
+[[case]]
+name = "if_else"
+group = "core"
+template = '''{% if x %}a{% else %}b{% endif %}'''
+data = '''{"x": 0}'''
+
+[[case]]
+name = "if_elif"
+group = "core"
+template = '''{% if x == 1 %}one{% elif x == 2 %}two{% elif x == 3 %}three{% else %}many{% endif %}'''
+data = '''{"x": 2}'''
+
+[[case]]
+name = "if_elseif"
+group = "core"
+template = '''{% if x == 1 %}one{% elseif x == 2 %}two{% else %}many{% endif %}'''
+data = '''{"x": 2}'''
+
+[[case]]
+name = "if_nested"
+group = "core"
+template = '''{% if a %}{% if b %}AB{% else %}A{% endif %}{% else %}none{% endif %}'''
+data = '''{"a": true, "b": false}'''
+
+[[case]]
+name = "if_not"
+group = "core"
+template = '''{% if not x %}empty{% endif %}'''
+data = '''{"x": ""}'''
+
+[[case]]
+name = "if_inline_expr"
+group = "core"
+template = '''{{ "big" if n > 5 else "small" }}'''
+data = '''{"n": 9}'''
+
+[[case]]
+name = "if_inline_no_else"
+group = "core"
+template = '''[{{ "big" if n > 5 }}]'''
+data = '''{"n": 1}'''
+
+[[case]]
+name = "for_array"
+group = "core"
+template = '''{% for i in items %}{{ i }},{% endfor %}'''
+data = '''{"items": [1, 2, 3]}'''
+
+[[case]]
+name = "for_else_empty"
+group = "core"
+template = '''{% for i in items %}{{ i }}{% else %}none{% endfor %}'''
+data = '''{"items": []}'''
+
+[[case]]
+name = "for_else_undefined"
+group = "core"
+template = '''{% for i in nothing %}{{ i }}{% else %}none{% endfor %}'''
+
+[[case]]
+name = "for_loop_index"
+group = "core"
+template = '''{% for i in items %}{{ loop.index }}:{{ loop.index0 }} {% endfor %}'''
+data = '''{"items": ["a", "b", "c"]}'''
+
+[[case]]
+name = "for_loop_revindex"
+group = "core"
+template = '''{% for i in items %}{{ loop.revindex }}:{{ loop.revindex0 }} {% endfor %}'''
+data = '''{"items": ["a", "b", "c"]}'''
+
+[[case]]
+name = "for_loop_first_last"
+group = "core"
+template = '''{% for i in items %}{% if loop.first %}[{% endif %}{{ i }}{% if loop.last %}]{% else %},{% endif %}{% endfor %}'''
+data = '''{"items": ["a", "b", "c"]}'''
+
+[[case]]
+name = "for_loop_length"
+group = "core"
+template = '''{% for i in items %}{{ loop.length }}{% endfor %}'''
+data = '''{"items": [1, 2]}'''
+
+[[case]]
+name = "for_object"
+group = "core"
+template = '''{% for k, v in obj %}{{ k }}={{ v }};{% endfor %}'''
+data = '''{"obj": {"b": 1, "a": 2, "c": 3}}'''
+
+[[case]]
+name = "for_object_single_var"
+group = "core"
+template = '''{% for k in obj %}[{{ k }}]{% endfor %}'''
+data = '''{"obj": {"x": 1, "y": 2}}'''
+
+[[case]]
+name = "for_nested"
+group = "core"
+template = '''{% for r in rows %}{% for c in r %}{{ c }}{% endfor %}|{% endfor %}'''
+data = '''{"rows": [[1, 2], [3, 4]]}'''
+
+[[case]]
+name = "for_nested_loop_index"
+group = "core"
+template = '''{% for r in rows %}{% for c in r %}{{ loop.index }}{% endfor %}-{{ loop.index }} {% endfor %}'''
+data = '''{"rows": [[1, 2], [3, 4]]}'''
+
+[[case]]
+name = "for_array_unpack"
+group = "core"
+template = '''{% for a, b in pairs %}{{ a }}-{{ b }} {% endfor %}'''
+data = '''{"pairs": [[1, 2], [3, 4]]}'''
+
+[[case]]
+name = "for_string"
+group = "core"
+template = '''{% for c in s %}[{{ c }}]{% endfor %}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "for_range"
+group = "core"
+template = '''{% for i in range(0, 4) %}{{ i }}{% endfor %}'''
+
+[[case]]
+name = "for_range_one_arg"
+group = "core"
+template = '''{% for i in range(3) %}{{ i }}{% endfor %}'''
+
+[[case]]
+name = "for_range_step"
+group = "core"
+template = '''{% for i in range(0, 10, 3) %}{{ i }},{% endfor %}'''
+
+[[case]]
+name = "for_scope_leak"
+group = "core"
+template = '''{% for i in items %}{% endfor %}[{{ i }}]'''
+data = '''{"items": [1]}'''
+
+[[case]]
+name = "for_set_inside"
+group = "core"
+template = '''{% set t = 0 %}{% for i in items %}{% set t = t + i %}{% endfor %}{{ t }}'''
+data = '''{"items": [1, 2, 3]}'''
+
+[[case]]
+name = "for_cycler"
+group = "core"
+template = '''{% set c = cycler("odd", "even") %}{% for i in items %}{{ c.next() }} {% endfor %}'''
+data = '''{"items": [1, 2, 3]}'''
+
+[[case]]
+name = "for_asyncEach_absent"
+group = "core"
+template = '''{% for i in items %}{{ i }}{% endfor %}done'''
+data = '''{"items": []}'''
+
+[[case]]
+name = "set_simple"
+group = "core"
+template = '''{% set x = 5 %}{{ x }}'''
+
+[[case]]
+name = "set_expr"
+group = "core"
+template = '''{% set x = a + b * 2 %}{{ x }}'''
+data = '''{"a": 1, "b": 3}'''
+
+[[case]]
+name = "set_multiple"
+group = "core"
+template = '''{% set a, b = 1, 2 %}{{ a }}{{ b }}'''
+
+[[case]]
+name = "set_block"
+group = "core"
+template = '''{% set x %}Hello {{ name }}{% endset %}[{{ x }}]'''
+data = '''{"name": "World"}'''
+
+[[case]]
+name = "set_block_autoescape"
+group = "core"
+template = '''{% set x %}<b>{{ v }}</b>{% endset %}{{ x }}'''
+data = '''{"v": "<i>"}'''
+
+[[case]]
+name = "set_array_literal"
+group = "core"
+template = '''{% set a = [1, 2, 3] %}{{ a | length }}{{ a[1] }}'''
+
+[[case]]
+name = "set_dict_literal"
+group = "core"
+template = '''{% set d = {"a": 1, "b": 2} %}{{ d.a }}{{ d["b"] }}'''
+
+[[case]]
+name = "set_overwrite"
+group = "core"
+template = '''{% set x = 1 %}{% set x = x + 1 %}{{ x }}'''
+
+[[case]]
+name = "set_string_concat"
+group = "core"
+template = '''{% set s = "a" ~ "b" ~ 1 %}{{ s }}'''
+
+[[case]]
+name = "raw_block"
+group = "core"
+template = '''{% raw %}{{ not rendered }} {% if %}{% endraw %}'''
+
+[[case]]
+name = "raw_with_text"
+group = "core"
+template = '''a{% raw %}{% for %}{{x}}{% endraw %}b'''
+
+[[case]]
+name = "verbatim_block"
+group = "core"
+template = '''{% verbatim %}{{ keep }} {% if %}{% endverbatim %}'''
+
+[[case]]
+name = "raw_ws_control"
+group = "core"
+template = '''a  {%- raw -%}  {{ x }}  {%- endraw -%}  b'''
+
+[[case]]
+name = "comment_block"
+group = "core"
+template = '''a{# a comment #}b'''
+
+[[case]]
+name = "comment_multiline"
+group = "core"
+template = '''
+a{# line1
+line2 #}b'''
+
+[[case]]
+name = "comment_with_tags"
+group = "core"
+template = '''a{# {% if x %} {{ y }} #}b'''
+
+[[case]]
+name = "filter_block"
+group = "core"
+template = '''{% filter upper %}hello {{ name }}{% endfilter %}'''
+data = '''{"name": "world"}'''
+
+[[case]]
+name = "filter_block_chain"
+group = "core"
+template = '''{% filter upper | replace("L", "_") %}hello{% endfilter %}'''
+
+[[case]]
+name = "filter_block_title"
+group = "core"
+template = '''{% filter title %}the quick fox{% endfilter %}'''
+
+[[case]]
+name = "macro_basic"
+group = "core"
+template = '''{% macro greet(name) %}Hello {{ name }}!{% endmacro %}{{ greet("Ann") }}'''
+
+[[case]]
+name = "macro_default_arg"
+group = "core"
+template = '''{% macro greet(name, greeting="Hi") %}{{ greeting }} {{ name }}{% endmacro %}{{ greet("Ann") }}|{{ greet("Bo", "Yo") }}'''
+
+[[case]]
+name = "macro_kwargs"
+group = "core"
+template = '''{% macro m(a, b) %}{{ a }}-{{ b }}{% endmacro %}{{ m(b=2, a=1) }}'''
+
+[[case]]
+name = "macro_missing_arg"
+group = "core"
+template = '''{% macro m(a, b) %}[{{ a }}][{{ b }}]{% endmacro %}{{ m(1) }}'''
+
+[[case]]
+name = "macro_returns_safe"
+group = "core"
+template = '''{% macro m(x) %}<b>{{ x }}</b>{% endmacro %}{{ m("<i>") }}'''
+
+[[case]]
+name = "macro_scope"
+group = "core"
+template = '''{% set outer = "O" %}{% macro m() %}[{{ outer }}]{% endmacro %}{{ m() }}'''
+
+[[case]]
+name = "macro_recursive"
+group = "core"
+template = '''{% macro fact(n) %}{% if n <= 1 %}1{% else %}{{ n * fact(n - 1) }}{% endif %}{% endmacro %}{{ fact(5) }}'''
+
+[[case]]
+name = "macro_caller_call"
+group = "core"
+template = '''{% macro wrap() %}<div>{{ caller() }}</div>{% endmacro %}{% call wrap() %}inner {{ x }}{% endcall %}'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "macro_call_with_args"
+group = "core"
+template = '''{% macro each_item(items) %}{% for i in items %}{{ caller(i) }}{% endfor %}{% endmacro %}{% call(item) each_item(list) %}<{{ item }}>{% endcall %}'''
+data = '''{"list": [1, 2]}'''
+
+[[case]]
+name = "macro_import_inline"
+group = "core"
+template = '''{% import "macros.njk" as m %}{{ m.hello("X") }}'''
+[case.includes]
+"macros.njk" = '''{% macro hello(n) %}Hello {{ n }}{% endmacro %}'''
+
+[[case]]
+name = "macro_from_import"
+group = "core"
+template = '''{% from "macros2.njk" import hello, bye %}{{ hello("A") }} {{ bye("B") }}'''
+[case.includes]
+"macros2.njk" = '''{% macro hello(n) %}Hello {{ n }}{% endmacro %}{% macro bye(n) %}Bye {{ n }}{% endmacro %}'''
+
+[[case]]
+name = "macro_from_import_as"
+group = "core"
+template = '''{% from "macros.njk" import hello as hi %}{{ hi("A") }}'''
+[case.includes]
+"macros.njk" = '''{% macro hello(n) %}Hello {{ n }}{% endmacro %}'''
+
+[[case]]
+name = "macro_import_with_context"
+group = "core"
+template = '''{% import "ctxm.njk" as c with context %}{{ c.show() }}'''
+data = '''{"site": "S"}'''
+[case.includes]
+"ctxm.njk" = '''{% macro show() %}[{{ site }}]{% endmacro %}'''
+
+[[case]]
+name = "macro_import_without_context"
+group = "core"
+template = '''{% import "ctxm.njk" as c %}{{ c.show() }}'''
+data = '''{"site": "S"}'''
+[case.includes]
+"ctxm.njk" = '''{% macro show() %}[{{ site }}]{% endmacro %}'''
+
+[[case]]
+name = "macro_import_set_export"
+group = "core"
+template = '''{% import "vars.njk" as v %}{{ v.color }}'''
+[case.includes]
+"vars.njk" = '''{% set color = "red" %}'''
+
+[[case]]
+name = "macro_from_import_var"
+group = "core"
+template = '''{% from "vars.njk" import color %}{{ color }}'''
+[case.includes]
+"vars.njk" = '''{% set color = "red" %}'''
+
+[[case]]
+name = "call_block_no_caller_use"
+group = "core"
+template = '''{% macro m() %}M{% endmacro %}{% call m() %}ignored{% endcall %}'''
+
+[[case]]
+name = "set_in_if"
+group = "core"
+template = '''{% if true %}{% set x = 1 %}{% endif %}[{{ x }}]'''
+
+[[case]]
+name = "if_in_for_with_set"
+group = "core"
+template = '''{% for i in [1,2,3] %}{% if i > 1 %}{% set last = i %}{% endif %}{% endfor %}[{{ last }}]'''
+
+[[case]]
+name = "switch_tag_absent"
+group = "core"
+template = '''{% if x == "a" %}A{% elif x == "b" %}B{% endif %}'''
+data = '''{"x": "b"}'''
+
+[[case]]
+name = "in_operator_tag"
+group = "core"
+template = '''{% if "a" in list %}has a{% endif %}'''
+data = '''{"list": ["a", "b"]}'''
+
+[[case]]
+name = "for_if_filter_inline"
+group = "core"
+template = '''{% for i in items if i > 1 %}{{ i }}{% endfor %}'''
+data = '''{"items": [1, 2, 3]}'''
+
+[[case]]
+name = "do_tag_absent"
+group = "core"
+template = '''{% set a = [1] %}{{ a.push(2) }}{{ a | length }}'''
+
+[[case]]
+name = "set_loop_var_name"
+group = "core"
+template = '''{% for loop in [1] %}{{ loop }}{% endfor %}'''

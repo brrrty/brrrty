@@ -1,0 +1,554 @@
+[[case]]
+name = "f_abs"
+group = "filters"
+template = '''{{ n | abs }}'''
+data = '''{"n": -5}'''
+
+[[case]]
+name = "f_batch"
+group = "filters"
+template = '''{% for row in a | batch(2) %}[{% for x in row %}{{ x }}{% endfor %}]{% endfor %}'''
+data = '''{"a": [1, 2, 3, 4, 5]}'''
+
+[[case]]
+name = "f_batch_fill"
+group = "filters"
+template = '''{% for row in a | batch(2, "-") %}[{% for x in row %}{{ x }}{% endfor %}]{% endfor %}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "f_capitalize"
+group = "filters"
+template = '''{{ s | capitalize }}'''
+data = '''{"s": "hELLO wORLD"}'''
+
+[[case]]
+name = "f_center"
+group = "filters"
+template = '''[{{ s | center(9) }}]'''
+data = '''{"s": "ab"}'''
+
+[[case]]
+name = "f_default"
+group = "filters"
+template = '''{{ nothing | default("d") }}'''
+
+[[case]]
+name = "f_dictsort"
+group = "filters"
+template = '''{% for k, v in o | dictsort %}{{ k }}={{ v }} {% endfor %}'''
+data = '''{"o": {"b": 1, "a": 2, "C": 3}}'''
+
+[[case]]
+name = "f_dump"
+group = "filters"
+template = '''{{ o | dump }}'''
+data = '''{"o": {"a": 1, "b": [1, 2]}}'''
+
+[[case]]
+name = "f_dump_indent"
+group = "filters"
+template = '''{{ o | dump(2) }}'''
+data = '''{"o": {"a": 1, "b": [1, 2]}}'''
+
+[[case]]
+name = "f_dump_string"
+group = "filters"
+template = '''{{ s | dump | safe }}'''
+data = '''{"s": "a\"b"}'''
+
+[[case]]
+name = "f_escape"
+group = "filters"
+template = '''{{ s | escape }}'''
+data = '''{"s": "<a href=\"x\">'&</a>"}'''
+
+[[case]]
+name = "f_escape_xml_arg"
+group = "filters"
+template = '''{{ s | escape('xml') }}'''
+data = '''{"s": "<a>&"}'''
+
+[[case]]
+name = "f_first"
+group = "filters"
+template = '''{{ a | first }}'''
+data = '''{"a": [7, 8, 9]}'''
+
+[[case]]
+name = "f_first_string"
+group = "filters"
+template = '''{{ s | first }}'''
+data = '''{"s": "xyz"}'''
+
+[[case]]
+name = "f_first_empty"
+group = "filters"
+template = '''[{{ a | first }}]'''
+data = '''{"a": []}'''
+
+[[case]]
+name = "f_float"
+group = "filters"
+template = '''{{ s | float + 1 }}'''
+data = '''{"s": "2.5"}'''
+
+[[case]]
+name = "f_float_bad"
+group = "filters"
+template = '''{{ s | float }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "f_float_default"
+group = "filters"
+template = '''{{ s | float(9) }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "f_forceescape"
+group = "filters"
+template = '''{{ s | safe | forceescape }}'''
+data = '''{"s": "<b>"}'''
+
+[[case]]
+name = "f_groupby"
+group = "filters"
+template = '''{% for k, items in a | groupby("t") %}{{ k }}:{% for i in items %}{{ i.n }}{% endfor %} {% endfor %}'''
+data = '''{"a": [{"t": "x", "n": 1}, {"t": "y", "n": 2}, {"t": "x", "n": 3}]}'''
+
+[[case]]
+name = "f_indent"
+group = "filters"
+template = '''{{ s | indent(2) }}'''
+data = '''{"s": "a\nb\nc"}'''
+
+[[case]]
+name = "f_indent_first"
+group = "filters"
+template = '''{{ s | indent(2, true) }}'''
+data = '''{"s": "a\nb"}'''
+
+[[case]]
+name = "f_int"
+group = "filters"
+template = '''{{ s | int + 1 }}'''
+data = '''{"s": "41"}'''
+
+[[case]]
+name = "f_int_float_string"
+group = "filters"
+template = '''{{ s | int }}'''
+data = '''{"s": "3.9"}'''
+
+[[case]]
+name = "f_int_bad"
+group = "filters"
+template = '''{{ s | int }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "f_int_default"
+group = "filters"
+template = '''{{ s | int(7) }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "f_join"
+group = "filters"
+template = '''{{ a | join(", ") }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "f_join_no_sep"
+group = "filters"
+template = '''{{ a | join }}'''
+data = '''{"a": ["a", "b"]}'''
+
+[[case]]
+name = "f_join_attr"
+group = "filters"
+template = '''{{ a | join(",", "n") }}'''
+data = '''{"a": [{"n": 1}, {"n": 2}]}'''
+
+[[case]]
+name = "f_last"
+group = "filters"
+template = '''{{ a | last }}'''
+data = '''{"a": [7, 8, 9]}'''
+
+[[case]]
+name = "f_length_array"
+group = "filters"
+template = '''{{ a | length }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "f_length_string"
+group = "filters"
+template = '''{{ s | length }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "f_length_object"
+group = "filters"
+template = '''{{ o | length }}'''
+data = '''{"o": {"a": 1, "b": 2}}'''
+
+[[case]]
+name = "f_length_undefined"
+group = "filters"
+template = '''{{ nothing | length }}'''
+
+[[case]]
+name = "f_list_string"
+group = "filters"
+template = '''{{ s | list | join("-") }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "f_list_object"
+group = "filters"
+template = '''{% for p in o | list %}{{ p.key }}={{ p.value }} {% endfor %}'''
+data = '''{"o": {"a": 1, "b": 2}}'''
+
+[[case]]
+name = "f_lower"
+group = "filters"
+template = '''{{ s | lower }}'''
+data = '''{"s": "HeLLo"}'''
+
+[[case]]
+name = "f_nl2br"
+group = "filters"
+template = '''{{ s | nl2br }}'''
+data = '''{"s": "a\nb\r\nc"}'''
+
+[[case]]
+name = "f_random_absent"
+group = "filters"
+template = '''{{ a | length }}'''
+data = '''{"a": [1]}'''
+
+[[case]]
+name = "f_reject"
+group = "filters"
+template = '''{{ a | reject("odd") | join(",") }}'''
+data = '''{"a": [1, 2, 3, 4]}'''
+
+[[case]]
+name = "f_rejectattr"
+group = "filters"
+template = '''{% for i in a | rejectattr("ok") %}{{ i.n }}{% endfor %}'''
+data = '''{"a": [{"n": 1, "ok": true}, {"n": 2, "ok": false}]}'''
+
+[[case]]
+name = "f_replace"
+group = "filters"
+template = '''{{ s | replace("l", "L") }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "f_replace_count"
+group = "filters"
+template = '''{{ s | replace("l", "L", 1) }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "f_replace_empty"
+group = "filters"
+template = '''{{ s | replace("", "-") }}'''
+data = '''{"s": "ab"}'''
+
+[[case]]
+name = "f_replace_number"
+group = "filters"
+template = '''{{ n | replace(1, 9) }}'''
+data = '''{"n": 1211}'''
+
+[[case]]
+name = "f_replace_special"
+group = "filters"
+template = '''{{ s | replace(".", "!") }}'''
+data = '''{"s": "a.b.c"}'''
+
+[[case]]
+name = "f_reverse_array"
+group = "filters"
+template = '''{{ a | reverse | join(",") }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "f_reverse_string"
+group = "filters"
+template = '''{{ s | reverse }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "f_round"
+group = "filters"
+template = '''{{ n | round }}'''
+data = '''{"n": 2.5}'''
+
+[[case]]
+name = "f_round_precision"
+group = "filters"
+template = '''{{ n | round(2) }}'''
+data = '''{"n": 3.14159}'''
+
+[[case]]
+name = "f_round_floor"
+group = "filters"
+template = '''{{ n | round(0, "floor") }}'''
+data = '''{"n": 3.9}'''
+
+[[case]]
+name = "f_round_ceil"
+group = "filters"
+template = '''{{ n | round(0, "ceil") }}'''
+data = '''{"n": 3.1}'''
+
+[[case]]
+name = "f_round_integer"
+group = "filters"
+template = '''{{ n | round }}'''
+data = '''{"n": 7}'''
+
+[[case]]
+name = "f_safe"
+group = "filters"
+template = '''{{ s | safe }}'''
+data = '''{"s": "<i>x</i>"}'''
+
+[[case]]
+name = "f_select"
+group = "filters"
+template = '''{{ a | select("odd") | join(",") }}'''
+data = '''{"a": [1, 2, 3, 4]}'''
+
+[[case]]
+name = "f_select_truthy"
+group = "filters"
+template = '''{{ a | select | join(",") }}'''
+data = '''{"a": [0, 1, "", "x", null]}'''
+
+[[case]]
+name = "f_selectattr"
+group = "filters"
+template = '''{% for i in a | selectattr("ok") %}{{ i.n }}{% endfor %}'''
+data = '''{"a": [{"n": 1, "ok": true}, {"n": 2, "ok": false}]}'''
+
+[[case]]
+name = "f_slice"
+group = "filters"
+template = '''{% for col in a | slice(2) %}[{% for x in col %}{{ x }}{% endfor %}]{% endfor %}'''
+data = '''{"a": [1, 2, 3, 4, 5]}'''
+
+[[case]]
+name = "f_sort"
+group = "filters"
+template = '''{{ a | sort | join(",") }}'''
+data = '''{"a": [3, 1, 2]}'''
+
+[[case]]
+name = "f_sort_strings"
+group = "filters"
+template = '''{{ a | sort | join(",") }}'''
+data = '''{"a": ["b", "C", "a"]}'''
+
+[[case]]
+name = "f_sort_reverse"
+group = "filters"
+template = '''{{ a | sort(true) | join(",") }}'''
+data = '''{"a": [3, 1, 2]}'''
+
+[[case]]
+name = "f_sort_attr"
+group = "filters"
+template = '''{{ a | sort(false, false, "n") | join(",", "n") }}'''
+data = '''{"a": [{"n": 3}, {"n": 1}, {"n": 2}]}'''
+
+[[case]]
+name = "f_string"
+group = "filters"
+template = '''{{ n | string }}{{ n | string | length }}'''
+data = '''{"n": 123}'''
+
+[[case]]
+name = "f_striptags"
+group = "filters"
+template = '''{{ s | striptags }}'''
+data = '''{"s": "<p>Hello <b>world</b></p>"}'''
+
+[[case]]
+name = "f_striptags_whitespace"
+group = "filters"
+template = '''{{ s | striptags }}'''
+data = '''{"s": "<p>a   b</p>\n\n<p>c</p>"}'''
+
+[[case]]
+name = "f_striptags_preserve"
+group = "filters"
+template = '''{{ s | striptags(true) }}'''
+data = '''{"s": "<p>a   b</p>\n\n<p>c</p>"}'''
+
+[[case]]
+name = "f_striptags_entities"
+group = "filters"
+template = '''{{ s | striptags }}'''
+data = '''{"s": "a &amp; <i>b</i>"}'''
+
+[[case]]
+name = "f_sum"
+group = "filters"
+template = '''{{ a | sum }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "f_sum_attr"
+group = "filters"
+template = '''{{ a | sum("n") }}'''
+data = '''{"a": [{"n": 1}, {"n": 5}]}'''
+
+[[case]]
+name = "f_sum_start"
+group = "filters"
+template = '''{{ a | sum("", 10) }}'''
+data = '''{"a": [1, 2]}'''
+
+[[case]]
+name = "f_title"
+group = "filters"
+template = '''{{ s | title }}'''
+data = '''{"s": "hello big world"}'''
+
+[[case]]
+name = "f_title_mixed"
+group = "filters"
+template = '''{{ s | title }}'''
+data = '''{"s": "hELLO wORLD-foo"}'''
+
+[[case]]
+name = "f_trim"
+group = "filters"
+template = '''[{{ s | trim }}]'''
+data = '''{"s": "  hi  \n"}'''
+
+[[case]]
+name = "f_truncate"
+group = "filters"
+template = '''{{ s | truncate(10) }}'''
+data = '''{"s": "The quick brown fox"}'''
+
+[[case]]
+name = "f_truncate_killwords"
+group = "filters"
+template = '''{{ s | truncate(10, true) }}'''
+data = '''{"s": "The quick brown fox"}'''
+
+[[case]]
+name = "f_truncate_end"
+group = "filters"
+template = '''{{ s | truncate(10, false, "~") }}'''
+data = '''{"s": "The quick brown fox"}'''
+
+[[case]]
+name = "f_truncate_short"
+group = "filters"
+template = '''{{ s | truncate(30) }}'''
+data = '''{"s": "short"}'''
+
+[[case]]
+name = "f_upper"
+group = "filters"
+template = '''{{ s | upper }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "f_urlencode"
+group = "filters"
+template = '''{{ s | urlencode }}'''
+data = '''{"s": "a b&c=d/é"}'''
+
+[[case]]
+name = "f_urlencode_object"
+group = "filters"
+template = '''{{ o | urlencode }}'''
+data = '''{"o": {"a": "x y", "b": 2}}'''
+
+[[case]]
+name = "f_urlize"
+group = "filters"
+template = '''{{ s | urlize }}'''
+data = '''{"s": "see http://example.com now"}'''
+
+[[case]]
+name = "f_wordcount"
+group = "filters"
+template = '''{{ s | wordcount }}'''
+data = '''{"s": "one two  three"}'''
+
+[[case]]
+name = "f_wordcount_empty"
+group = "filters"
+template = '''{{ s | wordcount }}'''
+data = '''{"s": ""}'''
+
+[[case]]
+name = "f_unique_absent_fallback"
+group = "filters"
+template = '''{{ a | length }}'''
+data = '''{"a": [1, 1]}'''
+
+[[case]]
+name = "f_chain"
+group = "filters"
+template = '''{{ s | trim | upper | replace("L", "_") | truncate(5) }}'''
+data = '''{"s": "  hello world "}'''
+
+[[case]]
+name = "f_filter_on_undefined"
+group = "filters"
+template = '''[{{ nothing | upper }}]'''
+
+[[case]]
+name = "f_filter_on_null"
+group = "filters"
+template = '''[{{ n | lower }}]'''
+data = '''{"n": null}'''
+
+[[case]]
+name = "f_filter_number_as_string"
+group = "filters"
+template = '''{{ n | upper }}'''
+data = '''{"n": 12}'''
+
+[[case]]
+name = "f_filter_arg_expression"
+group = "filters"
+template = '''{{ s | truncate(n * 2) }}'''
+data = '''{"s": "abcdefghijklmnop", "n": 4}'''
+
+[[case]]
+name = "f_filter_arg_variable"
+group = "filters"
+template = '''{{ a | join(sep) }}'''
+data = '''{"a": [1, 2], "sep": "+"}'''
+
+[[case]]
+name = "f_filter_kwargs"
+group = "filters"
+template = '''{{ s | truncate(length=5, end="..") }}'''
+data = '''{"s": "abcdefghij"}'''
+
+[[case]]
+name = "f_capitalize_empty"
+group = "filters"
+template = '''[{{ s | capitalize }}]'''
+data = '''{"s": ""}'''
+
+[[case]]
+name = "f_length_number"
+group = "filters"
+template = '''[{{ n | length }}]'''
+data = '''{"n": 12345}'''

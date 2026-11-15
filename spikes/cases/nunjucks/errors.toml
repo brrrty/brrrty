@@ -1,0 +1,156 @@
+[[case]]
+name = "err_unknown_filter"
+group = "errors"
+template = '''{{ "x" | nopefilter }}'''
+
+[[case]]
+name = "err_unknown_filter_line3"
+group = "errors"
+template = '''
+a
+b
+{{ x | nopefilter }}'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "err_unclosed_if"
+group = "errors"
+template = '''{% if x %}never closed'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "err_unclosed_for"
+group = "errors"
+template = '''
+line1
+{% for i in a %}
+line3'''
+data = '''{"a": [1]}'''
+
+[[case]]
+name = "err_unclosed_block"
+group = "errors"
+template = '''{% block b %}open'''
+
+[[case]]
+name = "err_unclosed_var"
+group = "errors"
+template = '''{{ x'''
+
+[[case]]
+name = "err_unclosed_comment"
+group = "errors"
+template = '''{# no end'''
+
+[[case]]
+name = "err_unclosed_raw"
+group = "errors"
+template = '''{% raw %}no end'''
+
+[[case]]
+name = "err_missing_include"
+group = "errors"
+template = '''{% include "ghost.njk" %}'''
+
+[[case]]
+name = "err_missing_include_line2"
+group = "errors"
+template = '''
+a
+{% include 'ghost.njk' %}'''
+
+[[case]]
+name = "err_undefined_macro"
+group = "errors"
+template = '''{{ nomacro("x") }}'''
+
+[[case]]
+name = "err_undefined_macro_namespace"
+group = "errors"
+template = '''{% import "m.njk" as m %}{{ m.nothere() }}'''
+[case.includes]
+"m.njk" = '''{% macro there() %}T{% endmacro %}'''
+
+[[case]]
+name = "err_unknown_tag"
+group = "errors"
+template = '''{% frobnicate %}'''
+
+[[case]]
+name = "err_stray_endif"
+group = "errors"
+template = '''{% endif %}'''
+
+[[case]]
+name = "err_stray_else"
+group = "errors"
+template = '''{% else %}'''
+
+[[case]]
+name = "err_bad_expression"
+group = "errors"
+template = '''{{ 1 + }}'''
+
+[[case]]
+name = "err_bad_for"
+group = "errors"
+template = '''{% for %}{% endfor %}'''
+
+[[case]]
+name = "err_bad_set"
+group = "errors"
+template = '''{% set %}'''
+
+[[case]]
+name = "err_mismatched_end"
+group = "errors"
+template = '''{% if x %}{% endfor %}'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "err_unknown_test"
+group = "errors"
+template = '''{% if x is nopetest %}a{% endif %}'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "err_call_non_function"
+group = "errors"
+template = '''{{ x() }}'''
+data = '''{"x": 5}'''
+
+[[case]]
+name = "err_filter_arg_missing"
+group = "errors"
+template = '''{{ "abc" | replace("a") }}'''
+
+[[case]]
+name = "err_macro_in_include_error"
+group = "errors"
+template = '''{% include "bad.njk" %}'''
+[case.includes]
+"bad.njk" = '''{{ x | nopefilter }}'''
+
+[[case]]
+name = "err_error_in_included_unclosed"
+group = "errors"
+template = '''{% include "bad2.njk" %}'''
+[case.includes]
+"bad2.njk" = '''{% if x %}'''
+
+[[case]]
+name = "err_extends_missing_block_ok"
+group = "errors"
+template = '''{% extends "b.njk" %}{% block nothere %}x{% endblock %}'''
+[case.includes]
+"b.njk" = '''base'''
+
+[[case]]
+name = "err_super_outside"
+group = "errors"
+template = '''{{ super() }}'''
+
+[[case]]
+name = "err_undefined_call_chain"
+group = "errors"
+template = '''{{ a.b.c() }}'''

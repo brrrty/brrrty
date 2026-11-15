@@ -1,0 +1,121 @@
+[[case]]
+name = "e_slug"
+group = "eleventy"
+template = '''{{ "Hello World! Foo_Bar" | slug }}'''
+
+[[case]]
+name = "e_slugify"
+group = "eleventy"
+template = '''{{ "Hello World! Foo_Bar" | slugify }}'''
+
+[[case]]
+name = "e_slugify_accents"
+group = "eleventy"
+template = '''{{ "Café Über" | slugify }}'''
+
+[[case]]
+name = "e_slugify_symbols"
+group = "eleventy"
+template = '''{{ "C++ & Rust: 100% fun?" | slugify }}'''
+
+[[case]]
+name = "e_slug_dollars"
+group = "eleventy"
+template = '''{{ "Price $5 and 10%" | slug }}'''
+
+[[case]]
+name = "e_slugify_number"
+group = "eleventy"
+template = '''{{ 2024 | slugify }}'''
+
+[[case]]
+name = "e_url_root"
+group = "eleventy"
+template = '''{{ "/a/b/" | url }}'''
+
+[[case]]
+name = "e_url_relative"
+group = "eleventy"
+template = '''{{ "a/b" | url }}'''
+
+[[case]]
+name = "e_url_empty"
+group = "eleventy"
+template = '''[{{ "" | url }}]'''
+
+[[case]]
+name = "e_url_absolute"
+group = "eleventy"
+template = '''{{ "https://example.com/x" | url }}'''
+
+[[case]]
+name = "e_url_dot"
+group = "eleventy"
+template = '''{{ "./x/" | url }}'''
+
+[[case]]
+name = "e_log_passthrough"
+group = "eleventy"
+template = '''{{ "kept" | log }}'''
+
+[[case]]
+name = "e_page_url"
+group = "eleventy"
+template = '''{{ page.url }}'''
+
+[[case]]
+name = "e_page_filePathStem"
+group = "eleventy"
+template = '''{{ page.filePathStem }}'''
+
+[[case]]
+name = "e_page_fileSlug"
+group = "eleventy"
+template = '''{{ page.fileSlug }}'''
+
+[[case]]
+name = "e_eleventy_var"
+group = "eleventy"
+template = '''[{{ eleventy.generator }}]'''
+
+[[case]]
+name = "e_collections_var"
+group = "eleventy"
+template = '''[{{ collections | length }}]'''
+
+[[case]]
+name = "e_slug_in_attr"
+group = "eleventy"
+template = '''<a href="/tag/{{ t | slugify }}/">{{ t }}</a>'''
+data = '''{"t": "Rust Lang"}'''
+
+[[case]]
+name = "e_url_then_safe"
+group = "eleventy"
+template = '''{{ "/x/" | url | safe }}'''
+
+[[case]]
+name = "e_safe_content"
+group = "eleventy"
+template = '''{{ body | safe }}[{{ body }}]'''
+data = '''{"body": "<p>hi</p>"}'''
+
+[[case]]
+name = "e_slugify_empty"
+group = "eleventy"
+template = '''[{{ "" | slugify }}]'''
+
+[[case]]
+name = "e_slugify_unicode_dashes"
+group = "eleventy"
+template = '''{{ "a -- b __ c" | slugify }}'''
+
+[[case]]
+name = "e_filter_markdown_absent"
+group = "eleventy"
+template = '''{{ "x" | markdown }}'''
+
+[[case]]
+name = "e_getCollectionItem_absent"
+group = "eleventy"
+template = '''{{ collections.all | length }}'''

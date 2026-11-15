@@ -1,0 +1,163 @@
+[[case]]
+name = "inc_basic"
+group = "core"
+template = '''{% include "part.njk" %}'''
+[case.includes]
+"part.njk" = '''PART'''
+
+[[case]]
+name = "inc_context"
+group = "core"
+template = '''{% set x = 5 %}{% include "ctx.njk" %}'''
+data = '''{"y": "Y"}'''
+[case.includes]
+"ctx.njk" = '''[{{ x }}{{ y }}]'''
+
+[[case]]
+name = "inc_sees_data"
+group = "core"
+template = '''{% include "show.njk" %}'''
+data = '''{"title": "T"}'''
+[case.includes]
+"show.njk" = '''<{{ title }}>'''
+
+[[case]]
+name = "inc_in_loop"
+group = "core"
+template = '''{% for i in [1,2,3] %}{% include "item.njk" %}{% endfor %}'''
+[case.includes]
+"item.njk" = '''<{{ i }}>'''
+
+[[case]]
+name = "inc_nested"
+group = "core"
+template = '''{% include "outer.njk" %}'''
+[case.includes]
+"outer.njk" = '''O({% include 'inner.njk' %})'''
+"inner.njk" = '''I'''
+
+[[case]]
+name = "inc_set_leak"
+group = "core"
+template = '''{% include "setter.njk" %}[{{ made }}]'''
+[case.includes]
+"setter.njk" = '''{% set made = 1 %}'''
+
+[[case]]
+name = "inc_with_filter_inside"
+group = "core"
+template = '''{% include "f.njk" %}'''
+data = '''{"s": "abc"}'''
+[case.includes]
+"f.njk" = '''{{ s | upper }}'''
+
+[[case]]
+name = "inc_ignore_missing"
+group = "core"
+template = '''a{% include "nope.njk" ignore missing %}b'''
+
+[[case]]
+name = "inc_ignore_missing_present"
+group = "core"
+template = '''{% include "yes.njk" ignore missing %}'''
+[case.includes]
+"yes.njk" = '''HERE'''
+
+[[case]]
+name = "inc_variable_name"
+group = "core"
+template = '''{% include name %}'''
+data = '''{"name": "dyn.njk"}'''
+[case.includes]
+"dyn.njk" = '''DYN'''
+
+[[case]]
+name = "inc_expression_name"
+group = "core"
+template = '''{% include "p" ~ ".njk" %}'''
+[case.includes]
+"p.njk" = '''CONCAT'''
+
+[[case]]
+name = "inc_noext"
+group = "core"
+template = '''{% include "plain" %}'''
+[case.includes]
+"plain.njk" = '''NOEXT'''
+
+[[case]]
+name = "inc_html_file"
+group = "core"
+template = '''{% include "frag.html" %}'''
+[case.includes]
+"frag.html" = '''<p>{{ v }}</p>'''
+
+[[case]]
+name = "inc_html_autoescape"
+group = "core"
+template = '''{% include "frag.html" %}'''
+data = '''{"v": "<b>"}'''
+[case.includes]
+"frag.html" = '''<p>{{ v }}</p>'''
+
+[[case]]
+name = "inc_subdir"
+group = "core"
+template = '''{% include "sub/deep.njk" %}'''
+[case.includes]
+"sub/deep.njk" = '''DEEP'''
+
+[[case]]
+name = "inc_markdown_file"
+group = "core"
+template = '''{% include "note.md" %}'''
+[case.includes]
+"note.md" = '''
+# Not rendered
+{{ 1 + 1 }}'''
+
+[[case]]
+name = "inc_preserves_trailing_newline"
+group = "core"
+template = '''a{% include 'nl.njk' %}b'''
+[case.includes]
+"nl.njk" = '''
+X
+'''
+
+[[case]]
+name = "inc_js_passthrough"
+group = "core"
+template = '''{% include "plain.js" %}'''
+[case.includes]
+"plain.js" = '''
+var a = {b: 1};
+function f() { return a.b; }
+'''
+
+[[case]]
+name = "inc_js_with_braces"
+group = "core"
+template = '''{% include "tricky.js" %}'''
+[case.includes]
+"tricky.js" = '''
+var o = {{a: 1}};
+var s = '{';
+'''
+
+[[case]]
+name = "inc_css_passthrough"
+group = "core"
+template = '''{% include "style.css" %}'''
+[case.includes]
+"style.css" = '''
+body { color: red; }
+.a > .b { margin: 0 }
+'''
+
+[[case]]
+name = "inc_macro_in_include"
+group = "core"
+template = '''{% include "defs.njk" %}{{ m() }}'''
+[case.includes]
+"defs.njk" = '''{% macro m() %}M{% endmacro %}'''

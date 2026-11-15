@@ -1,0 +1,2 @@
+body { color: red; }
+.a > .b { margin: 0 }

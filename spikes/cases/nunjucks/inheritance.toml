@@ -1,0 +1,124 @@
+[[case]]
+name = "ext_basic"
+group = "core"
+template = '''{% extends "base.njk" %}{% block body %}child{% endblock %}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_override_both"
+group = "core"
+template = '''{% extends "base.njk" %}{% block head %}CH{% endblock %}{% block body %}CB{% endblock %}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_no_override"
+group = "core"
+template = '''{% extends "base.njk" %}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_super"
+group = "core"
+template = '''{% extends "base.njk" %}{% block body %}[{{ super() }}]{% endblock %}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_super_multi"
+group = "core"
+template = '''{% extends "mid.njk" %}{% block body %}C({{ super() }}){% endblock %}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+"mid.njk" = '''{% extends "base.njk" %}{% block body %}M({{ super() }}){% endblock %}'''
+
+[[case]]
+name = "ext_text_outside_blocks_ignored"
+group = "core"
+template = '''ignored{% extends "base.njk" %}also ignored{% block body %}X{% endblock %}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_data_in_block"
+group = "core"
+template = '''{% extends "base.njk" %}{% block body %}{{ title }}{% endblock %}'''
+data = '''{"title": "T"}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_set_before_extends"
+group = "core"
+template = '''{% set x = "S" %}{% extends "vars2.njk" %}{% block body %}{% endblock %}'''
+[case.includes]
+"vars2.njk" = '''{{ x }}{% block body %}{% endblock %}'''
+
+[[case]]
+name = "ext_base_uses_var"
+group = "core"
+template = '''{% extends "tv.njk" %}{% set title = "child" %}{% block body %}b{% endblock %}'''
+[case.includes]
+"tv.njk" = '''[{{ title }}]{% block body %}{% endblock %}'''
+
+[[case]]
+name = "ext_nested_block"
+group = "core"
+template = '''{% extends "nest.njk" %}{% block inner %}INNER{% endblock %}'''
+[case.includes]
+"nest.njk" = '''{% block outer %}<{% block inner %}i{% endblock %}>{% endblock %}'''
+
+[[case]]
+name = "ext_block_in_loop"
+group = "core"
+template = '''{% extends "loop.njk" %}{% block item %}<{{ i }}>{% endblock %}'''
+data = '''{"items": [1, 2]}'''
+[case.includes]
+"loop.njk" = '''{% for i in items %}{% block item %}{{ i }}{% endblock %}{% endfor %}'''
+
+[[case]]
+name = "ext_autoescape"
+group = "core"
+template = '''{% extends "base.njk" %}{% block body %}{{ v }}{% endblock %}'''
+data = '''{"v": "<b>"}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_dynamic_name"
+group = "core"
+template = '''{% extends lay %}{% block body %}D{% endblock %}'''
+data = '''{"lay": "base.njk"}'''
+[case.includes]
+"base.njk" = '''<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>'''
+
+[[case]]
+name = "ext_ws"
+group = "core"
+template = '''
+{% extends 'wsbase.njk' %}
+{% block body %}
+  child
+{% endblock %}
+'''
+[case.includes]
+"wsbase.njk" = '''
+[{% block body %}{% endblock %}]
+'''
+
+[[case]]
+name = "ext_block_no_extends"
+group = "core"
+template = '''a{% block x %}X{% endblock %}b'''
+
+[[case]]
+name = "ext_named_endblock"
+group = "core"
+template = '''{% block x %}X{% endblock x %}'''
+
+[[case]]
+name = "ext_missing_base"
+group = "core"
+template = '''{% extends "nope.njk" %}{% block body %}x{% endblock %}'''

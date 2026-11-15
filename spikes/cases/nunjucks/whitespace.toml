@@ -1,0 +1,223 @@
+[[case]]
+name = "auto_escape_literal"
+group = "core"
+template = '''{{ "<b>" }}'''
+
+[[case]]
+name = "auto_escape_var"
+group = "core"
+template = '''{{ v }}'''
+data = '''{"v": "<b>&\"'"}'''
+
+[[case]]
+name = "auto_safe"
+group = "core"
+template = '''{{ v | safe }}'''
+data = '''{"v": "<b>"}'''
+
+[[case]]
+name = "auto_escape_filter"
+group = "core"
+template = '''{{ v | escape }}'''
+data = '''{"v": "<b>"}'''
+
+[[case]]
+name = "auto_escape_double"
+group = "core"
+template = '''{{ v | escape | escape }}'''
+data = '''{"v": "<b>"}'''
+
+[[case]]
+name = "auto_safe_then_escape"
+group = "core"
+template = '''{{ v | safe | escape }}'''
+data = '''{"v": "<b>"}'''
+
+[[case]]
+name = "auto_escape_number"
+group = "core"
+template = '''{{ n }}'''
+data = '''{"n": 5}'''
+
+[[case]]
+name = "auto_concat_safe"
+group = "core"
+template = '''{{ ("<a>" | safe) ~ "<b>" }}'''
+
+[[case]]
+name = "auto_autoescape_block_off"
+group = "core"
+template = '''{% autoescape false %}{{ v }}{% endautoescape %}'''
+data = '''{"v": "<b>"}'''
+
+[[case]]
+name = "auto_autoescape_block_on"
+group = "core"
+template = '''{% autoescape true %}{{ v }}{% endautoescape %}'''
+data = '''{"v": "<b>"}'''
+
+[[case]]
+name = "auto_escape_in_attribute"
+group = "core"
+template = '''<a title="{{ t }}">x</a>'''
+data = '''{"t": "say \"hi\" & 'bye'"}'''
+
+[[case]]
+name = "auto_array_element"
+group = "core"
+template = '''{{ a[0] }}'''
+data = '''{"a": ["<i>"]}'''
+
+[[case]]
+name = "auto_join_escapes"
+group = "core"
+template = '''{{ a | join(",") }}'''
+data = '''{"a": ["<i>", "&"]}'''
+
+[[case]]
+name = "auto_default_escapes"
+group = "core"
+template = '''{{ nothing | default("<d>") }}'''
+
+[[case]]
+name = "ws_trim_left"
+group = "core"
+template = '''
+a  
+  {%- if true %}b{% endif %}'''
+
+[[case]]
+name = "ws_trim_right"
+group = "core"
+template = '''
+{% if true -%}  
+  b{% endif %}'''
+
+[[case]]
+name = "ws_trim_both"
+group = "core"
+template = '''
+a 
+ {%- if true -%} 
+ b 
+ {%- endif -%} 
+ c'''
+
+[[case]]
+name = "ws_trim_var"
+group = "core"
+template = '''a  {{- x -}}  b'''
+data = '''{"x": "X"}'''
+
+[[case]]
+name = "ws_trim_var_left_only"
+group = "core"
+template = '''a  {{- x }}  b'''
+data = '''{"x": "X"}'''
+
+[[case]]
+name = "ws_trim_var_right_only"
+group = "core"
+template = '''a  {{ x -}}  b'''
+data = '''{"x": "X"}'''
+
+[[case]]
+name = "ws_trim_comment"
+group = "core"
+template = '''a  {#- comment -#}  b'''
+
+[[case]]
+name = "ws_for_loop_lines"
+group = "core"
+template = '''
+{% for i in [1,2,3] %}
+{{ i }}
+{% endfor %}'''
+
+[[case]]
+name = "ws_for_loop_trimmed"
+group = "core"
+template = '''
+{% for i in [1,2,3] -%}
+{{ i }}
+{%- endfor %}'''
+
+[[case]]
+name = "ws_tag_only_line"
+group = "core"
+template = '''
+a
+{% set x = 1 %}
+b'''
+
+[[case]]
+name = "ws_tag_only_line_trimmed"
+group = "core"
+template = '''
+a
+{%- set x = 1 -%}
+b'''
+
+[[case]]
+name = "ws_tabs"
+group = "core"
+template = '''a		{%- if true %}b{% endif %}'''
+
+[[case]]
+name = "ws_blank_lines_kept"
+group = "core"
+template = '''
+a
+
+
+{% if true %}b{% endif %}
+
+
+c'''
+
+[[case]]
+name = "ws_macro_trim"
+group = "core"
+template = '''
+{%- macro m() -%}
+  X
+{%- endmacro -%}
+[{{ m() }}]'''
+
+[[case]]
+name = "ws_indent_block"
+group = "core"
+template = '''
+  {% if true %}
+  x
+  {% endif %}
+'''
+
+[[case]]
+name = "ws_no_trailing_newline"
+group = "core"
+template = '''text'''
+
+[[case]]
+name = "ws_trailing_newline"
+group = "core"
+template = '''
+text
+'''
+
+[[case]]
+name = "ws_crlf"
+group = "core"
+template = '''
+a
+{{ x }}
+b'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "ws_elif_trim"
+group = "core"
+template = '''
+{% if false -%}a{%- elif true -%}
+  b
+{%- else -%}c{%- endif %}'''

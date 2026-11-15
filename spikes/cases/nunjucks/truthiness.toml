@@ -1,0 +1,156 @@
+[[case]]
+name = "truth_empty_array"
+group = "core"
+template = '''{% if a %}truthy{% else %}falsy{% endif %}'''
+data = '''{"a": []}'''
+
+[[case]]
+name = "truth_empty_object"
+group = "core"
+template = '''{% if o %}truthy{% else %}falsy{% endif %}'''
+data = '''{"o": {}}'''
+
+[[case]]
+name = "truth_empty_string"
+group = "core"
+template = '''{% if s %}truthy{% else %}falsy{% endif %}'''
+data = '''{"s": ""}'''
+
+[[case]]
+name = "truth_zero"
+group = "core"
+template = '''{% if z %}truthy{% else %}falsy{% endif %}'''
+data = '''{"z": 0}'''
+
+[[case]]
+name = "truth_null"
+group = "core"
+template = '''{% if n %}truthy{% else %}falsy{% endif %}'''
+data = '''{"n": null}'''
+
+[[case]]
+name = "truth_undefined"
+group = "core"
+template = '''{% if nothing %}truthy{% else %}falsy{% endif %}'''
+
+[[case]]
+name = "truth_string_zero"
+group = "core"
+template = '''{% if s %}truthy{% else %}falsy{% endif %}'''
+data = '''{"s": "0"}'''
+
+[[case]]
+name = "truth_string_false"
+group = "core"
+template = '''{% if s %}truthy{% else %}falsy{% endif %}'''
+data = '''{"s": "false"}'''
+
+[[case]]
+name = "truth_nonempty_array"
+group = "core"
+template = '''{% if a %}truthy{% else %}falsy{% endif %}'''
+data = '''{"a": [0]}'''
+
+[[case]]
+name = "truth_negative"
+group = "core"
+template = '''{% if n %}truthy{% else %}falsy{% endif %}'''
+data = '''{"n": -1}'''
+
+[[case]]
+name = "truth_float_zero"
+group = "core"
+template = '''{% if n %}truthy{% else %}falsy{% endif %}'''
+data = '''{"n": 0.0}'''
+
+[[case]]
+name = "truth_not_empty_array"
+group = "core"
+template = '''{% if not a %}empty{% else %}full{% endif %}'''
+data = '''{"a": []}'''
+
+[[case]]
+name = "truth_and_empty_array"
+group = "core"
+template = '''{{ (a and "yes") | dump }}'''
+data = '''{"a": []}'''
+
+[[case]]
+name = "truth_or_empty_string"
+group = "core"
+template = '''{{ s or "fallback" }}'''
+data = '''{"s": ""}'''
+
+[[case]]
+name = "truth_or_zero"
+group = "core"
+template = '''{{ z or "fallback" }}'''
+data = '''{"z": 0}'''
+
+[[case]]
+name = "truth_ternary_empty_array"
+group = "core"
+template = '''{{ "y" if a else "n" }}'''
+data = '''{"a": []}'''
+
+[[case]]
+name = "default_undefined"
+group = "core"
+template = '''{{ nothing | default("x") }}'''
+
+[[case]]
+name = "default_false"
+group = "core"
+template = '''{{ f | default("x") }}'''
+data = '''{"f": false}'''
+
+[[case]]
+name = "default_false_true"
+group = "core"
+template = '''{{ f | default("x", true) }}'''
+data = '''{"f": false}'''
+
+[[case]]
+name = "default_empty_string"
+group = "core"
+template = '''[{{ s | default("x") }}]'''
+data = '''{"s": ""}'''
+
+[[case]]
+name = "default_empty_string_true"
+group = "core"
+template = '''[{{ s | default("x", true) }}]'''
+data = '''{"s": ""}'''
+
+[[case]]
+name = "default_zero"
+group = "core"
+template = '''{{ z | default("x") }}|{{ z | default("x", true) }}'''
+data = '''{"z": 0}'''
+
+[[case]]
+name = "default_null"
+group = "core"
+template = '''{{ n | default("x") }}'''
+data = '''{"n": null}'''
+
+[[case]]
+name = "default_null_true"
+group = "core"
+template = '''{{ n | default("x", true) }}'''
+data = '''{"n": null}'''
+
+[[case]]
+name = "default_nested_undefined"
+group = "core"
+template = '''{{ a.b.c | default("deep") }}'''
+
+[[case]]
+name = "default_no_args"
+group = "core"
+template = '''[{{ nothing | default }}]'''
+
+[[case]]
+name = "default_chain"
+group = "core"
+template = '''{{ a | default(b) | default("last") }}'''

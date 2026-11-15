@@ -1,0 +1,475 @@
+[[case]]
+name = "expr_add"
+group = "core"
+template = '''{{ 1 + 2 }}'''
+
+[[case]]
+name = "expr_sub_mul"
+group = "core"
+template = '''{{ 10 - 3 * 2 }}'''
+
+[[case]]
+name = "expr_div"
+group = "core"
+template = '''{{ 7 / 2 }}'''
+
+[[case]]
+name = "expr_div_exact"
+group = "core"
+template = '''{{ 8 / 2 }}'''
+
+[[case]]
+name = "expr_floordiv"
+group = "core"
+template = '''{{ 7 // 2 }}'''
+
+[[case]]
+name = "expr_mod"
+group = "core"
+template = '''{{ 7 % 3 }}'''
+
+[[case]]
+name = "expr_mod_negative"
+group = "core"
+template = '''{{ -7 % 3 }}'''
+
+[[case]]
+name = "expr_pow"
+group = "core"
+template = '''{{ 2 ** 10 }}'''
+
+[[case]]
+name = "expr_pow_neg"
+group = "core"
+template = '''{{ 2 ** -1 }}'''
+
+[[case]]
+name = "expr_unary_minus"
+group = "core"
+template = '''{{ -x }}'''
+data = '''{"x": 5}'''
+
+[[case]]
+name = "expr_precedence_parens"
+group = "core"
+template = '''{{ (1 + 2) * 3 }}'''
+
+[[case]]
+name = "expr_float"
+group = "core"
+template = '''{{ 0.1 + 0.2 }}'''
+
+[[case]]
+name = "expr_float_plain"
+group = "core"
+template = '''{{ 1.50 }}'''
+
+[[case]]
+name = "expr_string_plus_number"
+group = "core"
+template = '''{{ "a" + 1 }}'''
+
+[[case]]
+name = "expr_number_plus_string"
+group = "core"
+template = '''{{ 1 + "2" }}'''
+
+[[case]]
+name = "expr_concat_tilde"
+group = "core"
+template = '''{{ "a" ~ 1 ~ "b" }}'''
+
+[[case]]
+name = "expr_concat_tilde_vars"
+group = "core"
+template = '''{{ a ~ " " ~ b }}'''
+data = '''{"a": "x", "b": "y"}'''
+
+[[case]]
+name = "expr_in_array"
+group = "core"
+template = '''{{ 2 in [1, 2, 3] }}'''
+
+[[case]]
+name = "expr_in_string"
+group = "core"
+template = '''{{ "ell" in "hello" }}'''
+
+[[case]]
+name = "expr_in_object"
+group = "core"
+template = '''{{ "k" in obj }}'''
+data = '''{"obj": {"k": 1}}'''
+
+[[case]]
+name = "expr_not_in"
+group = "core"
+template = '''{{ 5 not in [1, 2] }}'''
+
+[[case]]
+name = "expr_ternary"
+group = "core"
+template = '''{{ "y" if c else "n" }}'''
+data = '''{"c": 1}'''
+
+[[case]]
+name = "expr_ternary_nested"
+group = "core"
+template = '''{{ "a" if x == 1 else ("b" if x == 2 else "c") }}'''
+data = '''{"x": 2}'''
+
+[[case]]
+name = "expr_and_or_values"
+group = "core"
+template = '''{{ a and b }}|{{ a or b }}|{{ c or "default" }}'''
+data = '''{"a": "A", "b": "B", "c": ""}'''
+
+[[case]]
+name = "expr_and_or_precedence"
+group = "core"
+template = '''{{ true or false and false }}'''
+
+[[case]]
+name = "expr_not"
+group = "core"
+template = '''{{ not true }}|{{ not 0 }}|{{ not "" }}'''
+
+[[case]]
+name = "expr_eq"
+group = "core"
+template = '''{{ 1 == 1 }}|{{ "1" == 1 }}|{{ 1 === 1 }}'''
+
+[[case]]
+name = "expr_eq_loose_types"
+group = "core"
+template = '''{{ 0 == "" }}|{{ null == undefined }}|{{ 0 == false }}'''
+
+[[case]]
+name = "expr_ne"
+group = "core"
+template = '''{{ 1 != 2 }}|{{ 1 !== "1" }}'''
+
+[[case]]
+name = "expr_compare"
+group = "core"
+template = '''{{ 1 < 2 }}|{{ 2 <= 2 }}|{{ 3 > 4 }}|{{ 4 >= 4 }}'''
+
+[[case]]
+name = "expr_compare_strings"
+group = "core"
+template = '''{{ "a" < "b" }}|{{ "10" < "9" }}|{{ "10" < 9 }}'''
+
+[[case]]
+name = "expr_literals"
+group = "core"
+template = '''{{ true }}|{{ false }}|{{ none }}|{{ null }}'''
+
+[[case]]
+name = "expr_undefined_print"
+group = "core"
+template = '''[{{ nothing }}]'''
+
+[[case]]
+name = "expr_nested_undefined"
+group = "core"
+template = '''[{{ a.b.c }}]'''
+
+[[case]]
+name = "expr_nested_undefined_deeper"
+group = "core"
+template = '''[{{ a.b.c.d.e }}]'''
+data = '''{"a": {"b": {}}}'''
+
+[[case]]
+name = "expr_call_undefined"
+group = "core"
+template = '''[{{ nothing.method() }}]'''
+
+[[case]]
+name = "expr_array_index"
+group = "core"
+template = '''{{ a[0] }}{{ a[2] }}[{{ a[5] }}]'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "expr_array_negative_index"
+group = "core"
+template = '''[{{ a[-1] }}]'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "expr_bracket_string"
+group = "core"
+template = '''{{ o["a b"] }}{{ o['c'] }}'''
+data = '''{"o": {"a b": 1, "c": 2}}'''
+
+[[case]]
+name = "expr_bracket_var"
+group = "core"
+template = '''{{ o[k] }}'''
+data = '''{"o": {"x": "found"}, "k": "x"}'''
+
+[[case]]
+name = "expr_dot_vs_bracket_number"
+group = "core"
+template = '''{{ o.0 }}'''
+data = '''{"o": ["z"]}'''
+
+[[case]]
+name = "expr_length_prop"
+group = "core"
+template = '''{{ s.length }}|{{ a.length }}'''
+data = '''{"s": "hello", "a": [1, 2]}'''
+
+[[case]]
+name = "expr_js_toUpperCase"
+group = "core"
+template = '''{{ s.toUpperCase() }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "expr_js_toLowerCase"
+group = "core"
+template = '''{{ s.toLowerCase() }}'''
+data = '''{"s": "HeLLo"}'''
+
+[[case]]
+name = "expr_js_split"
+group = "core"
+template = '''{{ s.split(",") | join("|") }}'''
+data = '''{"s": "a,b,c"}'''
+
+[[case]]
+name = "expr_js_split_length"
+group = "core"
+template = '''{{ s.split(",").length }}'''
+data = '''{"s": "a,b,c"}'''
+
+[[case]]
+name = "expr_js_replace"
+group = "core"
+template = '''{{ s.replace("l", "L") }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "expr_js_replace_regex"
+group = "core"
+template = '''{{ s.replace(r/o/g, "0") }}'''
+data = '''{"s": "foo boo"}'''
+
+[[case]]
+name = "expr_js_trim"
+group = "core"
+template = '''[{{ s.trim() }}]'''
+data = '''{"s": "  hi  "}'''
+
+[[case]]
+name = "expr_js_slice"
+group = "core"
+template = '''{{ s.slice(1, 3) }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "expr_js_indexOf"
+group = "core"
+template = '''{{ s.indexOf("l") }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "expr_js_includes"
+group = "core"
+template = '''{{ s.includes("ell") }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "expr_js_startsWith"
+group = "core"
+template = '''{{ s.startsWith("he") }}'''
+data = '''{"s": "hello"}'''
+
+[[case]]
+name = "expr_js_array_join"
+group = "core"
+template = '''{{ a.join("-") }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "expr_js_array_slice"
+group = "core"
+template = '''{{ a.slice(1) | join(",") }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "expr_js_array_indexOf"
+group = "core"
+template = '''{{ a.indexOf(2) }}'''
+data = '''{"a": [1, 2, 3]}'''
+
+[[case]]
+name = "expr_js_toFixed"
+group = "core"
+template = '''{{ n.toFixed(2) }}'''
+data = '''{"n": 3.14159}'''
+
+[[case]]
+name = "expr_js_toString"
+group = "core"
+template = '''{{ n.toString() }}'''
+data = '''{"n": 42}'''
+
+[[case]]
+name = "expr_js_charAt"
+group = "core"
+template = '''{{ s.charAt(1) }}'''
+data = '''{"s": "abc"}'''
+
+[[case]]
+name = "expr_js_object_keys_call"
+group = "core"
+template = '''{{ o.hasOwnProperty("a") }}'''
+data = '''{"o": {"a": 1}}'''
+
+[[case]]
+name = "expr_range_func"
+group = "core"
+template = '''{{ range(3) | join(",") }}'''
+
+[[case]]
+name = "expr_dict_func"
+group = "core"
+template = '''{% set d = {a: 1} %}{{ d.a }}'''
+
+[[case]]
+name = "expr_regex_literal"
+group = "core"
+template = '''{{ "abc".replace(r/b/, "X") }}'''
+
+[[case]]
+name = "expr_filter_arg_escape_xml"
+group = "core"
+template = '''{{ s | escape('xml') }}'''
+data = '''{"s": "<a href=\"x\">&'</a>"}'''
+
+[[case]]
+name = "expr_filter_in_expr"
+group = "core"
+template = '''{{ (a | length) + 1 }}'''
+data = '''{"a": [1, 2]}'''
+
+[[case]]
+name = "expr_filter_precedence"
+group = "core"
+template = '''{{ 1 + 2 | string }}'''
+
+[[case]]
+name = "expr_filter_on_literal"
+group = "core"
+template = '''{{ "abc" | upper }}'''
+
+[[case]]
+name = "expr_is_test"
+group = "core"
+template = '''{% if n is odd %}odd{% else %}even{% endif %}'''
+data = '''{"n": 3}'''
+
+[[case]]
+name = "expr_is_defined"
+group = "core"
+template = '''{{ x is defined }}|{{ y is defined }}'''
+data = '''{"x": 1}'''
+
+[[case]]
+name = "expr_is_not_test"
+group = "core"
+template = '''{% if n is not even %}not even{% endif %}'''
+data = '''{"n": 3}'''
+
+[[case]]
+name = "expr_is_string"
+group = "core"
+template = '''{{ x is string }}|{{ y is number }}'''
+data = '''{"x": "a", "y": 1}'''
+
+[[case]]
+name = "expr_is_null"
+group = "core"
+template = '''{{ x is null }}|{{ x is none }}'''
+data = '''{"x": null}'''
+
+[[case]]
+name = "expr_is_divisibleby"
+group = "core"
+template = '''{{ 9 is divisibleby(3) }}'''
+
+[[case]]
+name = "expr_is_iterable"
+group = "core"
+template = '''{{ a is iterable }}|{{ s is iterable }}'''
+data = '''{"a": [1], "s": "x"}'''
+
+[[case]]
+name = "expr_is_mapping"
+group = "core"
+template = '''{{ o is mapping }}|{{ a is mapping }}'''
+data = '''{"o": {}, "a": []}'''
+
+[[case]]
+name = "expr_string_escapes"
+group = "core"
+template = '''{{ "a\tb\\n" }}'''
+
+[[case]]
+name = "expr_string_quote_mix"
+group = "core"
+template = '''{{ "it's" }}{{ 'say "hi"' }}'''
+
+[[case]]
+name = "expr_unicode"
+group = "core"
+template = '''{{ "café ☕" }}'''
+
+[[case]]
+name = "expr_large_number"
+group = "core"
+template = '''{{ 12345678901234567890 }}'''
+
+[[case]]
+name = "expr_exp_notation"
+group = "core"
+template = '''{{ 1e3 }}'''
+
+[[case]]
+name = "expr_object_in_for_unpack_len"
+group = "core"
+template = '''{{ obj | length }}'''
+data = '''{"obj": {"a": 1, "b": 2}}'''
+
+[[case]]
+name = "expr_object_print"
+group = "core"
+template = '''{{ obj }}'''
+data = '''{"obj": {"a": 1}}'''
+
+[[case]]
+name = "expr_array_print"
+group = "core"
+template = '''{{ arr }}'''
+data = '''{"arr": [1, "two", [3]]}'''
+
+[[case]]
+name = "expr_null_print"
+group = "core"
+template = '''[{{ v }}]'''
+data = '''{"v": null}'''
+
+[[case]]
+name = "expr_bool_print"
+group = "core"
+template = '''{{ t }}|{{ f }}'''
+data = '''{"t": true, "f": false}'''
+
+[[case]]
+name = "expr_number_print"
+group = "core"
+template = '''{{ i }}|{{ f }}|{{ big }}'''
+data = '''{"i": 3, "f": 2.5, "big": 1000000.0}'''
