@@ -256,8 +256,9 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             Problem::warning(
                 codes::TEMPLATE_PLUGIN_ONLY,
                 format!(
-                    "{} `{ext}` files skipped: in 11ty these are templates only when a plugin adds them",
-                    paths.len()
+                    "{} `{ext}` {} skipped: in 11ty these are templates only when a plugin adds them",
+                    paths.len(),
+                    if paths.len() == 1 { "file" } else { "files" }
                 ),
             )
             .with_path(input_rel.join(paths[0])),

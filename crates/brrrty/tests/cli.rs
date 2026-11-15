@@ -223,3 +223,12 @@ fn plugin_only_extensions_exit_zero() {
     let out = run_in(dir.path(), &["build", "--input", "src"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
 }
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_exits_zero() {
+    let dir = site(&[("src/i.md", "hi\n")]);
+    std::os::unix::fs::symlink("nowhere.md", dir.path().join("src/dangling.md")).unwrap();
+    let out = run_in(dir.path(), &["build", "--input", "src"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}

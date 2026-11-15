@@ -699,6 +699,7 @@ fn plugin_only_extensions_warn_once_per_extension() {
     write(root, "src/a.webc", "x");
     write(root, "src/b.webc", "x");
     write(root, "src/c.pug", "x");
+    write(root, "src/d.mdx", "x");
     write(root, "src/ok.md", "ok\n");
     let r = build(&opts(root), &Provisional);
     assert_eq!(error_count(&r), 0, "{:?}", r.problems);
@@ -707,7 +708,13 @@ fn plugin_only_extensions_warn_once_per_extension() {
         .iter()
         .filter(|p| p.code == codes::TEMPLATE_PLUGIN_ONLY)
         .collect();
-    assert_eq!(w.len(), 2, "{:?}", r.problems);
+    assert_eq!(w.len(), 3, "{:?}", r.problems);
+    let pug = w.iter().find(|p| p.message.contains(".pug")).unwrap();
+    assert!(
+        pug.message.starts_with("1 `.pug` file skipped:"),
+        "{}",
+        pug.message
+    );
     let webc = w.iter().find(|p| p.message.contains(".webc")).unwrap();
     assert_eq!(
         webc.message,
@@ -715,4 +722,24 @@ fn plugin_only_extensions_warn_once_per_extension() {
     );
     assert_eq!(webc.path.as_deref(), Some(Path::new("src/a.webc")));
     assert!(root.join("_site/ok/index.html").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_warns_and_finishes() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi\n");
+    std::os::unix::fs::symlink("nowhere.md", root.join("src/dangling.md")).unwrap();
+    let r = build(&opts(root), &Provisional);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    let w: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::SYMLINK_BROKEN)
+        .collect();
+    assert_eq!(w.len(), 1, "{:?}", r.problems);
+    assert_eq!(w[0].path.as_deref(), Some(Path::new("src/dangling.md")));
+    assert!(w[0].message.contains("nowhere.md"));
+    assert!(root.join("_site/index.html").exists());
 }

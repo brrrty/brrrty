@@ -8,7 +8,17 @@ use std::sync::Arc;
 const TEMPLATE_EXTS: &[&str] = &[".md", ".html"];
 const UNSUPPORTED_EXTS: &[&str] = &[".liquid", ".njk", ".11ty.js", ".11ty.cjs", ".11ty.mjs"];
 /// Template types 11ty only picks up when a plugin registers them.
-pub const PLUGIN_ONLY_EXTS: &[&str] = &[".webc", ".hbs", ".mustache", ".ejs", ".haml", ".pug"];
+pub const PLUGIN_ONLY_EXTS: &[&str] = &[
+    ".webc",
+    ".hbs",
+    ".mustache",
+    ".ejs",
+    ".haml",
+    ".pug",
+    ".jsx",
+    ".tsx",
+    ".mdx",
+];
 
 /// Templates found under the input dir. Paths are relative to the input dir and sorted.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -63,6 +73,20 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
                         )
                         .with_path(root_relative(&root, link))
                         .with_help("Remove the link or point it outside its own folder."),
+                    );
+                    continue;
+                }
+                if let Some(link) = broken_link(&e) {
+                    let target = std::fs::read_link(link)
+                        .map(|t| t.display().to_string())
+                        .unwrap_or_else(|_| "a missing file".to_string());
+                    found.warnings.push(
+                        Problem::warning(
+                            codes::SYMLINK_BROKEN,
+                            format!("this link points to `{target}`, which does not exist"),
+                        )
+                        .with_path(root_relative(&root, link))
+                        .with_help("remove the link or point it at an existing file"),
                     );
                     continue;
                 }
@@ -137,6 +161,27 @@ fn loop_child(e: &ignore::Error) -> Option<&std::path::Path> {
             loop_child(err)
         }
         ignore::Error::Partial(errs) => errs.iter().find_map(loop_child),
+        _ => None,
+    }
+}
+
+/// The path of a link whose target is missing, looking through path and depth wrappers.
+fn broken_link(e: &ignore::Error) -> Option<&std::path::Path> {
+    fn is_not_found(e: &ignore::Error) -> bool {
+        match e {
+            ignore::Error::Io(io) => io.kind() == std::io::ErrorKind::NotFound,
+            ignore::Error::WithPath { err, .. } | ignore::Error::WithDepth { err, .. } => {
+                is_not_found(err)
+            }
+            _ => false,
+        }
+    }
+    match e {
+        ignore::Error::WithPath { path, err } if is_not_found(err) => Some(path),
+        ignore::Error::WithPath { err, .. } | ignore::Error::WithDepth { err, .. } => {
+            broken_link(err)
+        }
+        ignore::Error::Partial(errs) => errs.iter().find_map(broken_link),
         _ => None,
     }
 }
