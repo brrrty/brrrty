@@ -58,10 +58,21 @@ impl Diagnostic for Rendered {
 }
 
 /// Byte offset of 1-based `line`/`column` in `text`, plus the length to underline.
+///
+/// Core counts columns on text with a leading BOM already removed, so the BOM is skipped on
+/// line 1 to keep the underline on the right character.
 fn locate(text: &str, line: usize, column: usize) -> Option<SourceSpan> {
+    let bom = if text.starts_with('\u{feff}') {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    };
     let mut start = 0;
     for (i, l) in text.split_inclusive('\n').enumerate() {
         if i + 1 == line {
+            let skip = if i == 0 { bom } else { 0 };
+            let l = &l[skip..];
+            start += skip;
             let content = l.trim_end_matches(['\n', '\r']);
             let col_off = content
                 .char_indices()
@@ -172,4 +183,15 @@ pub fn print_problems(problems: &[Problem], root: &Path, color: bool) {
         if errors == 1 { "error" } else { "errors" },
         if warnings == 1 { "warning" } else { "warnings" }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locate_skips_a_leading_bom_on_line_one() {
+        let span = locate("\u{feff}{{ x }}\n", 1, 1).unwrap();
+        assert_eq!(span.offset(), 3);
+    }
 }
