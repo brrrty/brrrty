@@ -57,8 +57,22 @@ pub type FilterFn = Arc<
 >;
 
 /// Finds partials by name. Returns the resolved name and the source.
+///
+/// The engine does the name handling LiquidJS does: it appends `.liquid`
+/// when the name has no extension (Node's `path.extname` rule), then calls
+/// `load` with that file name, as written otherwise (`sub/page.md`,
+/// `./x.liquid`). The loader only maps a file name to a file: it tries each
+/// of its roots in order (11ty's are the includes folder, then the input
+/// folder), refuses names that leave a root, and returns the path it found
+/// and the source.
 pub trait Loader: Send + Sync {
     fn load(&self, name: &str) -> Option<(String, String)>;
+
+    /// Every path `load` tries for `name`, in order. It is shown when the
+    /// file is missing.
+    fn search_paths(&self, _name: &str) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// A registered filter: one the embedder added, or one of the standard set.

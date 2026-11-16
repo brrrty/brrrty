@@ -1,11 +1,15 @@
 //! Renders a parsed template, as LiquidJS's `Render.renderTemplates` and
 //! the tag `render` methods do.
 
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use brrrty_js::Value;
 
-use crate::ast::{BinaryOp, Expr, FilterArg, FilteredValue, HashArg, Literal, Node, Segment, Span};
+use crate::ast::{
+    BinaryOp, Expr, FilterArg, FilteredValue, HashArg, Literal, Node, Segment, Span, Template,
+};
 use crate::context::{Context, Val};
 use crate::engine::{Engine, Filter, FilterCtx, Loader, Tz};
 use crate::error::{ErrorKind, LiquidError};
@@ -43,7 +47,7 @@ impl RenderErr {
         self
     }
 
-    fn locate(self, span: Span, template: &str) -> RenderErr {
+    pub fn locate(self, span: Span, template: &str) -> RenderErr {
         match self {
             RenderErr::Plain {
                 kind,
@@ -73,10 +77,16 @@ pub(crate) fn too_many(message: String) -> RenderErr {
 
 pub(crate) struct Renderer<'a> {
     pub engine: &'a Engine,
-    pub template: &'a str,
-    #[allow(dead_code)] // Used by include and render.
+    /// The template being rendered, for error positions. `include` and
+    /// `render` swap it for the partial's name.
+    pub template: Rc<str>,
     pub loader: &'a dyn Loader,
     pub ctx: Context<'a>,
+    /// Parsed partials by the path the loader resolved, so a partial in a
+    /// loop is parsed once.
+    pub partials: HashMap<String, Rc<Template>>,
+    /// The partials being rendered: `(resolved path, name as written)`.
+    pub stack: Vec<(String, String)>,
 }
 
 impl<'a> Renderer<'a> {
@@ -88,9 +98,11 @@ impl<'a> Renderer<'a> {
     ) -> Renderer<'a> {
         Renderer {
             engine,
-            template,
+            template: Rc::from(template),
             loader,
             ctx: Context::new(data),
+            partials: HashMap::new(),
+            stack: Vec::new(),
         }
     }
 
@@ -112,7 +124,7 @@ impl<'a> Renderer<'a> {
     pub fn render_nodes(&mut self, nodes: &[Node], out: &mut String) -> R<()> {
         for node in nodes {
             grow(|| self.render_node(node, out))
-                .map_err(|e| e.locate(node.span(), self.template))?;
+                .map_err(|e| e.locate(node.span(), &self.template))?;
             if self.ctx.interrupted() {
                 break;
             }

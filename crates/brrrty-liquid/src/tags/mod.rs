@@ -3,11 +3,11 @@
 mod branch;
 mod iteration;
 mod layout;
+mod partials;
 mod variable;
 
 use crate::ast::{Tag, TagKind};
-use crate::error::ErrorKind;
-use crate::render::{R, RenderErr, Renderer};
+use crate::render::{R, Renderer};
 
 /// Renders one tag into `out`.
 pub(crate) fn render(r: &mut Renderer<'_>, tag: &Tag, out: &mut String) -> R<()> {
@@ -48,9 +48,7 @@ pub(crate) fn render(r: &mut Renderer<'_>, tag: &Tag, out: &mut String) -> R<()>
         TagKind::Liquid { body } => r.render_nodes(body, out),
         TagKind::Layout(l) => layout::layout(r, l, out),
         TagKind::Block { body, .. } => layout::block(r, body, out),
-        TagKind::Include(_) | TagKind::Render(_) => Err(RenderErr::new(
-            ErrorKind::Render,
-            format!("`{{% {} %}}` is not supported yet", tag.name),
-        )),
+        TagKind::Include(i) => partials::include(r, i, out),
+        TagKind::Render(rn) => partials::render(r, rn, out),
     }
 }

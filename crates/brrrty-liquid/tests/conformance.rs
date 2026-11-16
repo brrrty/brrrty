@@ -176,7 +176,9 @@ fn every_conformance_template_parses_like_liquidjs() {
 /// The case files that must render exactly like LiquidJS. Each task that
 /// adds engine features extends this list.
 const GATED_FILES: &[&str] = &[
+    "errors.toml",
     "filters.toml",
+    "includes.toml",
     "tags.toml",
     "operators.toml",
     "truthiness.toml",
@@ -215,6 +217,19 @@ fn run_case(case: &Case) -> Outcome {
     let got = engine
         .parse(&case.name, &case.template)
         .and_then(|t| engine.render(&t, &data, &MapLoader(&case.includes)));
+    // An `.error` file with `line:N, col:M` also pins where the error is.
+    // The message may differ: ours can be more helpful.
+    let want_position = fs::read_to_string(expected.join(format!("{}.error", case.name)))
+        .ok()
+        .and_then(|text| error_position(&text));
+    if let (Some((line, col)), Err(e)) = (want_position, &got)
+        && (e.line, e.column) != (line, col)
+    {
+        return Outcome::Fail(format!(
+            "want an error at {line}:{col}, got {}:{}: {e}",
+            e.line, e.column
+        ));
+    }
     match (want_out, got) {
         (Some(want), Ok(got)) if want == got => Outcome::Pass,
         (Some(want), Ok(got)) => Outcome::Fail(format!("want {want:?}, got {got:?}")),

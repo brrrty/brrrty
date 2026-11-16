@@ -48,9 +48,11 @@ fn eval_on(r: &mut Renderer<'_>, path: Option<&Expr>, item: &Value) -> R<Val> {
     };
     let mut sub = Renderer {
         engine: r.engine,
-        template: r.template,
+        template: r.template.clone(),
         loader: r.loader,
         ctx: Context::new(item),
+        partials: Default::default(),
+        stack: Vec::new(),
     };
     sub.eval(path)
 }
