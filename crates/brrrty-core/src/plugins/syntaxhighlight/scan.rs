@@ -40,8 +40,14 @@ const MAX_FILE: u64 = 16 << 20;
 
 /// Every file under `input` (as `input_rel` shows it) that names a
 /// language changing grammars Brrrty has, skipping `node_modules`, `.git`
-/// and anything under `skip` (the output folder).
-pub fn scan(input: &Path, input_rel: &Path, skip: &Path) -> Vec<Found> {
+/// and anything under `skip` (the output folder). `engines` says which
+/// language renders Markdown and HTML.
+pub fn scan(
+    input: &Path,
+    input_rel: &Path,
+    skip: &Path,
+    engines: crate::options::TemplateEngines,
+) -> Vec<Found> {
     let mut files = Vec::new();
     walk(input, skip, &mut files);
     files.sort();
@@ -53,7 +59,8 @@ pub fn scan(input: &Path, input_rel: &Path, skip: &Path) -> Vec<Found> {
         }
         let text = String::from_utf8_lossy(&bytes);
         let shown = input_rel.join(file.strip_prefix(input).unwrap_or(&file));
-        for (line, language) in languages(&text) {
+        let nunjucks = may_be_nunjucks(&file, &text, engines);
+        for (line, language) in languages(&text, nunjucks) {
             if let Some(keys) = changes(&language) {
                 out.push(Found {
                     path: shown.clone(),
@@ -65,6 +72,22 @@ pub fn scan(input: &Path, input_rel: &Path, skip: &Path) -> Vec<Found> {
         }
     }
     out
+}
+
+/// Whether Nunjucks could render `file`: a `.njk` file, Markdown or HTML
+/// that the config gives Nunjucks, or a file that names it anywhere (as
+/// `templateEngineOverride` would).
+fn may_be_nunjucks(file: &Path, text: &str, engines: crate::options::TemplateEngines) -> bool {
+    use crate::options::TemplateLanguage;
+    let ext = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    ext == "njk"
+        || (ext == "md" && engines.markdown == Some(TemplateLanguage::Nunjucks))
+        || (ext == "html" && engines.html == Some(TemplateLanguage::Nunjucks))
+        || text.contains("njk")
 }
 
 fn walk(dir: &Path, skip: &Path, out: &mut Vec<PathBuf>) {
@@ -119,10 +142,12 @@ pub(crate) fn changes(language: &str) -> Option<Vec<String>> {
 /// every fence's info string (markdown-it's `info.split(/\s+/)[0]`, its
 /// backslash escapes removed) and the first argument of every
 /// `{% highlight %}` (quotes removed, for Nunjucks). Looser than Markdown
-/// is: a fence anywhere in a line counts. A word with a backslash left in
+/// is: a fence anywhere in a line counts. In a file Nunjucks may render
+/// (`nunjucks`), a tag whose arguments aren't one string could load any
+/// language, and so could a tag whose arguments start on another line. A word with a backslash left in
 /// it counts both whole and cut there, as a string in a data file would be
 /// read.
-fn languages(text: &str) -> Vec<(usize, String)> {
+fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let mut add = |word: &str| {
@@ -151,7 +176,9 @@ fn languages(text: &str) -> Vec<(usize, String)> {
         while let Some(at) = rest.find("{%") {
             let tag = rest[at + 2..].trim_start_matches('-').trim_start();
             if let Some(args) = tag.strip_prefix("highlight")
-                && args.starts_with(char::is_whitespace)
+                && (args.is_empty()
+                    || args.starts_with(char::is_whitespace)
+                    || (nunjucks && args.starts_with(['"', '\''])))
             {
                 let word = args
                     .trim_start()
@@ -162,11 +189,34 @@ fn languages(text: &str) -> Vec<(usize, String)> {
                 if !word.is_empty() {
                     add(word);
                 }
+                // The arguments go on to another line, or Nunjucks
+                // evaluates them as an expression other than one string:
+                // the language could be any.
+                if word.is_empty() || (nunjucks && !one_string(args)) {
+                    let written = args.split("%}").next().unwrap_or("");
+                    let written = written.trim().trim_end_matches('-').trim_end();
+                    add(&format!("{{{{ {written} }}}}"));
+                }
             }
             rest = &rest[at + 2..];
         }
     }
     out
+}
+
+/// Whether Nunjucks tag arguments are one string literal without escapes,
+/// up to the tag's end.
+fn one_string(args: &str) -> bool {
+    let args = args.trim_start();
+    let Some(q) = args.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+        return false;
+    };
+    let Some(end) = args[1..].find(q) else {
+        return false;
+    };
+    let body = &args[1..1 + end];
+    let after = args[2 + end..].trim_start();
+    !body.contains('\\') && (after.starts_with("%}") || after.starts_with("-%}"))
 }
 
 /// markdown-it's backslash escapes: `\` before ASCII punctuation goes.
@@ -211,7 +261,7 @@ mod tests {
     #[test]
     fn fences_and_tags_name_their_languages() {
         let text = "x\n```regex\n~~~ diff-jsdoc/1 more\n  > ```js/1-2\n{%- highlight \"css-extras\" -%}\n{% highlight php-extras 1 %}\n`not` ``a``\n";
-        let got: Vec<(usize, String)> = languages(text);
+        let got: Vec<(usize, String)> = languages(text, false);
         assert_eq!(
             got,
             vec![
@@ -227,14 +277,46 @@ mod tests {
     #[test]
     fn a_language_from_a_string_counts_cut_at_a_backslash() {
         assert_eq!(
-            languages(r#"{"md": "```regex\nx\n```"}"#),
+            languages(r#"{"md": "```regex\nx\n```"}"#, false),
             vec![
                 (1, "regex".to_string()),
                 (1, r"regex\nx\n".to_string()),
                 (1, "\"}".to_string())
             ]
         );
-        assert_eq!(languages(r"```reg\-ex"), vec![(1, "reg-ex".to_string())]);
+        assert_eq!(
+            languages(r"```reg\-ex", false),
+            vec![(1, "reg-ex".to_string())]
+        );
+    }
+
+    #[test]
+    fn nunjucks_arguments_other_than_one_string_could_be_any_language() {
+        let text = "{% highlight \"regex 1\" %}\n{% highlight lang %}\n{%- highlight \"js\" ~ x -%}\n{% highlight'css' -%}\n{% highlight\n";
+        let got = languages(text, true);
+        assert_eq!(
+            got,
+            vec![
+                (1, "regex".to_string()),
+                (2, "lang".to_string()),
+                (2, "{{ lang }}".to_string()),
+                (3, "js".to_string()),
+                (3, "{{ \"js\" ~ x }}".to_string()),
+                (4, "css".to_string()),
+                (5, "{{  }}".to_string()),
+            ]
+        );
+        for (_, l) in &got[2..] {
+            if l.starts_with("{{") {
+                assert!(changes(l).is_some_and(|k| k.iter().any(|k| k == "javascript")));
+            }
+        }
+        // Liquid reads the first word as written; only a tag cut at the
+        // line could be any language.
+        assert_eq!(
+            languages("{% highlight lang %}\n{% highlight\n", false),
+            vec![(1, "lang".to_string()), (2, "{{  }}".to_string())]
+        );
     }
 
     #[test]

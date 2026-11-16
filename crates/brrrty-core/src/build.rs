@@ -1550,7 +1550,12 @@ fn build_once(
     // The syntax highlighting plugin, refusing the grammars a language some
     // file names could change for the pages 11ty renders after it.
     let highlight = opts.config.syntax_highlight.as_ref().map(|p| {
-        let mut all = crate::plugins::syntaxhighlight::scan::scan(&input, &input_rel, &out);
+        let mut all = crate::plugins::syntaxhighlight::scan::scan(
+            &input,
+            &input_rel,
+            &out,
+            opts.config.template_engines,
+        );
         all.extend(found.iter().cloned());
         p.with_mutations(&all)
     });
