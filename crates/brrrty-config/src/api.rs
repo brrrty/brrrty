@@ -39,10 +39,12 @@ thread_local! {
         std::cell::Cell::new(std::time::Instant::now());
 }
 
-/// Start the clock that stops a run after [`MAX_SECONDS`]. Call it where a
+/// Start the clock that stops a run after [`MAX_SECONDS`], and the count of what its objects
+/// hold (see [`crate::object::MAX_OBJECTS_SIZE`]). Call it where a
 /// run begins on this thread.
 pub fn start_clock() {
     RUN_START.with(|s| s.set(std::time::Instant::now()));
+    crate::object::reset_objects_size();
 }
 
 /// A JavaScript `Date`: milliseconds since 1970, `NaN` when invalid.

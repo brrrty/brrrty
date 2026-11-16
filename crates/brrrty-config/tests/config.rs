@@ -265,6 +265,36 @@ fn a_huge_string_is_stopped() {
     assert_eq!(p.code, codes::CONFIG_LIMIT);
 }
 
+/// Rhai can't see inside an `object()`, so Brrrty counts what objects hold. Filling one with
+/// 8 MB strings used to grow past 7 GB before the clock stopped it; now it stops at 64 MB,
+/// whether the strings go in one object, in objects inside it, or in objects in an array.
+#[test]
+fn filling_objects_is_stopped_by_size() {
+    let big = "let big = \"x\";\nfor n in 0..23 { big += big; }\nlet i = 0;\n";
+    for fill in [
+        "let o = object();\nloop { o[i.to_string()] = big + i; i += 1; }\n",
+        "let o = object();\nloop { let p = object(); p.s = big + i; o[`k${i}`] = p; i += 1; }\n",
+        "let a = [];\nloop { let p = object(); p.s = [big + i]; a.push(p); i += 1; }\n",
+        "let o = object();\nloop { o[`k${i}`] = #{ s: big + i }; i += 1; }\n",
+    ] {
+        let started = Instant::now();
+        let p = err(&format!("{big}{fill}"));
+        assert_eq!(p.code, codes::CONFIG_LIMIT, "{fill}");
+        assert_eq!(p.line, Some(5), "{fill}");
+        assert!(
+            p.message.contains("Total size of objects (over 64 MB"),
+            "{}",
+            p.message
+        );
+        assert!(started.elapsed() < Duration::from_secs(5), "{fill}");
+    }
+    // Replacing a value, or removing one, gives its size back.
+    let c = ok(&format!(
+        "{big}let o = object();\nfor n in 0..20 {{ o.s = big + n; o.t = big + n; o.remove(\"t\"); }}\nconfig.add_global_data(\"n\", o.s.len());\n"
+    ));
+    assert_eq!(c.global_data["n"], Value::Number(8_388_610.0));
+}
+
 #[test]
 fn deeply_nested_data_is_stopped_without_overflowing() {
     let p = err("let a = [];\nfor i in 0..2000 { a = [a]; }\nconfig.add_global_data(\"a\", a);\n");

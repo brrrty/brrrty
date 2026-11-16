@@ -1389,3 +1389,17 @@ fn a_filter_calling_timestamp_is_refused() {
     assert!(why.contains("timestamp() is not available"), "{why}");
     assert!(why.contains("Use now()"), "{why}");
 }
+
+/// A filter that fills an `object()` past Brrrty's size limit is stopped with Rhai's
+/// data-too-large error, and the next call starts its count afresh.
+#[test]
+fn a_filter_filling_an_object_is_stopped_by_size() {
+    let cfg = load(
+        "config.add_filter(\"fill\", |n| { let big = \"x\"; for k in 0..23 { big += big; } \
+         let o = object(); for i in 0..n.to_int() { o[i.to_string()] = big + i; } o.len() });",
+    );
+    let why = render(&cfg, "{{ 20 | fill }}", "{}").unwrap_err();
+    assert!(why.contains("Total size of objects (over 64 MB"), "{why}");
+    assert_eq!(render(&cfg, "{{ 7 | fill }}", "{}").unwrap(), "7");
+    assert_eq!(render(&cfg, "{{ 7 | fill }}", "{}").unwrap(), "7");
+}

@@ -31,7 +31,7 @@ use brrrty_js::traps::TRAP_KEYS;
 use indexmap::IndexMap;
 use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position};
 
-use crate::api::{MAX_MAP_SIZE, invalid};
+use crate::api::{MAX_MAP_SIZE, MAX_STRING_SIZE, invalid};
 use crate::convert::{to_dynamic, to_value_at};
 
 /// JavaScript's `null`, as a value a script can hold. It is equal to `()`
@@ -52,7 +52,7 @@ pub struct JsNull;
 #[derive(Debug, Clone)]
 pub enum JsObject {
     Shared(Arc<IndexMap<String, Value>>),
-    Owned(IndexMap<String, Dynamic>),
+    Owned(OwnedMap),
     /// A collection item, or an object read through one: the same object,
     /// which can't be changed.
     Frozen(Arc<IndexMap<String, Value>>),
@@ -62,6 +62,128 @@ pub enum JsObject {
 /// `to_array()` copies it into an array the script can change.
 #[derive(Debug, Clone)]
 pub struct FrozenArray(pub Arc<Vec<Value>>);
+
+/// Most bytes all of a run's objects may hold together, counted as Rhai counts an array's or
+/// a map's size (see [`OwnedMap`]). Rhai can't see inside an `object()`, so without this a
+/// script could fill one with copies of a large string until the machine ran out of memory.
+pub const MAX_OBJECTS_SIZE: usize = 4 * MAX_STRING_SIZE;
+
+/// The entries of an `object()` the script has changed, with what they count toward
+/// [`MAX_OBJECTS_SIZE`]: the length of every key and string, and one for every item and key
+/// of the arrays and maps in it, at any depth, as Rhai sizes data. An object inside counts
+/// itself, so it isn't counted twice. The count of every live map on a thread is kept in
+/// `OBJECTS_SIZE`, and a copy counts again, as a copy of an array does in Rhai.
+#[derive(Debug, Default)]
+pub struct OwnedMap {
+    map: IndexMap<String, Dynamic>,
+    size: usize,
+}
+
+impl std::ops::Deref for OwnedMap {
+    type Target = IndexMap<String, Dynamic>;
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl Clone for OwnedMap {
+    fn clone(&self) -> Self {
+        add_size(self.size);
+        OwnedMap {
+            map: self.map.clone(),
+            size: self.size,
+        }
+    }
+}
+
+impl Drop for OwnedMap {
+    fn drop(&mut self) {
+        sub_size(self.size);
+    }
+}
+
+impl FromIterator<(String, Dynamic)> for OwnedMap {
+    fn from_iter<I: IntoIterator<Item = (String, Dynamic)>>(iter: I) -> Self {
+        let mut m = OwnedMap::default();
+        for (k, v) in iter {
+            m.insert(k, v);
+        }
+        m
+    }
+}
+
+impl OwnedMap {
+    fn insert(&mut self, k: String, v: Dynamic) {
+        let (key, new) = (k.len(), data_size(&v));
+        match self.map.insert(k, v) {
+            // The key was counted already.
+            Some(old) => self.resize(new, data_size(&old)),
+            None => self.resize(key + new, 0),
+        }
+    }
+
+    fn shift_remove(&mut self, k: &str) -> Option<Dynamic> {
+        let old = self.map.shift_remove(k)?;
+        self.resize(0, k.len() + data_size(&old));
+        Some(old)
+    }
+
+    fn resize(&mut self, add: usize, sub: usize) {
+        self.size = (self.size + add).saturating_sub(sub);
+        add_size(add);
+        sub_size(sub);
+    }
+}
+
+/// What `v` counts toward [`MAX_OBJECTS_SIZE`], following Rhai's `calc_data_sizes`: string
+/// bytes, and one per item or key of an array or map, at any depth. Objects count themselves.
+fn data_size(v: &Dynamic) -> usize {
+    if let Some(s) = v.read_lock::<ImmutableString>() {
+        return s.len();
+    }
+    if v.is_array() {
+        let a = v.read_lock::<Array>().expect("an array");
+        return a.iter().map(|x| 1 + data_size(x)).sum();
+    }
+    if v.is_map() {
+        let m = v.read_lock::<Map>().expect("a map");
+        return m.iter().map(|(k, x)| 1 + k.len() + data_size(x)).sum();
+    }
+    0
+}
+
+thread_local! {
+    /// What every changed `object()` on this thread holds; see [`OwnedMap`].
+    static OBJECTS_SIZE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn add_size(n: usize) {
+    OBJECTS_SIZE.with(|s| s.set(s.get().saturating_add(n)));
+}
+
+fn sub_size(n: usize) {
+    OBJECTS_SIZE.with(|s| s.set(s.get().saturating_sub(n)));
+}
+
+/// Start counting afresh for a new run. Objects left from a run that ended don't count.
+pub fn reset_objects_size() {
+    OBJECTS_SIZE.with(|s| s.set(0));
+}
+
+/// An error once the objects on this thread hold more than [`MAX_OBJECTS_SIZE`].
+fn check_objects_size() -> Result<(), Box<EvalAltResult>> {
+    if OBJECTS_SIZE.with(|s| s.get()) > MAX_OBJECTS_SIZE {
+        return Err(EvalAltResult::ErrorDataTooLarge(
+            format!(
+                "Total size of objects (over {} MB of keys, text and items)",
+                MAX_OBJECTS_SIZE / (1024 * 1024)
+            ),
+            Position::NONE,
+        )
+        .into());
+    }
+    Ok(())
+}
 
 thread_local! {
     /// A read a collection made that 11ty would have stopped at, such as an
@@ -140,7 +262,7 @@ fn premature(o: &IndexMap<String, Value>, key: &str) -> Result<(), Box<EvalAltRe
 
 impl Default for JsObject {
     fn default() -> Self {
-        JsObject::Owned(IndexMap::new())
+        JsObject::Owned(OwnedMap::default())
     }
 }
 
@@ -225,7 +347,7 @@ impl JsObject {
 
     /// The map, copied out of its `Arc` first if it is shared. An item
     /// can't be changed.
-    fn owned(&mut self, what: &str) -> Result<&mut IndexMap<String, Dynamic>, Box<EvalAltResult>> {
+    fn owned(&mut self, what: &str) -> Result<&mut OwnedMap, Box<EvalAltResult>> {
         if let JsObject::Frozen(_) = self {
             return Err(read_only(what.to_string()));
         }
@@ -245,7 +367,7 @@ impl JsObject {
             JsObject::Shared(m) | JsObject::Frozen(m) => Ok(Value::Object(m.clone())),
             JsObject::Owned(m) => {
                 let mut out = IndexMap::new();
-                for (k, x) in m {
+                for (k, x) in m.iter() {
                     out.insert(k.clone(), to_value_at(x, depth + 1)?);
                 }
                 Ok(Value::Object(Arc::new(out)))
@@ -301,7 +423,7 @@ fn set(o: &mut JsObject, key: ImmutableString, v: Dynamic) -> Result<(), Box<Eva
         ));
     }
     o.owned("")?.insert(key.to_string(), v);
-    Ok(())
+    check_objects_size()
 }
 
 /// `sort` or `reverse` on an array read through an item: JavaScript would
@@ -419,8 +541,10 @@ pub fn register(e: &mut Engine) {
         });
     e.register_type_with_name::<JsObject>("object")
         .register_fn("object", JsObject::default)
-        .register_fn("object", |m: Map| {
-            JsObject::Owned(m.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        .register_fn("object", |m: Map| -> Result<JsObject, Box<EvalAltResult>> {
+            let o = JsObject::Owned(m.into_iter().map(|(k, v)| (k.to_string(), v)).collect());
+            check_objects_size()?;
+            Ok(o)
         })
         .register_indexer_get(get)
         .register_indexer_set(set)
