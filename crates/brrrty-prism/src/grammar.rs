@@ -90,6 +90,12 @@ pub struct Grammars {
     /// The grammars `Prism.languages` surely has once a fence language
     /// (by its normalized name) is loaded, whatever was loaded before.
     pub keys_by_language: Vec<(String, Vec<String>)>,
+    /// Each Prism component Brrrty doesn't load whose loading changes
+    /// grammars it does (and each alias of one), with the `Prism.languages`
+    /// keys that change: once any page loads it, 11ty highlights later
+    /// pages in those languages differently. From components.json, as
+    /// Prism's `loadLanguages` reads it, and from loading each one.
+    pub mutators: Vec<(String, Vec<String>)>,
     pub grammars: Vec<Grammar>,
     pub regexes: Vec<RegexEntry>,
     /// Each grammar's tokens once `rest` is merged in, made on first use.
@@ -178,6 +184,10 @@ impl Grammars {
             .iter()
             .map(|(k, x)| (k.clone(), strings(x)))
             .collect();
+        let mutators = obj("mutators")?
+            .iter()
+            .map(|(k, x)| (k.clone(), strings(x)))
+            .collect();
         let mut regexes: Vec<RegexEntry> = Vec::new();
         let mut regex_ids: HashMap<(String, String), RegexId> = HashMap::new();
         let raw = v["grammars"].as_array().ok_or("`grammars` is missing")?;
@@ -223,6 +233,7 @@ impl Grammars {
             hooks_by_language,
             base_keys,
             keys_by_language,
+            mutators,
             grammars,
             regexes,
             merged,
@@ -296,6 +307,16 @@ impl Grammars {
         self.keys_by_language
             .iter()
             .find(|(k, _)| k == lang)
+            .map(|(_, v)| v.as_slice())
+    }
+
+    /// The `Prism.languages` keys whose grammars change once a page loads
+    /// `name` (a component or alias), or `None` when loading it changes none
+    /// of them.
+    pub fn mutated_by(&self, name: &str) -> Option<&[String]> {
+        self.mutators
+            .iter()
+            .find(|(k, _)| k == name)
             .map(|(_, v)| v.as_slice())
     }
 

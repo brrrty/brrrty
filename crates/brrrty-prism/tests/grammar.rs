@@ -274,3 +274,54 @@ fn what_loading_a_language_surely_brings() {
     }
     assert!(g.keys_after_loading("haskell").is_none());
 }
+
+#[test]
+fn languages_brrrty_lacks_that_change_its_grammars() {
+    let g = grammars();
+    let has = |by: &str, key: &str| {
+        g.mutated_by(by)
+            .is_some_and(|ks| ks.iter().any(|k| k == key))
+    };
+    // `javascript` lists `regex` as optional: loading it reloads
+    // javascript, and markup, css and everything built on them.
+    for key in [
+        "javascript",
+        "js",
+        "markup",
+        "html",
+        "css",
+        "php",
+        "markdown",
+        "jsx",
+    ] {
+        assert!(has("regex", key), "regex changes {key}");
+    }
+    assert!(!has("regex", "bash"));
+    assert!(has("css-extras", "css"));
+    assert!(has("jsdoc", "javascript"));
+    assert!(has("php-extras", "php"));
+    assert!(has("opencl", "c"));
+    // cilkc's insertBefore replaces Prism.languages.c, which components.json
+    // doesn't say.
+    assert!(has("cilkc", "c"));
+    // Aliases count as their component.
+    assert_eq!(g.mutated_by("adoc"), g.mutated_by("asciidoc"));
+    // Languages that change nothing Brrrty has.
+    for name in [
+        "kotlin",
+        "swift",
+        "cpp",
+        "csharp",
+        "javascript",
+        "bash",
+        "yaml",
+    ] {
+        assert!(g.mutated_by(name).is_none(), "{name}");
+    }
+    // Every key named is one Brrrty has.
+    for (_, keys) in &g.mutators {
+        for k in keys {
+            assert!(g.language(k).is_some(), "{k}");
+        }
+    }
+}

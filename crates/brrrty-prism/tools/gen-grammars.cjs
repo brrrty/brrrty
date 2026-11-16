@@ -39,12 +39,14 @@
 // "hooks" has the source of every hook Prism has once loaded, and
 // "hooksByLanguage" how many of each a fence language adds alone; the
 // tokenizer has to port them. "components" is Prism's components.json
-// languages and aliases, for the plugin's alias normalization.
+// languages and aliases, for the plugin's alias normalization. "mutators"
+// is described at `mutators` below.
 
 'use strict';
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const { FENCES, load } = require('./pins.cjs');
@@ -106,8 +108,105 @@ function snapshot(roots) {
   return { rootIds, grammars };
 }
 
-// Child: load `names` in order and print the state.
-function child(nm, names) {
+// The token names and aliases in `g` and every grammar it reaches.
+function tokenNames(g, out = new Set(), seen = new Set()) {
+  if (!isGrammar(g) || seen.has(g)) return out;
+  seen.add(g);
+  for (const name in g) {
+    if (!Object.prototype.hasOwnProperty.call(g, name) || !g[name]) continue;
+    if (name === 'rest') {
+      tokenNames(g.rest, out, seen);
+      continue;
+    }
+    out.add(name);
+    for (const p of [].concat(g[name])) {
+      if (p instanceof RegExp) continue;
+      for (const a of [].concat(p.alias || [])) out.add(a);
+      if (p.inside) tokenNames(p.inside, out, seen);
+    }
+  }
+  return out;
+}
+
+// Whether `hook`, run on `env`, does anything but read the properties in
+// `reads`: anything else it reads, writes or throws counts as acting.
+function acts(hook, env, reads) {
+  let acted = false;
+  const proxy = new Proxy(env, {
+    get(t, k) {
+      if (!reads.includes(k)) acted = true;
+      return t[k];
+    },
+    has(t, k) {
+      if (!reads.includes(k)) acted = true;
+      return k in t;
+    },
+    set() {
+      acted = true;
+      return true;
+    },
+    deleteProperty() {
+      acted = true;
+      return true;
+    },
+    defineProperty() {
+      acted = true;
+      return true;
+    },
+    ownKeys(t) {
+      acted = true;
+      return Reflect.ownKeys(t);
+    },
+  });
+  try {
+    hook(proxy);
+  } catch {
+    acted = true;
+  }
+  return acted;
+}
+
+// The Prism.languages keys that hooks `base` doesn't have can act on in
+// Prism.highlight: a `before-tokenize` or `after-tokenize` hook that reads
+// more than `env.language`, or a `wrap` hook that reads more than
+// `env.language` and `env.type` for some token the key's grammar has
+// (Prism.highlight runs no other hooks). A `diff-` name stands for the diff
+// grammar. A hook with the same source as one in `base` is a component's
+// hook added again when Prism reloads it: it does to a language what the
+// one in `base` does, which Brrrty ports, so it can only change the
+// languages of the components reloaded, which are counted already.
+function hookKeys(Prism, base) {
+  const known = new Set();
+  for (const v of Object.values(base)) for (const src of v) known.add(src);
+  const extra = [];
+  for (const [k, v] of Object.entries(Prism.hooks.all)) {
+    for (const f of v) if (!known.has(String(f))) extra.push([k, f]);
+  }
+  const out = new Set();
+  const keys = Object.keys(Prism.languages).filter((k) => isGrammar(Prism.languages[k]));
+  const probes = keys.map((k) => [k, k]);
+  if (keys.includes('diff')) probes.push(['diff', 'diff-javascript']);
+  for (const [key, language] of probes) {
+    const grammar = Prism.languages[key];
+    const types = [...tokenNames(grammar)];
+    for (const [name, hook] of extra) {
+      let hit = false;
+      if (name === 'before-tokenize' || name === 'after-tokenize') {
+        hit = acts(hook, { code: '', grammar, language, tokens: [] }, ['language']);
+      } else if (name === 'wrap') {
+        hit = types.some((type) =>
+          acts(hook, { type, content: '', tag: 'span', classes: ['token', type], attributes: {}, language }, ['language', 'type']),
+        );
+      }
+      if (hit) out.add(key);
+    }
+  }
+  return [...out];
+}
+
+// Child: load `names` in order and print the state; with `baseHooks` (a
+// file of another state's hooks), also the keys hooks beyond those act on.
+function child(nm, names, baseHooks) {
   const { Prism, PrismLoader, normalize, components, versions } = load(nm);
   const hooksBefore = {};
   for (const [k, v] of Object.entries(Prism.hooks.all)) hooksBefore[k] = v.length;
@@ -125,6 +224,7 @@ function child(nm, names) {
   }
   return {
     versions,
+    hookKeys: baseHooks ? hookKeys(Prism, JSON.parse(fs.readFileSync(baseHooks, 'utf8'))) : null,
     fences,
     languages: languages.map((k, i) => [k, snap.rootIds[i]]),
     grammars: snap.grammars,
@@ -137,8 +237,9 @@ function child(nm, names) {
   };
 }
 
-function run(nm, names) {
-  const out = execFileSync(process.execPath, [__filename, '--child', nm, JSON.stringify(names)], {
+function run(nm, names, baseHooks) {
+  const args = [__filename, '--child', nm, JSON.stringify(names)].concat(baseHooks ? [baseHooks] : []);
+  const out = execFileSync(process.execPath, args, {
     maxBuffer: 1 << 30,
   });
   return JSON.parse(out);
@@ -188,6 +289,82 @@ function shuffled(xs, seed) {
     s = (s * 1103515245 + 12345) % 2147483648;
     const j = s % (i + 1);
     [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// Prism.languages is one object for the whole build in 11ty, so a page that
+// loads a language Brrrty doesn't have can change the grammars of the ones
+// it has, for every page 11ty renders after it. Which grammars a component
+// changes comes from components.json, the way Prism's own loadLanguages
+// reads it (dependencies.js): loading it reloads every loaded component it
+// modifies or that depends on it, until nothing changes. A Prism.languages
+// key is changed when its component is reloaded, or its grammar reaches the
+// grammar of one that is. Every component is then loaded after the fence
+// languages and before them, and every grammar compared: one that changes
+// where components.json says it doesn't fails the generator, and so does a
+// component that adds a hook, which Brrrty would have to port.
+//
+// "mutators" maps each component (and its aliases, as the plugin names
+// them) that changes any grammar to the Prism.languages keys it changes.
+function mutators(nm, state) {
+  const { components, plugin } = load(nm);
+  const getLoader = require(require.resolve('prismjs/dependencies', { paths: [plugin] }));
+  const ids = Object.keys(components.languages).filter((id) => id !== 'meta');
+  const alias = new Map();
+  for (const id of ids) {
+    alias.set(id, id);
+    for (const a of [].concat(components.languages[id].alias || [])) alias.set(a, id);
+  }
+  const keys = state.languages.map(([k]) => k);
+  const loadedIds = new Set(keys.filter((k) => alias.has(k)).map((k) => alias.get(k)));
+  // Grammars reachable from each key.
+  const reach = new Map();
+  for (const [k, root] of state.languages) {
+    const seen = new Set();
+    const stack = [root];
+    while (stack.length) {
+      const g = stack.pop();
+      if (seen.has(g)) continue;
+      seen.add(g);
+      const gr = state.grammars[g];
+      if (gr.rest !== null) stack.push(gr.rest);
+      for (const [, ps] of gr.tokens) for (const p of ps) if (p.inside !== null) stack.push(p.inside);
+    }
+    reach.set(k, seen);
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-grammars-'));
+  const baseHooks = path.join(dir, 'hooks.json');
+  fs.writeFileSync(baseHooks, JSON.stringify(state.hooks));
+  const out = {};
+  try {
+    for (const c of ids) {
+      if (loadedIds.has(c)) continue;
+      // What components.json says: the components Prism reloads.
+      const reloaded = getLoader(components, [c], keys).getIds().filter((id) => loadedIds.has(id));
+      const roots = new Set(keys.filter((k) => reloaded.includes(alias.get(k))).map((k) => rootOf(state, k)));
+      const changed = new Set(
+        keys.filter((k) => reloaded.includes(alias.get(k)) || [...roots].some((r) => reach.get(k).has(r))),
+      );
+      // What loading it does, in either order. Some components change a
+      // grammar components.json doesn't say they touch (cilkc's
+      // insertBefore replaces Prism.languages.c).
+      for (const order of [FENCES.concat([c]), [c].concat(FENCES)]) {
+        const s = run(nm, order, baseHooks);
+        for (const k of keys) {
+          const r = rootOf(s, k);
+          if (r === null) throw new Error(`loading ${c} removes ${k}`);
+          if (differences(state, rootOf(state, k), s, r).length > 0) changed.add(k);
+        }
+        for (const k of s.hookKeys) if (keys.includes(k)) changed.add(k);
+      }
+      if (changed.size > 0) {
+        const list = keys.filter((k) => changed.has(k));
+        for (const [name, id] of alias) if (id === c) out[name] = list;
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   return out;
 }
@@ -259,6 +436,7 @@ function main(nm, outFile) {
     hooksByLanguage,
     baseKeys: state.baseKeys,
     keysByLanguage,
+    mutators: mutators(nm, state),
     hooks: state.hooks,
     components: state.components,
     grammars: state.grammars,
@@ -281,7 +459,7 @@ function main(nm, outFile) {
 }
 
 if (process.argv[2] === '--child') {
-  process.stdout.write(JSON.stringify(child(process.argv[3], JSON.parse(process.argv[4]))));
+  process.stdout.write(JSON.stringify(child(process.argv[3], JSON.parse(process.argv[4]), process.argv[5])));
 } else if (process.argv.length === 4) {
   main(path.resolve(process.argv[2]), process.argv[3]);
 } else {
