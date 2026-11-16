@@ -137,3 +137,23 @@ fn template_formats_pick_what_is_highlighted() {
     o.template_formats = Some(vec!["*".into()]);
     assert!(o.has_format("liquid"));
 }
+
+#[test]
+fn an_upper_case_diff_prefix_is_an_unknown_language() {
+    // What 11ty 3.1.8 writes, with or without a `diff-js` page before.
+    let p = plugin();
+    for first in [None, Some("diff-js")] {
+        let mut page = p.page();
+        if let Some(lang) = first {
+            page.markdown("- x\n", lang).unwrap();
+        }
+        assert_eq!(
+            page.markdown("- let a = 1;\n", "DIFF-js").unwrap(),
+            r#"<pre class="language-DIFF-js"><code class="language-DIFF-js">- let a = 1;</code></pre>"#
+        );
+        assert_eq!(
+            page.markdown("- x\n", "Diff-javascript").unwrap(),
+            r#"<pre class="language-Diff-javascript"><code class="language-Diff-javascript">- x</code></pre>"#
+        );
+    }
+}

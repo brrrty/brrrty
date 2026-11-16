@@ -209,14 +209,17 @@ pub fn normalize(language: &str) -> String {
 
 /// Whether some page could have put `name` in `Prism.languages`: a
 /// component or one of its aliases, a grammar Brrrty has, or a `diff-`
-/// name (the plugin and the diff-highlight hook add those).
+/// name (the plugin and the diff-highlight hook add those). The hook's
+/// pattern ignores case, but it only sees a name the plugin highlights
+/// with, which starts with a lower case `diff-`: 11ty writes `DIFF-js`
+/// plain on every page.
 fn could_be_loaded(name: &str) -> bool {
     grammars().language(name).is_some()
         || grammars()
             .components
             .iter()
             .any(|(id, aliases)| id == name || aliases.iter().any(|a| a == name))
-        || name.to_ascii_lowercase().starts_with("diff-")
+        || name.starts_with("diff-")
 }
 
 /// `Prism.languages`, as far as one page can know it.

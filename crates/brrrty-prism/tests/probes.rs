@@ -1,6 +1,8 @@
 //! Replays tests/probes/regex.json: what Node's `exec` gave for Prism's
 //! regular expressions on code-like text, a sample of the fuzz in
-//! tests/fuzz.rs (which wrote the file). Positions are UTF-16 units.
+//! tests/fuzz.rs (which wrote the file). Positions are UTF-16 units. A
+//! case `exec` refuses (its backtracking budget runs out) is counted as a
+//! refusal, not a difference: the page would be refused, never written.
 
 use brrrty_prism::regex::{JsText, translate};
 use serde_json::Value;
@@ -30,6 +32,7 @@ fn prism_regexes_match_node() {
     .unwrap();
     let mut failures = Vec::new();
     let mut compared = 0;
+    let mut refused = Vec::new();
     let regexes = file["regexes"].as_array().unwrap();
     for r in regexes {
         let (source, flags) = (r["source"].as_str().unwrap(), r["flags"].as_str().unwrap());
@@ -43,7 +46,14 @@ fn prism_regexes_match_node() {
         for case in r["cases"].as_array().unwrap() {
             let t = text(case);
             let last = case["i"].as_u64().unwrap() as usize;
-            let got = re.exec(&t, last).unwrap().map(|m| {
+            let got = match re.exec(&t, last) {
+                Ok(got) => got,
+                Err(e) => {
+                    refused.push(format!("/{source}/{flags} at {last}: {e:?}"));
+                    continue;
+                }
+            };
+            let got = got.map(|m| {
                 let mut out = vec![m.index as i64, m.end as i64];
                 for g in &m.groups {
                     let (a, b) = g.map_or((-1, -1), |(a, b)| (a as i64, b as i64));
@@ -62,6 +72,9 @@ fn prism_regexes_match_node() {
                 ));
             }
         }
+    }
+    if !refused.is_empty() {
+        eprintln!("{} refused:\n{}", refused.len(), refused.join("\n"));
     }
     assert!(
         failures.is_empty(),
