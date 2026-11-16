@@ -158,6 +158,10 @@ pub fn engine_for(clock: Clock, label: String, root: &Path) -> Engine {
         .set_max_string_size(MAX_STRING_SIZE)
         .set_max_array_size(MAX_ARRAY_SIZE)
         .set_max_map_size(MAX_MAP_SIZE)
+        // Rhai's string interner sits behind a lock that sleeps 10 ms
+        // when another thread holds it, and filters run on several threads
+        // at once, so it is off.
+        .set_max_strings_interned(0)
         // Config scripts are one file: no imports, and no `eval`.
         .set_module_resolver(rhai::module_resolvers::DummyModuleResolver::new())
         .set_strict_variables(true)
