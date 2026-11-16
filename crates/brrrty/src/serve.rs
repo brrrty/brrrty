@@ -1248,10 +1248,12 @@ fn stamp_of<'a>(stamps: &'a HashMap<PathBuf, Stamp>, src: &Path) -> Option<&'a S
 
 /// A path relative to the project folder, for printing as 11ty does (`./src/index.md`). The
 /// project folder itself is `.` (the watcher lost track of an input folder that is the
-/// project folder).
+/// project folder). A path outside the project folder is printed whole.
 fn shown(rel: &Path) -> String {
     if rel.as_os_str().is_empty() {
         ".".to_string()
+    } else if rel.is_absolute() {
+        rel.display().to_string()
     } else {
         format!("./{}", rel.display())
     }
@@ -1325,6 +1327,8 @@ mod echo_tests {
         assert_eq!(shown(Path::new("src/index.md")), "./src/index.md");
         // The input folder is the project folder and the watcher lost track of it.
         assert_eq!(shown(Path::new("")), ".");
+        // A passthrough source outside the project folder.
+        assert_eq!(shown(Path::new("/elsewhere/x.css")), "/elsewhere/x.css");
     }
 
     #[test]
