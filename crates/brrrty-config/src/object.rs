@@ -302,8 +302,20 @@ impl JsObject {
 
     pub fn len(&self) -> usize {
         match self {
-            JsObject::Shared(m) | JsObject::Frozen(m) => m.len(),
+            JsObject::Shared(m) => {
+                brrrty_js::traps::keys(m);
+                m.len()
+            }
+            JsObject::Frozen(m) => m.len(),
             JsObject::Owned(m) => m.len(),
+        }
+    }
+
+    /// Records that a script listed the keys: a trap for the open
+    /// `collections`, whose config may add more.
+    fn listed(&self) {
+        if let JsObject::Shared(m) = self {
+            brrrty_js::traps::keys(m);
         }
     }
 
@@ -313,7 +325,8 @@ impl JsObject {
 
     pub fn contains(&self, k: &str) -> bool {
         match self {
-            JsObject::Shared(m) | JsObject::Frozen(m) => m.contains_key(k),
+            JsObject::Shared(m) => brrrty_js::traps::has(m, k),
+            JsObject::Frozen(m) => m.contains_key(k),
             JsObject::Owned(m) => m.contains_key(k),
         }
     }
@@ -351,8 +364,10 @@ impl JsObject {
         if let JsObject::Frozen(_) = self {
             return Err(read_only(what.to_string()));
         }
-        if let JsObject::Shared(m) = self {
-            *self = JsObject::Owned(m.iter().map(|(k, v)| (k.clone(), to_dynamic(v))).collect());
+        if let JsObject::Shared(_) = self {
+            // Every value as a read gives it: copying an item or the open
+            // `collections` is a listing of it, so the render is refused.
+            *self = JsObject::Owned(self.read_all()?.into_iter().collect());
         }
         match self {
             JsObject::Owned(m) => Ok(m),
@@ -383,6 +398,7 @@ impl IntoIterator for JsObject {
     /// `for k in o` walks the keys, like JavaScript's `for (k in o)`.
     /// (Rhai's `for (k, v) in o` gives a counter, not a value.)
     fn into_iter(self) -> Self::IntoIter {
+        self.listed();
         self.js_keys()
             .into_iter()
             .cloned()
@@ -550,6 +566,7 @@ pub fn register(e: &mut Engine) {
         .register_indexer_set(set)
         .register_iterator::<JsObject>()
         .register_fn("keys", |o: &mut JsObject| -> Array {
+            o.listed();
             o.js_keys()
                 .into_iter()
                 .map(|k| Dynamic::from(k.clone()))

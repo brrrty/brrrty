@@ -739,7 +739,10 @@ fn length(val: Val, ops: Ops) -> R<Val> {
     if is_object(&value) && !matches!(value, Val::Safe(_)) {
         let n = match &value {
             Val::Obj(o) => o.props.borrow().len(),
-            Val::V(Value::Object(o)) => o.len(),
+            Val::V(Value::Object(o)) => {
+                brrrty_js::traps::keys(o);
+                o.len()
+            }
             _ => 0,
         };
         return Ok(Val::num(n as f64));

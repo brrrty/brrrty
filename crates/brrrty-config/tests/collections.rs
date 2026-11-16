@@ -672,3 +672,35 @@ fn frozen_arrays_and_anonymous_functions_explain_themselves() {
         );
     }
 }
+
+/// A filter given a collection item (probed with 11ty 3.1.8 through a JS
+/// filter): `Object.keys(item).length` is 13. A change to the item copies
+/// it in Brrrty, which can't carry `template` or the content along, so a
+/// filter that sets a property on an item and then reads it is refused
+/// instead of reading `undefined`. In 11ty the change would also reach
+/// every other page that shares the item.
+#[test]
+fn a_filter_changing_an_item_is_refused() {
+    let script = r#"
+config.add_filter("nkeys", |o| o.keys().len());
+config.add_filter("mut", |o| { o.x = 1; o.content });
+"#;
+    let each = |body: &str| {
+        format!(
+            "{{% for p in collections.all %}}{{% if p.url == \"/a/\" %}}{body}{{% endif %}}{{% endfor %}}\n"
+        )
+    };
+    let (t, r) = site(
+        script,
+        &[
+            ("a.md", "# A\n"),
+            ("k.njk", &each("{{ p | nkeys }}")),
+            ("m.njk", &each("{{ p | mut }}")),
+        ],
+    );
+    let all = errors(&r);
+    assert_eq!(all.len(), 1, "{:#?}", r.problems);
+    assert_eq!(all[0].path.as_deref(), Some(Path::new("src/m.njk")));
+    assert!(out(&t, "m/index.html").is_none());
+    assert_eq!(out(&t, "k/index.html").unwrap(), "13\n");
+}

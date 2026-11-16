@@ -205,6 +205,29 @@ pub fn read_item(item: &Value, key: &str) {
     }
 }
 
+/// A listing of `o`'s property names (or a count of them), without their
+/// values. An item's names are all there, so only an open object, which
+/// may have more, is a trap. True when it recorded one.
+pub fn keys(o: &IndexMap<String, Value>) -> bool {
+    if is_open(o) {
+        hit(format!("{OPEN_PREFIX}*"));
+        return true;
+    }
+    false
+}
+
+/// Whether `o` has `key` as an own property (`key in o`). A name an open
+/// object doesn't have is a trap: the config may add it.
+pub fn has(o: &IndexMap<String, Value>, key: &str) -> bool {
+    if o.contains_key(key) {
+        return true;
+    }
+    if is_open(o) {
+        hit(format!("{OPEN_PREFIX}{key}"));
+    }
+    false
+}
+
 /// A listing of all of `o`'s properties. True when it recorded a trap: the
 /// caller's result will be refused, so a walk of the data can stop there.
 pub fn entries(o: &IndexMap<String, Value>) -> bool {

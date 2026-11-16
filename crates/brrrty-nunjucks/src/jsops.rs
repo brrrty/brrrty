@@ -776,7 +776,7 @@ pub(crate) fn has_own(obj: &Val, key: &str) -> R<bool> {
         Val::V(Value::Array(a)) => {
             key == "length" || brrrty_js::array_index(key).is_some_and(|i| (i as usize) < a.len())
         }
-        Val::V(Value::Object(o)) => o.contains_key(key),
+        Val::V(Value::Object(o)) => brrrty_js::traps::has(o, key),
         Val::Safe(_) => key == "val" || key == "length",
         Val::Arr(a) => {
             key == "length"

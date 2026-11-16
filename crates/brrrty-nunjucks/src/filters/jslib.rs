@@ -207,11 +207,15 @@ pub(super) fn entries(v: &Val) -> Vec<(String, Val)> {
                 (k, val)
             })
             .collect(),
-        Val::V(Value::Object(o)) => crate::value::js_key_order(o.keys().cloned())
+        // A listing of a collection item, or of the open `collections`,
+        // is a trap, as `for k, v in` is; each value is read as a property
+        // read reads it.
+        Val::V(Value::Object(o)) => Value::js_entries(o)
             .into_iter()
-            .map(|k| {
-                let val = o.get(&k).cloned().map_or_else(Val::undef, Val::V);
-                (k, val)
+            .map(|(k, v)| {
+                let val =
+                    brrrty_js::traps::read(o, k, Some(v.clone())).map_or_else(Val::undef, Val::V);
+                (k.clone(), val)
             })
             .collect(),
         Val::Safe(s) => vec![

@@ -430,3 +430,85 @@ fn a_panic_in_a_render_refuses_only_that_page() {
     assert_eq!(read(root, "b/index.html"), "fine\n");
     assert!(!root.join("_site/a/index.html").exists());
 }
+
+/// Probed with 11ty 3.1.8: `urlencode`, `dictsort` and `list` on a
+/// collection item print its `template` as `[object Object]` and its
+/// rendered content, and `dump` stops the build ("Converting circular
+/// structure to JSON"). Brrrty doesn't have `template`, so each is refused
+/// like `for k, v in item`. A count of the keys (13) and `in` need no
+/// values, so they render.
+#[test]
+fn listing_a_collection_item_through_a_filter_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.md", "---\ntitle: A\n---\n# A\n");
+    let each = |body: &str| {
+        format!(
+            "{{% for p in collections.all %}}{{% if p.url == \"/a/\" %}}{body}{{% endif %}}{{% endfor %}}\n"
+        )
+    };
+    write(root, "src/u.njk", each("{{ p | urlencode }}"));
+    write(
+        root,
+        "src/d.njk",
+        each("{% for k, v in p | dictsort %}{{ k }}={{ v }};{% endfor %}"),
+    );
+    write(root, "src/l.njk", each("{{ p | list | length }}"));
+    write(root, "src/j.njk", each("{{ p | dump }}"));
+    write(
+        root,
+        "src/k.njk",
+        each("{{ p | length }};{{ \"content\" in p }};{{ \"nope\" in p }}"),
+    );
+    let r = run(root);
+    let refused: Vec<_> = errors(&r).iter().map(|p| p.path.clone().unwrap()).collect();
+    let want: Vec<PathBuf> = ["d", "j", "l", "u"]
+        .iter()
+        .map(|n| PathBuf::from(format!("src/{n}.njk")))
+        .collect();
+    assert_eq!(refused, want, "{:#?}", r.problems);
+    for p in errors(&r) {
+        assert!(
+            p.message.contains("`template` of a collection item"),
+            "{p:?}"
+        );
+    }
+    for n in ["d", "j", "l", "u"] {
+        assert!(!root.join(format!("_site/{n}/index.html")).exists(), "{n}");
+    }
+    assert_eq!(read(root, "k/index.html"), "13;true;false\n");
+}
+
+/// Probed with 11ty 3.1.8 and a config that adds the collection `foo`:
+/// `"foo" in collections` is true, `collections | length` is 2, and
+/// `dictsort` and `urlencode` list `foo`. Brrrty can't see the config's
+/// collections, so each is refused instead of leaving `foo` out.
+#[test]
+fn counting_or_listing_collections_under_an_11ty_config_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "eleventy.config.js",
+        "module.exports = c => { c.addCollection('foo', () => []); };\n",
+    );
+    write(root, "src/a.md", "# A\n");
+    write(root, "src/in.njk", "{{ \"foo\" in collections }}\n");
+    write(root, "src/len.njk", "{{ collections | length }}\n");
+    write(
+        root,
+        "src/ds.njk",
+        "{% for k, v in collections | dictsort %}{{ k }};{% endfor %}\n",
+    );
+    write(root, "src/ue.njk", "{{ collections | urlencode }}\n");
+    write(root, "src/all.njk", "{{ \"all\" in collections }}\n");
+    let r = run(root);
+    let mut refused: Vec<_> = errors(&r).iter().map(|p| p.path.clone().unwrap()).collect();
+    refused.sort();
+    let want: Vec<PathBuf> = ["ds", "in", "len", "ue"]
+        .iter()
+        .map(|n| PathBuf::from(format!("src/{n}.njk")))
+        .collect();
+    assert_eq!(refused, want, "{:#?}", r.problems);
+    assert_eq!(read(root, "all/index.html"), "true\n");
+}
