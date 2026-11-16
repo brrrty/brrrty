@@ -224,7 +224,7 @@ dependencies = [
 name = "brrrty-markdown"
 version = "0.0.2"
 dependencies = [
- "pulldown-cmark",
+ "markdown-it",
 ]
 
 [[package]]
@@ -240,7 +240,6 @@ dependencies = [
  "comrak",
  "liquid",
  "liquid-core",
- "markdown-it",
  "minijinja",
  "pulldown-cmark",
  "regex",

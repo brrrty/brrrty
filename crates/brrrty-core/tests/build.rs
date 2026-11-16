@@ -1,5 +1,5 @@
 use brrrty_core::{BuildOptions, Severity, build, codes};
-use brrrty_markdown::Provisional;
+use brrrty_markdown::MarkdownIt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -41,7 +41,10 @@ fn builds_a_plain_site() {
     write(root, "src/index.md", "# Hello\n\nWorld\n");
     write(root, "src/page.html", "<p>html page</p>\n");
     write(root, "src/images/a.png", "x");
-    let r = build(&opts_with_passthrough(root, &["src/images"]), &Provisional);
+    let r = build(
+        &opts_with_passthrough(root, &["src/images"]),
+        &MarkdownIt::new(),
+    );
     assert!(!r.has_errors(), "{:?}", r.problems);
     let out = root.join("_site");
     assert_eq!(
@@ -58,7 +61,7 @@ fn permalink_false_writes_nothing() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(root, "src/hidden.md", "---\npermalink: false\n---\nx\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert_eq!(r.written, 0);
 }
@@ -70,7 +73,7 @@ fn bad_page_does_not_stop_the_build() {
     write(root, "src/good.md", "ok\n");
     write(root, "src/bad.md", "---\ntitle: [unclosed\n---\n");
     write(root, "src/bin.md", [0xffu8, 0xfe]);
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(root.join("_site/good/index.html").exists());
     let found: Vec<_> = r.problems.iter().map(|p| p.code).collect();
     assert!(
@@ -86,7 +89,7 @@ fn unsupported_templates_are_errors() {
     let root = t.path();
     write(root, "src/c.njk", "{{ x }}");
     write(root, "src/ok.md", "ok\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     let p = r
         .problems
         .iter()
@@ -106,7 +109,7 @@ fn collisions_write_nothing_and_name_both_inputs() {
     write(root, "src/a.md", "---\npermalink: /same/\n---\na\n");
     write(root, "src/b.md", "---\npermalink: /same/\n---\nb\n");
     write(root, "src/c.md", "c\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!root.join("_site/same/index.html").exists());
     assert!(root.join("_site/c/index.html").exists());
     let p = r
@@ -132,7 +135,7 @@ fn overlapping_output_writes_nothing() {
     write(root, "src/a.md", "a\n");
     let mut o = opts(root);
     o.output = PathBuf::from("src");
-    let r = build(&o, &Provisional);
+    let r = build(&o, &MarkdownIt::new());
     assert!(
         r.problems
             .iter()
@@ -148,7 +151,7 @@ fn passthrough_cannot_escape_output() {
     write(root, "src/a.md", "a\n");
     let r = build(
         &opts_with_passthrough(root, &["../outside", "/etc"]),
-        &Provisional,
+        &MarkdownIt::new(),
     );
     assert_eq!(
         r.problems
@@ -165,7 +168,10 @@ fn passthrough_missing_is_a_warning() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(root, "src/a.md", "a\n");
-    let r = build(&opts_with_passthrough(root, &["src/nope"]), &Provisional);
+    let r = build(
+        &opts_with_passthrough(root, &["src/nope"]),
+        &MarkdownIt::new(),
+    );
     let p = r
         .problems
         .iter()
@@ -184,7 +190,7 @@ fn passthrough_outside_input_and_root_file_map_to_output_root() {
     write(root, "robots.txt", "User-agent: *");
     let r = build(
         &opts_with_passthrough(root, &["assets", "robots.txt"]),
-        &Provisional,
+        &MarkdownIt::new(),
     );
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert_eq!(read(root.join("_site/assets/css/site.css")), "body{}");
@@ -199,8 +205,8 @@ fn second_build_skips_unchanged_passthrough() {
     write(root, "src/a.md", "a\n");
     write(root, "src/images/a.png", "x");
     let o = opts_with_passthrough(root, &["src/images"]);
-    build(&o, &Provisional);
-    let r = build(&o, &Provisional);
+    build(&o, &MarkdownIt::new());
+    let r = build(&o, &MarkdownIt::new());
     assert_eq!((r.unchanged, r.copied), (1, 0));
 }
 
@@ -213,7 +219,7 @@ fn strict_stops_at_first_error() {
     write(root, "src/good.md", "ok\n");
     let mut o = opts(root);
     o.strict = true;
-    let r = build(&o, &Provisional);
+    let r = build(&o, &MarkdownIt::new());
     assert_eq!(error_count(&r), 1);
     assert!(!root.join("_site").exists());
 }
@@ -228,7 +234,10 @@ fn passthrough_overrides_page_with_warning() {
         "---\npermalink: /robots.txt\n---\npage\n",
     );
     write(root, "robots.txt", "passthrough");
-    let r = build(&opts_with_passthrough(root, &["robots.txt"]), &Provisional);
+    let r = build(
+        &opts_with_passthrough(root, &["robots.txt"]),
+        &MarkdownIt::new(),
+    );
     let p = r
         .problems
         .iter()
@@ -247,7 +256,10 @@ fn passthrough_of_input_or_root_is_refused_clearly() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(root, "src/a.md", "a\n");
-    let r = build(&opts_with_passthrough(root, &["src", "."]), &Provisional);
+    let r = build(
+        &opts_with_passthrough(root, &["src", "."]),
+        &MarkdownIt::new(),
+    );
     assert_eq!(
         r.problems
             .iter()
@@ -265,7 +277,7 @@ fn duplicate_passthrough_entries_count_once_and_warn_once() {
     write(root, "src/games/a.html", "<p>page</p>\n");
     write(root, "src/games/index.html", "<p>page</p>\n");
     let o = opts_with_passthrough(root, &["src/games", "src/games", "src/games/a.html"]);
-    let r = build(&o, &Provisional);
+    let r = build(&o, &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     // games/index.html is overwritten by its identical passthrough copy, so that page is not "written".
     assert_eq!((r.written, r.copied), (1, 2));
@@ -290,7 +302,7 @@ fn overriding_passthrough_with_different_bytes_warns_once_per_page() {
         "---\npermalink: /games/b.txt\n---\n# b\n",
     );
     write(root, "src/games/b.txt", "different");
-    let r = build(&o, &Provisional);
+    let r = build(&o, &MarkdownIt::new());
     let warnings = r
         .problems
         .iter()
@@ -314,7 +326,7 @@ fn repeated_overriding_entry_does_not_underflow_written() {
     );
     write(root, "src/games/b.txt", "different");
     let o = opts_with_passthrough(root, &["src/games", "src/games"]);
-    let r = build(&o, &Provisional);
+    let r = build(&o, &MarkdownIt::new());
     assert_eq!(r.written, 0);
     assert_eq!(r.copied, 2);
     assert_eq!(
@@ -329,7 +341,7 @@ fn repeated_overriding_entry_does_not_underflow_written() {
 #[test]
 fn missing_input_folder_is_one_clear_error() {
     let t = tempfile::tempdir().unwrap();
-    let r = build(&opts(t.path()), &Provisional);
+    let r = build(&opts(t.path()), &MarkdownIt::new());
     assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
     let p = &r.problems[0];
     assert_eq!(p.code, codes::INPUT_MISSING);
@@ -341,7 +353,7 @@ fn missing_input_folder_is_one_clear_error() {
 fn input_that_is_a_file_is_a_clear_error() {
     let t = tempfile::tempdir().unwrap();
     write(t.path(), "src", "not a folder");
-    let r = build(&opts(t.path()), &Provisional);
+    let r = build(&opts(t.path()), &MarkdownIt::new());
     assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
     assert_eq!(r.problems[0].code, codes::INPUT_NOT_A_DIRECTORY);
     assert_eq!(r.problems[0].path.as_deref(), Some(Path::new("src")));
@@ -358,7 +370,7 @@ fn template_syntax_in_body_is_an_error_with_file_position() {
     );
     write(root, "src/b.html", "<p>{% if x %}</p>\n");
     write(root, "src/ok.md", "fine { not syntax }\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     let all: Vec<_> = r
         .problems
         .iter()
@@ -400,7 +412,7 @@ fn unsupported_front_matter_keys_are_errors() {
         "---\npagination:\n  data: x\neleventyComputed:\n  y: 1\n---\nbody\n",
     );
     write(root, "src/c.md", "---\ntitle: ok\ntags: [x]\n---\nbody\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     let a = r
         .problems
         .iter()
@@ -430,7 +442,7 @@ fn eleventy_config_files_warn_once_each() {
     write(root, "src/a.md", "a\n");
     write(root, "eleventy.config.js", "module.exports = () => {};");
     write(root, ".eleventy.js", "module.exports = () => {};");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     let warned: Vec<_> = r
         .problems
@@ -458,7 +470,11 @@ fn eleventy_config_files_warn_once_each() {
     // no config, no warning
     let t2 = tempfile::tempdir().unwrap();
     write(t2.path(), "src/a.md", "a\n");
-    assert!(build(&opts(t2.path()), &Provisional).problems.is_empty());
+    assert!(
+        build(&opts(t2.path()), &MarkdownIt::new())
+            .problems
+            .is_empty()
+    );
 }
 
 #[test]
@@ -480,7 +496,7 @@ fn date_keywords_build_without_errors() {
             format!("---\ndate: {kw}\n---\nx\n"),
         );
     }
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert_eq!(r.written, 4);
 }
@@ -491,7 +507,7 @@ fn problem_paths_are_root_relative() {
     let root = t.path();
     write(root, "src/bad.md", "---\ntitle: [unclosed\n---\n");
     write(root, "src/posts/raw.md", "{{ x }}\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.problems.is_empty());
     for p in &r.problems {
         let path = p.path.as_deref().expect("every problem has a path");
@@ -523,7 +539,7 @@ fn passthrough_and_discover_problem_paths_are_root_relative() {
     write(root, "src/images/a.html", "<p>other</p>\n");
     let r = build(
         &opts_with_passthrough(root, &["./src/gone", "../x", "src/images"]),
-        &Provisional,
+        &MarkdownIt::new(),
     );
     let path_of = |code: &str| {
         r.problems
@@ -552,7 +568,7 @@ fn write_failures_report_root_relative_paths() {
     fs::create_dir_all(root.join("_site/a/index.html")).unwrap();
     // A file where b.md's output folder belongs makes the folder creation fail.
     write(root, "_site/b", "in the way");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     let paths: Vec<_> = r
         .problems
         .iter()
@@ -584,7 +600,7 @@ fn ignore_rules_match_11ty_probe() {
     write(root, ".gitignore", "deep.md\ndrafts\n");
     write(root, "src/.eleventyignore", "*.md\n");
     write(root, ".eleventyignore", "sub/deeper\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     let mut pages = Vec::new();
     collect(&root.join("_site"), &root.join("_site"), &mut pages);
@@ -652,7 +668,7 @@ fn symlinked_file_builds_at_link_path() {
     write(root, "src/real/target.md", "hi\n");
     fs::create_dir_all(root.join("src/posts")).unwrap();
     std::os::unix::fs::symlink("../real/target.md", root.join("src/posts/link.md")).unwrap();
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert!(root.join("_site/real/target/index.html").exists());
     assert!(root.join("_site/posts/link/index.html").exists());
@@ -665,7 +681,7 @@ fn symlinked_dir_is_followed() {
     let root = t.path();
     write(root, "src/real/target.md", "hi\n");
     std::os::unix::fs::symlink("real", root.join("src/linkdir")).unwrap();
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert!(root.join("_site/linkdir/target/index.html").exists());
 }
@@ -678,7 +694,7 @@ fn symlink_loop_warns_and_finishes() {
     write(root, "src/index.md", "hi\n");
     write(root, "src/sub/page.md", "hi\n");
     std::os::unix::fs::symlink(".", root.join("src/loop")).unwrap();
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     let loops: Vec<_> = r
         .problems
@@ -701,7 +717,7 @@ fn plugin_only_extensions_warn_once_per_extension() {
     write(root, "src/c.pug", "x");
     write(root, "src/d.mdx", "x");
     write(root, "src/ok.md", "ok\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert_eq!(error_count(&r), 0, "{:?}", r.problems);
     let w: Vec<_> = r
         .problems
@@ -731,7 +747,7 @@ fn dangling_symlink_warns_and_finishes() {
     let root = t.path();
     write(root, "src/index.md", "hi\n");
     std::os::unix::fs::symlink("nowhere.md", root.join("src/dangling.md")).unwrap();
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     let w: Vec<_> = r
         .problems
@@ -756,7 +772,7 @@ fn duplicate_passthrough_destination_is_an_error() {
     // Both entries land in _site/assets: one input-relative, one root-relative.
     let r = build(
         &opts_with_passthrough(root, &["src/assets/", "assets/"]),
-        &Provisional,
+        &MarkdownIt::new(),
     );
     let errs: Vec<_> = r
         .problems
@@ -796,7 +812,7 @@ fn check_outside_input_build(root: &Path, input: &str) {
         input: PathBuf::from(input),
         ..opts(root)
     };
-    let r = build(&o, &Provisional);
+    let r = build(&o, &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert!(root.join("_site/index.html").exists());
     assert!(
@@ -843,7 +859,7 @@ fn symlinked_input_reports_paths_and_dates_through_the_link() {
     write(&base, "real/plain.md", "hi\n");
     fs::create_dir_all(&root).unwrap();
     std::os::unix::fs::symlink("../real", root.join("src")).unwrap();
-    let r = build(&opts(&root), &Provisional);
+    let r = build(&opts(&root), &MarkdownIt::new());
     let paths: Vec<_> = r.problems.iter().filter_map(|p| p.path.clone()).collect();
     assert_eq!(paths, [PathBuf::from("src/bad.md")], "{:?}", r.problems);
     assert!(root.join("_site/plain/index.html").exists());
@@ -856,7 +872,7 @@ fn ignore_line_matching_a_root_file_outside_the_input_does_not_warn() {
     write(root, "README.md", "readme\n");
     write(root, "src/a.md", "a\n");
     write(root, ".gitignore", "*.md\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     assert!(
         r.problems
@@ -875,7 +891,7 @@ fn invalid_ignore_line_warns_and_the_build_goes_on() {
     write(root, "src/a.md", "a\n");
     write(root, "src/skip.md", "skip\n");
     write(root, "src/.eleventyignore", "{a,b\nskip.md\n");
-    let r = build(&opts(root), &Provisional);
+    let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.has_errors(), "{:?}", r.problems);
     let w: Vec<_> = r
         .problems

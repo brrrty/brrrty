@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use brrrty::{bug, report};
 use brrrty_core::{BuildOptions, build};
-use brrrty_markdown::Provisional;
+use brrrty_markdown::MarkdownIt;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -67,7 +67,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
         passthrough: args.passthrough,
         strict: args.strict,
     };
-    let report = build(&opts, &Provisional);
+    let report = build(&opts, &MarkdownIt::new());
     if !args.quiet {
         println!(
             "Wrote {} files, copied {} files in {:.2} seconds (brrrty {})",
