@@ -64,7 +64,11 @@ fn engine_cost(language: &str) -> usize {
         "liquid" => 10,
         // `Html.js` engine.
         "html" => 17,
-        // `Markdown.js` engine (and anything else, which Brrrty refuses).
+        // `Nunjucks.js` engine. Brrrty doesn't render Nunjucks yet, but a
+        // Nunjucks template or layout still takes its place in the order.
+        "njk" => 17,
+        // `Markdown.js` engine (and anything else: JavaScript templates
+        // refuse collections, so their place never counts).
         _ => 25,
     }
 }
@@ -516,6 +520,24 @@ mod tests {
         ];
         // n settles at 38, m at 46, a at 51.
         assert_eq!(order(&shared, &l), ["n.html", "m.md", "a.liquid"]);
+    }
+
+    /// Measured: the Nunjucks engine loads as fast as HTML's, for a
+    /// template (`z.njk` at 38, with `h.html`) and for a layout (`b` at 51).
+    #[test]
+    fn nunjucks_takes_its_place() {
+        let l = layouts(&[("n.njk", "njk", None)]);
+        let ts = [
+            t("a.md", 0, None),
+            t("b.liquid", 0, Some("n.njk")),
+            t("h.html", 0, None),
+            t("y.liquid", 0, None),
+            t("z.njk", 0, None),
+        ];
+        assert_eq!(
+            order(&ts, &l),
+            ["y.liquid", "h.html", "z.njk", "a.md", "b.liquid"]
+        );
     }
 
     /// Pages that read their date from the disk come last.

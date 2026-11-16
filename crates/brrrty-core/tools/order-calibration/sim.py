@@ -15,7 +15,7 @@ from collections import deque
 # engine -> end with no layout; layout data -> end; layout file's engine ->
 # its front matter. Same as engine_cost, TO_LAYOUT, PLAIN, AFTER_LAYOUT and
 # FRONT_MATTER in src/order.rs.
-E = {"liquid": 10, "html": 17, "md": 25}
+E = {"liquid": 10, "html": 17, "njk": 17, "md": 25}
 T_LAYOUT, T_PLAIN, T_AFTER, FM_AFTER = 13, 19, 6, 10
 
 

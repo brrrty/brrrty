@@ -13,12 +13,20 @@ ELEVENTY_DIR=/path/to/node_modules/@11ty/eleventy \
   python3 crates/brrrty-core/tools/order-calibration/calibrate.py 80 1
 ```
 
-The arguments are the number of sites and a seed. **Calibrated** means the
-last line reads `0 mismatches over N sites`: on every generated site 11ty
-builds, the simulation gives the same templates, in the same order, each
-added in the same microtask round. The script exits 1 otherwise. The last
-calibration (11ty 3.1.8) gave 0 mismatches over 74 sites, with 6 skipped
-because 11ty refused them.
+The arguments are the number of sites and a seed. Add `njk` to mix
+Nunjucks templates and layouts into the sites (Brrrty doesn't render them,
+but they still take their place in the order):
+
+```sh
+ELEVENTY_DIR=... python3 crates/brrrty-core/tools/order-calibration/calibrate.py 80 7 njk
+```
+
+**Calibrated** means the last line reads `0 mismatches over N sites`: on
+every generated site 11ty builds, the simulation gives the same templates,
+in the same order, each added in the same microtask round. The script exits
+1 otherwise. The last calibration (11ty 3.1.8) gave 0 mismatches over 74
+sites (seed 1, 6 skipped because 11ty refused them), and with `njk` 0 over
+74 (seed 7) and 0 over 72 (seed 8).
 
 ## Files
 
@@ -36,7 +44,8 @@ because 11ty refused them.
 
 When `ELEVENTY_VERSION` in `src/build.rs` changes:
 
-1. Rerun the calibration above against the new 11ty. If it reports
+1. Rerun the calibration above against the new 11ty, with and without
+   `njk`. If it reports
    mismatches, use `events.mjs -v` on a failing site to find the changed
    step, then update `sim.py` and `src/order.rs` together until it reports
    0 mismatches.

@@ -1,6 +1,6 @@
 """Calibrate src/order.rs against real 11ty.
 
-usage: ELEVENTY_DIR=/path/to/node_modules/@11ty/eleventy python3 calibrate.py [SITES] [SEED]
+usage: ELEVENTY_DIR=/path/to/node_modules/@11ty/eleventy python3 calibrate.py [SITES] [SEED] [njk]
 
 Generates SITES random sites (default 80) weighted toward data files, layout
 chains, directory-data layouts and `name`/`name.ext` layout spellings
@@ -36,12 +36,13 @@ def main():
         sys.exit("Set ELEVENTY_DIR to the @11ty/eleventy package folder.")
     sites = int(sys.argv[1]) if len(sys.argv) > 1 else 80
     seed = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    extra = sys.argv[3:]
     work = tempfile.mkdtemp(prefix="order-calibration-")
     checked = skipped = bad = 0
     try:
         for i in range(sites):
             out = os.path.join(work, f"s{i}")
-            subprocess.run([sys.executable, os.path.join(HERE, "gen_site.py"), out, str(seed * 1000 + i)], check=True)
+            subprocess.run([sys.executable, os.path.join(HERE, "gen_site.py"), out, str(seed * 1000 + i)] + extra, check=True)
             site = os.path.join(out, "site")
             r = subprocess.run(["node", os.path.join(HERE, "events.mjs"), site], capture_output=True, text=True)
             rows = rows_of(r.stdout)
