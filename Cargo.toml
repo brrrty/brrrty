@@ -4,7 +4,7 @@ members = ["crates/*", "xtask", "spikes"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/brrrty/brrrty"
 homepage = "https://brrrty.com"

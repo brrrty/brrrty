@@ -213,6 +213,8 @@ pub enum StartError {
     Problems(Vec<Problem>),
     /// The staging folder could not be made.
     Staging(PathBuf, io::Error),
+    /// Another `brrrty serve` (by process id, when known) is using the output folder.
+    InUse(PathBuf, String),
     /// The file watcher could not start.
     Watch(notify::Error),
 }
@@ -223,6 +225,18 @@ impl std::fmt::Display for StartError {
             StartError::Problems(p) => write!(f, "{} problem(s) in the config or folders", p.len()),
             StartError::Staging(path, e) => {
                 write!(f, "cannot make the folder {}: {e}", path.display())
+            }
+            StartError::InUse(output, pid) => {
+                let by = if pid.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (process {pid})")
+                };
+                write!(
+                    f,
+                    "another `brrrty serve`{by} is using the output folder {}",
+                    output.display()
+                )
             }
             StartError::Watch(e) => write!(f, "cannot watch the source files: {e}"),
         }
@@ -255,6 +269,8 @@ struct Retired {
 
 /// A serve session: the watcher, the staging folder and the builds in it.
 pub struct Session {
+    /// Held while the session runs, so `brrrty build` and other sessions leave `staging` be.
+    lock: Option<brrrty_core::ServeLock>,
     settings: Settings,
     /// The flags with the input and output folders fixed at the first build.
     flags: Flags,
@@ -330,12 +346,28 @@ impl Session {
         flags.output = Some(opts.output.clone());
 
         let staging = output.join(STAGING_DIR);
+        let in_use = |pid| StartError::InUse(output.clone(), pid);
+        if fs::symlink_metadata(&staging).is_ok_and(|m| m.is_dir())
+            && let Some(pid) = brrrty_core::serve_lock_holder(&staging)
+        {
+            return Err(in_use(pid));
+        }
         // A folder left by a session that was killed before it could clean up, or a symlink
         // by that name, which is removed and never followed.
         if fs::symlink_metadata(&staging).is_ok() {
             remove_any(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
         }
         fs::create_dir_all(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
+        let lock = match brrrty_core::ServeLock::take(&staging) {
+            Ok(l) => l,
+            // Another session started at the same moment and won.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                return Err(in_use(
+                    brrrty_core::serve_lock_holder(&staging).unwrap_or_default(),
+                ));
+            }
+            Err(e) => return Err(StartError::Staging(staging.clone(), e)),
+        };
         // Compare against real paths: the watcher reports them.
         let output = output.canonicalize().unwrap_or(output);
         let staging = output.join(STAGING_DIR);
@@ -348,6 +380,7 @@ impl Session {
         .map_err(StartError::Watch)?;
 
         let mut session = Session {
+            lock: Some(lock),
             settings,
             flags,
             root,
@@ -1025,6 +1058,8 @@ impl Session {
             std::thread::sleep(Duration::from_millis(20));
         }
         self.retired.clear();
+        // Release the lock first: a held file can't be removed everywhere.
+        self.lock = None;
         if let Err(e) = fs::remove_dir_all(&self.staging)
             && e.kind() != io::ErrorKind::NotFound
         {

@@ -25,6 +25,7 @@ pub mod permalink;
 pub mod plugins;
 pub mod problem;
 mod render;
+pub mod serve_lock;
 mod templates;
 mod yaml;
 
@@ -42,3 +43,4 @@ pub use page::{Page, file_path_stem, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;
 pub use permalink::{Permalink, resolve_permalink};
 pub use problem::{Problem, Severity, codes};
+pub use serve_lock::{SERVE_LOCK_FILE, ServeLock, serve_lock_holder};

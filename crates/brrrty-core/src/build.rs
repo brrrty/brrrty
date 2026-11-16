@@ -1407,10 +1407,30 @@ fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport 
 }
 
 /// Remove `<out>/.brrrty-serve`, and nothing else: only that exact name, only directly
-/// inside the output folder. A symlink by that name is removed, never followed.
+/// inside the output folder. A symlink by that name is removed, never followed. A folder a
+/// live `brrrty serve` holds is left alone, with a note.
 fn remove_serve_staging(out: &Path) -> Option<Problem> {
     let staging = out.join(crate::options::SERVE_STAGING_DIR);
     let meta = fs::symlink_metadata(&staging).ok()?;
+    if meta.is_dir()
+        && let Some(pid) = crate::serve_lock::serve_lock_holder(&staging)
+    {
+        let by = if pid.is_empty() {
+            String::new()
+        } else {
+            format!(" (process {pid})")
+        };
+        return Some(
+            Problem::info(
+                codes::SERVE_STAGING_IN_USE,
+                format!(
+                    "left {} alone: a running `brrrty serve`{by} is using it",
+                    staging.display()
+                ),
+            )
+            .with_help("it is removed when that session stops; don't deploy while it runs"),
+        );
+    }
     let removed = if meta.is_dir() {
         fs::remove_dir_all(&staging)
     } else {

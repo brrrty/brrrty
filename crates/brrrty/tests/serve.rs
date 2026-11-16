@@ -606,6 +606,8 @@ fn a_killed_session_leaves_the_last_good_build_in_the_output() {
         },
     )
     .unwrap();
+    // The lock it held went with the process.
+    assert!(root.join("_site").join(STAGING_DIR).join("lock").is_file());
     write(root, "src/index.md", &page_md("built"));
     assert!(!brrrty_core::build(&opts, &brrrty_markdown::MarkdownIt::new()).has_errors());
     assert!(!root.join("_site").join(STAGING_DIR).exists());
@@ -910,4 +912,49 @@ fn a_symlinked_passthrough_folder_is_mirrored_on_every_edit() {
     });
     assert!(finished.problems.is_empty(), "{:?}", finished.problems);
     assert_eq!(read(&root, "_site/public/x.css").as_deref(), Some("v2"));
+}
+
+#[test]
+fn a_build_or_a_second_session_leaves_a_live_session_alone() {
+    let t = site();
+    let root = t.path();
+    let flags = Flags {
+        input: Some(PathBuf::from("src")),
+        ..Flags::default()
+    };
+    let finished = with_session(root, |live| {
+        live.settle();
+        let opts = brrrty::options::build_options(root, &flags).unwrap();
+        let report = brrrty_core::build(&opts, &brrrty_markdown::MarkdownIt::new());
+        assert!(!report.has_errors(), "{:?}", report.problems);
+        let note = report
+            .problems
+            .iter()
+            .find(|p| p.code == brrrty_core::codes::SERVE_STAGING_IN_USE)
+            .expect("a note that staging was left alone");
+        assert_eq!(note.severity, brrrty_core::Severity::Info);
+        assert!(note.message.contains(&std::process::id().to_string()));
+        assert!(root.join("_site").join(STAGING_DIR).is_dir());
+        assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
+        // A second session on the same output folder refuses to start.
+        let settings = Settings {
+            flags: flags.clone(),
+            quiet: true,
+            ..Settings::default()
+        };
+        match Session::start(root, settings) {
+            Err(e @ brrrty::serve::StartError::InUse(..)) => {
+                assert!(e.to_string().contains("another `brrrty serve`"), "{e}");
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+            Ok(_) => panic!("a second session started on the same output folder"),
+        }
+        // The first one still serves and rebuilds.
+        assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
+        write(root, "src/index.md", &page_md("v1"));
+        assert!(live.next_rebuild().ok);
+        assert_eq!(live.page(), "<main><p>v1</p>\n</main>");
+    });
+    assert!(finished.problems.is_empty(), "{:?}", finished.problems);
+    assert!(!root.join("_site").join(STAGING_DIR).exists());
 }
