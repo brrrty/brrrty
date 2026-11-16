@@ -28,20 +28,17 @@ impl Default for EngineOptions {
     }
 }
 
-/// What a filter can see of the engine.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct FilterCtx {
-    pub timezone: Tz,
-}
-
-/// A filter: `(input, arguments, context)`. The arguments are the ones
-/// written, in order; keyword arguments arrive as a last object argument
-/// that also has `__keywords: true`, as Nunjucks passes them to a
-/// JavaScript filter. An `Err` becomes a render error where the filter was
-/// used.
-pub type FilterFn =
-    Arc<dyn Fn(&Value, &[Value], &FilterCtx) -> Result<Value, String> + Send + Sync>;
+/// A filter: `(input, arguments, what the filter can see)`. It is the
+/// shared [`brrrty_js::FilterFn`], so one filter can serve Liquid and
+/// Nunjucks.
+///
+/// The arguments are the ones written, in order. Keyword arguments arrive
+/// as a last object argument that also has `__keywords: true`, as
+/// Nunjucks passes them to a JavaScript filter, and again, taken apart,
+/// in [`FilterEnv::kwargs`]. A `SafeString` input or argument arrives as
+/// its text, with [`FilterEnv::input_safe`] or [`FilterEnv::args_safe`]
+/// set. An `Err` becomes a render error where the filter was used.
+pub type FilterFn = brrrty_js::FilterFn;
 
 /// A compiled template, ready to render.
 #[derive(Clone)]
@@ -92,18 +89,38 @@ impl Engine {
 
     /// Adds an engine-neutral filter, such as one of Eleventy's.
     pub fn register_filter_impl(&mut self, name: &str, f: brrrty_js::FilterImpl) {
-        self.register_filter(
-            name,
-            Arc::new(move |input, args, ctx| {
-                f(input, args, &brrrty_js::FilterEnv::new(ctx.timezone))
-            }),
-        );
+        self.register_filter(name, Arc::new(f));
     }
 
-    /// Adds Eleventy's own filters: `slug`, `slugify`, `url` and `log`.
+    /// Adds Eleventy's own filters that Nunjucks can run: `slug`,
+    /// `slugify`, `url` and `log`.
+    ///
+    /// `slug` and `slugify` take an options object as a second argument,
+    /// which a Nunjucks call can write (`{{ t | slugify({lower: false}) }}`,
+    /// or `lower=false`). Brrrty's versions have no options, so a call that
+    /// passes an object is refused.
+    ///
+    /// Eleventy's other filters are not added to either engine:
+    /// `getCollectionItemIndex`, `getCollectionItem`,
+    /// `getPreviousCollectionItem`, `getNextCollectionItem`,
+    /// `renderTransforms` (async) and `inputPathToUrl`.
     pub fn register_eleventy_filters(&mut self) {
         for (name, f) in brrrty_js::eleventy_filters() {
-            self.register_filter_impl(name, f);
+            if name == "slug" || name == "slugify" {
+                self.register_filter(
+                    name,
+                    Arc::new(move |input, args, env| {
+                        if args.iter().any(|a| matches!(a, Value::Object(_))) {
+                            return Err(format!(
+                                "Brrrty doesn't support options for the `{name}` filter yet"
+                            ));
+                        }
+                        f(input, args, env)
+                    }),
+                );
+            } else {
+                self.register_filter_impl(name, f);
+            }
         }
     }
 

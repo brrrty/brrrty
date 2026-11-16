@@ -11,6 +11,7 @@
 //! data tables are in `eleventy_tables.rs`, which `tools/gen-eleventy.mjs`
 //! generates from those packages.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use unicode_normalization::UnicodeNormalization;
@@ -18,21 +19,74 @@ use unicode_normalization::UnicodeNormalization;
 use crate::eleventy_tables::{DIACRITICS, SLUG_CHARMAP, TRANSLITERATE};
 use crate::{Tz, Value, is_js_whitespace, js_number_to_string};
 
+/// A filter's error that starts with this is a refusal: the filter can't do
+/// what was asked exactly, as opposed to the call failing as it would in
+/// JavaScript. Nunjucks reports it as unsupported.
+pub const REFUSAL_PREFIX: &str = "Brrrty ";
+
 /// A filter that does not depend on a template engine.
 pub type FilterImpl = fn(&Value, &[Value], &FilterEnv) -> Result<Value, String>;
 
-/// What an engine-neutral filter can see of the build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A filter that a template engine can call: the closure form of
+/// [`FilterImpl`], for filters that carry state, such as one written in a
+/// config script.
+pub type FilterFn =
+    Arc<dyn Fn(&Value, &[Value], &FilterEnv) -> Result<Value, String> + Send + Sync>;
+
+/// What an engine-neutral filter can see of the build and of the call.
+///
+/// Liquid builds one with [`FilterEnv::new`], which leaves everything past
+/// the time zone empty, so its filters behave as before. Nunjucks fills in
+/// the rest.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct FilterEnv {
     /// The zone a `Date` input is printed in, as JavaScript's `String(date)`
     /// prints it.
     pub timezone: Tz,
+    /// The page's data, which a JavaScript filter reads as `this.page`.
+    pub page: Option<Value>,
+    /// The keyword arguments of the call, in the order written. Nunjucks
+    /// also passes them as a last object argument, with `__keywords: true`,
+    /// which stays in the arguments a filter gets; this is the same data
+    /// taken apart. Liquid passes none here.
+    pub kwargs: Vec<(String, Value)>,
+    /// The input is a `SafeString` (from `safe`, `escape` or a macro). The
+    /// filter gets its text as a string, as `String(input)` would give it.
+    pub input_safe: bool,
+    /// Which of the arguments are `SafeString`s, by position.
+    pub args_safe: Vec<bool>,
+    returned_input: Cell<bool>,
 }
 
 impl FilterEnv {
     pub fn new(timezone: Tz) -> Self {
-        FilterEnv { timezone }
+        FilterEnv {
+            timezone,
+            page: None,
+            kwargs: Vec::new(),
+            input_safe: false,
+            args_safe: Vec::new(),
+            returned_input: Cell::new(false),
+        }
+    }
+
+    /// Whether any of the input and the arguments is a `SafeString`.
+    pub fn any_safe(&self) -> bool {
+        self.input_safe || self.args_safe.iter().any(|s| *s)
+    }
+
+    /// A filter calls this when the value it returns is the input object
+    /// itself, as JavaScript's `return input` is. Nunjucks then keeps a
+    /// `SafeString` input safe. A filter that builds a new string, even an
+    /// equal one, must not call it.
+    pub fn returns_input(&self) {
+        self.returned_input.set(true);
+    }
+
+    /// Whether the filter called [`FilterEnv::returns_input`].
+    pub fn did_return_input(&self) -> bool {
+        self.returned_input.get()
     }
 }
 
@@ -185,11 +239,29 @@ fn drop_contraction_apostrophes(s: &str) -> String {
 
 fn url_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result<Value, String> {
     // The registered filter takes a truthy string argument as the path
-    // prefix, and uses the configured one, `/`, otherwise.
+    // prefix, and uses the configured one, `/`, otherwise. A `SafeString`
+    // is an object, not a string.
     let prefix = match args.first() {
-        Some(Value::String(s)) if !s.is_empty() => s.to_string(),
+        Some(Value::String(s)) if !s.is_empty() && !env.args_safe.first().is_some_and(|x| *x) => {
+            s.to_string()
+        }
         _ => "/".to_string(),
     };
+    if env.input_safe {
+        // A `SafeString` is truthy. `new URL(it)` and `startsWith` read its
+        // text, so a URL comes back as the same object; anything else
+        // reaches `path.posix.join`, which wants a string.
+        let text = input.to_js_string_in(env.timezone);
+        return if is_valid_url(&text) || text.starts_with("//") {
+            env.returns_input();
+            Ok(input.clone())
+        } else {
+            Err(
+                "The \"path\" argument must be of type string. Received an instance of String"
+                    .to_string(),
+            )
+        };
+    }
     if !input.js_truthy() {
         return Ok(string(add_path_prefix("", &prefix)));
     }
@@ -198,12 +270,14 @@ fn url_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result<Value, S
         // on the value's string form, so an array holding a URL passes.
         // A `Date` never parses as a URL, so it throws, as in Eleventy.
         return if is_valid_url(&input.to_js_string_in(env.timezone)) {
+            env.returns_input();
             Ok(input.clone())
         } else {
             Err("url.startsWith is not a function".to_string())
         };
     };
     if is_valid_url(s) || (s.starts_with("//") && &**s != "//") {
+        env.returns_input();
         return Ok(input.clone());
     }
     Ok(string(add_path_prefix(s, &prefix)))
@@ -289,11 +363,12 @@ fn posix_normalize(path: &str) -> String {
 
 /// Eleventy's `log` is `console.log(input, ...messages)`, then returns the
 /// input. This prints to stderr, so a build's own output stays clean.
-fn log_filter(input: &Value, args: &[Value], _env: &FilterEnv) -> Result<Value, String> {
+fn log_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result<Value, String> {
     let mut all = Vec::with_capacity(args.len() + 1);
     all.push(input.clone());
     all.extend_from_slice(args);
     eprintln!("{}", console_format(&all));
+    env.returns_input();
     Ok(input.clone())
 }
 

@@ -23,8 +23,9 @@ mod tests;
 mod value;
 
 pub use ast::Template;
+pub use brrrty_js::FilterEnv;
 pub use brrrty_js::{LoadError, Loader, Tz};
-pub use engine::{Compiled, Engine, EngineOptions, FilterCtx, FilterFn};
+pub use engine::{Compiled, Engine, EngineOptions, FilterFn};
 pub use error::{ErrorKind, NunjucksError};
 pub use render::Rendered;
 

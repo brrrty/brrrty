@@ -206,7 +206,7 @@ impl Renderer<'_> {
     ) -> R<Val> {
         let filter = crate::filters::lookup(self.engine, name)?;
         let argv = self.eval_args(args, kwargs, scope)?;
-        crate::filters::run(self, &filter, name, &argv)
+        crate::filters::run(self, &filter, name, &argv, scope)
     }
 }
 

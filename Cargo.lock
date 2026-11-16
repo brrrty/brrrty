@@ -328,6 +328,7 @@ dependencies = [
  "brrrty-js",
  "brrrty-liquid",
  "brrrty-markdown",
+ "brrrty-nunjucks",
  "clap",
  "comrak",
  "liquid",

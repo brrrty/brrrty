@@ -2,6 +2,7 @@ use brrrty_markdown::MarkdownRenderer;
 use brrrty_spike::case::{Lang, load_cases};
 use brrrty_spike::corpus::{self, SiteInput};
 use brrrty_spike::engines::brrrty_liquid::BrrrtyLiquid;
+use brrrty_spike::engines::brrrty_nunjucks::BrrrtyNunjucks;
 use brrrty_spike::engines::liquid_crate::LiquidCrate;
 use brrrty_spike::engines::markdown::{Comrak, ComrakFormatted, MarkdownItRs, Pulldown};
 use brrrty_spike::engines::minijinja::MiniJinja;
@@ -91,7 +92,7 @@ fn results_path(name: &str) -> PathBuf {
 fn candidates(kind: Kind) -> Vec<Box<dyn Engine>> {
     match kind {
         Kind::Liquid => vec![Box::new(LiquidCrate::new()), Box::new(BrrrtyLiquid::new())],
-        Kind::Nunjucks => vec![Box::new(MiniJinja::new())],
+        Kind::Nunjucks => vec![Box::new(MiniJinja::new()), Box::new(BrrrtyNunjucks::new())],
     }
 }
 

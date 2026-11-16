@@ -745,9 +745,21 @@ pub(crate) fn raw_index(obj: &Val, key: &Val, ops: Ops) -> R<Val> {
         } else {
             "null"
         };
-        let k = property_key(key, ops)?;
+        // V8 shows a plain object key as `#<Object>`, and leaves the key out
+        // for an array, a date, a `SafeString` and an object with its own
+        // `toString`.
+        let reading = match key {
+            Val::Obj(_) | Val::V(Value::Object(_)) if !has_own(key, "toString")? => {
+                " (reading '#<Object>')".to_string()
+            }
+            Val::Obj(_)
+            | Val::V(Value::Object(_) | Value::Array(_) | Value::Date(_))
+            | Val::Arr(_)
+            | Val::Safe(_) => String::new(),
+            _ => format!(" (reading '{}')", property_key(key, ops)?),
+        };
         return Err(type_error(format!(
-            "Cannot read properties of {what} (reading '{k}')"
+            "Cannot read properties of {what}{reading}"
         )));
     }
     member(obj, key, ops)

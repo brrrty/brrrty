@@ -10,7 +10,9 @@ pub mod tz;
 mod value;
 mod zones;
 
-pub use eleventy::{FilterEnv, FilterImpl, console_format, eleventy_filters};
+pub use eleventy::{
+    FilterEnv, FilterFn, FilterImpl, REFUSAL_PREFIX, console_format, eleventy_filters,
+};
 pub use loader::{LoadError, Loader};
 pub use number::{is_js_whitespace, js_number_to_string, js_string_to_number};
 pub use tz::Tz;

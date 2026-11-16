@@ -10,7 +10,7 @@ homepage.workspace = true
 keywords = ["static-site", "ssg", "eleventy", "11ty", "nunjucks"]
 categories = ["template-engine", "web-programming"]
 readme = false
-exclude = ["tests/conformance.rs", "tests/render.rs", "tests/probes/conformance_parse_errors.json", "tests/probes/render.json", "tools"]
+exclude = ["tests/conformance.rs", "tests/render.rs", "tests/filters.rs", "tests/probes/conformance_parse_errors.json", "tests/probes/render.json", "tests/probes/filters.json", "tools"]
 
 [dependencies]
 brrrty-js = { version = "0.0.6", path = "../brrrty-js" }
