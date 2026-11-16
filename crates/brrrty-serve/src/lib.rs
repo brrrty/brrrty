@@ -78,6 +78,45 @@ impl Default for Limits {
     }
 }
 
+/// How long a closing connection keeps reading what the client still sends.
+const LINGER_TIME: Duration = Duration::from_millis(500);
+/// How much a closing connection reads before giving up on the client.
+const LINGER_BYTES: usize = 64 * 1024;
+/// How many refused connections may linger at once; past this they close at once.
+const MAX_LINGERING: usize = 64;
+
+/// Close a connection the server is ending without losing the response.
+///
+/// Closing a socket that still has unread input makes the kernel send a reset, and a
+/// reset can throw away the response the client has not read yet. So the write side
+/// is shut first, which sends the response and then end-of-stream, and the input is
+/// drained until the client closes too, for at most [`LINGER_TIME`] and
+/// [`LINGER_BYTES`].
+fn lingering_close(stream: &TcpStream) {
+    if stream.shutdown(Shutdown::Write).is_err() {
+        return;
+    }
+    let until = Instant::now() + LINGER_TIME;
+    let mut buf = [0u8; 4096];
+    let mut read = 0;
+    let mut s = stream;
+    while read < LINGER_BYTES {
+        let Some(left) = until
+            .checked_duration_since(Instant::now())
+            .filter(|l| !l.is_zero())
+        else {
+            break;
+        };
+        if s.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => read += n,
+        }
+    }
+}
+
 /// How long to wait after the `n`th accept error in a row (1 is the first).
 /// Doubles from 10 ms to a 1 s cap, so a descriptor shortage does not spin a
 /// core.
@@ -140,6 +179,8 @@ struct Shared {
     conns: Mutex<HashMap<u64, TcpStream>>,
     next_conn: AtomicU64,
     active: AtomicUsize,
+    /// Refused connections still draining their input.
+    lingering: AtomicUsize,
     limits: Limits,
 }
 
@@ -216,6 +257,7 @@ impl Server {
             conns: Mutex::new(HashMap::new()),
             next_conn: AtomicU64::new(0),
             active: AtomicUsize::new(0),
+            lingering: AtomicUsize::new(0),
             limits,
         });
         let accept_shared = Arc::clone(&shared);
@@ -429,7 +471,25 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
             shared.active.fetch_sub(1, Ordering::SeqCst);
             let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
             let resp = plain_error(503).header("Retry-After", "1");
-            let _ = http::write_response(&mut stream, resp, false, false);
+            if http::write_response(&mut stream, resp, false, false).is_err() {
+                continue;
+            }
+            // Linger off the accept thread, so refusing never slows accepting; the
+            // number lingering is capped, past which the close is immediate.
+            if shared.lingering.fetch_add(1, Ordering::SeqCst) < MAX_LINGERING {
+                let linger_shared = Arc::clone(&shared);
+                let spawned = std::thread::Builder::new()
+                    .name("brrrty-serve-linger".into())
+                    .spawn(move || {
+                        lingering_close(&stream);
+                        linger_shared.lingering.fetch_sub(1, Ordering::SeqCst);
+                    });
+                if spawned.is_err() {
+                    shared.lingering.fetch_sub(1, Ordering::SeqCst);
+                }
+            } else {
+                shared.lingering.fetch_sub(1, Ordering::SeqCst);
+            }
             continue;
         }
         let id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
@@ -482,7 +542,9 @@ fn handle_connection(stream: TcpStream, shared: &Shared) {
             Err(ParseError::Closed) => return,
             Err(ParseError::Reject(status)) => {
                 let resp = plain_error(status);
-                let _ = http::write_response(&mut writer, resp, false, false);
+                if http::write_response(&mut writer, resp, false, false).is_ok() {
+                    lingering_close(&writer);
+                }
                 return;
             }
         };
@@ -490,7 +552,12 @@ fn handle_connection(stream: TcpStream, shared: &Shared) {
         let keep_alive = req.keep_alive();
         let head_only = req.method.eq_ignore_ascii_case("HEAD");
         let resp = route(&req, shared);
-        if http::write_response(&mut writer, resp, head_only, keep_alive).is_err() || !keep_alive {
+        if http::write_response(&mut writer, resp, head_only, keep_alive).is_err() {
+            return;
+        }
+        if !keep_alive {
+            // The client may still be sending a body that is never read.
+            lingering_close(&writer);
             return;
         }
     }

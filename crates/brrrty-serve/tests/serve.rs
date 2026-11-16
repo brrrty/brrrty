@@ -742,6 +742,9 @@ fn connections_past_the_cap_get_503_and_a_slot_frees_up() {
         assert_eq!(read_reply(s, false).status, 200);
     }
     let mut over = connect(&srv);
+    // A request the server never reads: closing with it unread must not reset the
+    // connection before the 503 arrives.
+    over.write_all(&padded_request()).unwrap();
     let r = read_reply(&mut over, false);
     assert_eq!(r.status, 503);
     assert_eq!(r.header("retry-after"), Some("1"));
@@ -760,6 +763,65 @@ fn connections_past_the_cap_get_503_and_a_slot_frees_up() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(ok, "a slot never freed up");
+}
+
+/// A request with a large header, so plenty of it sits unread in the server's buffer.
+fn padded_request() -> Vec<u8> {
+    format!(
+        "GET /about HTTP/1.1\r\nHost: x\r\nX-Pad: {}\r\n\r\n",
+        "p".repeat(6000)
+    )
+    .into_bytes()
+}
+
+/// Send `head` and then `trailing` bytes the server will not read, and read the reply
+/// after giving the trailing bytes time to land.
+fn reply_with_unread_bytes(srv: &RunningServer, head: &[u8], trailing: usize) -> Reply {
+    let mut s = connect(srv);
+    s.write_all(head).unwrap();
+    s.write_all(&vec![b'x'; trailing]).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    read_reply(&mut s, false)
+}
+
+#[test]
+fn early_closes_drain_unread_input_so_the_reply_arrives() {
+    let f = fixture(true);
+    let srv = start(&f);
+    // 400: conflicting lengths, then a body the server never reads.
+    let r = reply_with_unread_bytes(
+        &srv,
+        b"POST /about HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+        20_000,
+    );
+    assert_eq!(r.status, 400);
+    // 200 with Connection: close and an unread body.
+    let r = reply_with_unread_bytes(
+        &srv,
+        b"POST /about HTTP/1.1\r\nHost: x\r\nContent-Length: 20000\r\nConnection: close\r\n\r\n",
+        20_000,
+    );
+    assert_eq!(r.status, 200);
+    assert_eq!(r.text(), "about page");
+}
+
+#[test]
+fn a_408_arrives_even_with_unread_input() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            head_timeout: Duration::from_millis(300),
+            ..Limits::default()
+        },
+    );
+    let mut s = connect(&srv);
+    // An unfinished head the server gives up on, then more bytes it never reads.
+    s.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\n").unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    s.write_all(&vec![b'x'; 20_000]).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(read_reply(&mut s, false).status, 408);
 }
 
 // ---- request framing --------------------------------------------------
