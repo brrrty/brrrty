@@ -164,6 +164,10 @@ impl MarkdownIt {
         markdown_it::plugins::html::add(&mut md);
         markdown_it::plugins::extra::strikethrough::add(&mut md);
         add_tables(&mut md);
+        // The port only limits indentation (a line indented 4 or more is
+        // not a list item, a fence, a heading...) when the `code` rule is
+        // added; markdown-it always does.
+        md.max_indent = 4;
         MarkdownIt { md }
     }
 }
@@ -437,6 +441,22 @@ mod tests {
         for blank in ["\u{feff}", " \u{a0}\u{3000}", "\u{2028}"] {
             assert_eq!(f(blank), None, "{blank:?}");
         }
+    }
+
+    /// markdown-it limits indentation without its `code` rule too: a line indented 4 or more
+    /// (from where the block starts) continues the paragraph above it. Node's output for each.
+    #[test]
+    fn indentation_is_limited_without_the_code_rule() {
+        assert_eq!(
+            md().render("3. Deploy\n  1. Copy:\n    * A\n    * B\n  2. Link:\n    * C\n"),
+            "<ol start=\"3\">\n<li>Deploy</li>\n<li>Copy:\n* A\n* B</li>\n<li>Link:\n* C</li>\n</ol>\n"
+        );
+        assert_eq!(md().render("a\n    # b\n"), "<p>a\n# b</p>\n");
+        assert_eq!(md().render("    # b\n"), "<p># b</p>\n");
+        assert_eq!(
+            md().render("    ```\n    x\n    ```\n"),
+            "<p><code>    x    </code></p>\n"
+        );
     }
 
     /// 11ty disables markdown-it's `code` rule, so indented lines are paragraph text.
