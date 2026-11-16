@@ -174,7 +174,7 @@ fn unsupported_engine_overrides_are_errors() {
     write(
         root,
         "src/a.md",
-        "---\ntemplateEngineOverride: njk\n---\nx\n",
+        "---\ntemplateEngineOverride: 11ty.js\n---\nx\n",
     );
     write(
         root,
@@ -364,7 +364,7 @@ fn a_layout_cycle_is_one_error_and_the_build_goes_on() {
 fn layout_problems_are_clear_errors() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(root, "src/_includes/n.njk", "{{ content | safe }}");
+    write(root, "src/_includes/n.11ty.js", "module.exports = 1;");
     write(root, "src/_includes/folder/x.liquid", "x");
     write(root, "src/_includes/noext", "x");
     write(
@@ -373,7 +373,7 @@ fn layout_problems_are_clear_errors() {
         "---\nlayout: false\n---\n{{ content }}",
     );
     write(root, "src/missing.md", "---\nlayout: nope\n---\nx\n");
-    write(root, "src/njk.md", "---\nlayout: n\n---\nx\n");
+    write(root, "src/js.md", "---\nlayout: n\n---\nx\n");
     write(root, "src/folder.md", "---\nlayout: folder\n---\nx\n");
     write(root, "src/noext.md", "---\nlayout: noext\n---\nx\n");
     write(root, "src/endsbad.md", "---\nlayout: endsbad\n---\nx\n");
@@ -399,12 +399,15 @@ fn layout_problems_are_clear_errors() {
         "{:?}",
         missing.help
     );
-    let njk = find(codes::LAYOUT_UNSUPPORTED);
-    assert_eq!(njk.path.as_deref(), Some(Path::new("src/_includes/n.njk")));
+    let js = find(codes::LAYOUT_UNSUPPORTED);
     assert_eq!(
-        njk.help.as_deref(),
+        js.path.as_deref(),
+        Some(Path::new("src/_includes/n.11ty.js"))
+    );
+    assert_eq!(
+        js.help.as_deref(),
         Some(
-            "Nunjucks support is coming soon. Liquid, Markdown and HTML layouts work now. 1 page uses this layout and was not written."
+            "JavaScript layouts are coming soon. Liquid, Nunjucks, Markdown and HTML layouts work now. 1 page uses this layout and was not written."
         )
     );
     let invalid: Vec<_> = r

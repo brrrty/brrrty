@@ -37,6 +37,7 @@ fn follows_11ty_default_rules() {
         "src/_includes/x.md",
         "src/_data/d.json",
         "src/c.njk",
+        "src/d.11ty.js",
         "src/sub/node_modules/y.md",
         "node_modules/x/n.md",
         "src/README.md",
@@ -53,11 +54,12 @@ fn follows_11ty_default_rules() {
             ".dot.md",
             ".hidden/a.md",
             "_draft.md",
+            "c.njk",
             "index.md",
             "page.html"
         ])
     );
-    assert_eq!(d.unsupported, paths(&["c.njk"]));
+    assert_eq!(d.unsupported, paths(&["d.11ty.js"]));
 }
 
 #[test]

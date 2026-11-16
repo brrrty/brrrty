@@ -88,7 +88,7 @@ fn bad_page_does_not_stop_the_build() {
 fn unsupported_templates_are_errors() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(root, "src/c.njk", "{{ x }}");
+    write(root, "src/c.11ty.js", "module.exports = 1;");
     write(root, "src/ok.md", "ok\n");
     let r = build(&opts(root), &MarkdownIt::new());
     let p = r
@@ -98,7 +98,9 @@ fn unsupported_templates_are_errors() {
         .unwrap();
     assert_eq!(
         p.help.as_deref(),
-        Some("Nunjucks support is coming soon. Liquid, Markdown and HTML templates work now.")
+        Some(
+            "JavaScript templates are coming soon. Liquid, Nunjucks, Markdown and HTML templates work now."
+        )
     );
     assert!(root.join("_site/ok/index.html").exists());
 }
@@ -490,7 +492,7 @@ fn passthrough_and_discover_problem_paths_are_root_relative() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(root, "src/index.md", "hi\n");
-    write(root, "src/old.njk", "x\n");
+    write(root, "src/old.11ty.js", "x\n");
     write(root, "src/a.html", "<p>a</p>\n");
     write(root, "src/a/index.md", "x\n");
     write(root, "src/images/a.html", "<p>other</p>\n");
@@ -506,7 +508,7 @@ fn passthrough_and_discover_problem_paths_are_root_relative() {
     };
     assert_eq!(
         path_of(codes::TEMPLATE_UNSUPPORTED),
-        Some("src/old.njk".into())
+        Some("src/old.11ty.js".into())
     );
     assert_eq!(path_of(codes::PASSTHROUGH_MISSING), Some("src/gone".into()));
     assert_eq!(path_of(codes::PASSTHROUGH_ESCAPES), Some("../x".into()));

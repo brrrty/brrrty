@@ -1,0 +1,9 @@
+---
+title: C
+date: 2026-01-12
+permalink: "/c/{{ title | slugify }}/"
+eleventyComputed:
+  bar: "{{ foo }}-y"
+  foo: "{{ title }}-x"
+---
+{{ page.templateSyntax }} {{ foo }} {{ bar }} {{ page.url }}

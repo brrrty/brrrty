@@ -3,8 +3,8 @@
 //! the plugin registers.
 //!
 //! 11ty renders the feed from a Nunjucks template the plugin writes
-//! (`virtualTemplate.js`). Brrrty has no Nunjucks yet, so [`feed`] renders
-//! those three templates directly: the same text, the same whitespace
+//! (`virtualTemplate.js`). [`feed`] renders those three templates
+//! directly, without the Nunjucks engine: the same text, the same whitespace
 //! control, Nunjucks's escaping, and the same filters, down to the double
 //! escaping of an Atom entry's link. The feed is a page of the site like any
 //! other: it has its place in `collections.all`, its data cascade, and its

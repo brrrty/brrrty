@@ -1,5 +1,6 @@
-//! The partial loader for `{% include %}` and `{% render %}`: 11ty's
-//! LiquidJS roots, `_includes` then the input folder.
+//! The loaders for included templates: 11ty's LiquidJS roots, `_includes`
+//! then the input folder, and its Nunjucks roots, `_includes` then the
+//! project folder.
 
 use std::fs;
 use std::io;
@@ -17,12 +18,40 @@ struct Root {
 }
 
 /// Loads partials from the includes folder, then the input folder, as 11ty
-/// configures LiquidJS. A name may not lead outside those folders: it is
-/// normalized lexically first, and the file found is canonicalized and must
-/// still be inside its folder, so a symbolic link can't point elsewhere.
+/// configures LiquidJS, or from the includes folder, then the project
+/// folder, as it configures Nunjucks's `FileSystemLoader`. A name may not
+/// lead outside those folders: it is normalized lexically first, and the
+/// file found is canonicalized and must still be inside its folder, so a
+/// symbolic link can't point elsewhere.
 #[derive(Debug, Clone)]
 pub(crate) struct FsLoader {
     roots: Vec<Root>,
+    /// Nunjucks: an absolute name is a file in a root, the way Nunjucks
+    /// resolves `./` names against the including template's path. A name
+    /// outside every root is missing, as Nunjucks reports it.
+    nunjucks: bool,
+}
+
+/// `path` with `.` and `..` resolved, as Node's `path.resolve` does for an
+/// absolute path; `None` when it isn't absolute.
+fn lexical_absolute(path: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                // `/..` is `/`.
+                if out.parent().is_some() {
+                    out.pop();
+                }
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    Some(out)
 }
 
 /// `name` with `.` and `..` resolved, or `None` when it is absolute or
@@ -64,6 +93,25 @@ impl FsLoader {
                     shown: input_shown,
                 },
             ],
+            nunjucks: false,
+        }
+    }
+
+    /// 11ty's Nunjucks loader: `includes` (canonical, shown as
+    /// `includes_shown`), then `root`, the canonical project folder.
+    pub fn nunjucks(includes: PathBuf, includes_shown: PathBuf, root: PathBuf) -> FsLoader {
+        FsLoader {
+            roots: vec![
+                Root {
+                    real: includes,
+                    shown: includes_shown,
+                },
+                Root {
+                    real: root,
+                    shown: PathBuf::new(),
+                },
+            ],
+            nunjucks: true,
         }
     }
 
@@ -88,21 +136,50 @@ impl FsLoader {
 
 impl Loader for FsLoader {
     fn load(&self, name: &str) -> Result<(String, String), LoadError> {
-        let Some(rel) = lexical(name) else {
-            return Err(LoadError {
-                tried: Vec::new(),
-                io: Some(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!("the name leads outside {}", self.folders()),
-                )),
-            });
+        // Each root with the path the name has in it.
+        let candidates: Vec<(&Root, PathBuf)> = if self.nunjucks && Path::new(name).is_absolute() {
+            let path = lexical_absolute(Path::new(name)).unwrap_or_default();
+            self.roots
+                .iter()
+                .filter_map(|r| {
+                    path.strip_prefix(&r.real)
+                        .ok()
+                        .map(|rel| (r, rel.to_path_buf()))
+                })
+                .collect()
+        } else {
+            match lexical(name) {
+                Some(rel) => self.roots.iter().map(|r| (r, rel.clone())).collect(),
+                // Nunjucks finds nothing in a root a name leads out of.
+                None if self.nunjucks => Vec::new(),
+                None => {
+                    return Err(LoadError {
+                        tried: Vec::new(),
+                        io: Some(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            format!("the name leads outside {}", self.folders()),
+                        )),
+                    });
+                }
+            }
         };
         let mut tried = Vec::new();
-        for root in &self.roots {
+        for (root, rel) in candidates {
             tried.push(root.shown.join(&rel).display().to_string());
             let candidate = root.real.join(&rel);
             match fs::metadata(&candidate) {
                 Ok(m) if m.is_file() => {}
+                // Nunjucks's `existsSync` finds a folder, which it then
+                // fails to read.
+                Ok(_) if self.nunjucks => {
+                    return Err(LoadError {
+                        tried,
+                        io: Some(io::Error::new(
+                            io::ErrorKind::IsADirectory,
+                            "it is a folder",
+                        )),
+                    });
+                }
                 Ok(_) => continue,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(LoadError { tried, io: Some(e) }),

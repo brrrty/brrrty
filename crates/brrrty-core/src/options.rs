@@ -45,6 +45,53 @@ pub struct ConfigOptions {
     /// The feeds `feedPlugin` (`@11ty/eleventy-plugin-rss`) adds, in the
     /// order they were added: each is a virtual template.
     pub feeds: Vec<crate::plugins::rss::FeedOptions>,
+    /// `markdownTemplateEngine` and `htmlTemplateEngine`.
+    pub template_engines: TemplateEngines,
+}
+
+/// A template language that runs on a page's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateLanguage {
+    Liquid,
+    Nunjucks,
+}
+
+impl TemplateLanguage {
+    /// 11ty's name for it, as `page.templateSyntax` lists it.
+    pub fn name(self) -> &'static str {
+        match self {
+            TemplateLanguage::Liquid => "liquid",
+            TemplateLanguage::Nunjucks => "njk",
+        }
+    }
+
+    /// The language 11ty names `name` (`liquid` or `njk`), if Brrrty runs
+    /// it.
+    pub fn from_name(name: &str) -> Option<TemplateLanguage> {
+        match name {
+            "liquid" => Some(TemplateLanguage::Liquid),
+            "njk" => Some(TemplateLanguage::Nunjucks),
+            _ => None,
+        }
+    }
+}
+
+/// What runs on `.md` and `.html` files before Markdown (11ty's
+/// `markdownTemplateEngine` and `htmlTemplateEngine`). `None` is `false`:
+/// nothing does. Both are Liquid by default, as in 11ty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemplateEngines {
+    pub markdown: Option<TemplateLanguage>,
+    pub html: Option<TemplateLanguage>,
+}
+
+impl Default for TemplateEngines {
+    fn default() -> Self {
+        TemplateEngines {
+            markdown: Some(TemplateLanguage::Liquid),
+            html: Some(TemplateLanguage::Liquid),
+        }
+    }
 }
 
 /// One `.rhai` data file to run.

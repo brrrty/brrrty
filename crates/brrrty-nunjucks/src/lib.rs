@@ -18,6 +18,7 @@ mod jsops;
 mod lexer;
 mod parser;
 mod render;
+mod symbols;
 mod tags;
 mod tests;
 mod value;
@@ -28,6 +29,7 @@ pub use brrrty_js::{LoadError, Loader, Tz};
 pub use engine::{Compiled, Engine, EngineOptions, FilterFn};
 pub use error::{ErrorKind, NunjucksError};
 pub use render::Rendered;
+pub use symbols::symbols;
 
 /// Parses `source`. `template_name` names the template in errors.
 ///

@@ -161,6 +161,8 @@ pub struct SiteConfig {
     /// The config file, relative to the root.
     pub file: PathBuf,
     pub dir: DirOptions,
+    /// `markdownTemplateEngine` and `htmlTemplateEngine`, as returned.
+    pub template_engines: brrrty_core::TemplateEngines,
     /// `add_passthrough_copy` entries, in 11ty's order: one per source as
     /// written, the last target winning.
     pub passthrough: Vec<PassthroughEntry>,
@@ -195,6 +197,7 @@ impl SiteConfig {
             data: None,
             syntax_highlight: self.syntax_highlight.clone(),
             feeds: self.feeds.clone(),
+            template_engines: self.template_engines,
         }
     }
 }
@@ -318,7 +321,7 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
     let global_data = api::resolve_global_data(&engine, &ast, state.global_data)
         .map_err(|e| vec![runtime_problem(*e)])?;
     let mut problems = Vec::new();
-    let dir = read_returned(returned, &mut problems)?;
+    let (dir, template_engines) = read_returned(returned, &mut problems)?;
     // The script's filters run later, while pages render.
     let runtime = Arc::new(filters::Runtime { engine, ast });
     let filters = state
@@ -340,6 +343,7 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
     Ok(SiteConfig {
         file: PathBuf::from(CONFIG_FILE),
         dir,
+        template_engines,
         passthrough: state
             .passthrough
             .into_iter()
@@ -469,10 +473,45 @@ fn runtime_problem(e: EvalAltResult) -> Problem {
 }
 
 /// The returned object: `()` or a map with `dir`.
-fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<DirOptions, Vec<Problem>> {
+/// A returned `markdownTemplateEngine` or `htmlTemplateEngine`: a
+/// language's name, or `false` for none.
+fn template_engine(
+    key: &str,
+    value: Dynamic,
+) -> Result<Option<brrrty_core::TemplateLanguage>, Vec<Problem>> {
+    if value.as_bool() == Ok(false) {
+        return Ok(None);
+    }
+    let type_name = value.type_name();
+    let Ok(name) = value.into_immutable_string() else {
+        return Err(vec![Problem::error(
+            codes::CONFIG_INVALID,
+            format!(
+                "`{key}` is a {type_name}; it should be a template language, like \"njk\", or false"
+            ),
+        )]);
+    };
+    match brrrty_core::TemplateLanguage::from_name(&name) {
+        Some(l) => Ok(Some(l)),
+        None => Err(vec![
+            Problem::error(
+                codes::CONFIG_UNSUPPORTED,
+                format!("`{key}` is `{name}`, which Brrrty doesn't run there"),
+            )
+            .with_help("use \"liquid\", \"njk\" or false"),
+        ]),
+    }
+}
+
+/// The returned object: `()` or a map with `dir` and the template engines.
+fn read_returned(
+    v: Dynamic,
+    problems: &mut Vec<Problem>,
+) -> Result<(DirOptions, brrrty_core::TemplateEngines), Vec<Problem>> {
     let invalid = |m: String| vec![Problem::error(codes::CONFIG_INVALID, m)];
+    let mut engines = brrrty_core::TemplateEngines::default();
     if v.is_unit() {
-        return Ok(DirOptions::default());
+        return Ok((DirOptions::default(), engines));
     }
     let type_name = v.type_name();
     let Some(map) = v.try_cast::<Map>() else {
@@ -482,6 +521,29 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<DirOptions, 
     };
     let mut dir = DirOptions::default();
     for (key, value) in map {
+        match key.as_str() {
+            "markdownTemplateEngine" => {
+                engines.markdown = template_engine(&key, value)?;
+                continue;
+            }
+            "htmlTemplateEngine" => {
+                engines.html = template_engine(&key, value)?;
+                continue;
+            }
+            // 11ty 3 no longer reads it (probed: data files are not
+            // rendered).
+            "dataTemplateEngine" => {
+                problems.push(
+                    Problem::warning(
+                        codes::CONFIG_UNSUPPORTED,
+                        "`dataTemplateEngine` was ignored: 11ty 3 doesn't read it",
+                    )
+                    .with_path(CONFIG_FILE),
+                );
+                continue;
+            }
+            _ => {}
+        }
         if key != "dir" {
             return Err(vec![
                 Problem::error(
@@ -541,5 +603,5 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<DirOptions, 
             ]);
         }
     }
-    Ok(dir)
+    Ok((dir, engines))
 }

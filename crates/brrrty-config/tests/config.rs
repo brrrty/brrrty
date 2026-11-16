@@ -76,6 +76,31 @@ fn the_last_expression_is_the_returned_object() {
     ok(r#"#{ dir: #{ includes: "_includes", data: "./_data/", layouts: "_includes" } }"#);
 }
 
+/// 11ty's `markdownTemplateEngine` and `htmlTemplateEngine`: a language
+/// or `false`. `dataTemplateEngine` is warned about: 11ty 3 ignores it
+/// (probed: a data file's `{{ }}` is printed as written).
+#[test]
+fn template_engines_are_read_from_the_returned_object() {
+    use brrrty_core::{TemplateEngines, TemplateLanguage};
+    assert_eq!(ok("").template_engines, TemplateEngines::default());
+    let c = ok(r#"#{ markdownTemplateEngine: "njk", htmlTemplateEngine: false }"#);
+    assert_eq!(
+        c.template_engines,
+        TemplateEngines {
+            markdown: Some(TemplateLanguage::Nunjucks),
+            html: None,
+        }
+    );
+    assert_eq!(c.build_options().template_engines, c.template_engines);
+    let c = ok(r#"#{ dataTemplateEngine: "njk" }"#);
+    assert_eq!(c.problems.len(), 1, "{:?}", c.problems);
+    assert!(c.problems[0].message.contains("dataTemplateEngine"));
+    let p = err(r#"#{ htmlTemplateEngine: "ejs" }"#);
+    assert_eq!(p.code, codes::CONFIG_UNSUPPORTED);
+    let p = err(r#"#{ markdownTemplateEngine: 3 }"#);
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+}
+
 #[test]
 fn unsupported_returned_keys_are_refused() {
     let p = err(r#"#{ dir: #{ input: "src" }, pathPrefix: "/x/" }"#);

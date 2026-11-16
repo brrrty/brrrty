@@ -25,6 +25,7 @@ pub mod permalink;
 pub mod plugins;
 pub mod problem;
 mod render;
+mod templates;
 mod yaml;
 
 pub use build::{BuildReport, build};
@@ -34,7 +35,8 @@ pub use frontmatter::split_front_matter;
 pub use js::js_truthy;
 pub use options::{
     BuildOptions, CollectionError, CollectionFn, CollectionInput, CollectionPage, ConfigCollection,
-    ConfigFilter, ConfigOptions, DataFn, DataRequest, DataRunner, PassthroughEntry, UndatedPage,
+    ConfigFilter, ConfigOptions, DataFn, DataRequest, DataRunner, PassthroughEntry,
+    TemplateEngines, TemplateLanguage, UndatedPage,
 };
 pub use page::{Page, file_path_stem, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;

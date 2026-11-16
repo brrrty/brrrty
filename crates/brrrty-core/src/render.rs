@@ -1,6 +1,7 @@
-//! The template pipeline: Liquid, then Markdown for `.md`, then the layout
-//! chain, as 11ty 3.1.8 runs them with its default `markdownTemplateEngine`
-//! and `htmlTemplateEngine` (both `liquid`).
+//! The template pipeline: the page's template language (Liquid or
+//! Nunjucks), then Markdown for `.md`, then the layout chain, as 11ty 3.1.8
+//! runs them. `.md` and `.html` run the config's `markdownTemplateEngine`
+//! and `htmlTemplateEngine` (Liquid by default).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -8,45 +9,60 @@ use std::sync::Arc;
 
 use brrrty_js::Value;
 use brrrty_js::Value as Json;
-use brrrty_liquid::{Engine, ErrorKind, LiquidError, Template};
+use brrrty_liquid::{ErrorKind, LiquidError};
 use brrrty_markdown::MarkdownRenderer;
 use indexmap::IndexMap;
 
 use crate::layout::{Kind, LayoutFile};
-use crate::loader::FsLoader;
+use crate::options::TemplateEngines;
 use crate::problem::{Problem, codes};
+use crate::templates::{Compiled, Lang, Langs, TplError, has_tags};
 
 /// What runs on a page's body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Engines {
-    /// Written as is: `templateEngineOverride` of `html`, `""` or `false`.
+    /// Written as is: `templateEngineOverride` of `html`, `""` or `false`,
+    /// or `.html` when `htmlTemplateEngine` is `false`.
     Raw,
-    Liquid,
-    /// Markdown, after Liquid when `liquid` is set.
-    Markdown {
-        liquid: bool,
-    },
+    /// One template language.
+    Template(Lang),
+    /// Markdown, after `pre` when it is set.
+    Markdown { pre: Option<Lang> },
 }
 
 /// Template languages 11ty knows by default that Brrrty doesn't render.
-const OTHER_ENGINES: &[&str] = &["njk", "11ty.js"];
+const OTHER_ENGINES: &[&str] = &["11ty.js"];
 
 fn override_error(message: String) -> Problem {
-    Problem::error(codes::TEMPLATE_ENGINE_OVERRIDE_INVALID, message)
-        .with_help("use `liquid`, `md`, `html`, or `liquid,md`")
+    Problem::error(codes::TEMPLATE_ENGINE_OVERRIDE_INVALID, message).with_help(
+        "use `liquid`, `njk`, `md` or `html`, or `md` with one of the others, like `njk,md`",
+    )
 }
 
-/// The engines for a page and its `page.templateSyntax`, from its file
-/// extension (`ext`, lowercase) and the merged `templateEngineOverride`, as
-/// 11ty's `TemplateRender` picks them.
-pub(crate) fn engines_for(ext: &str, over: Option<&Json>) -> Result<(Engines, String), Problem> {
-    let default = || match ext {
-        "md" => (Engines::Markdown { liquid: true }, "liquid,md".to_string()),
-        _ => (Engines::Liquid, "liquid".to_string()),
-    };
-    let Some(over) = over else {
-        return Ok(default());
-    };
+/// The engines a page runs without an override, and their
+/// `page.templateSyntax`, from its extension (lowercase): 11ty's
+/// `getEnginesList`.
+fn default_engines(ext: &str, config: TemplateEngines) -> (Engines, String) {
+    match ext {
+        "md" => match config.markdown {
+            Some(l) => (
+                Engines::Markdown { pre: Some(l) },
+                format!("{},md", l.name()),
+            ),
+            None => (Engines::Markdown { pre: None }, "md".to_string()),
+        },
+        "html" => match config.html {
+            Some(l) => (Engines::Template(l), l.name().to_string()),
+            None => (Engines::Raw, "html".to_string()),
+        },
+        "njk" => (Engines::Template(Lang::Nunjucks), "njk".to_string()),
+        _ => (Engines::Template(Lang::Liquid), "liquid".to_string()),
+    }
+}
+
+/// A `templateEngineOverride` taken apart as 11ty's `parseEngineOverrides`
+/// does: whether it has `md`, and its one other language, if any.
+fn parse_override(over: &Json) -> Result<(bool, Option<String>), Problem> {
     // `typeof (value || "") !== "string"` is an error in 11ty.
     let text = match over {
         Json::String(s) => s.as_ref(),
@@ -73,38 +89,143 @@ pub(crate) fn engines_for(ext: &str, over: Option<&Json>) -> Result<(Engines, St
             "templateEngineOverride `{text}` mixes template languages; 11ty allows one, plus `md`"
         )));
     }
+    Ok((markdown, engines.pop()))
+}
+
+/// The language an override names, refused when Brrrty doesn't run it.
+fn override_language(name: &str, over: &Json) -> Result<Lang, Problem> {
+    let text = match over {
+        Json::String(s) => s.to_string(),
+        other => crate::data::json_text(other),
+    };
+    if let Some(lang) = Lang::from_name(name) {
+        return Ok(lang);
+    }
+    if OTHER_ENGINES.contains(&name) {
+        return Err(Problem::error(
+            codes::TEMPLATE_ENGINE_UNSUPPORTED,
+            format!("templateEngineOverride `{text}` uses {name}, which Brrrty doesn't support yet"),
+        )
+        .with_help("JavaScript templates are coming soon. Until then, use `liquid`, `njk`, `md` or `html`."));
+    }
+    Err(override_error(format!(
+        "templateEngineOverride `{text}` names an unknown template language `{name}`"
+    )))
+}
+
+/// The engines for a page and its `page.templateSyntax`, from its file
+/// extension (`ext`, lowercase), the merged `templateEngineOverride` and
+/// the config, as 11ty's `TemplateRender` picks them.
+pub(crate) fn engines_for(
+    ext: &str,
+    over: Option<&Json>,
+    config: TemplateEngines,
+) -> Result<(Engines, String), Problem> {
+    let Some(over) = over else {
+        return Ok(default_engines(ext, config));
+    };
+    let (markdown, other) = parse_override(over)?;
+    let lang = other
+        .as_deref()
+        .map(|name| override_language(name, over))
+        .transpose()?;
     // 11ty lists the override's engines last first; a falsy override keeps
     // the default list, though the page is written as is.
     let syntax = if crate::js::js_truthy(over) {
-        let mut list: Vec<&str> = engines.iter().map(String::as_str).collect();
+        let mut list: Vec<&str> = lang.iter().map(|l| l.name()).collect();
         if markdown {
             list.push("md");
         }
         list.join(",")
     } else {
-        default().1
+        default_engines(ext, config).1
     };
-    let engine = match engines.first().map(String::as_str) {
-        None if markdown => Engines::Markdown { liquid: false },
-        None => Engines::Raw,
-        Some("liquid") if markdown => Engines::Markdown { liquid: true },
-        Some("liquid") => Engines::Liquid,
-        Some(other) if OTHER_ENGINES.contains(&other) => {
-            return Err(Problem::error(
-                codes::TEMPLATE_ENGINE_UNSUPPORTED,
-                format!(
-                    "templateEngineOverride `{text}` uses {other}, which Brrrty doesn't support yet"
-                ),
-            )
-            .with_help("Nunjucks support is coming soon. Until then, use `liquid`, `md`, `html` or `liquid,md`."));
-        }
-        Some(other) => {
-            return Err(override_error(format!(
-                "templateEngineOverride `{text}` names an unknown template language `{other}`"
-            )));
-        }
+    let engine = match (lang, markdown) {
+        (pre, true) => Engines::Markdown { pre },
+        (Some(l), false) => Engines::Template(l),
+        (None, false) => Engines::Raw,
     };
     Ok((engine, syntax))
+}
+
+/// What renders a page's permalink and computed values, which 11ty
+/// compiles without Markdown (`bypassMarkdown`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DataEngine {
+    /// The language, or `None` when strings are used as written.
+    pub lang: Option<Lang>,
+    /// The language whose delimiters 11ty looks for first, by the page's
+    /// extension: `.liquid` and `.njk` check their own, `.md` and `.html`
+    /// always compile.
+    check: Option<Lang>,
+    /// The language 11ty parses computed values with to order them
+    /// (`parseForSymbols` of the page's preprocessor engine), or `None`
+    /// when that engine has none.
+    pub symbols: Option<Lang>,
+}
+
+impl DataEngine {
+    /// The engine for a page with extension `ext` (lowercase).
+    ///
+    /// With an override, 11ty's `setEngineOverride` picks it: nothing for
+    /// `html` or a falsy value, and for one with `md` the config's
+    /// `markdownTemplateEngine` (probed: the override's own language only
+    /// runs on the body). Without, the extension does.
+    pub fn new(
+        ext: &str,
+        over: Option<&Json>,
+        config: TemplateEngines,
+    ) -> Result<DataEngine, Problem> {
+        let by_ext = |ext: &str| match ext {
+            "md" => config.markdown,
+            "html" => config.html,
+            "njk" => Some(Lang::Nunjucks),
+            _ => Some(Lang::Liquid),
+        };
+        let lang = match over {
+            None => by_ext(ext),
+            Some(over) => match parse_override(over)? {
+                (true, _) => config.markdown,
+                (false, Some(name)) => Some(override_language(&name, over)?),
+                (false, None) => None,
+            },
+        };
+        let check = match ext {
+            "md" | "html" => None,
+            "njk" => Some(Lang::Nunjucks),
+            _ => Some(Lang::Liquid),
+        };
+        Ok(DataEngine {
+            lang,
+            check,
+            symbols: by_ext(ext),
+        })
+    }
+
+    /// Whether 11ty compiles `s` (`needsCompilation`). A string with none
+    /// of the language's delimiters renders as written either way.
+    ///
+    /// 11ty checks with the page's own engine until a string compiles, and
+    /// with the override's after. They only disagree on a `.liquid` page
+    /// whose strings run as Nunjucks, for a string whose only tag is a
+    /// Nunjucks comment: with more than one string to render (`repeated`),
+    /// which way it goes depends on the order 11ty renders them, so it is
+    /// refused.
+    pub fn compiles(&self, s: &str, repeated: bool) -> Result<bool, Problem> {
+        let Some(lang) = self.lang else {
+            return Ok(false);
+        };
+        let ours = has_tags(lang, s);
+        let first = self.check.is_none_or(|c| has_tags(c, s));
+        if ours && !first && repeated {
+            return Err(Problem::error(
+                codes::COMPUTED_UNSUPPORTED,
+                "a value whose only Nunjucks tag is a comment (`{#`), on a `.liquid` page whose `templateEngineOverride` runs Nunjucks: 11ty compiles it or not depending on the order it renders the page's values",
+            )
+            .with_help("Remove the comment, or add `{{ \"\" }}` to the value so it is always compiled."));
+        }
+        Ok(ours && first)
+    }
 }
 
 /// How many lines of `text` come before `body`, its tail.
@@ -153,6 +274,9 @@ pub(crate) fn liquid_problem(
 pub(crate) struct Job<'a> {
     /// Relative to the project root.
     pub shown: &'a Path,
+    /// The canonical file, which Nunjucks resolves `./` includes against;
+    /// `None` for a virtual template.
+    pub real: Option<&'a Path>,
     pub body: &'a str,
     pub body_line: usize,
     pub engines: Engines,
@@ -169,8 +293,7 @@ pub(crate) struct Output {
 }
 
 pub(crate) struct Pipeline<'a> {
-    pub engine: &'a Engine,
-    pub loader: &'a FsLoader,
+    pub langs: &'a Langs<'a>,
     pub markdown: &'a dyn MarkdownRenderer,
     /// 11ty's syntax highlighting plugin, when the config added it and it
     /// highlights Markdown.
@@ -216,18 +339,18 @@ impl Pipeline<'_> {
     /// `templateContent`, and what a collection item's `content` holds.
     pub fn content(&self, job: &Job<'_>) -> Result<Output, Problem> {
         let mut undefined = BTreeSet::new();
-        let page_liquid = |undefined: &mut BTreeSet<String>| -> Result<String, Problem> {
-            // 11ty skips the engine when the body has no Liquid in it.
-            if !job.body.contains("{{") && !job.body.contains("{%") {
+        let page = |lang: Lang, undefined: &mut BTreeSet<String>| -> Result<String, Problem> {
+            // Without its delimiters, a body renders as written.
+            if !has_tags(lang, job.body) {
                 return Ok(job.body.to_string());
             }
             let name = job.shown.display().to_string();
             let t = self
-                .engine
-                .parse(&name, job.body)
+                .langs
+                .compile(lang, &name, job.real, job.body)
                 .map_err(|e| self.problem(&e, job))?;
             let data = Value::Object(Arc::new(job.data.clone()));
-            self.liquid(&t, &data, undefined, job)
+            self.render(&t, &data, undefined, job)
         };
         if let Some(feed) = job.feed {
             let r = crate::plugins::rss::feed::render(feed, job.data).map_err(|why| {
@@ -242,14 +365,15 @@ impl Pipeline<'_> {
         }
         let html = match job.engines {
             Engines::Raw => job.body.to_string(),
-            Engines::Liquid => page_liquid(&mut undefined)?,
-            Engines::Markdown { liquid: true } => {
-                let source = page_liquid(&mut undefined)?;
-                // A line in the page is only known when Liquid changed nothing.
+            Engines::Template(lang) => page(lang, &mut undefined)?,
+            Engines::Markdown { pre: Some(lang) } => {
+                let source = page(lang, &mut undefined)?;
+                // A line in the page is only known when the template
+                // language changed nothing.
                 let line = (source == job.body).then_some(job.body_line);
                 self.render_markdown(&source, job.shown, line)?
             }
-            Engines::Markdown { liquid: false } => {
+            Engines::Markdown { pre: None } => {
                 self.render_markdown(job.body, job.shown, Some(job.body_line))?
             }
         };
@@ -269,11 +393,15 @@ impl Pipeline<'_> {
             }
             let layout_data = Value::Object(Arc::new(with_content));
             content = match &layout.kind {
-                Kind::Liquid(t) => self.liquid(t, &layout_data, &mut undefined, job)?,
-                Kind::Markdown(t) => {
-                    let out = self.liquid(t, &layout_data, &mut undefined, job)?;
+                Kind::Template(t) => self.render(t, &layout_data, &mut undefined, job)?,
+                Kind::Markdown(pre) => {
+                    let out = match pre {
+                        Some(t) => self.render(t, &layout_data, &mut undefined, job)?,
+                        None => layout.body.clone(),
+                    };
                     self.render_markdown(&out, &layout.shown, None)?
                 }
+                Kind::Raw => layout.body.clone(),
                 // Pages with such a layout are refused before they get here.
                 Kind::Unrenderable(p) => return Err(p.clone()),
             };
@@ -335,40 +463,38 @@ impl Pipeline<'_> {
             })?
     }
 
-    fn liquid(
+    fn render(
         &self,
-        t: &Template,
+        t: &Compiled,
         data: &Value,
         undefined: &mut BTreeSet<String>,
         job: &Job<'_>,
     ) -> Result<String, Problem> {
         let r = self
-            .engine
-            .render_tracked(t, data, self.loader)
+            .langs
+            .render(t, data)
             .map_err(|e| self.problem(&e, job))?;
         undefined.extend(r.undefined);
         Ok(r.output)
     }
 
-    /// Where an error came from: the page, one of its layouts, or a partial
-    /// the loader found (named by its canonical path).
-    fn problem(&self, e: &LiquidError, job: &Job<'_>) -> Problem {
-        let template = Path::new(&e.template);
+    /// Where an error came from: the page, one of its layouts, or a
+    /// template the loader found.
+    fn problem(&self, e: &TplError, job: &Job<'_>) -> Problem {
+        let template = Path::new(e.template());
         let (path, offset) = if template == job.shown {
             (job.shown.to_path_buf(), job.body_line)
         } else if let Some(l) = job.layouts.iter().find(|l| l.shown == template) {
             (l.shown.clone(), l.body_line)
-        } else if template.is_absolute() {
+        } else {
             (
-                self.loader
-                    .shown(template)
+                self.langs
+                    .shown(e)
                     .unwrap_or_else(|| template.to_path_buf()),
                 0,
             )
-        } else {
-            (template.to_path_buf(), 0)
         };
-        liquid_problem(e, path, offset, Some(job.shown))
+        self.langs.problem(e, path, offset, Some(job.shown))
     }
 }
 
@@ -377,11 +503,22 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const LIQUID: Lang = Lang::Liquid;
+    const NJK: Lang = Lang::Nunjucks;
+
+    fn engines_with(
+        ext: &str,
+        over: Option<serde_json::Value>,
+        config: TemplateEngines,
+    ) -> Result<(Engines, String), &'static str> {
+        engines_for(ext, over.map(|j| Json::from_json(&j)).as_ref(), config).map_err(|p| p.code)
+    }
+
     fn engines(
         ext: &str,
         over: Option<serde_json::Value>,
     ) -> Result<(Engines, String), &'static str> {
-        engines_for(ext, over.map(|j| Json::from_json(&j)).as_ref()).map_err(|p| p.code)
+        engines_with(ext, over, TemplateEngines::default())
     }
 
     /// Probed: `page.templateSyntax` and output for each override.
@@ -391,30 +528,44 @@ mod tests {
         let ok = |e, s: &str| Ok((e, s.to_string()));
         assert_eq!(
             engines("md", None),
-            ok(Markdown { liquid: true }, "liquid,md")
+            ok(Markdown { pre: Some(LIQUID) }, "liquid,md")
         );
-        assert_eq!(engines("html", None), ok(Liquid, "liquid"));
-        assert_eq!(engines("liquid", None), ok(Liquid, "liquid"));
+        assert_eq!(engines("html", None), ok(Template(LIQUID), "liquid"));
+        assert_eq!(engines("liquid", None), ok(Template(LIQUID), "liquid"));
+        assert_eq!(engines("njk", None), ok(Template(NJK), "njk"));
         assert_eq!(
             engines("md", Some(json!("md"))),
-            ok(Markdown { liquid: false }, "md")
+            ok(Markdown { pre: None }, "md")
         );
-        assert_eq!(engines("md", Some(json!("liquid"))), ok(Liquid, "liquid"));
+        assert_eq!(
+            engines("md", Some(json!("liquid"))),
+            ok(Template(LIQUID), "liquid")
+        );
         assert_eq!(
             engines("html", Some(json!("liquid,md"))),
-            ok(Markdown { liquid: true }, "liquid,md")
+            ok(Markdown { pre: Some(LIQUID) }, "liquid,md")
         );
         assert_eq!(
             engines("liquid", Some(json!("md,liquid"))),
-            ok(Markdown { liquid: true }, "liquid,md")
+            ok(Markdown { pre: Some(LIQUID) }, "liquid,md")
+        );
+        assert_eq!(engines("md", Some(json!("njk"))), ok(Template(NJK), "njk"));
+        assert_eq!(
+            engines("liquid", Some(json!("njk,md"))),
+            ok(Markdown { pre: Some(NJK) }, "njk,md")
+        );
+        assert_eq!(
+            engines("njk", Some(json!("md"))),
+            ok(Markdown { pre: None }, "md")
         );
         assert_eq!(engines("md", Some(json!("html"))), ok(Raw, ""));
         assert_eq!(engines("md", Some(json!(" HTML , "))), ok(Raw, ""));
         assert_eq!(engines("liquid", Some(json!(false))), ok(Raw, "liquid"));
+        assert_eq!(engines("njk", Some(json!(false))), ok(Raw, "njk"));
         assert_eq!(engines("liquid", Some(json!(null))), ok(Raw, "liquid"));
         assert_eq!(engines("liquid", Some(json!(""))), ok(Raw, "liquid"));
         assert_eq!(
-            engines("md", Some(json!("njk"))),
+            engines("md", Some(json!("11ty.js"))),
             Err(codes::TEMPLATE_ENGINE_UNSUPPORTED)
         );
         assert_eq!(
@@ -428,6 +579,78 @@ mod tests {
         assert_eq!(
             engines("md", Some(json!("pug"))),
             Err(codes::TEMPLATE_ENGINE_OVERRIDE_INVALID)
+        );
+    }
+
+    /// Probed: `markdownTemplateEngine` and `htmlTemplateEngine` of `njk`
+    /// and `false`.
+    #[test]
+    fn config_engines_like_11ty() {
+        use Engines::*;
+        let ok = |e, s: &str| Ok((e, s.to_string()));
+        let njk = TemplateEngines {
+            markdown: Some(NJK),
+            html: Some(NJK),
+        };
+        let off = TemplateEngines {
+            markdown: None,
+            html: None,
+        };
+        assert_eq!(
+            engines_with("md", None, njk),
+            ok(Markdown { pre: Some(NJK) }, "njk,md")
+        );
+        assert_eq!(engines_with("html", None, njk), ok(Template(NJK), "njk"));
+        assert_eq!(
+            engines_with("liquid", None, njk),
+            ok(Template(LIQUID), "liquid")
+        );
+        assert_eq!(
+            engines_with("md", None, off),
+            ok(Markdown { pre: None }, "md")
+        );
+        assert_eq!(engines_with("html", None, off), ok(Raw, "html"));
+        assert_eq!(engines_with("md", Some(json!(false)), off), ok(Raw, "md"));
+    }
+
+    fn data(ext: &str, over: Option<serde_json::Value>, config: TemplateEngines) -> DataEngine {
+        DataEngine::new(ext, over.map(|j| Json::from_json(&j)).as_ref(), config).unwrap()
+    }
+
+    /// Probed: which language runs a page's permalink, and whether it is
+    /// compiled at all.
+    #[test]
+    fn permalinks_compile_like_11ty() {
+        let njk = TemplateEngines {
+            markdown: Some(NJK),
+            html: Some(NJK),
+        };
+        // An override with `md` runs the config's Markdown language.
+        let d = data("md", Some(json!("liquid,md")), njk);
+        assert_eq!(d.lang, Some(NJK));
+        assert_eq!(d.compiles("/{# x #}/", true), Ok(true));
+        assert_eq!(data("md", Some(json!("md")), njk).lang, Some(NJK));
+        assert_eq!(data("njk", Some(json!("liquid")), njk).lang, Some(LIQUID));
+        assert_eq!(data("njk", Some(json!("html")), njk).lang, None);
+        assert_eq!(data("html", None, njk).lang, Some(NJK));
+        assert_eq!(
+            data("html", None, TemplateEngines::default()).lang,
+            Some(LIQUID)
+        );
+        // `.liquid` checks for Liquid's delimiters first.
+        let d = data("liquid", Some(json!("njk,md")), njk);
+        assert_eq!(d.lang, Some(NJK));
+        assert_eq!(d.compiles("/d{# x #}/", false), Ok(false));
+        assert!(d.compiles("/d{# x #}/", true).is_err());
+        assert_eq!(d.compiles("/{{ x }}{# x #}/", true), Ok(true));
+        let d = data("njk", None, njk);
+        assert_eq!(d.compiles("/{# x #}/", true), Ok(true));
+        assert_eq!(d.compiles("/x/", true), Ok(false));
+        // Symbols come from the extension's language, not the override's.
+        assert_eq!(data("md", Some(json!("liquid,md")), njk).symbols, Some(NJK));
+        assert_eq!(
+            data("liquid", Some(json!("njk")), njk).symbols,
+            Some(LIQUID)
         );
     }
 

@@ -1,5 +1,5 @@
-//! `eleventyComputed`: Liquid-string values rendered against the page's data
-//! in 11ty's dependency order.
+//! `eleventyComputed`: template-string values (Liquid or Nunjucks) rendered
+//! against the page's data in 11ty's dependency order.
 //!
 //! Probed against 11ty 3.1.8 (`Template.addComputedData`, `ComputedData`):
 //!
@@ -11,6 +11,9 @@
 //!   `{{ }}` outputs starts with that entry's exact name: LiquidJS's
 //!   `parseForSymbols` takes the text before the first `|`. Reads inside
 //!   tags, in strings, through an index or of a parent object are not seen.
+//!   Nunjucks's (`brrrty_nunjucks::symbols`) sees every variable, extended
+//!   by `.name` steps. The language is the page's preprocessor's, by its
+//!   extension, whatever its `templateEngineOverride`.
 //! - The entries run in the order `dependency-graph` 1.0.0 gives, and a
 //!   cycle aborts 11ty. Each result is stored with `lodash.set`.
 //! - Entries read the data as it is when they run, so an entry the order
@@ -26,13 +29,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use brrrty_js::Value;
-use brrrty_liquid::{Engine, Loader};
 use indexmap::IndexMap;
 
 use crate::frontmatter::Data;
 use crate::permalink::{Locator, Permalink};
 use crate::problem::{Problem, codes};
-use crate::render::liquid_problem;
+use crate::render::DataEngine;
+use crate::templates::{Lang, Langs, TplError, nunjucks_problem};
 
 /// Top-level keys a computed value may not set: they change how the page is
 /// built, or 11ty owns them. `date`, `tags` and `eleventyExcludeFromCollections`
@@ -54,9 +57,9 @@ const REFUSED_ROOTS: &[&str] = &[
 /// The computed entries of a page, in the order to run them.
 #[derive(Debug, Clone)]
 pub(crate) struct Plan {
-    /// `templateEngineOverride` of `html`, `""` or `false`: values are set
-    /// as written (probed).
-    raw: bool,
+    /// What renders the values; with no language (`templateEngineOverride`
+    /// of `html`, `""` or `false`), they are set as written (probed).
+    engine: DataEngine,
     steps: Vec<Step>,
 }
 
@@ -96,7 +99,7 @@ impl Plan {
     /// The plan for the merged `eleventyComputed` of a page, or `None` when
     /// there is nothing to compute (11ty ignores a value that isn't a plain
     /// object).
-    pub fn new(data: &Data, raw: bool) -> Result<Option<Plan>, Problem> {
+    pub fn new(data: &Data, engine: DataEngine) -> Result<Option<Plan>, Problem> {
         let Some(Value::Object(computed)) = data.get("eleventyComputed") else {
             return Ok(None);
         };
@@ -154,18 +157,21 @@ impl Plan {
                 }
                 continue;
             }
-            let symbols = match &leaf.value {
-                Value::String(s) => symbols(s),
+            let strings: Vec<&str> = match &leaf.value {
+                Value::String(s) => vec![s.as_ref()],
                 Value::Array(items) => items
                     .iter()
                     .filter_map(|v| match v {
-                        Value::String(s) => Some(symbols(s)),
+                        Value::String(s) => Some(s.as_ref()),
                         _ => None,
                     })
-                    .flatten()
                     .collect(),
                 _ => Vec::new(),
             };
+            let mut symbols = Vec::new();
+            for s in strings {
+                symbols.extend(symbols_of(engine, s, name)?);
+            }
             let mut used = Vec::new();
             for symbol in symbols {
                 if symbol.starts_with("collections.") {
@@ -211,7 +217,7 @@ impl Plan {
                 page: l.page,
             })
             .collect();
-        Ok(Some(Plan { raw, steps }))
+        Ok(Some(Plan { engine, steps }))
     }
 
     /// `base` with every computed value set, in order, and the permalink as
@@ -219,8 +225,7 @@ impl Plan {
     /// are added to `undefined`, like any other render.
     pub fn apply(
         &self,
-        engine: &Engine,
-        loader: &dyn Loader,
+        langs: &Langs<'_>,
         shown: &Path,
         base: &IndexMap<String, Value>,
         undefined: &mut BTreeSet<String>,
@@ -242,7 +247,7 @@ impl Plan {
                     }
                 }
             } else {
-                self.render(&step.value, &key, engine, loader, shown, &data, undefined)?
+                self.render(&step.value, &key, langs, shown, &data, undefined)?
             };
             if matches!(step.value, Value::Array(_))
                 && let Some(Value::Object(own)) = data.get_mut("eleventyComputed")
@@ -279,13 +284,11 @@ impl Plan {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
         value: &Value,
         key: &str,
-        engine: &Engine,
-        loader: &dyn Loader,
+        langs: &Langs<'_>,
         shown: &Path,
         data: &IndexMap<String, Value>,
         undefined: &mut BTreeSet<String>,
@@ -293,27 +296,34 @@ impl Plan {
         match value {
             Value::String(s) => {
                 // 11ty skips the engine when there is nothing to compile.
-                if self.raw || !(s.contains("{{") || s.contains("{%")) {
-                    return Ok(value.clone());
-                }
                 let name = format!("eleventyComputed.{key}");
-                let fail = |e: brrrty_liquid::LiquidError| {
-                    let mut p = liquid_problem(&e, shown.to_path_buf(), 0, None);
+                let compiles = self.engine.compiles(s, true).map_err(|p| {
+                    Problem {
+                        message: format!("{} (`{name}`)", p.message),
+                        ..p
+                    }
+                    .with_path(shown)
+                })?;
+                let Some(lang) = self.engine.lang.filter(|_| compiles) else {
+                    return Ok(value.clone());
+                };
+                let fail = |e: TplError| {
+                    let mut p = langs.problem(&e, shown.to_path_buf(), 0, None);
                     p.line = None;
                     p.column = None;
                     p.message = format!("{} in `{name}`", p.message);
                     p
                 };
-                let t = engine.parse(&name, s).map_err(fail)?;
                 let scope = Value::Object(Arc::new(data.clone()));
-                let r = engine.render_tracked(&t, &scope, loader).map_err(fail)?;
-                undefined.extend(r.undefined);
-                Ok(Value::String(r.output.into()))
+                let out = langs
+                    .render_string(lang, &name, s, &scope, undefined)
+                    .map_err(fail)?;
+                Ok(Value::String(out.into()))
             }
             Value::Array(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items.iter() {
-                    out.push(self.render(item, key, engine, loader, shown, data, undefined)?);
+                    out.push(self.render(item, key, langs, shown, data, undefined)?);
                 }
                 Ok(Value::Array(Arc::new(out)))
             }
@@ -322,7 +332,7 @@ impl Plan {
                 for (k, v) in Value::js_entries(o) {
                     out.insert(
                         k.clone(),
-                        self.render(v, key, engine, loader, shown, data, undefined)?,
+                        self.render(v, key, langs, shown, data, undefined)?,
                     );
                 }
                 Ok(Value::Object(Arc::new(out)))
@@ -406,6 +416,38 @@ fn reorder_along(root: &mut Data, path: &[String]) {
         && let Some(Value::Object(o)) = root.get_mut(first.as_str())
     {
         reorder_along(Arc::make_mut(o), rest);
+    }
+}
+
+/// The names a computed value `s` (the entry `name`) reads, as 11ty's
+/// `parseForSymbols` of the page's preprocessor engine finds them.
+fn symbols_of(engine: DataEngine, s: &str, name: &str) -> Result<Vec<String>, Problem> {
+    match engine.symbols {
+        Some(Lang::Liquid) => Ok(symbols(s)),
+        Some(Lang::Nunjucks) => {
+            let found = crate::contain::catch(|| brrrty_nunjucks::symbols(s)).map_err(|why| {
+                Problem::error(
+                    codes::NUNJUCKS_RENDER,
+                    format!("Brrrty's Nunjucks engine crashed reading `eleventyComputed.{name}`: {why}"),
+                )
+                .with_help("this is a bug in Brrrty's Nunjucks engine, not in your template. Please report the template at https://github.com/brrrty/brrrty/issues")
+            })?;
+            found.map_err(|e| {
+                let mut p = nunjucks_problem(&e, std::path::PathBuf::new(), 0, None);
+                p.path = None;
+                p.line = None;
+                p.column = None;
+                p.message = format!("{} in `eleventyComputed.{name}`", p.message);
+                p
+            })
+        }
+        // Without a preprocessor, 11ty finds what a value reads by
+        // rendering it; a value nothing renders reads nothing.
+        None if engine.lang.is_none() => Ok(Vec::new()),
+        None => Err(unsupported(
+            format!("computed value `{name}` can't be ordered: its page's extension runs no template language, so 11ty orders computed values by running them, which Brrrty doesn't follow yet"),
+            "Set `markdownTemplateEngine` or `htmlTemplateEngine` in brrrty.config.rhai, or move the computed values to a `.liquid` or `.njk` page.".to_string(),
+        )),
     }
 }
 

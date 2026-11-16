@@ -78,7 +78,7 @@ fn bare_command_means_build() {
 fn errors_exit_1_and_show_location_and_issue_link() {
     let dir = site(&[
         ("src/bad.md", "---\ntitle: [oops\n---\nbody\n"),
-        ("src/c.njk", "{{ secret }}\n"),
+        ("src/c.11ty.js", "module.exports = '{{ secret }}';\n"),
     ]);
     let out = run_in(dir.path(), &["--input", "src"]);
     assert_eq!(out.status.code(), Some(1));
@@ -130,9 +130,9 @@ fn problem_location_appears_once_and_counts_are_singular() {
 
 #[test]
 fn unsupported_without_snippet_keeps_path_in_message() {
-    let dir = site(&[("src/c.njk", "x\n")]);
+    let dir = site(&[("src/c.11ty.js", "x\n")]);
     let err = stderr(&run_in(dir.path(), &["--input", "src"]));
-    assert!(err.contains("c.njk: "), "{err}");
+    assert!(err.contains("c.11ty.js: "), "{err}");
 }
 
 #[test]
@@ -158,10 +158,10 @@ fn file_as_input_names_the_path() {
 
 #[test]
 fn issue_link_for_11ty_js_templates_names_the_full_extension() {
-    let dir = site(&[("src/a.11ty.js", "x\n"), ("src/b.njk", "x\n")]);
+    let dir = site(&[("src/a.11ty.js", "x\n"), ("src/b.11ty.cjs", "x\n")]);
     let err = stderr(&run_in(dir.path(), &["--input", "src"]));
     assert!(err.contains("%20.11ty.js%20templates"), "{err}");
-    assert!(err.contains("%20.njk%20templates"), "{err}");
+    assert!(err.contains("%20.11ty.cjs%20templates"), "{err}");
     assert!(!err.contains("Unsupported%3A%20.js%20"), "{err}");
 }
 

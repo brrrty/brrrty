@@ -37,9 +37,6 @@ pub(crate) struct ContentPage<'a> {
     pub item: Option<usize>,
     /// 11ty renders it: false for a `permalink` map without `build`.
     pub renderable: bool,
-    /// Brrrty can't render its template language yet: its content is
-    /// refused with this problem.
-    pub unsupported: Option<&'a Problem>,
 }
 
 impl ContentPage<'_> {
@@ -130,8 +127,6 @@ pub(crate) struct Contents {
     shown: Vec<std::path::PathBuf>,
     page_numbers: Vec<Option<usize>>,
     renderable: Vec<bool>,
-    /// Brrrty can't render the page's template language yet.
-    unsupported: Vec<bool>,
     states: Vec<State>,
     /// The page has its content once 11ty's two passes are done.
     settled: Vec<bool>,
@@ -276,16 +271,9 @@ pub(crate) fn render_all(
         states: (0..n).map(|_| Mutex::new(None)).collect(),
         pending: (0..n).map(|_| Mutex::new(Vec::new())).collect(),
     };
-    // Content Brrrty can't render is refused before anything reads it.
-    for (i, p) in pages.iter().enumerate() {
-        if let Some(problem) = p.unsupported.filter(|_| p.renderable) {
-            *lock(&run.states[i]) = Some(State::Failed(problem.clone()));
-            let _ = run.live.cells[i].set(Final::Refused);
-        }
-    }
     rayon::scope(|s| {
         for (i, p) in pages.iter().enumerate() {
-            if p.renderable && p.unsupported.is_none() {
+            if p.renderable {
                 let run = &run;
                 s.spawn(move |s| run.render(i, s));
             }
@@ -315,7 +303,6 @@ pub(crate) fn render_all(
         shown: pages.iter().map(|p| p.job.shown.to_path_buf()).collect(),
         page_numbers: pages.iter().map(|p| p.page_number).collect(),
         renderable: pages.iter().map(|p| p.renderable).collect(),
-        unsupported: pages.iter().map(|p| p.unsupported.is_some()).collect(),
         states,
         settled: vec![false; n],
         late: (0..n).map(|_| None).collect(),
@@ -441,20 +428,7 @@ impl Contents {
     /// Page `i` reads the content of page `j`, which has none.
     pub fn needs_problem(&self, i: usize, j: usize) -> Problem {
         let label = &self.labels[j];
-        let p = if self.unsupported[j] && self.renderable[j] {
-            Problem::error(
-                codes::CONTENT_UNAVAILABLE,
-                self.on_page(
-                    i,
-                    format!(
-                        "this page reads `templateContent` of {label}, a Nunjucks template Brrrty can't render yet"
-                    ),
-                ),
-            )
-            .with_help(
-                "Nunjucks support is coming soon. Until then, read the item's `url` or `data`, or write that page in Liquid, Markdown or HTML.",
-            )
-        } else if self.renderable[j] {
+        let p = if self.renderable[j] {
             Problem::error(
                 codes::CONTENT_UNAVAILABLE,
                 self.on_page(

@@ -298,20 +298,18 @@ fn computed_data_from_a_javascript_file_is_still_refused() {
     assert!(!exists(t.path(), "c/a/index.html"));
 }
 
-/// Nunjucks pages stay refused, computed data or not (Plan 6).
+/// Computed values of a Nunjucks page run as Nunjucks (probed).
 #[test]
-fn nunjucks_pages_with_computed_data_stay_refused() {
+fn nunjucks_pages_compute_with_nunjucks() {
     let t = tempfile::tempdir().unwrap();
     write(
         t.path(),
         "src/n.njk",
-        "---\neleventyComputed:\n  x: \"{{ title }}\"\n---\nn",
+        "---\ntitle: T\neleventyComputed:\n  x: \"{{ title | lower }}{# c #}\"\n---\n{{ x }}",
     );
-    write(t.path(), "src/ok.liquid", "ok");
     let r = run(t.path());
-    let p = only_error(&r);
-    assert_eq!(p.code, codes::TEMPLATE_UNSUPPORTED);
-    assert_eq!(read(t.path(), "ok/index.html"), "ok");
+    assert!(r.problems.is_empty(), "{:#?}", r.problems);
+    assert_eq!(read(t.path(), "n/index.html"), "t");
 }
 
 /// Probed: a computed value renders with the template's engine, so a

@@ -243,9 +243,7 @@ fn report_problem(r: &BuildReport) -> &Problem {
 
 /// Probed: Nunjucks templates, and pages with a Nunjucks layout, are
 /// collection items with their front matter, data files, layout data,
-/// computed values, permalinks, pagination and dates. Brrrty places them
-/// without running Nunjucks and writes the pages that read them exactly as
-/// 11ty does; it only refuses to write the Nunjucks pages themselves.
+/// computed values, permalinks, pagination and dates.
 #[test]
 fn nunjucks_templates_are_collection_items() {
     let t = tempfile::tempdir().unwrap();
@@ -316,12 +314,7 @@ fn nunjucks_templates_are_collection_items() {
         write(root, &format!("src/{rel}"), text);
     }
     let r = run(root);
-    for p in errors(&r) {
-        assert!(
-            [codes::TEMPLATE_UNSUPPORTED, codes::LAYOUT_UNSUPPORTED].contains(&p.code),
-            "{p:#?}"
-        );
-    }
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
     assert_eq!(
         read(root, "list/index.html"),
         "[/sub/i/|./_site/sub/i/index.html|./src/sub/i.njk|i|/sub/i|%F|I|||post|njk|html]
@@ -350,76 +343,45 @@ c=<h1>C C</h1>
         r#"{% set x = 1 %}A {{ title }}
 |{"inputPath":"./src/a.njk","fileSlug":"a","filePathStem":"/a","outputFileExtension":"html","templateSyntax":"njk","date":"2020-01-03T00:00:00.000Z","rawInput":"{% set x = 1 %}A {{ title }}\n","url":"/a/","outputPath":"./_site/a/index.html"}"#
     );
-    // Only the pages Brrrty can render are written; the Nunjucks layout is
-    // reported once for the two pages that use it.
-    assert_eq!(r.written, 3);
-    let layout = errors(&r)
-        .into_iter()
-        .find(|p| p.code == codes::LAYOUT_UNSUPPORTED)
-        .unwrap();
-    assert_eq!(
-        layout.path.as_deref(),
-        Some(Path::new("src/_includes/l.njk"))
-    );
-    assert!(
-        layout
-            .help
-            .as_deref()
-            .unwrap()
-            .ends_with("2 pages use this layout and were not written."),
-        "{layout:?}"
-    );
-    assert!(!root.join("_site/a/index.html").exists());
-    assert!(!root.join("_site/c/index.html").exists());
+    assert_eq!(read(root, "a/index.html"), "A A\n");
+    assert_eq!(read(root, "c/index.html"), "<l><h1>C C</h1>\n</l>\n");
+    assert_eq!(read(root, "c2/index.html"), "<l><m><p>C2</p>\n</m>\n</l>\n");
+    assert_eq!(read(root, "g/2/index.html"), "G\n");
 }
 
-/// Reading what only Nunjucks can make is refused: the content of a
-/// Nunjucks page, and collections holding a Nunjucks page whose permalink
-/// or computed data is a Nunjucks template.
+/// A Nunjucks page's content can be read, and a Nunjucks permalink,
+/// computed value or override places it like any other page.
 #[test]
-fn reads_that_need_nunjucks_are_refused() {
+fn nunjucks_pages_are_read_and_placed() {
     let t = site("{% for p in collections.all %}{{ p.templateContent }}{% endfor %}");
-    write(t.path(), "src/n.njk", "---\ndate: 2020-01-03\n---\nN");
-    let r = run(t.path());
-    let p = report_problem(&r);
-    assert_eq!(p.code, codes::CONTENT_UNAVAILABLE);
-    assert_eq!(
-        p.message,
-        "this page reads `templateContent` of src/n.njk, a Nunjucks template Brrrty can't render yet"
+    write(
+        t.path(),
+        "src/n.njk",
+        "---\ndate: 2020-01-03\n---\n{{ 1 + 1 }}{# c #}N",
     );
-    assert_eq!(read(t.path(), "a/index.html"), "<p>a</p>\n");
-    assert_eq!(errors(&r).len(), 2, "{:#?}", r.problems);
+    let r = run(t.path());
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(read(t.path(), "report.txt"), "<p>a</p>\n<p>b</p>\n2N");
 
-    for (front, why) in [
-        (
-            "permalink: \"/{{ title }}/\"\n",
-            "its `permalink` is a Nunjucks template",
-        ),
-        (
-            "permalink: \"/n/{# note #}\"\n",
-            "its `permalink` is a Nunjucks template",
-        ),
-        (
-            "eleventyComputed:\n  t: \"{{ title }}\"\n",
-            "its `eleventyComputed` values are Nunjucks templates",
-        ),
-        (
-            "templateEngineOverride: md\n",
-            "it sets `templateEngineOverride`",
-        ),
+    for (front, url) in [
+        ("permalink: \"/{{ title }}/\"\n", "/T/"),
+        ("permalink: \"/n/{# note #}\"\n", "/n/"),
+        ("eleventyComputed:\n  t: \"{{ title }}\"\n", "/n/"),
+        ("templateEngineOverride: md\n", "/n/"),
     ] {
-        let t = site("{{ collections.all | size }}");
-        write(t.path(), "src/n.njk", &format!("---\n{front}---\nN"));
+        let t = site("{% for p in collections.all %}{{ p.url }} {% endfor %}");
+        write(
+            t.path(),
+            "src/n.njk",
+            &format!("---\ntitle: T\ndate: 2020-01-03\n{front}---\nN"),
+        );
         let r = run(t.path());
+        assert!(errors(&r).is_empty(), "{front}: {:#?}", r.problems);
         assert_eq!(
-            report_problem(&r).message,
-            format!(
-                "this page uses `collections`, but Brrrty can't tell where src/n.njk goes in the collections: {why}"
-            ),
+            read(t.path(), "report.txt"),
+            format!("/a/ /b/ {url} "),
             "{front}"
         );
-        // Only the Nunjucks template itself is reported besides.
-        assert_eq!(errors(&r).len(), 2, "{:#?}", r.problems);
     }
 }
 
@@ -767,7 +729,7 @@ fn a_javascript_data_file_refuses_collections() {
 #[test]
 fn a_failing_page_under_an_unrenderable_layout_reports_the_layout() {
     let t = tempfile::tempdir().unwrap();
-    write(t.path(), "src/_includes/l.njk", "{{ content | safe }}");
+    write(t.path(), "src/_includes/l.njk", "{{ content | safe }");
     for name in ["a", "b"] {
         write(
             t.path(),
@@ -778,7 +740,7 @@ fn a_failing_page_under_an_unrenderable_layout_reports_the_layout() {
     let r = run(t.path());
     let errs = errors(&r);
     assert_eq!(errs.len(), 1, "{:#?}", r.problems);
-    assert_eq!(errs[0].code, codes::LAYOUT_UNSUPPORTED);
+    assert_eq!(errs[0].code, codes::NUNJUCKS_SYNTAX);
     assert!(
         errs[0]
             .help

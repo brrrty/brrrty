@@ -7,8 +7,9 @@
 //! - A layout's front matter `layout` names the next layout. The chain's data
 //!   is merged farthest first, so the nearest layout wins, and the page's own
 //!   data wins over all of it.
-//! - Layouts ignore `templateEngineOverride`: `.liquid` and `.html` run
-//!   Liquid, `.md` runs Liquid and then Markdown.
+//! - Layouts ignore `templateEngineOverride`: `.liquid` runs Liquid,
+//!   `.njk` Nunjucks, `.html` the config's `htmlTemplateEngine`, and `.md`
+//!   its `markdownTemplateEngine` and then Markdown.
 //!
 //! Where 11ty crashes or reports only the start of a cycle, Brrrty gives one
 //! error naming the file: a cycle names every layout in it, and a folder, a
@@ -21,26 +22,28 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use brrrty_js::Value;
-use brrrty_liquid::{Engine, Template};
 
 use crate::data::{json_text, key_line};
 use crate::frontmatter::{Data, split_front_matter};
 use crate::loader::lexical;
+use crate::options::TemplateEngines;
 use crate::problem::{Problem, codes};
-use crate::render::{body_line, liquid_problem};
+use crate::render::body_line;
+use crate::templates::{Compiled, Lang, Langs};
 
 /// What runs on a layout's body.
 #[derive(Debug, Clone)]
 pub(crate) enum Kind {
-    /// `.liquid` and `.html`: Liquid.
-    Liquid(Template),
-    /// `.md`: Liquid, then Markdown.
-    Markdown(Template),
-    /// A layout Brrrty can't render: Nunjucks, which it doesn't render yet,
-    /// or Liquid that doesn't parse. Its front matter still joins the
-    /// page's data and names the next layout, so the page takes its place
-    /// in the collections and its content can be read; writing the page is
-    /// refused with this problem.
+    /// One template language.
+    Template(Compiled),
+    /// `.md`: its template language, if any, then Markdown.
+    Markdown(Option<Compiled>),
+    /// `.html` when `htmlTemplateEngine` is `false`: the body as written.
+    Raw,
+    /// A layout Brrrty can't render: one that doesn't parse. Its front
+    /// matter still joins the page's data and names the next layout, so
+    /// the page takes its place in the collections and its content can be
+    /// read; writing the page is refused with this problem.
     Unrenderable(Problem),
 }
 
@@ -52,6 +55,8 @@ pub(crate) struct LayoutFile {
     /// Canonical, to tell layouts apart however they are named.
     pub real: PathBuf,
     pub kind: Kind,
+    /// The text after the front matter.
+    pub body: String,
     pub data: Data,
     /// Lines in the file before the body.
     pub body_line: usize,
@@ -85,7 +90,8 @@ const EXTENSIONS: &[&str] = &[
 
 /// Resolves and parses layouts, each once per build.
 pub(crate) struct Layouts<'a> {
-    engine: &'a Engine,
+    langs: &'a Langs<'a>,
+    config: TemplateEngines,
     /// Canonical input folder.
     input: PathBuf,
     /// The input folder relative to the project root.
@@ -99,9 +105,15 @@ fn shown_value(v: &Value) -> String {
 }
 
 impl<'a> Layouts<'a> {
-    pub fn new(engine: &'a Engine, input: PathBuf, input_shown: PathBuf) -> Layouts<'a> {
+    pub fn new(
+        langs: &'a Langs<'a>,
+        config: TemplateEngines,
+        input: PathBuf,
+        input_shown: PathBuf,
+    ) -> Layouts<'a> {
         Layouts {
-            engine,
+            langs,
+            config,
             input,
             input_shown,
             cache: Mutex::new(HashMap::new()),
@@ -244,12 +256,14 @@ impl<'a> Layouts<'a> {
             ));
         }
         let lower = found.to_string_lossy().to_lowercase();
-        let language = if lower.ends_with(".liquid") || lower.ends_with(".html") {
-            Language::Liquid
-        } else if lower.ends_with(".md") {
-            Language::Markdown
+        let language = if lower.ends_with(".liquid") {
+            Language::Template(Some(Lang::Liquid))
         } else if lower.ends_with(".njk") {
-            Language::Nunjucks
+            Language::Template(Some(Lang::Nunjucks))
+        } else if lower.ends_with(".html") {
+            Language::Template(self.config.html)
+        } else if lower.ends_with(".md") {
+            Language::Markdown(self.config.markdown)
         } else if [".11ty.js", ".11ty.cjs", ".11ty.mjs"]
             .iter()
             .any(|x| lower.ends_with(x))
@@ -257,13 +271,13 @@ impl<'a> Layouts<'a> {
             return Err(file(
                 codes::LAYOUT_UNSUPPORTED,
                 "JavaScript layouts aren't supported yet".to_string(),
-                "JavaScript layouts are coming soon. Liquid, Markdown and HTML layouts work now.",
+                "JavaScript layouts are coming soon. Liquid, Nunjucks, Markdown and HTML layouts work now.",
             ));
         } else {
             return Err(file(
                 codes::LAYOUT_INVALID,
                 format!("layout {} has no template file extension", shown.display()),
-                "rename it to end in .liquid, .md or .html",
+                "rename it to end in .liquid, .njk, .md or .html",
             ));
         };
         let text = fs::read(&real)
@@ -286,45 +300,40 @@ impl<'a> Layouts<'a> {
         let (data, body) =
             split_front_matter(&text).map_err(|p| Failure::File(p.with_path(&shown)))?;
         let body_line = body_line(&text, body);
-        // A layout whose Liquid doesn't parse still has its data: like a
-        // Nunjucks layout, it only refuses writing its pages.
-        let parse = |wrap: fn(Template) -> Kind| match self
-            .engine
-            .parse(&shown.display().to_string(), body)
-        {
-            Ok(t) => wrap(t),
-            Err(e) => Kind::Unrenderable(liquid_problem(&e, shown.clone(), body_line, None)),
+        // A layout that doesn't parse still has its data: it only refuses
+        // writing its pages.
+        let compile = |lang: Lang| {
+            self.langs
+                .compile(lang, &shown.display().to_string(), Some(&real), body)
+                .map_err(|e| {
+                    Kind::Unrenderable(self.langs.problem(&e, shown.clone(), body_line, None))
+                })
         };
         let kind = match language {
-            Language::Liquid => parse(Kind::Liquid),
-            Language::Markdown => parse(Kind::Markdown),
-            Language::Nunjucks => Kind::Unrenderable(
-                Problem::error(
-                    codes::LAYOUT_UNSUPPORTED,
-                    "Nunjucks layouts aren't supported yet",
-                )
-                .with_path(&shown)
-                .with_help(
-                    "Nunjucks support is coming soon. Liquid, Markdown and HTML layouts work now.",
-                ),
-            ),
+            Language::Template(Some(lang)) => compile(lang).map_or_else(|k| k, Kind::Template),
+            Language::Template(None) => Kind::Raw,
+            Language::Markdown(Some(lang)) => {
+                compile(lang).map_or_else(|k| k, |t| Kind::Markdown(Some(t)))
+            }
+            Language::Markdown(None) => Kind::Markdown(None),
         };
         Ok(Arc::new(LayoutFile {
             layout_line: key_line(&text, "layout"),
             shown,
             real,
             kind,
+            body: body.to_string(),
             data,
             body_line,
         }))
     }
 }
 
-/// A layout file's template language.
+/// What runs on a layout file: a template language (`None` for `.html`
+/// with no `htmlTemplateEngine`), or Markdown after one.
 enum Language {
-    Liquid,
-    Markdown,
-    Nunjucks,
+    Template(Option<Lang>),
+    Markdown(Option<Lang>),
 }
 
 impl LayoutFile {

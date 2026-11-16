@@ -65,8 +65,7 @@ fn engine_cost(language: &str) -> usize {
         "liquid" => 10,
         // `Html.js` engine.
         "html" => 17,
-        // `Nunjucks.js` engine. Brrrty doesn't render Nunjucks yet, but a
-        // Nunjucks template or layout still takes its place in the order.
+        // `Nunjucks.js` engine.
         "njk" => 17,
         // `Markdown.js` engine (and anything else: JavaScript templates
         // refuse collections, so their place never counts).

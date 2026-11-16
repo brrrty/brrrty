@@ -1,0 +1,7 @@
+---
+title: Posts
+date: 2026-01-17
+---
+{% for p in collections.post | reverse %}<article>{{ p.data.title }} {{ p.date | dateToRfc3339 }}
+{{ p.templateContent | safe }}</article>
+{% endfor %}{{ collections.post | length }}

@@ -43,6 +43,10 @@ pub mod codes {
     pub const LIQUID_SYNTAX: &str = "liquid-syntax";
     pub const LIQUID_UNKNOWN_FILTER: &str = "liquid-unknown-filter";
     pub const MARKDOWN_RENDER_FAILED: &str = "markdown-render-failed";
+    pub const NUNJUCKS_LIMIT: &str = "nunjucks-limit";
+    pub const NUNJUCKS_RENDER: &str = "nunjucks-render";
+    pub const NUNJUCKS_SYNTAX: &str = "nunjucks-syntax";
+    pub const NUNJUCKS_UNSUPPORTED: &str = "nunjucks-unsupported";
     pub const OUTPUT_COLLISION: &str = "output-collision";
     pub const OUTPUT_ESCAPES: &str = "output-escapes";
     pub const OUTPUT_OVERLAPS_SOURCE: &str = "output-overlaps-source";

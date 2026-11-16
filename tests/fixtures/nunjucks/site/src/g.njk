@@ -1,0 +1,6 @@
+---
+title: Extends
+date: 2026-01-16
+---
+{% extends "shell.njk" %}
+{% block main %}{{ super() }} + {{ title }}{% endblock %}

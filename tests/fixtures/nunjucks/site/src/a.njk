@@ -1,0 +1,15 @@
+---
+title: A <b>
+date: 2026-01-10
+---
+{% include "rootonly.txt" %}
+{% include "sub/x.njk" %}
+{% include "./posts/rel.txt" %}
+{% include "lib.js" %}
+{{ title }} {{ site.title }} {{ site.tpl }}
+{{ range(3) | join(",") }} {{ cycler is defined }} {{ joiner is defined }} {{ lipsum is defined }}
+{{ page.inputPath }} {{ page.fileSlug }} {{ page.templateSyntax }} {{ page.url }}
+{{ eleventy.version }} {{ eleventy.directories.includes }}
+{% import "macros.njk" as m %}{{ m.card("Home & <away>") }} {{ m.card(title, url="/a/") }}
+{% set items = ["x", "y", "z"] %}{% for i in items %}{{ loop.index }}:{{ i }}{% if not loop.last %},{% endif %}{% endfor %}
+{{ "x" | url }} {{ "Hello World" | slugify }} {{ title | safe }} {{ title | escape | safe }}

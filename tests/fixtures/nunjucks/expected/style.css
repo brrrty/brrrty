@@ -1,0 +1,6 @@
+body { color: #333; }
+.a > .b { margin: 0 }
+
+var lib = {a: {b: 1}}; // }} %} not tags
+if (lib.a) { console.log("#"); }
+

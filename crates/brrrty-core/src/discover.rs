@@ -5,8 +5,8 @@ use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const TEMPLATE_EXTS: &[&str] = &[".md", ".html", ".liquid"];
-const UNSUPPORTED_EXTS: &[&str] = &[".njk", ".11ty.js", ".11ty.cjs", ".11ty.mjs"];
+const TEMPLATE_EXTS: &[&str] = &[".md", ".html", ".liquid", ".njk"];
+const UNSUPPORTED_EXTS: &[&str] = &[".11ty.js", ".11ty.cjs", ".11ty.mjs"];
 /// Template types 11ty only picks up when a plugin registers them.
 pub const PLUGIN_ONLY_EXTS: &[&str] = &[
     ".webc",

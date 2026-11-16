@@ -5,11 +5,11 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use brrrty_js::Value;
-use brrrty_liquid::{Engine, Loader};
 
 use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
-use crate::render::liquid_problem;
+use crate::render::DataEngine;
+use crate::templates::{Langs, TplError};
 
 /// The outcome of resolving a page's permalink.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,17 +228,17 @@ pub(crate) struct Located {
 /// generates, with that page's data.
 #[derive(Clone)]
 pub(crate) struct Locator<'a> {
-    pub engine: &'a Engine,
-    pub loader: &'a dyn Loader,
+    pub langs: &'a Langs<'a>,
+    /// What renders the permalink.
+    pub data_engine: DataEngine,
+    /// The page has computed data, which renders other strings too.
+    pub computed: bool,
     /// The source file, relative to the input folder.
     pub rel: &'a Path,
     /// The source file as problems show it.
     pub shown: &'a Path,
     /// The output folder as 11ty spells it in `page.outputPath`.
     pub output_shown: &'a str,
-    /// `templateEngineOverride` of `html`, `""` or `false`: the permalink is
-    /// written as it is (probed).
-    pub raw: bool,
     /// The data file or layout `permalink` comes from, when not the page.
     pub from: Option<String>,
     /// The line of `permalink:` in the page's front matter.
@@ -291,9 +291,15 @@ impl Locator<'_> {
             v => v,
         };
         // `dynamicPermalink: false` writes the permalink as it is.
-        let render = !self.raw && !matches!(data.get("dynamicPermalink"), Some(Value::Bool(false)));
+        let render = !matches!(data.get("dynamicPermalink"), Some(Value::Bool(false)));
+        let compiles = |s: &str| -> Result<bool, Problem> {
+            if !render {
+                return Ok(false);
+            }
+            self.data_engine.compiles(s, self.computed)
+        };
         let rendered = match value {
-            Some(Value::String(s)) if render && has_liquid(s) => {
+            Some(Value::String(s)) if compiles(s)? => {
                 let out = self.render(s, data, undefined)?;
                 if out.is_empty() {
                     return Err(empty_permalink("`permalink`", self.rel));
@@ -306,7 +312,7 @@ impl Locator<'_> {
                     let Value::String(s) = v else {
                         return Err(map_unsupported(self.rel));
                     };
-                    let text = if render && has_liquid(s) {
+                    let text = if compiles(s)? {
                         self.render(s, data, undefined)?
                     } else {
                         s.to_string()
@@ -346,8 +352,8 @@ impl Locator<'_> {
         data: &Data,
         undefined: &mut BTreeSet<String>,
     ) -> Result<String, Problem> {
-        let fail = |e: brrrty_liquid::LiquidError| {
-            let mut p = liquid_problem(&e, self.shown.to_path_buf(), 0, None);
+        let fail = |e: TplError| {
+            let mut p = self.langs.problem(&e, self.shown.to_path_buf(), 0, None);
             // The line is inside the permalink, not the file.
             p.line = None;
             p.column = None;
@@ -364,14 +370,14 @@ impl Locator<'_> {
             }
             p
         };
-        let t = self.engine.parse("permalink", template).map_err(fail)?;
+        let lang = self
+            .data_engine
+            .lang
+            .expect("only a page with a template language compiles");
         let scope = Value::Object(Arc::new(data.clone()));
-        let r = self
-            .engine
-            .render_tracked(&t, &scope, self.loader)
-            .map_err(fail)?;
-        undefined.extend(r.undefined);
-        Ok(r.output)
+        self.langs
+            .render_string(lang, "permalink", template, &scope, undefined)
+            .map_err(fail)
     }
 }
 
@@ -427,11 +433,6 @@ fn node_normalize(p: &str) -> String {
         (false, true) => ".".to_string(),
         (false, false) => joined,
     }
-}
-
-/// 11ty only compiles a permalink that has a tag or output delimiter.
-fn has_liquid(s: &str) -> bool {
-    s.contains("{{") || s.contains("{%")
 }
 
 #[cfg(test)]

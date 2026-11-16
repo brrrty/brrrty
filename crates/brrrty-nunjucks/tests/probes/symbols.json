@@ -1,0 +1,4367 @@
+[
+ {
+  "src": "{{ foo }}",
+  "symbols": [
+   "foo"
+  ]
+ },
+ {
+  "src": "{{ foo.bar }}",
+  "symbols": [
+   "foo.bar"
+  ]
+ },
+ {
+  "src": "{{ foo.bar.baz }}",
+  "symbols": [
+   "foo.bar.baz"
+  ]
+ },
+ {
+  "src": "{{ foo[\"bar\"] }}",
+  "symbols": [
+   "foo"
+  ]
+ },
+ {
+  "src": "{{ foo.bar | upper }}",
+  "symbols": [
+   "upper",
+   "foo.bar"
+  ]
+ },
+ {
+  "src": "{{ a.b }}{{ a.b.c }}",
+  "symbols": [
+   "a.b",
+   "a.b.c"
+  ]
+ },
+ {
+  "src": "{{ x | f(y.z, k=w.v) }}",
+  "symbols": [
+   "f",
+   "x",
+   "y.z",
+   "k",
+   "w.v"
+  ]
+ },
+ {
+  "src": "{{ a if b.c else d.e }}",
+  "symbols": [
+   "b.c",
+   "a",
+   "d.e"
+  ]
+ },
+ {
+  "src": "{% for x in items.list %}{{ x.name }}{% endfor %}",
+  "symbols": [
+   "items.list",
+   "x",
+   "x.name"
+  ]
+ },
+ {
+  "src": "{% for k, v in obj.map %}{{ k }}{{ v.y }}{% endfor %}",
+  "symbols": [
+   "obj.map",
+   "k",
+   "v",
+   "v.y"
+  ]
+ },
+ {
+  "src": "{% set y = page.url %}{{ y }}",
+  "symbols": [
+   "page.url",
+   "y"
+  ]
+ },
+ {
+  "src": "{% set y %}{{ title }}{% endset %}{{ y }}",
+  "symbols": [
+   "y"
+  ]
+ },
+ {
+  "src": "{% if a.b == c.d %}{{ e.f }}{% elif g.h %}i{% else %}{{ j.k }}{% endif %}",
+  "symbols": [
+   "a.b",
+   "e.f",
+   "g.h",
+   "j.k"
+  ]
+ },
+ {
+  "src": "{{ a.b < c.d < e.f }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ a ~ b.c }}",
+  "symbols": [
+   "a",
+   "b.c"
+  ]
+ },
+ {
+  "src": "{{ not a.b }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ -a.b }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ a.b is defined }}",
+  "symbols": [
+   "a.b",
+   "defined"
+  ]
+ },
+ {
+  "src": "{{ a.b in c.d }}",
+  "symbols": [
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{{ a.b not in c.d }}",
+  "symbols": [
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{{ (a.b, c.d) }}",
+  "symbols": [
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{{ [a.b, c.d] }}",
+  "symbols": [
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{{ {k: a.b, \"s\": c.d} }}",
+  "symbols": [
+   "k",
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{% switch a.b %}{% case c.d %}{{ e.f }}{% default %}{{ g.h }}{% endswitch %}",
+  "symbols": [
+   "a.b",
+   "g.h"
+  ]
+ },
+ {
+  "src": "{% macro m(x, y=z.w) %}{{ x.q }}{% endmacro %}{{ m(a.b) }}",
+  "symbols": [
+   "m",
+   "x",
+   "y",
+   "z.w",
+   "x.q",
+   "a.b"
+  ]
+ },
+ {
+  "src": "{% call m(a.b) %}{{ c.d }}{% endcall %}",
+  "symbols": [
+   "m",
+   "a.b",
+   "caller",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{% call(x) m(a.b) %}{{ x.d }}{% endcall %}",
+  "symbols": [
+   "m",
+   "a.b",
+   "caller",
+   "x",
+   "x.d"
+  ]
+ },
+ {
+  "src": "{% filter upper %}{{ a.b }}{% endfilter %}",
+  "symbols": [
+   "upper",
+   "a.b"
+  ]
+ },
+ {
+  "src": "{% filter f(x.y) %}t{% endfilter %}",
+  "symbols": [
+   "f",
+   "x.y"
+  ]
+ },
+ {
+  "src": "{% include a.b %}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{% import a.b as c %}{{ c.d }}",
+  "symbols": [
+   "a.b",
+   "c",
+   "c.d"
+  ]
+ },
+ {
+  "src": "{% from a.b import c, d as e %}",
+  "symbols": [
+   "a.b",
+   "c",
+   "d",
+   "e"
+  ]
+ },
+ {
+  "src": "{% block content %}{{ a.b }}{% endblock %}",
+  "symbols": [
+   "content",
+   "a.b"
+  ]
+ },
+ {
+  "src": "{% extends a.b %}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{% raw %}{{ a.b }}{% endraw %}{{ c.d }}",
+  "symbols": [
+   "c.d"
+  ]
+ },
+ {
+  "src": "{{ a }}\n.b",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a }}x\n{{ .5 }}",
+  "error": "unexpected token: ."
+ },
+ {
+  "src": "{{a.b}}{{a.b.c}}",
+  "symbols": [
+   "a.b",
+   "a.b.c"
+  ]
+ },
+ {
+  "src": "{{ a.b.c.d.e }}",
+  "symbols": [
+   "a.b.c.d.e"
+  ]
+ },
+ {
+  "src": "{{ a .b }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a. b }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ a.b(c).d }}",
+  "symbols": [
+   "a.b",
+   "c"
+  ]
+ },
+ {
+  "src": "{{ a[0].b }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a.b[c.d] }}",
+  "symbols": [
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "é {{ a.b }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "😀{{ a.b }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ \"é\".x }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ a | b.c }}",
+  "symbols": [
+   "b.c",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | b.c | d }}",
+  "symbols": [
+   "d",
+   "b.c",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ super() }}",
+  "symbols": [
+   "super"
+  ]
+ },
+ {
+  "src": "{{ caller() }}",
+  "symbols": [
+   "caller"
+  ]
+ },
+ {
+  "src": "{{ loop.index }}",
+  "symbols": [
+   "loop.index"
+  ]
+ },
+ {
+  "src": "{{ x }}{# a.b #}{{ y.z }}",
+  "symbols": [
+   "x",
+   "y.z"
+  ]
+ },
+ {
+  "src": "{%- if a.b -%} {{ c.d }} {%- endif -%}",
+  "symbols": [
+   "a.b",
+   "c.d"
+  ]
+ },
+ {
+  "src": "  {{- a.b -}}  ",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ a.b }}\n{{ c.d }}\n{{ e.f.g }}",
+  "symbols": [
+   "a.b",
+   "c.d",
+   "e.f.g"
+  ]
+ },
+ {
+  "src": "{{ true }}{{ a }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a }}{{ none }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a.true }}",
+  "error": "expected name as lookup value, got true"
+ },
+ {
+  "src": "{{ a }}.{{ b }}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{{ a }}.{{ 1 }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{a}}.{{true}}{{b.c}}",
+  "symbols": [
+   "a",
+   "b.c"
+  ]
+ },
+ {
+  "src": "{{ a.b }}.{{ c }}",
+  "symbols": [
+   "a.b",
+   "c"
+  ]
+ },
+ {
+  "src": "{{ page.url }}!",
+  "symbols": [
+   "page.url"
+  ]
+ },
+ {
+  "src": "{{ title }}-x",
+  "symbols": [
+   "title"
+  ]
+ },
+ {
+  "src": "{{ foo }}-y",
+  "symbols": [
+   "foo"
+  ]
+ },
+ {
+  "src": "{{ collections.post | length }}",
+  "symbols": [
+   "length",
+   "collections.post"
+  ]
+ },
+ {
+  "src": "{{ collections[\"post\"] }}",
+  "symbols": [
+   "collections"
+  ]
+ },
+ {
+  "src": "{% set a, b = c.d %}{{ a }}",
+  "symbols": [
+   "c.d",
+   "a"
+  ]
+ },
+ {
+  "src": "{% for x in y %}{% else %}{{ z.w }}{% endfor %}",
+  "symbols": [
+   "y",
+   "x",
+   "z.w"
+  ]
+ },
+ {
+  "src": "{% asyncEach x in y.z %}{{ x }}{% endeach %}",
+  "symbols": [
+   "y.z",
+   "x"
+  ]
+ },
+ {
+  "src": "{% ifAsync a.b %}c{% endif %}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ r/a.b/g }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ x if y }}",
+  "symbols": [
+   "y",
+   "x"
+  ]
+ },
+ {
+  "src": "{{ {a.b: 1} }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ f(a=b) }}",
+  "symbols": [
+   "f",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{{ f(**) }}",
+  "error": "unexpected token: **"
+ },
+ {
+  "src": "{{",
+  "error": "expected expression, got end of file"
+ },
+ {
+  "src": "text only",
+  "symbols": []
+ },
+ {
+  "src": "",
+  "symbols": []
+ },
+ {
+  "src": "\n\n{{ a.b }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ a\n.b }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a.\nb }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a }}\r\n.b",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | default(b.c) }}",
+  "symbols": [
+   "default",
+   "a",
+   "b.c"
+  ]
+ },
+ {
+  "src": "{{ \"x\" ~ a.b ~ \"y\" }}",
+  "symbols": [
+   "a.b"
+  ]
+ },
+ {
+  "src": "{{ a.b.length }}",
+  "symbols": [
+   "a.b.length"
+  ]
+ },
+ {
+  "src": "plain text",
+  "symbols": []
+ },
+ {
+  "src": "a { b } c",
+  "symbols": []
+ },
+ {
+  "src": "a {\n b",
+  "symbols": []
+ },
+ {
+  "src": "x}}y",
+  "symbols": []
+ },
+ {
+  "src": "x%}y",
+  "symbols": []
+ },
+ {
+  "src": "a # b",
+  "symbols": []
+ },
+ {
+  "src": "a #} b",
+  "error": "unexpected end of comment"
+ },
+ {
+  "src": "line1\nline2 #}",
+  "error": "unexpected end of comment"
+ },
+ {
+  "src": "a {",
+  "symbols": []
+ },
+ {
+  "src": "a #",
+  "symbols": []
+ },
+ {
+  "src": "{",
+  "symbols": []
+ },
+ {
+  "src": "}",
+  "symbols": []
+ },
+ {
+  "src": "#",
+  "symbols": []
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\n",
+  "symbols": []
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = \"{{\";\n",
+  "error": "expected variable end"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = \"{{ x }}\";\n",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = '{#';\n",
+  "error": "expected end of comment, got end of file"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = '{# c #}';\n",
+  "symbols": []
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = \"{%\";\n",
+  "error": "tag name expected"
+ },
+ {
+  "src": "var o = {{a: 1}};",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{# c #}",
+  "symbols": []
+ },
+ {
+  "src": "a{# c #}b",
+  "symbols": []
+ },
+ {
+  "src": "{# c",
+  "error": "expected end of comment, got end of file"
+ },
+ {
+  "src": "{#",
+  "error": "expected end of comment, got end of file"
+ },
+ {
+  "src": "{#}",
+  "error": "expected end of comment, got end of file"
+ },
+ {
+  "src": "{##}",
+  "symbols": []
+ },
+ {
+  "src": "{# {{ x }} {% if %} #}",
+  "symbols": []
+ },
+ {
+  "src": "{# a\nb #}c",
+  "symbols": []
+ },
+ {
+  "src": "a {#- c -#} b",
+  "symbols": []
+ },
+ {
+  "src": "a {#- c #} b",
+  "symbols": []
+ },
+ {
+  "src": "a {# c -#} b",
+  "symbols": []
+ },
+ {
+  "src": "{# a #} #}",
+  "error": "unexpected end of comment"
+ },
+ {
+  "src": "{# a {# b #} c #}",
+  "error": "unexpected end of comment"
+ },
+ {
+  "src": "{{ x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{x}}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ x",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ }}",
+  "error": "unexpected token: }}"
+ },
+ {
+  "src": "{{ x y }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ x %}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ x -}}  a",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "a  {{- x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "  a  {{- x -}}  b  ",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{- x -}}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "\n\t {{- x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ \"a\\nb\\tc\\rd\\\"e\\\\f\\qg\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 'it''s' }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ 'a\"b' }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"unterminated }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ \"abc\\",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ 1 }}{{ 1.5 }}{{ 10. }}{{ 007 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1e5 }}",
+  "symbols": [
+   "1e5"
+  ]
+ },
+ {
+  "src": "{{ 1.e5 }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ 12345678901234567890 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 0.1 }}{{ 1.0 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ true }}{{ false }}{{ none }}{{ null }}{{ True }}",
+  "symbols": [
+   "True"
+  ]
+ },
+ {
+  "src": "{{ r/a.b/gi }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ r/a\\/b/ }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ r// }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ r/x/gg }}",
+  "error": "Invalid flags supplied to RegExp constructor 'gg'"
+ },
+ {
+  "src": "{{ r/x/mgy }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ r/x }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ r }}",
+  "symbols": [
+   "r"
+  ]
+ },
+ {
+  "src": "{{ [1, 2, 3] }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ [] }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ [1, 2, ] }}",
+  "error": "unexpected token: ]"
+ },
+ {
+  "src": "{{ [1 2] }}",
+  "error": "parseAggregate: expected comma after expression"
+ },
+ {
+  "src": "{{ (1, 2) }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ () }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ [1, 2) }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ {a: 1, \"b\": 2} }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ { a: 1 } }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ {a: {b: 1}} }}",
+  "error": "parseAggregate: expected comma after expression"
+ },
+ {
+  "src": "{{ {a 1} }}",
+  "error": "parseAggregate: expected colon after dict key"
+ },
+ {
+  "src": "{{ {1: 2, x.y: 3} }}",
+  "symbols": [
+   "x.y"
+  ]
+ },
+ {
+  "src": "{{ {} }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ a.b.c }}",
+  "symbols": [
+   "a.b.c"
+  ]
+ },
+ {
+  "src": "{{ a[\"b\"][0] }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a.0 }}",
+  "error": "expected name as lookup value, got 0"
+ },
+ {
+  "src": "{{ a.1.5 }}",
+  "error": "expected name as lookup value, got 1.5"
+ },
+ {
+  "src": "{{ a.1.",
+  "error": "expected name as lookup value, got 1.null"
+ },
+ {
+  "src": "{{ a. }}",
+  "error": "expected name as lookup value, got }}"
+ },
+ {
+  "src": "{{ a.r/x/ }}",
+  "error": "expected name as lookup value, got [object Object]"
+ },
+ {
+  "src": "{{ a[] }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a[1, 2] }}",
+  "error": "invalid index"
+ },
+ {
+  "src": "{{ f() }}",
+  "symbols": [
+   "f"
+  ]
+ },
+ {
+  "src": "{{ f(1, 2, x=3, 4) }}",
+  "symbols": [
+   "f",
+   "x"
+  ]
+ },
+ {
+  "src": "{{ f(1)(2) }}",
+  "symbols": [
+   "f"
+  ]
+ },
+ {
+  "src": "{{ f(1,) }}",
+  "error": "unexpected token: )"
+ },
+ {
+  "src": "{{ f(1 2) }}",
+  "error": "parseSignature: expected comma after expression"
+ },
+ {
+  "src": "{{ f( }}",
+  "error": "unexpected token: }}"
+ },
+ {
+  "src": "{{ f(",
+  "error": "Cannot read properties of null (reading 'type')"
+ },
+ {
+  "src": "{{ ,(1) }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ ,[1] }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ , }}",
+  "error": "unexpected token: ,"
+ },
+ {
+  "src": "{{ a.b(c).d[e] }}",
+  "symbols": [
+   "a.b",
+   "c",
+   "e"
+  ]
+ },
+ {
+  "src": "{{ 1 + 2 * 3 - 4 / 5 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ a // b % c ** d }}",
+  "symbols": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ]
+ },
+ {
+  "src": "{{ a ~ b ~ c }}",
+  "symbols": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "src": "{{ -a + +b }}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{{ - - a }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ -a | abs }}",
+  "symbols": [
+   "abs",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a == b }}{{ a === b }}{{ a != b }}{{ a !== b }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a < b <= c > d >= e }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a \"==\" b }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a = b }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ a ! b }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ a and b or c and not d }}",
+  "symbols": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ]
+ },
+ {
+  "src": "{{ not not a }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a in b }}{{ a not in b }}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{{ a not b }}",
+  "error": "pushToken: can only push one token on between reads"
+ },
+ {
+  "src": "{{ a not }}",
+  "error": "pushToken: can only push one token on between reads"
+ },
+ {
+  "src": "{% if a not %}{% endif %}",
+  "error": "pushToken: can only push one token on between reads"
+ },
+ {
+  "src": "{{ a is defined }}{{ a is not divisibleby(3) }}",
+  "symbols": [
+   "a",
+   "defined",
+   "divisibleby"
+  ]
+ },
+ {
+  "src": "{{ a if b else c }}",
+  "symbols": [
+   "b",
+   "a",
+   "c"
+  ]
+ },
+ {
+  "src": "{{ a if b }}",
+  "symbols": [
+   "b",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a if b if c else d }}",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{{ (a + b) * c }}",
+  "symbols": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "src": "{{ a | upper }}",
+  "symbols": [
+   "upper",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | replace(\"x\", \"y\") | join(\",\") }}",
+  "symbols": [
+   "join",
+   "replace",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | f(x=1) }}",
+  "symbols": [
+   "f",
+   "a",
+   "x"
+  ]
+ },
+ {
+  "src": "{{ a | b.c(1) }}",
+  "symbols": [
+   "b.c",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | f(1)(2) }}",
+  "symbols": [
+   "f",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | f(1).x }}",
+  "error": "Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{{ a | f(1)[0] }}",
+  "error": "Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{{ a | 1 }}",
+  "error": "expected symbol, got int"
+ },
+ {
+  "src": "{{ a | }}",
+  "error": "expected symbol, got variable-end"
+ },
+ {
+  "src": "{{ a | f | g(1) + 2 }}",
+  "symbols": [
+   "g",
+   "f",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ \"a\" if x else \"b\" | upper }}",
+  "symbols": [
+   "x",
+   "upper"
+  ]
+ },
+ {
+  "src": "{% %}",
+  "error": "tag name expected"
+ },
+ {
+  "src": "{%",
+  "error": "Cannot read properties of null (reading 'type')"
+ },
+ {
+  "src": "{% if",
+  "error": "expected expression, got end of file"
+ },
+ {
+  "src": "{% 1 %}",
+  "error": "tag name expected"
+ },
+ {
+  "src": "{% if x %}a{% endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{%if x%}a{%endif%}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if x %}a{% elif y %}b{% elseif z %}c{% else %}d{% endif %}",
+  "symbols": [
+   "x",
+   "y",
+   "z"
+  ]
+ },
+ {
+  "src": "{% if x %}a{% else %}b{% elif y %}c{% endif %}",
+  "error": "unknown block tag: elif"
+ },
+ {
+  "src": "{% if x %}never closed",
+  "error": "parseIf: expected elif, else, or endif, got end of file"
+ },
+ {
+  "src": "{% if x %}a{% else %}b",
+  "error": "unexpected end of file"
+ },
+ {
+  "src": "{% if x %}{% endif y %}",
+  "error": "expected block end in endif statement"
+ },
+ {
+  "src": "{% if %}{% endif %}",
+  "error": "unexpected token: %}"
+ },
+ {
+  "src": "{% ifAsync x %}a{% elif y %}b{% endif %}",
+  "symbols": [
+   "x",
+   "y"
+  ]
+ },
+ {
+  "src": "{% endif %}",
+  "error": "unknown block tag: endif"
+ },
+ {
+  "src": "{% else %}",
+  "error": "unknown block tag: else"
+ },
+ {
+  "src": "{% if x %}{% endfor %}",
+  "error": "unknown block tag: endfor"
+ },
+ {
+  "src": "{% for x in xs %}{{ x }}{% else %}none{% endfor %}",
+  "symbols": [
+   "xs",
+   "x"
+  ]
+ },
+ {
+  "src": "{% for k, v in obj %}{% endfor %}",
+  "symbols": [
+   "obj",
+   "k",
+   "v"
+  ]
+ },
+ {
+  "src": "{% for a, b, c in xs %}{% endfor %}",
+  "symbols": [
+   "xs",
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "src": "{% for a, in xs %}{% endfor %}",
+  "error": "parseFor: expected \"in\" keyword for loop"
+ },
+ {
+  "src": "{% for a, 1 in xs %}{% endfor %}",
+  "symbols": [
+   "xs",
+   "a"
+  ]
+ },
+ {
+  "src": "{% for 1 in xs %}{% endfor %}",
+  "error": "parseFor: variable name expected for loop"
+ },
+ {
+  "src": "{% for x xs %}{% endfor %}",
+  "error": "parseFor: expected \"in\" keyword for loop"
+ },
+ {
+  "src": "{% for x in %}{% endfor %}",
+  "error": "unexpected token: %}"
+ },
+ {
+  "src": "{% for x in xs %}",
+  "error": "unexpected end of file"
+ },
+ {
+  "src": "{% for x in xs %}{% endfor x %}",
+  "error": "expected block end in endfor statement"
+ },
+ {
+  "src": "{% asyncEach x in xs %}{% endeach %}",
+  "symbols": [
+   "xs",
+   "x"
+  ]
+ },
+ {
+  "src": "{% asyncAll x in xs %}{% endall %}",
+  "symbols": [
+   "xs",
+   "x"
+  ]
+ },
+ {
+  "src": "{% set x = 1 %}",
+  "symbols": []
+ },
+ {
+  "src": "{% set x, y = 1 %}",
+  "symbols": []
+ },
+ {
+  "src": "{% set a, b = 1, 2 %}",
+  "error": "expected block end in set statement"
+ },
+ {
+  "src": "{% set x %}a{{ b }}{% endset %}",
+  "symbols": []
+ },
+ {
+  "src": "{% set x -%}  a  {%- endset %}",
+  "symbols": []
+ },
+ {
+  "src": "{% set x %}open",
+  "error": "unexpected end of file"
+ },
+ {
+  "src": "{% set %}",
+  "error": "unexpected token: %}"
+ },
+ {
+  "src": "{% set x y %}",
+  "error": "parseSet: expected = or block end in set tag"
+ },
+ {
+  "src": "{% set x.y = 1 %}",
+  "symbols": []
+ },
+ {
+  "src": "{% block b %}x{% endblock %}",
+  "symbols": [
+   "b"
+  ]
+ },
+ {
+  "src": "{% block b %}x{% endblock b %}",
+  "symbols": [
+   "b"
+  ]
+ },
+ {
+  "src": "{% block b %}x{% endblock c %}",
+  "error": "expected block end in c statement"
+ },
+ {
+  "src": "{% block b %}x",
+  "error": "parseBlock: expected endblock, got end of file"
+ },
+ {
+  "src": "{% block %}{% endblock %}",
+  "error": "unexpected token: %}"
+ },
+ {
+  "src": "{% block \"b\" %}{% endblock %}",
+  "error": "parseBlock: variable name expected"
+ },
+ {
+  "src": "{% block a.b %}{% endblock %}",
+  "error": "parseBlock: variable name expected"
+ },
+ {
+  "src": "{% block b %}{% block c %}{% endblock %}{% endblock %}",
+  "symbols": [
+   "b",
+   "c"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "{% extends base %}{% block a %}{% endblock %}",
+  "symbols": [
+   "base",
+   "a"
+  ]
+ },
+ {
+  "src": "{% extends %}",
+  "error": "unexpected token: %}"
+ },
+ {
+  "src": "{% include \"a.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"a.njk\" ignore missing %}",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"a.njk\" ignore %}",
+  "symbols": []
+ },
+ {
+  "src": "{% include x + \".njk\" %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% macro m(a, b=2) %}{{ a }}{% endmacro %}",
+  "symbols": [
+   "m",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% macro m %}{% endmacro %}",
+  "error": "expected arguments"
+ },
+ {
+  "src": "{% macro m() %}",
+  "error": "unexpected end of file"
+ },
+ {
+  "src": "{% macro \"m\"() %}{% endmacro %}",
+  "symbols": []
+ },
+ {
+  "src": "{% call m(1) %}body{% endcall %}",
+  "symbols": [
+   "m",
+   "caller"
+  ]
+ },
+ {
+  "src": "{% call(x, y) m(1, k=2) %}{{ x }}{% endcall %}",
+  "symbols": [
+   "m",
+   "k",
+   "caller",
+   "x",
+   "y"
+  ]
+ },
+ {
+  "src": "{% call m %}{% endcall %}",
+  "error": "Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{% call m.x %}{% endcall %}",
+  "error": "Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{% call m %}",
+  "error": "unexpected end of file"
+ },
+ {
+  "src": "{% import \"m.njk\" as m %}",
+  "symbols": [
+   "m"
+  ]
+ },
+ {
+  "src": "{% import \"m.njk\" as m with context %}",
+  "symbols": [
+   "m"
+  ]
+ },
+ {
+  "src": "{% import \"m.njk\" as m without context %}",
+  "symbols": [
+   "m"
+  ]
+ },
+ {
+  "src": "{% import \"m.njk\" as m with %}",
+  "error": "parseFrom: expected context after with/without"
+ },
+ {
+  "src": "{% import \"m.njk\" %}",
+  "error": "parseImport: expected \"as\" keyword"
+ },
+ {
+  "src": "{% from \"m.njk\" import a, b as c %}",
+  "symbols": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "src": "{% from \"m.njk\" import a with context, b %}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% from \"m.njk\" import a, b without context %}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% from \"m.njk\" import %}",
+  "error": "parseFrom: Expected at least one import name"
+ },
+ {
+  "src": "{% from \"m.njk\" import a b %}",
+  "error": "parseFrom: expected comma"
+ },
+ {
+  "src": "{% from \"m.njk\" import _a %}",
+  "error": "parseFrom: names starting with an underscore cannot be imported"
+ },
+ {
+  "src": "{% from \"m.njk\" import \"_a\" %}",
+  "error": "parseFrom: names starting with an underscore cannot be imported"
+ },
+ {
+  "src": "{% from \"m.njk\" import \"b\" %}",
+  "symbols": []
+ },
+ {
+  "src": "{% from \"m.njk\" import 1 %}",
+  "error": "name.value.charAt is not a function"
+ },
+ {
+  "src": "{% from \"m.njk\" import none %}",
+  "error": "Cannot read properties of null (reading 'charAt')"
+ },
+ {
+  "src": "{% from \"m.njk\" import [a] %}",
+  "error": "Cannot read properties of undefined (reading 'charAt')"
+ },
+ {
+  "src": "{% from \"m.njk\" a %}",
+  "error": "parseFrom: expected import"
+ },
+ {
+  "src": "{% from \"m.njk\" import a",
+  "error": "Cannot read properties of null (reading 'type')"
+ },
+ {
+  "src": "{% filter upper %}x{% endfilter %}",
+  "symbols": [
+   "upper"
+  ]
+ },
+ {
+  "src": "{% filter replace(\"a\", \"b\") %}x{% endfilter %}",
+  "symbols": [
+   "replace"
+  ]
+ },
+ {
+  "src": "{% filter upper | lower %}x{% endfilter %}",
+  "error": "expected block end in filter statement"
+ },
+ {
+  "src": "{% filter f(1).x %}x{% endfilter %}",
+  "error": "Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{% filter %}x{% endfilter %}",
+  "error": "expected symbol, got block-end"
+ },
+ {
+  "src": "{% switch x %}{% case 1 %}a{% case 2 %}b{% default %}c{% endswitch %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% switch x %}ignored{% case 1 %}a{% endswitch %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% switch x %}{% endswitch %}",
+  "error": "Cannot read properties of null (reading 'value')"
+ },
+ {
+  "src": "{% switch x %}{% default %}d{% endswitch %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% switch x %}{% case 1 %}a",
+  "error": "Cannot read properties of null (reading 'value')"
+ },
+ {
+  "src": "{% raw %}{{ x }}{% if %}{% endraw %}",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}a{% raw %}b{% endraw %}c{% endraw %}d",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}a{% raw %}b{% endraw %}c",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}no end",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}a{%endraw%}b",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}a{%\tendraw %}b",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}a{%\nendraw %}b",
+  "error": "Cannot read properties of undefined (reading 'lastIndexOf')"
+ },
+ {
+  "src": "{% raw %}a\n{% endraw %}b",
+  "symbols": []
+ },
+ {
+  "src": "{% raw %}a{%- endraw %}b",
+  "error": "unknown block tag: endraw"
+ },
+ {
+  "src": "a  {%- raw -%}  {{ x }}  {%- endraw -%}  b",
+  "error": "unknown block tag: endraw"
+ },
+ {
+  "src": "a  {%- raw -%}  {{ x }}  {% endraw -%}  b",
+  "error": "unknown block tag: endraw"
+ },
+ {
+  "src": "a {% raw -%}  b {% endraw %}",
+  "symbols": []
+ },
+ {
+  "src": "{% verbatim %}{% raw %}{% endverbatim %}",
+  "symbols": []
+ },
+ {
+  "src": "{% raw x %}{% endraw %}",
+  "error": "expected block end in raw statement"
+ },
+ {
+  "src": "{% autoescape true %}{{ v }}{% endautoescape %}",
+  "error": "unknown block tag: autoescape"
+ },
+ {
+  "src": "{% frobnicate %}",
+  "error": "unknown block tag: frobnicate"
+ },
+ {
+  "src": "{% setAsync \"x\" %}a{% endsetAsync %}",
+  "error": "unknown block tag: setAsync"
+ },
+ {
+  "src": "a  {%- if x -%}  b  {%- endif -%}  c",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "a\n  {% if x %}\n  b\n  {% endif %}\n",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "a {%- if x %} b {% endif -%} c",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "x\r\n{%- if y -%}\r\nz{% endif %}",
+  "symbols": [
+   "y"
+  ]
+ },
+ {
+  "src": "{% if x -%}\n{{ y }}{%- endif %}",
+  "symbols": [
+   "x",
+   "y"
+  ]
+ },
+ {
+  "src": "{{ x -}} {# c #} {{- y }}",
+  "symbols": [
+   "x",
+   "y"
+  ]
+ },
+ {
+  "src": "{% if x -%} {# c #} {%- endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if x -%}{{ y }}  {%- endif %}",
+  "symbols": [
+   "x",
+   "y"
+  ]
+ },
+ {
+  "src": "one\ntwo\n{% frobnicate %}",
+  "error": "unknown block tag: frobnicate"
+ },
+ {
+  "src": "x\r\ny {% frobnicate %}",
+  "error": "unknown block tag: frobnicate"
+ },
+ {
+  "src": "é {% frobnicate %}",
+  "error": "unknown block tag: frobnicate"
+ },
+ {
+  "src": "😀 {% frobnicate %}",
+  "error": "unknown block tag: frobnicate"
+ },
+ {
+  "src": "😀\n\t😀{{ a. 1 }}",
+  "error": "expected name as lookup value, got 1"
+ },
+ {
+  "src": "{{ \"😀\" ~ x. 1 }}",
+  "error": "expected name as lookup value, got 1"
+ },
+ {
+  "src": "   {{ x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ x　}}",
+  "symbols": [
+   "x　"
+  ]
+ },
+ {
+  "src": "{{ ((((((((((((((((((((((((((((((((((((((((x)))))))))))))))))))))))))))))))))))))))) }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19 + a20 + a21 + a22 + a23 + a24 + a25 + a26 + a27 + a28 + a29 + a30 + a31 + a32 + a33 + a34 + a35 + a36 + a37 + a38 + a39 + a40 + a41 + a42 + a43 + a44 + a45 + a46 + a47 + a48 + a49 + a50 + a51 + a52 + a53 + a54 + a55 + a56 + a57 + a58 + a59 }}",
+  "symbols": [
+   "a0",
+   "a1",
+   "a2",
+   "a3",
+   "a4",
+   "a5",
+   "a6",
+   "a7",
+   "a8",
+   "a9",
+   "a10",
+   "a11",
+   "a12",
+   "a13",
+   "a14",
+   "a15",
+   "a16",
+   "a17",
+   "a18",
+   "a19",
+   "a20",
+   "a21",
+   "a22",
+   "a23",
+   "a24",
+   "a25",
+   "a26",
+   "a27",
+   "a28",
+   "a29",
+   "a30",
+   "a31",
+   "a32",
+   "a33",
+   "a34",
+   "a35",
+   "a36",
+   "a37",
+   "a38",
+   "a39",
+   "a40",
+   "a41",
+   "a42",
+   "a43",
+   "a44",
+   "a45",
+   "a46",
+   "a47",
+   "a48",
+   "a49",
+   "a50",
+   "a51",
+   "a52",
+   "a53",
+   "a54",
+   "a55",
+   "a56",
+   "a57",
+   "a58",
+   "a59"
+  ]
+ },
+ {
+  "src": "{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}x{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ \"Hello World! Foo_Bar\" | slug }}",
+  "symbols": [
+   "slug"
+  ]
+ },
+ {
+  "src": "{{ \"Hello World! Foo_Bar\" | slugify }}",
+  "symbols": [
+   "slugify"
+  ]
+ },
+ {
+  "src": "{{ \"Café Über\" | slugify }}",
+  "symbols": [
+   "slugify"
+  ]
+ },
+ {
+  "src": "{{ \"C++ & Rust: 100% fun?\" | slugify }}",
+  "symbols": [
+   "slugify"
+  ]
+ },
+ {
+  "src": "{{ \"Price $5 and 10%\" | slug }}",
+  "symbols": [
+   "slug"
+  ]
+ },
+ {
+  "src": "{{ 2024 | slugify }}",
+  "symbols": [
+   "slugify"
+  ]
+ },
+ {
+  "src": "{{ \"/a/b/\" | url }}",
+  "symbols": [
+   "url"
+  ]
+ },
+ {
+  "src": "{{ \"a/b\" | url }}",
+  "symbols": [
+   "url"
+  ]
+ },
+ {
+  "src": "[{{ \"\" | url }}]",
+  "symbols": [
+   "url"
+  ]
+ },
+ {
+  "src": "{{ \"https://example.com/x\" | url }}",
+  "symbols": [
+   "url"
+  ]
+ },
+ {
+  "src": "{{ \"./x/\" | url }}",
+  "symbols": [
+   "url"
+  ]
+ },
+ {
+  "src": "{{ \"kept\" | log }}",
+  "symbols": [
+   "log"
+  ]
+ },
+ {
+  "src": "{{ page.url }}",
+  "symbols": [
+   "page.url"
+  ]
+ },
+ {
+  "src": "{{ page.filePathStem }}",
+  "symbols": [
+   "page.filePathStem"
+  ]
+ },
+ {
+  "src": "{{ page.fileSlug }}",
+  "symbols": [
+   "page.fileSlug"
+  ]
+ },
+ {
+  "src": "[{{ eleventy.generator }}]",
+  "symbols": [
+   "eleventy.generator"
+  ]
+ },
+ {
+  "src": "[{{ collections | length }}]",
+  "symbols": [
+   "length",
+   "collections"
+  ]
+ },
+ {
+  "src": "<a href=\"/tag/{{ t | slugify }}/\">{{ t }}</a>",
+  "symbols": [
+   "slugify",
+   "t"
+  ]
+ },
+ {
+  "src": "{{ \"/x/\" | url | safe }}",
+  "symbols": [
+   "safe",
+   "url"
+  ]
+ },
+ {
+  "src": "{{ body | safe }}[{{ body }}]",
+  "symbols": [
+   "safe",
+   "body"
+  ]
+ },
+ {
+  "src": "[{{ \"\" | slugify }}]",
+  "symbols": [
+   "slugify"
+  ]
+ },
+ {
+  "src": "{{ \"a -- b __ c\" | slugify }}",
+  "symbols": [
+   "slugify"
+  ]
+ },
+ {
+  "src": "{{ \"x\" | markdown }}",
+  "symbols": [
+   "markdown"
+  ]
+ },
+ {
+  "src": "{{ collections.all | length }}",
+  "symbols": [
+   "length",
+   "collections.all"
+  ]
+ },
+ {
+  "src": "{{ \"x\" | nopefilter }}",
+  "symbols": [
+   "nopefilter"
+  ]
+ },
+ {
+  "src": "a\nb\n{{ x | nopefilter }}",
+  "symbols": [
+   "nopefilter",
+   "x"
+  ]
+ },
+ {
+  "src": "line1\n{% for i in a %}\nline3",
+  "error": "unexpected end of file"
+ },
+ {
+  "src": "{% block b %}open",
+  "error": "parseBlock: expected endblock, got end of file"
+ },
+ {
+  "src": "{# no end",
+  "error": "expected end of comment, got end of file"
+ },
+ {
+  "src": "{% include \"ghost.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "a\n{% include 'ghost.njk' %}",
+  "symbols": []
+ },
+ {
+  "src": "{{ nomacro(\"x\") }}",
+  "symbols": [
+   "nomacro"
+  ]
+ },
+ {
+  "src": "{% import \"m.njk\" as m %}{{ m.nothere() }}",
+  "symbols": [
+   "m",
+   "m.nothere"
+  ]
+ },
+ {
+  "src": "{% macro there() %}T{% endmacro %}",
+  "symbols": [
+   "there"
+  ]
+ },
+ {
+  "src": "{{ 1 + }}",
+  "error": "unexpected token: }}"
+ },
+ {
+  "src": "{% for %}{% endfor %}",
+  "error": "unexpected token: %}"
+ },
+ {
+  "src": "{% if x is nopetest %}a{% endif %}",
+  "symbols": [
+   "x",
+   "nopetest"
+  ]
+ },
+ {
+  "src": "{{ x() }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ \"abc\" | replace(\"a\") }}",
+  "symbols": [
+   "replace"
+  ]
+ },
+ {
+  "src": "{% include \"bad.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "{{ x | nopefilter }}",
+  "symbols": [
+   "nopefilter",
+   "x"
+  ]
+ },
+ {
+  "src": "{% include \"bad2.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "{% if x %}",
+  "error": "parseIf: expected elif, else, or endif, got end of file"
+ },
+ {
+  "src": "{% extends \"b.njk\" %}{% block nothere %}x{% endblock %}",
+  "symbols": [
+   "nothere"
+  ]
+ },
+ {
+  "src": "base",
+  "symbols": []
+ },
+ {
+  "src": "{{ a.b.c() }}",
+  "symbols": [
+   "a.b.c"
+  ]
+ },
+ {
+  "src": "{{ 1 + 2 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 10 - 3 * 2 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 7 / 2 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 8 / 2 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 7 // 2 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 7 % 3 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ -7 % 3 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 2 ** 10 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 2 ** -1 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ -x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ (1 + 2) * 3 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 0.1 + 0.2 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1.50 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"a\" + 1 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1 + \"2\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"a\" ~ 1 ~ \"b\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ a ~ \" \" ~ b }}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{{ 2 in [1, 2, 3] }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"ell\" in \"hello\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"k\" in obj }}",
+  "symbols": [
+   "obj"
+  ]
+ },
+ {
+  "src": "{{ 5 not in [1, 2] }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"y\" if c else \"n\" }}",
+  "symbols": [
+   "c"
+  ]
+ },
+ {
+  "src": "{{ \"a\" if x == 1 else (\"b\" if x == 2 else \"c\") }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ a and b }}|{{ a or b }}|{{ c or \"default\" }}",
+  "symbols": [
+   "a",
+   "b",
+   "c"
+  ]
+ },
+ {
+  "src": "{{ true or false and false }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ not true }}|{{ not 0 }}|{{ not \"\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1 == 1 }}|{{ \"1\" == 1 }}|{{ 1 === 1 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 0 == \"\" }}|{{ null == undefined }}|{{ 0 == false }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1 != 2 }}|{{ 1 !== \"1\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1 < 2 }}|{{ 2 <= 2 }}|{{ 3 > 4 }}|{{ 4 >= 4 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"a\" < \"b\" }}|{{ \"10\" < \"9\" }}|{{ \"10\" < 9 }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ true }}|{{ false }}|{{ none }}|{{ null }}",
+  "symbols": []
+ },
+ {
+  "src": "[{{ nothing }}]",
+  "symbols": [
+   "nothing"
+  ]
+ },
+ {
+  "src": "[{{ a.b.c }}]",
+  "symbols": [
+   "a.b.c"
+  ]
+ },
+ {
+  "src": "[{{ a.b.c.d.e }}]",
+  "symbols": [
+   "a.b.c.d.e"
+  ]
+ },
+ {
+  "src": "[{{ nothing.method() }}]",
+  "symbols": [
+   "nothing.method"
+  ]
+ },
+ {
+  "src": "{{ a[0] }}{{ a[2] }}[{{ a[5] }}]",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "[{{ a[-1] }}]",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ o[\"a b\"] }}{{ o['c'] }}",
+  "symbols": [
+   "o"
+  ]
+ },
+ {
+  "src": "{{ o[k] }}",
+  "symbols": [
+   "o",
+   "k"
+  ]
+ },
+ {
+  "src": "{{ o.0 }}",
+  "error": "expected name as lookup value, got 0"
+ },
+ {
+  "src": "{{ s.length }}|{{ a.length }}",
+  "symbols": [
+   "s.length",
+   "a.length"
+  ]
+ },
+ {
+  "src": "{{ s.toUpperCase() }}",
+  "symbols": [
+   "s.toUpperCase"
+  ]
+ },
+ {
+  "src": "{{ s.toLowerCase() }}",
+  "symbols": [
+   "s.toLowerCase"
+  ]
+ },
+ {
+  "src": "{{ s.split(\",\") | join(\"|\") }}",
+  "symbols": [
+   "join",
+   "s.split"
+  ]
+ },
+ {
+  "src": "{{ s.split(\",\").length }}",
+  "symbols": [
+   "s.split"
+  ]
+ },
+ {
+  "src": "{{ s.replace(\"l\", \"L\") }}",
+  "symbols": [
+   "s.replace"
+  ]
+ },
+ {
+  "src": "{{ s.replace(r/o/g, \"0\") }}",
+  "symbols": [
+   "s.replace"
+  ]
+ },
+ {
+  "src": "[{{ s.trim() }}]",
+  "symbols": [
+   "s.trim"
+  ]
+ },
+ {
+  "src": "{{ s.slice(1, 3) }}",
+  "symbols": [
+   "s.slice"
+  ]
+ },
+ {
+  "src": "{{ s.indexOf(\"l\") }}",
+  "symbols": [
+   "s.indexOf"
+  ]
+ },
+ {
+  "src": "{{ s.includes(\"ell\") }}",
+  "symbols": [
+   "s.includes"
+  ]
+ },
+ {
+  "src": "{{ s.startsWith(\"he\") }}",
+  "symbols": [
+   "s.startsWith"
+  ]
+ },
+ {
+  "src": "{{ a.join(\"-\") }}",
+  "symbols": [
+   "a.join"
+  ]
+ },
+ {
+  "src": "{{ a.slice(1) | join(\",\") }}",
+  "symbols": [
+   "join",
+   "a.slice"
+  ]
+ },
+ {
+  "src": "{{ a.indexOf(2) }}",
+  "symbols": [
+   "a.indexOf"
+  ]
+ },
+ {
+  "src": "{{ n.toFixed(2) }}",
+  "symbols": [
+   "n.toFixed"
+  ]
+ },
+ {
+  "src": "{{ n.toString() }}",
+  "symbols": [
+   "n.toString"
+  ]
+ },
+ {
+  "src": "{{ s.charAt(1) }}",
+  "symbols": [
+   "s.charAt"
+  ]
+ },
+ {
+  "src": "{{ o.hasOwnProperty(\"a\") }}",
+  "symbols": [
+   "o.hasOwnProperty"
+  ]
+ },
+ {
+  "src": "{{ range(3) | join(\",\") }}",
+  "symbols": [
+   "join",
+   "range"
+  ]
+ },
+ {
+  "src": "{% set d = {a: 1} %}{{ d.a }}",
+  "symbols": [
+   "a",
+   "d.a"
+  ]
+ },
+ {
+  "src": "{{ \"abc\".replace(r/b/, \"X\") }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ s | escape('xml') }}",
+  "symbols": [
+   "escape",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ (a | length) + 1 }}",
+  "symbols": [
+   "length",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ 1 + 2 | string }}",
+  "symbols": [
+   "string"
+  ]
+ },
+ {
+  "src": "{{ \"abc\" | upper }}",
+  "symbols": [
+   "upper"
+  ]
+ },
+ {
+  "src": "{% if n is odd %}odd{% else %}even{% endif %}",
+  "symbols": [
+   "n",
+   "odd"
+  ]
+ },
+ {
+  "src": "{{ x is defined }}|{{ y is defined }}",
+  "symbols": [
+   "x",
+   "defined",
+   "y"
+  ]
+ },
+ {
+  "src": "{% if n is not even %}not even{% endif %}",
+  "symbols": [
+   "n",
+   "even"
+  ]
+ },
+ {
+  "src": "{{ x is string }}|{{ y is number }}",
+  "symbols": [
+   "x",
+   "string",
+   "y",
+   "number"
+  ]
+ },
+ {
+  "src": "{{ x is null }}|{{ x is none }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ 9 is divisibleby(3) }}",
+  "symbols": [
+   "divisibleby"
+  ]
+ },
+ {
+  "src": "{{ a is iterable }}|{{ s is iterable }}",
+  "symbols": [
+   "a",
+   "iterable",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ o is mapping }}|{{ a is mapping }}",
+  "symbols": [
+   "o",
+   "mapping",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ \"a\\tb\\\\n\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"it's\" }}{{ 'say \"hi\"' }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ \"café ☕\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ 1e3 }}",
+  "symbols": [
+   "1e3"
+  ]
+ },
+ {
+  "src": "{{ obj | length }}",
+  "symbols": [
+   "length",
+   "obj"
+  ]
+ },
+ {
+  "src": "{{ obj }}",
+  "symbols": [
+   "obj"
+  ]
+ },
+ {
+  "src": "{{ arr }}",
+  "symbols": [
+   "arr"
+  ]
+ },
+ {
+  "src": "[{{ v }}]",
+  "symbols": [
+   "v"
+  ]
+ },
+ {
+  "src": "{{ t }}|{{ f }}",
+  "symbols": [
+   "t",
+   "f"
+  ]
+ },
+ {
+  "src": "{{ i }}|{{ f }}|{{ big }}",
+  "symbols": [
+   "i",
+   "f",
+   "big"
+  ]
+ },
+ {
+  "src": "{{ n | abs }}",
+  "symbols": [
+   "abs",
+   "n"
+  ]
+ },
+ {
+  "src": "{% for row in a | batch(2) %}[{% for x in row %}{{ x }}{% endfor %}]{% endfor %}",
+  "symbols": [
+   "batch",
+   "a",
+   "row",
+   "x"
+  ]
+ },
+ {
+  "src": "{% for row in a | batch(2, \"-\") %}[{% for x in row %}{{ x }}{% endfor %}]{% endfor %}",
+  "symbols": [
+   "batch",
+   "a",
+   "row",
+   "x"
+  ]
+ },
+ {
+  "src": "{{ s | capitalize }}",
+  "symbols": [
+   "capitalize",
+   "s"
+  ]
+ },
+ {
+  "src": "[{{ s | center(9) }}]",
+  "symbols": [
+   "center",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ nothing | default(\"d\") }}",
+  "symbols": [
+   "default",
+   "nothing"
+  ]
+ },
+ {
+  "src": "{% for k, v in o | dictsort %}{{ k }}={{ v }} {% endfor %}",
+  "symbols": [
+   "dictsort",
+   "o",
+   "k",
+   "v"
+  ]
+ },
+ {
+  "src": "{{ o | dump }}",
+  "symbols": [
+   "dump",
+   "o"
+  ]
+ },
+ {
+  "src": "{{ o | dump(2) }}",
+  "symbols": [
+   "dump",
+   "o"
+  ]
+ },
+ {
+  "src": "{{ s | dump | safe }}",
+  "symbols": [
+   "safe",
+   "dump",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | escape }}",
+  "symbols": [
+   "escape",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ a | first }}",
+  "symbols": [
+   "first",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ s | first }}",
+  "symbols": [
+   "first",
+   "s"
+  ]
+ },
+ {
+  "src": "[{{ a | first }}]",
+  "symbols": [
+   "first",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ s | float + 1 }}",
+  "symbols": [
+   "float",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | float }}",
+  "symbols": [
+   "float",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | float(9) }}",
+  "symbols": [
+   "float",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | safe | forceescape }}",
+  "symbols": [
+   "forceescape",
+   "safe",
+   "s"
+  ]
+ },
+ {
+  "src": "{% for k, items in a | groupby(\"t\") %}{{ k }}:{% for i in items %}{{ i.n }}{% endfor %} {% endfor %}",
+  "symbols": [
+   "groupby",
+   "a",
+   "k",
+   "items",
+   "i",
+   "i.n"
+  ]
+ },
+ {
+  "src": "{{ s | indent(2) }}",
+  "symbols": [
+   "indent",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | indent(2, true) }}",
+  "symbols": [
+   "indent",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | int + 1 }}",
+  "symbols": [
+   "int",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | int }}",
+  "symbols": [
+   "int",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | int(7) }}",
+  "symbols": [
+   "int",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ a | join(\", \") }}",
+  "symbols": [
+   "join",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | join }}",
+  "symbols": [
+   "join",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | join(\",\", \"n\") }}",
+  "symbols": [
+   "join",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | last }}",
+  "symbols": [
+   "last",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | length }}",
+  "symbols": [
+   "length",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ s | length }}",
+  "symbols": [
+   "length",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ o | length }}",
+  "symbols": [
+   "length",
+   "o"
+  ]
+ },
+ {
+  "src": "{{ nothing | length }}",
+  "symbols": [
+   "length",
+   "nothing"
+  ]
+ },
+ {
+  "src": "{{ s | list | join(\"-\") }}",
+  "symbols": [
+   "join",
+   "list",
+   "s"
+  ]
+ },
+ {
+  "src": "{% for p in o | list %}{{ p.key }}={{ p.value }} {% endfor %}",
+  "symbols": [
+   "list",
+   "o",
+   "p",
+   "p.key",
+   "p.value"
+  ]
+ },
+ {
+  "src": "{{ s | lower }}",
+  "symbols": [
+   "lower",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | nl2br }}",
+  "symbols": [
+   "nl2br",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ a | reject(\"odd\") | join(\",\") }}",
+  "symbols": [
+   "join",
+   "reject",
+   "a"
+  ]
+ },
+ {
+  "src": "{% for i in a | rejectattr(\"ok\") %}{{ i.n }}{% endfor %}",
+  "symbols": [
+   "rejectattr",
+   "a",
+   "i",
+   "i.n"
+  ]
+ },
+ {
+  "src": "{{ s | replace(\"l\", \"L\") }}",
+  "symbols": [
+   "replace",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | replace(\"l\", \"L\", 1) }}",
+  "symbols": [
+   "replace",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | replace(\"\", \"-\") }}",
+  "symbols": [
+   "replace",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ n | replace(1, 9) }}",
+  "symbols": [
+   "replace",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ s | replace(\".\", \"!\") }}",
+  "symbols": [
+   "replace",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ a | reverse | join(\",\") }}",
+  "symbols": [
+   "join",
+   "reverse",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ s | reverse }}",
+  "symbols": [
+   "reverse",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ n | round }}",
+  "symbols": [
+   "round",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ n | round(2) }}",
+  "symbols": [
+   "round",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ n | round(0, \"floor\") }}",
+  "symbols": [
+   "round",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ n | round(0, \"ceil\") }}",
+  "symbols": [
+   "round",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ s | safe }}",
+  "symbols": [
+   "safe",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ a | select(\"odd\") | join(\",\") }}",
+  "symbols": [
+   "join",
+   "select",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | select | join(\",\") }}",
+  "symbols": [
+   "join",
+   "select",
+   "a"
+  ]
+ },
+ {
+  "src": "{% for i in a | selectattr(\"ok\") %}{{ i.n }}{% endfor %}",
+  "symbols": [
+   "selectattr",
+   "a",
+   "i",
+   "i.n"
+  ]
+ },
+ {
+  "src": "{% for col in a | slice(2) %}[{% for x in col %}{{ x }}{% endfor %}]{% endfor %}",
+  "symbols": [
+   "slice",
+   "a",
+   "col",
+   "x"
+  ]
+ },
+ {
+  "src": "{{ a | sort | join(\",\") }}",
+  "symbols": [
+   "join",
+   "sort",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | sort(true) | join(\",\") }}",
+  "symbols": [
+   "join",
+   "sort",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | sort(false, false, \"n\") | join(\",\", \"n\") }}",
+  "symbols": [
+   "join",
+   "sort",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ n | string }}{{ n | string | length }}",
+  "symbols": [
+   "string",
+   "n",
+   "length"
+  ]
+ },
+ {
+  "src": "{{ s | striptags }}",
+  "symbols": [
+   "striptags",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | striptags(true) }}",
+  "symbols": [
+   "striptags",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ a | sum }}",
+  "symbols": [
+   "sum",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | sum(\"n\") }}",
+  "symbols": [
+   "sum",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | sum(\"\", 10) }}",
+  "symbols": [
+   "sum",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ s | title }}",
+  "symbols": [
+   "title",
+   "s"
+  ]
+ },
+ {
+  "src": "[{{ s | trim }}]",
+  "symbols": [
+   "trim",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | truncate(10) }}",
+  "symbols": [
+   "truncate",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | truncate(10, true) }}",
+  "symbols": [
+   "truncate",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | truncate(10, false, \"~\") }}",
+  "symbols": [
+   "truncate",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | truncate(30) }}",
+  "symbols": [
+   "truncate",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | upper }}",
+  "symbols": [
+   "upper",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | urlencode }}",
+  "symbols": [
+   "urlencode",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ o | urlencode }}",
+  "symbols": [
+   "urlencode",
+   "o"
+  ]
+ },
+ {
+  "src": "{{ s | urlize }}",
+  "symbols": [
+   "urlize",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | wordcount }}",
+  "symbols": [
+   "wordcount",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ s | trim | upper | replace(\"L\", \"_\") | truncate(5) }}",
+  "symbols": [
+   "truncate",
+   "replace",
+   "upper",
+   "trim",
+   "s"
+  ]
+ },
+ {
+  "src": "[{{ nothing | upper }}]",
+  "symbols": [
+   "upper",
+   "nothing"
+  ]
+ },
+ {
+  "src": "[{{ n | lower }}]",
+  "symbols": [
+   "lower",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ n | upper }}",
+  "symbols": [
+   "upper",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ s | truncate(n * 2) }}",
+  "symbols": [
+   "truncate",
+   "s",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ a | join(sep) }}",
+  "symbols": [
+   "join",
+   "a",
+   "sep"
+  ]
+ },
+ {
+  "src": "{{ s | truncate(length=5, end=\"..\") }}",
+  "symbols": [
+   "truncate",
+   "s",
+   "length",
+   "end"
+  ]
+ },
+ {
+  "src": "[{{ s | capitalize }}]",
+  "symbols": [
+   "capitalize",
+   "s"
+  ]
+ },
+ {
+  "src": "[{{ n | length }}]",
+  "symbols": [
+   "length",
+   "n"
+  ]
+ },
+ {
+  "src": "{% include \"part.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "PART",
+  "symbols": []
+ },
+ {
+  "src": "{% set x = 5 %}{% include \"ctx.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "[{{ x }}{{ y }}]",
+  "symbols": [
+   "x",
+   "y"
+  ]
+ },
+ {
+  "src": "{% include \"show.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "<{{ title }}>",
+  "symbols": [
+   "title"
+  ]
+ },
+ {
+  "src": "{% for i in [1,2,3] %}{% include \"item.njk\" %}{% endfor %}",
+  "symbols": [
+   "i"
+  ]
+ },
+ {
+  "src": "<{{ i }}>",
+  "symbols": [
+   "i"
+  ]
+ },
+ {
+  "src": "{% include \"outer.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "O({% include 'inner.njk' %})",
+  "symbols": []
+ },
+ {
+  "src": "I",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"setter.njk\" %}[{{ made }}]",
+  "symbols": [
+   "made"
+  ]
+ },
+ {
+  "src": "{% set made = 1 %}",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"f.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "a{% include \"nope.njk\" ignore missing %}b",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"yes.njk\" ignore missing %}",
+  "symbols": []
+ },
+ {
+  "src": "HERE",
+  "symbols": []
+ },
+ {
+  "src": "{% include name %}",
+  "symbols": [
+   "name"
+  ]
+ },
+ {
+  "src": "DYN",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"p\" ~ \".njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "CONCAT",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"plain\" %}",
+  "symbols": []
+ },
+ {
+  "src": "NOEXT",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"frag.html\" %}",
+  "symbols": []
+ },
+ {
+  "src": "<p>{{ v }}</p>",
+  "symbols": [
+   "v"
+  ]
+ },
+ {
+  "src": "{% include \"sub/deep.njk\" %}",
+  "symbols": []
+ },
+ {
+  "src": "DEEP",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"note.md\" %}",
+  "symbols": []
+ },
+ {
+  "src": "# Not rendered\n{{ 1 + 1 }}",
+  "symbols": []
+ },
+ {
+  "src": "a{% include 'nl.njk' %}b",
+  "symbols": []
+ },
+ {
+  "src": "X\n",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"plain.js\" %}",
+  "symbols": []
+ },
+ {
+  "src": "var a = {b: 1};\nfunction f() { return a.b; }\n",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"tricky.js\" %}",
+  "symbols": []
+ },
+ {
+  "src": "var o = {{a: 1}};\nvar s = '{';\n",
+  "error": "expected variable end"
+ },
+ {
+  "src": "{% include \"style.css\" %}",
+  "symbols": []
+ },
+ {
+  "src": "body { color: red; }\n.a > .b { margin: 0 }\n",
+  "symbols": []
+ },
+ {
+  "src": "{% include \"defs.njk\" %}{{ m() }}",
+  "symbols": [
+   "m"
+  ]
+ },
+ {
+  "src": "{% macro m() %}M{% endmacro %}",
+  "symbols": [
+   "m"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}{% block body %}child{% endblock %}",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "<html>{% block head %}H{% endblock %}|{% block body %}B{% endblock %}</html>",
+  "symbols": [
+   "head",
+   "body"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}{% block head %}CH{% endblock %}{% block body %}CB{% endblock %}",
+  "symbols": [
+   "head",
+   "body"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}{% block body %}[{{ super() }}]{% endblock %}",
+  "symbols": [
+   "body",
+   "super"
+  ]
+ },
+ {
+  "src": "{% extends \"mid.njk\" %}{% block body %}C({{ super() }}){% endblock %}",
+  "symbols": [
+   "body",
+   "super"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}{% block body %}M({{ super() }}){% endblock %}",
+  "symbols": [
+   "body",
+   "super"
+  ]
+ },
+ {
+  "src": "ignored{% extends \"base.njk\" %}also ignored{% block body %}X{% endblock %}",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}{% block body %}{{ title }}{% endblock %}",
+  "symbols": [
+   "body",
+   "title"
+  ]
+ },
+ {
+  "src": "{% set x = \"S\" %}{% extends \"vars2.njk\" %}{% block body %}{% endblock %}",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "{{ x }}{% block body %}{% endblock %}",
+  "symbols": [
+   "x",
+   "body"
+  ]
+ },
+ {
+  "src": "{% extends \"tv.njk\" %}{% set title = \"child\" %}{% block body %}b{% endblock %}",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "[{{ title }}]{% block body %}{% endblock %}",
+  "symbols": [
+   "title",
+   "body"
+  ]
+ },
+ {
+  "src": "{% extends \"nest.njk\" %}{% block inner %}INNER{% endblock %}",
+  "symbols": [
+   "inner"
+  ]
+ },
+ {
+  "src": "{% block outer %}<{% block inner %}i{% endblock %}>{% endblock %}",
+  "symbols": [
+   "outer",
+   "inner"
+  ]
+ },
+ {
+  "src": "{% extends \"loop.njk\" %}{% block item %}<{{ i }}>{% endblock %}",
+  "symbols": [
+   "item",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{% block item %}{{ i }}{% endblock %}{% endfor %}",
+  "symbols": [
+   "items",
+   "i",
+   "item"
+  ]
+ },
+ {
+  "src": "{% extends \"base.njk\" %}{% block body %}{{ v }}{% endblock %}",
+  "symbols": [
+   "body",
+   "v"
+  ]
+ },
+ {
+  "src": "{% extends lay %}{% block body %}D{% endblock %}",
+  "symbols": [
+   "lay",
+   "body"
+  ]
+ },
+ {
+  "src": "{% extends 'wsbase.njk' %}\n{% block body %}\n  child\n{% endblock %}\n",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "[{% block body %}{% endblock %}]\n",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "a{% block x %}X{% endblock %}b",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% block x %}X{% endblock x %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% extends \"nope.njk\" %}{% block body %}x{% endblock %}",
+  "symbols": [
+   "body"
+  ]
+ },
+ {
+  "src": "{% if x %}yes{% endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "[{% if x %}yes{% endif %}]",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if x %}a{% else %}b{% endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if x == 1 %}one{% elif x == 2 %}two{% elif x == 3 %}three{% else %}many{% endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if x == 1 %}one{% elseif x == 2 %}two{% else %}many{% endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if a %}{% if b %}AB{% else %}A{% endif %}{% else %}none{% endif %}",
+  "symbols": [
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% if not x %}empty{% endif %}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{{ \"big\" if n > 5 else \"small\" }}",
+  "symbols": [
+   "n"
+  ]
+ },
+ {
+  "src": "[{{ \"big\" if n > 5 }}]",
+  "symbols": [
+   "n"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{{ i }},{% endfor %}",
+  "symbols": [
+   "items",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{{ i }}{% else %}none{% endfor %}",
+  "symbols": [
+   "items",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in nothing %}{{ i }}{% else %}none{% endfor %}",
+  "symbols": [
+   "nothing",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{{ loop.index }}:{{ loop.index0 }} {% endfor %}",
+  "symbols": [
+   "items",
+   "i",
+   "loop.index",
+   "loop.index0"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{{ loop.revindex }}:{{ loop.revindex0 }} {% endfor %}",
+  "symbols": [
+   "items",
+   "i",
+   "loop.revindex",
+   "loop.revindex0"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{% if loop.first %}[{% endif %}{{ i }}{% if loop.last %}]{% else %},{% endif %}{% endfor %}",
+  "symbols": [
+   "items",
+   "i",
+   "loop.first",
+   "loop.last"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{{ loop.length }}{% endfor %}",
+  "symbols": [
+   "items",
+   "i",
+   "loop.length"
+  ]
+ },
+ {
+  "src": "{% for k, v in obj %}{{ k }}={{ v }};{% endfor %}",
+  "symbols": [
+   "obj",
+   "k",
+   "v"
+  ]
+ },
+ {
+  "src": "{% for k in obj %}[{{ k }}]{% endfor %}",
+  "symbols": [
+   "obj",
+   "k"
+  ]
+ },
+ {
+  "src": "{% for r in rows %}{% for c in r %}{{ c }}{% endfor %}|{% endfor %}",
+  "symbols": [
+   "rows",
+   "r",
+   "c"
+  ]
+ },
+ {
+  "src": "{% for r in rows %}{% for c in r %}{{ loop.index }}{% endfor %}-{{ loop.index }} {% endfor %}",
+  "symbols": [
+   "rows",
+   "r",
+   "c",
+   "loop.index"
+  ]
+ },
+ {
+  "src": "{% for a, b in pairs %}{{ a }}-{{ b }} {% endfor %}",
+  "symbols": [
+   "pairs",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% for c in s %}[{{ c }}]{% endfor %}",
+  "symbols": [
+   "s",
+   "c"
+  ]
+ },
+ {
+  "src": "{% for i in range(0, 4) %}{{ i }}{% endfor %}",
+  "symbols": [
+   "range",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in range(3) %}{{ i }}{% endfor %}",
+  "symbols": [
+   "range",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in range(0, 10, 3) %}{{ i }},{% endfor %}",
+  "symbols": [
+   "range",
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in items %}{% endfor %}[{{ i }}]",
+  "symbols": [
+   "items",
+   "i"
+  ]
+ },
+ {
+  "src": "{% set t = 0 %}{% for i in items %}{% set t = t + i %}{% endfor %}{{ t }}",
+  "symbols": [
+   "items",
+   "i",
+   "t"
+  ]
+ },
+ {
+  "src": "{% set c = cycler(\"odd\", \"even\") %}{% for i in items %}{{ c.next() }} {% endfor %}",
+  "symbols": [
+   "cycler",
+   "items",
+   "i",
+   "c.next"
+  ]
+ },
+ {
+  "src": "{% set x = 5 %}{{ x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% set x = a + b * 2 %}{{ x }}",
+  "symbols": [
+   "a",
+   "b",
+   "x"
+  ]
+ },
+ {
+  "src": "{% set a, b = 1, 2 %}{{ a }}{{ b }}",
+  "error": "expected block end in set statement"
+ },
+ {
+  "src": "{% set x %}Hello {{ name }}{% endset %}[{{ x }}]",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% set x %}<b>{{ v }}</b>{% endset %}{{ x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% set a = [1, 2, 3] %}{{ a | length }}{{ a[1] }}",
+  "symbols": [
+   "length",
+   "a"
+  ]
+ },
+ {
+  "src": "{% set d = {\"a\": 1, \"b\": 2} %}{{ d.a }}{{ d[\"b\"] }}",
+  "symbols": [
+   "d.a",
+   "d"
+  ]
+ },
+ {
+  "src": "{% set x = 1 %}{% set x = x + 1 %}{{ x }}",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% set s = \"a\" ~ \"b\" ~ 1 %}{{ s }}",
+  "symbols": [
+   "s"
+  ]
+ },
+ {
+  "src": "{% raw %}{{ not rendered }} {% if %}{% endraw %}",
+  "symbols": []
+ },
+ {
+  "src": "a{% raw %}{% for %}{{x}}{% endraw %}b",
+  "symbols": []
+ },
+ {
+  "src": "{% verbatim %}{{ keep }} {% if %}{% endverbatim %}",
+  "symbols": []
+ },
+ {
+  "src": "a{# a comment #}b",
+  "symbols": []
+ },
+ {
+  "src": "a{# line1\nline2 #}b",
+  "symbols": []
+ },
+ {
+  "src": "a{# {% if x %} {{ y }} #}b",
+  "symbols": []
+ },
+ {
+  "src": "{% filter upper %}hello {{ name }}{% endfilter %}",
+  "symbols": [
+   "upper",
+   "name"
+  ]
+ },
+ {
+  "src": "{% filter upper | replace(\"L\", \"_\") %}hello{% endfilter %}",
+  "error": "expected block end in filter statement"
+ },
+ {
+  "src": "{% filter title %}the quick fox{% endfilter %}",
+  "symbols": [
+   "title"
+  ]
+ },
+ {
+  "src": "{% macro greet(name) %}Hello {{ name }}!{% endmacro %}{{ greet(\"Ann\") }}",
+  "symbols": [
+   "greet",
+   "name"
+  ]
+ },
+ {
+  "src": "{% macro greet(name, greeting=\"Hi\") %}{{ greeting }} {{ name }}{% endmacro %}{{ greet(\"Ann\") }}|{{ greet(\"Bo\", \"Yo\") }}",
+  "symbols": [
+   "greet",
+   "name",
+   "greeting"
+  ]
+ },
+ {
+  "src": "{% macro m(a, b) %}{{ a }}-{{ b }}{% endmacro %}{{ m(b=2, a=1) }}",
+  "symbols": [
+   "m",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% macro m(a, b) %}[{{ a }}][{{ b }}]{% endmacro %}{{ m(1) }}",
+  "symbols": [
+   "m",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{% macro m(x) %}<b>{{ x }}</b>{% endmacro %}{{ m(\"<i>\") }}",
+  "symbols": [
+   "m",
+   "x"
+  ]
+ },
+ {
+  "src": "{% set outer = \"O\" %}{% macro m() %}[{{ outer }}]{% endmacro %}{{ m() }}",
+  "symbols": [
+   "m",
+   "outer"
+  ]
+ },
+ {
+  "src": "{% macro fact(n) %}{% if n <= 1 %}1{% else %}{{ n * fact(n - 1) }}{% endif %}{% endmacro %}{{ fact(5) }}",
+  "symbols": [
+   "fact",
+   "n"
+  ]
+ },
+ {
+  "src": "{% macro wrap() %}<div>{{ caller() }}</div>{% endmacro %}{% call wrap() %}inner {{ x }}{% endcall %}",
+  "symbols": [
+   "wrap",
+   "caller",
+   "x"
+  ]
+ },
+ {
+  "src": "{% macro each_item(items) %}{% for i in items %}{{ caller(i) }}{% endfor %}{% endmacro %}{% call(item) each_item(list) %}<{{ item }}>{% endcall %}",
+  "symbols": [
+   "each_item",
+   "items",
+   "i",
+   "caller",
+   "list",
+   "item"
+  ]
+ },
+ {
+  "src": "{% import \"macros.njk\" as m %}{{ m.hello(\"X\") }}",
+  "symbols": [
+   "m",
+   "m.hello"
+  ]
+ },
+ {
+  "src": "{% macro hello(n) %}Hello {{ n }}{% endmacro %}",
+  "symbols": [
+   "hello",
+   "n"
+  ]
+ },
+ {
+  "src": "{% from \"macros2.njk\" import hello, bye %}{{ hello(\"A\") }} {{ bye(\"B\") }}",
+  "symbols": [
+   "hello",
+   "bye"
+  ]
+ },
+ {
+  "src": "{% macro hello(n) %}Hello {{ n }}{% endmacro %}{% macro bye(n) %}Bye {{ n }}{% endmacro %}",
+  "symbols": [
+   "hello",
+   "n",
+   "bye"
+  ]
+ },
+ {
+  "src": "{% from \"macros.njk\" import hello as hi %}{{ hi(\"A\") }}",
+  "symbols": [
+   "hello",
+   "hi"
+  ]
+ },
+ {
+  "src": "{% import \"ctxm.njk\" as c with context %}{{ c.show() }}",
+  "symbols": [
+   "c",
+   "c.show"
+  ]
+ },
+ {
+  "src": "{% macro show() %}[{{ site }}]{% endmacro %}",
+  "symbols": [
+   "show",
+   "site"
+  ]
+ },
+ {
+  "src": "{% import \"ctxm.njk\" as c %}{{ c.show() }}",
+  "symbols": [
+   "c",
+   "c.show"
+  ]
+ },
+ {
+  "src": "{% import \"vars.njk\" as v %}{{ v.color }}",
+  "symbols": [
+   "v",
+   "v.color"
+  ]
+ },
+ {
+  "src": "{% set color = \"red\" %}",
+  "symbols": []
+ },
+ {
+  "src": "{% from \"vars.njk\" import color %}{{ color }}",
+  "symbols": [
+   "color"
+  ]
+ },
+ {
+  "src": "{% macro m() %}M{% endmacro %}{% call m() %}ignored{% endcall %}",
+  "symbols": [
+   "m",
+   "caller"
+  ]
+ },
+ {
+  "src": "{% if true %}{% set x = 1 %}{% endif %}[{{ x }}]",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% for i in [1,2,3] %}{% if i > 1 %}{% set last = i %}{% endif %}{% endfor %}[{{ last }}]",
+  "symbols": [
+   "i",
+   "last"
+  ]
+ },
+ {
+  "src": "{% if \"a\" in list %}has a{% endif %}",
+  "symbols": [
+   "list"
+  ]
+ },
+ {
+  "src": "{% for i in items if i > 1 %}{{ i }}{% endfor %}",
+  "symbols": [
+   "i",
+   "items"
+  ]
+ },
+ {
+  "src": "{% set a = [1] %}{{ a.push(2) }}{{ a | length }}",
+  "symbols": [
+   "a.push",
+   "length",
+   "a"
+  ]
+ },
+ {
+  "src": "{% for loop in [1] %}{{ loop }}{% endfor %}",
+  "symbols": [
+   "loop"
+  ]
+ },
+ {
+  "src": "{% if a %}truthy{% else %}falsy{% endif %}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{% if o %}truthy{% else %}falsy{% endif %}",
+  "symbols": [
+   "o"
+  ]
+ },
+ {
+  "src": "{% if s %}truthy{% else %}falsy{% endif %}",
+  "symbols": [
+   "s"
+  ]
+ },
+ {
+  "src": "{% if z %}truthy{% else %}falsy{% endif %}",
+  "symbols": [
+   "z"
+  ]
+ },
+ {
+  "src": "{% if n %}truthy{% else %}falsy{% endif %}",
+  "symbols": [
+   "n"
+  ]
+ },
+ {
+  "src": "{% if nothing %}truthy{% else %}falsy{% endif %}",
+  "symbols": [
+   "nothing"
+  ]
+ },
+ {
+  "src": "{% if not a %}empty{% else %}full{% endif %}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ (a and \"yes\") | dump }}",
+  "symbols": [
+   "dump",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ s or \"fallback\" }}",
+  "symbols": [
+   "s"
+  ]
+ },
+ {
+  "src": "{{ z or \"fallback\" }}",
+  "symbols": [
+   "z"
+  ]
+ },
+ {
+  "src": "{{ \"y\" if a else \"n\" }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ nothing | default(\"x\") }}",
+  "symbols": [
+   "default",
+   "nothing"
+  ]
+ },
+ {
+  "src": "{{ f | default(\"x\") }}",
+  "symbols": [
+   "default",
+   "f"
+  ]
+ },
+ {
+  "src": "{{ f | default(\"x\", true) }}",
+  "symbols": [
+   "default",
+   "f"
+  ]
+ },
+ {
+  "src": "[{{ s | default(\"x\") }}]",
+  "symbols": [
+   "default",
+   "s"
+  ]
+ },
+ {
+  "src": "[{{ s | default(\"x\", true) }}]",
+  "symbols": [
+   "default",
+   "s"
+  ]
+ },
+ {
+  "src": "{{ z | default(\"x\") }}|{{ z | default(\"x\", true) }}",
+  "symbols": [
+   "default",
+   "z"
+  ]
+ },
+ {
+  "src": "{{ n | default(\"x\") }}",
+  "symbols": [
+   "default",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ n | default(\"x\", true) }}",
+  "symbols": [
+   "default",
+   "n"
+  ]
+ },
+ {
+  "src": "{{ a.b.c | default(\"deep\") }}",
+  "symbols": [
+   "default",
+   "a.b.c"
+  ]
+ },
+ {
+  "src": "[{{ nothing | default }}]",
+  "symbols": [
+   "default",
+   "nothing"
+  ]
+ },
+ {
+  "src": "{{ a | default(b) | default(\"last\") }}",
+  "symbols": [
+   "default",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "src": "{{ \"<b>\" }}",
+  "symbols": []
+ },
+ {
+  "src": "{{ v }}",
+  "symbols": [
+   "v"
+  ]
+ },
+ {
+  "src": "{{ v | safe }}",
+  "symbols": [
+   "safe",
+   "v"
+  ]
+ },
+ {
+  "src": "{{ v | escape }}",
+  "symbols": [
+   "escape",
+   "v"
+  ]
+ },
+ {
+  "src": "{{ v | escape | escape }}",
+  "symbols": [
+   "escape",
+   "v"
+  ]
+ },
+ {
+  "src": "{{ v | safe | escape }}",
+  "symbols": [
+   "escape",
+   "safe",
+   "v"
+  ]
+ },
+ {
+  "src": "{{ n }}",
+  "symbols": [
+   "n"
+  ]
+ },
+ {
+  "src": "{{ (\"<a>\" | safe) ~ \"<b>\" }}",
+  "symbols": [
+   "safe"
+  ]
+ },
+ {
+  "src": "{% autoescape false %}{{ v }}{% endautoescape %}",
+  "error": "unknown block tag: autoescape"
+ },
+ {
+  "src": "<a title=\"{{ t }}\">x</a>",
+  "symbols": [
+   "t"
+  ]
+ },
+ {
+  "src": "{{ a[0] }}",
+  "symbols": [
+   "a"
+  ]
+ },
+ {
+  "src": "{{ a | join(\",\") }}",
+  "symbols": [
+   "join",
+   "a"
+  ]
+ },
+ {
+  "src": "{{ nothing | default(\"<d>\") }}",
+  "symbols": [
+   "default",
+   "nothing"
+  ]
+ },
+ {
+  "src": "a  \n  {%- if true %}b{% endif %}",
+  "symbols": []
+ },
+ {
+  "src": "{% if true -%}  \n  b{% endif %}",
+  "symbols": []
+ },
+ {
+  "src": "a \n {%- if true -%} \n b \n {%- endif -%} \n c",
+  "symbols": []
+ },
+ {
+  "src": "a  {{- x -}}  b",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "a  {{- x }}  b",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "a  {{ x -}}  b",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "a  {#- comment -#}  b",
+  "symbols": []
+ },
+ {
+  "src": "{% for i in [1,2,3] %}\n{{ i }}\n{% endfor %}",
+  "symbols": [
+   "i"
+  ]
+ },
+ {
+  "src": "{% for i in [1,2,3] -%}\n{{ i }}\n{%- endfor %}",
+  "symbols": [
+   "i"
+  ]
+ },
+ {
+  "src": "a\n{% set x = 1 %}\nb",
+  "symbols": []
+ },
+ {
+  "src": "a\n{%- set x = 1 -%}\nb",
+  "symbols": []
+ },
+ {
+  "src": "a\t\t{%- if true %}b{% endif %}",
+  "symbols": []
+ },
+ {
+  "src": "a\n\n\n{% if true %}b{% endif %}\n\n\nc",
+  "symbols": []
+ },
+ {
+  "src": "{%- macro m() -%}\n  X\n{%- endmacro -%}\n[{{ m() }}]",
+  "symbols": [
+   "m"
+  ]
+ },
+ {
+  "src": "  {% if true %}\n  x\n  {% endif %}\n",
+  "symbols": []
+ },
+ {
+  "src": "text",
+  "symbols": []
+ },
+ {
+  "src": "text\n",
+  "symbols": []
+ },
+ {
+  "src": "a\r\n{{ x }}\r\nb",
+  "symbols": [
+   "x"
+  ]
+ },
+ {
+  "src": "{% if false -%}a{%- elif true -%}\n  b\n{%- else -%}c{%- endif %}",
+  "symbols": []
+ }
+]

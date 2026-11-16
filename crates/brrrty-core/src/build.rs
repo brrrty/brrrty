@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use brrrty_js::Value;
 use brrrty_liquid::{Engine, EngineOptions, Tz};
 use brrrty_markdown::MarkdownRenderer;
+use brrrty_nunjucks::EngineOptions as NunjucksOptions;
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde_json::Value as Json;
@@ -24,7 +25,7 @@ use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::{Data, split_front_matter};
 use crate::layout::{ChainError, LayoutFile, Layouts};
 use crate::loader::FsLoader;
-use crate::options::BuildOptions;
+use crate::options::{BuildOptions, TemplateEngines};
 use crate::order::{OrderLayout, OrderTemplate};
 use crate::page::{file_path_stem, file_slug, resolve_date};
 use crate::paginate::{Links, Spec};
@@ -32,7 +33,8 @@ use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Located, Locator, Permalink};
 use crate::plugins::rss::{FeedOptions, FeedTemplate};
 use crate::problem::{Problem, Severity, codes};
-use crate::render::{Engines, Job, Pipeline, body_line, engines_for};
+use crate::render::{DataEngine, Engines, Job, Pipeline, body_line, engines_for};
+use crate::templates::Langs;
 use brrrty_js::traps::{self, Outcome};
 
 /// What a build did.
@@ -74,16 +76,14 @@ struct Source {
     input_path: PathBuf,
     /// The template's path relative to the project root.
     shown: PathBuf,
+    /// The canonical file; `None` for a virtual template.
+    real: Option<PathBuf>,
     body: String,
     body_line: usize,
     engines: Engines,
     layouts: Vec<Arc<LayoutFile>>,
     /// Keys left out of the data because Brrrty can't supply their value.
     withheld: Vec<(String, Withheld)>,
-    /// A template in a language Brrrty doesn't render yet (Nunjucks): its
-    /// pages are collection items, with this problem as their content, and
-    /// are never written.
-    unsupported: Option<Problem>,
     /// A feed `feedPlugin` adds: Brrrty renders its Nunjucks template itself.
     feed: Option<Arc<FeedTemplate>>,
 }
@@ -119,9 +119,6 @@ enum Loaded {
     LayoutFailed(Problem),
     /// A problem in a data file, the same for every page it applies to.
     DataFailed(Problem),
-    /// A template Brrrty doesn't render (reported on its own) whose place in
-    /// the collections it can't work out either, and why.
-    Unplaced(Problem),
 }
 
 /// A template that loaded.
@@ -163,7 +160,7 @@ struct Deferred {
     spec: Spec,
     rel: PathBuf,
     shown: PathBuf,
-    raw: bool,
+    data_engine: DataEngine,
     /// Where `permalink` and `pagination` come from, when not the page.
     permalink_from: Option<String>,
     permalink_line: Option<usize>,
@@ -173,8 +170,9 @@ struct Deferred {
 
 /// What every page shares while loading.
 struct Shared<'a> {
-    engine: &'a Engine,
-    loader: &'a FsLoader,
+    langs: &'a Langs<'a>,
+    /// `markdownTemplateEngine` and `htmlTemplateEngine`.
+    template_engines: TemplateEngines,
     input: &'a Path,
     input_rel: &'a Path,
     layouts: &'a Layouts<'a>,
@@ -347,52 +345,10 @@ fn at(p: Problem, line: Option<usize>) -> Problem {
 /// Load one template: its front matter, layouts, data and output path.
 /// Problems carry paths relative to the project root.
 fn load(shared: &Shared<'_>, rel: &Path) -> Loaded {
-    let loaded = match load_page(shared, rel) {
+    match load_page(shared, rel) {
         Ok(l) => l,
         Err(p) => Loaded::Failed(p),
-    };
-    if !is_nunjucks(rel) || shared.virtuals.contains_key(rel) {
-        return loaded;
     }
-    // A Nunjucks template is already reported as unsupported; anything else
-    // wrong with it only keeps it out of the collections.
-    match loaded {
-        Loaded::Failed(p) | Loaded::LayoutFailed(p) | Loaded::DataFailed(p) => Loaded::Unplaced(p),
-        other => other,
-    }
-}
-
-fn is_nunjucks(rel: &Path) -> bool {
-    rel.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("njk"))
-}
-
-/// Nunjucks compiles a string that has `{%`, `{{` or `{#` in it
-/// (`Nunjucks.needsCompilation`); anything else it leaves as written.
-fn has_nunjucks(v: &Value) -> bool {
-    match v {
-        Value::String(s) => s.contains("{%") || s.contains("{{") || s.contains("{#"),
-        Value::Array(a) => a.iter().any(has_nunjucks),
-        Value::Object(o) => o.values().any(has_nunjucks),
-        _ => false,
-    }
-}
-
-/// Why Brrrty can't place a Nunjucks template without running Nunjucks, if
-/// it can't: its permalink or computed data is a Nunjucks template, or it
-/// overrides its template language.
-fn nunjucks_unplaced(data: &Data) -> Option<&'static str> {
-    if data.contains_key("templateEngineOverride") {
-        return Some("it sets `templateEngineOverride`");
-    }
-    let dynamic = !matches!(data.get("dynamicPermalink"), Some(Value::Bool(false)));
-    if dynamic && data.get("permalink").is_some_and(has_nunjucks) {
-        return Some("its `permalink` is a Nunjucks template");
-    }
-    if data.get("eleventyComputed").is_some_and(has_nunjucks) {
-        return Some("its `eleventyComputed` values are Nunjucks templates");
-    }
-    None
 }
 
 /// The layout chain `layout` names, for the page at `shown`.
@@ -640,22 +596,16 @@ fn load_page_inner(
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let nunjucks = ext == "njk";
-    let (engines, syntax) = if nunjucks {
-        // Placed without rendering: everything that would run Nunjucks to
-        // place the page keeps it out of the collections instead.
-        if let Some(why) = nunjucks_unplaced(&data) {
-            return Err(Problem::error(codes::TEMPLATE_UNSUPPORTED, why).with_path(&shown));
-        }
-        (Engines::Raw, "njk".to_string())
-    } else {
-        engines_for(&ext, data.get("templateEngineOverride")).map_err(|p| {
-            at(
-                p.with_path(&shown),
-                key_line(&text, "templateEngineOverride"),
-            )
-        })?
+    let over = data.get("templateEngineOverride");
+    let over_problem = |p: Problem| {
+        at(
+            p.with_path(&shown),
+            key_line(&text, "templateEngineOverride"),
+        )
     };
+    let (engines, syntax) =
+        engines_for(&ext, over, shared.template_engines).map_err(over_problem)?;
+    let data_engine = DataEngine::new(&ext, over, shared.template_engines).map_err(over_problem)?;
 
     // `page`, in the order 11ty fills it in, after any `page` keys of the
     // page's own.
@@ -672,7 +622,7 @@ fn load_page_inner(
     page.insert("templateSyntax".into(), string(syntax));
     page.insert("date".into(), Value::Date(date.fixed_offset()));
     page.insert("rawInput".into(), string(body.to_string()));
-    let plan = computed_plan(&data, &shown, &text, engines == Engines::Raw)?;
+    let plan = computed_plan(&data, &shown, &text, data_engine)?;
     let mut values = js_object(&data);
     values.insert("page".into(), Value::Object(Arc::new(page)));
     // 11ty puts `collections` here, after the page's own data and before
@@ -692,12 +642,12 @@ fn load_page_inner(
         }
     };
     let locator = Locator {
-        engine: shared.engine,
-        loader: shared.loader,
+        langs: shared.langs,
+        data_engine,
+        computed: plan.is_some(),
         rel,
         shown: &shown,
         output_shown: &shared.output_shown,
-        raw: engines == Engines::Raw,
         from: from("permalink"),
         line: front
             .contains_key("permalink")
@@ -708,12 +658,12 @@ fn load_page_inner(
     let source = Arc::new(Source {
         input_path: rel.to_path_buf(),
         shown: shown.clone(),
+        real: feed.is_none().then(|| full.clone()),
         body: body.to_string(),
         body_line: body_line(&text, body),
         engines,
         layouts,
         withheld,
-        unsupported: (nunjucks && feed.is_none()).then(|| unsupported_template(&shown)),
         feed: feed.map(|f| f.template.clone()),
     });
     let computed_membership = plan
@@ -823,7 +773,7 @@ fn load_page_inner(
             spec,
             rel: rel.to_path_buf(),
             shown: shown.clone(),
-            raw: engines == Engines::Raw,
+            data_engine,
             permalink_from: from("permalink"),
             permalink_line: locator.line,
             pagination_from: from("pagination"),
@@ -939,8 +889,7 @@ impl Place<'_, '_> {
         match self.plan {
             Some(plan) => {
                 let applied = plan.apply(
-                    self.shared.engine,
-                    self.shared.loader,
+                    self.shared.langs,
                     locator.shown,
                     &values,
                     undefined,
@@ -1104,12 +1053,12 @@ impl Deferred {
         so_far: &Arc<IndexMap<String, Value>>,
     ) -> Result<Vec<Prepared>, Problem> {
         let locator = Locator {
-            engine: shared.engine,
-            loader: shared.loader,
+            langs: shared.langs,
+            data_engine: self.data_engine,
+            computed: self.plan.is_some(),
             rel: &self.rel,
             shown: &self.shown,
             output_shown: &shared.output_shown,
-            raw: self.raw,
             from: self.permalink_from.clone(),
             line: self.permalink_line,
             subdir: None,
@@ -1145,7 +1094,7 @@ fn computed_plan(
     data: &Data,
     shown: &Path,
     text: &str,
-    raw: bool,
+    engine: DataEngine,
 ) -> Result<Option<ComputedPlan>, Problem> {
     let line = key_line(text, "eleventyComputed");
     if let Some(Value::Object(computed)) = data.get("eleventyComputed") {
@@ -1154,7 +1103,7 @@ fn computed_plan(
             return Err(at(reserved_problem(&reserved).with_path(shown), line));
         }
     }
-    ComputedPlan::new(data, raw).map_err(|p| at(p.with_path(shown), line))
+    ComputedPlan::new(data, engine).map_err(|p| at(p.with_path(shown), line))
 }
 
 /// What a page's reads of `collections` are checked against.
@@ -1637,15 +1586,37 @@ fn build_once(
             engine.register_args_filter(name, f);
         }
     }
+    // 11ty gives Nunjucks the same filters, and the RSS plugin's
+    // Nunjucks-only ones.
+    let mut nunjucks = brrrty_nunjucks::Engine::new(NunjucksOptions {
+        timezone: Tz::Local,
+        autoescape: true,
+    });
+    crate::filters::register_nunjucks_filters(
+        &mut nunjucks,
+        &opts.config.filters,
+        !opts.config.feeds.is_empty(),
+    );
     let includes = input.join("_includes");
     let includes = includes.canonicalize().unwrap_or(includes);
     let loader = FsLoader::new(
-        includes,
+        includes.clone(),
         input_rel.join("_includes"),
         input.clone(),
         input_rel.clone(),
     );
-    let layouts = Layouts::new(&engine, input.clone(), input_rel.clone());
+    let nunjucks_loader = FsLoader::nunjucks(includes, input_rel.join("_includes"), root.clone());
+    let langs = Langs {
+        liquid: &engine,
+        liquid_loader: &loader,
+        nunjucks: &nunjucks,
+        nunjucks_loader: &nunjucks_loader,
+        nunjucks_highlight: highlight
+            .as_ref()
+            .is_some_and(|p| p.options.has_format("njk")),
+    };
+    let template_engines = opts.config.template_engines;
+    let layouts = Layouts::new(&langs, template_engines, input.clone(), input_rel.clone());
     let data_dir = input_rel.join("_data");
     let (globals, output_shown) = globals(opts, &root, &input_rel);
     // 11ty sets the config's `addGlobalData` values, adds its `eleventy`
@@ -1703,19 +1674,9 @@ fn build_once(
     if let Some(v) = globals.get("pkg") {
         global.insert("pkg".to_string(), v.clone());
     }
-    // Nunjucks templates aren't rendered, but they are loaded, with their
-    // data files: they are collection items like any other page.
-    let (nunjucks, javascript): (Vec<PathBuf>, Vec<PathBuf>) = discovery
-        .unsupported
-        .iter()
-        .cloned()
-        .partition(|rel| is_nunjucks(rel));
-    let mut loadable: Vec<PathBuf> = discovery
-        .templates
-        .iter()
-        .cloned()
-        .chain(nunjucks)
-        .collect();
+    // JavaScript templates aren't loaded: their data is JavaScript.
+    let javascript = &discovery.unsupported;
+    let mut loadable: Vec<PathBuf> = discovery.templates.clone();
     // The feeds' virtual templates come after every file, as 11ty adds
     // them. One that has a file's path is refused, as 11ty refuses it.
     let mut virtuals: HashMap<PathBuf, FeedOptions> = HashMap::new();
@@ -1752,8 +1713,8 @@ fn build_once(
     );
     report.problems.extend(dir_data.notes.iter().cloned());
     let shared = Shared {
-        engine: &engine,
-        loader: &loader,
+        langs: &langs,
+        template_engines,
         input: &input,
         input_rel: &input_rel,
         layouts: &layouts,
@@ -1770,11 +1731,9 @@ fn build_once(
     let mut from_layouts = Vec::new();
     let mut from_data = Vec::new();
     let mut unbuilt = 0usize;
-    let mut unplaced: Vec<Problem> = Vec::new();
     for item in loaded {
         match item {
             Loaded::Template(t) => templates.push(*t),
-            Loaded::Unplaced(p) => unplaced.push(p),
             Loaded::Failed(p) => {
                 unbuilt += 1;
                 report.problems.push(p);
@@ -1828,7 +1787,6 @@ fn build_once(
         .collect();
     let mut gap = collections_gap(
         unbuilt,
-        &unplaced,
         javascript.len(),
         templates.iter().any(|t| t.computed_membership),
         js_data,
@@ -2030,13 +1988,11 @@ fn build_once(
         }
     }
     // A page that shares its output with another is not written, but its
-    // content is still rendered for the pages that read it. A Nunjucks
-    // template is reported once, as unsupported, and never written.
+    // content is still rendered for the pages that read it.
     let writes = |p: &Prepared| {
-        p.source.unsupported.is_none()
-            && p.output_rel
-                .as_ref()
-                .is_some_and(|o| !colliding.contains(o))
+        p.output_rel
+            .as_ref()
+            .is_some_and(|o| !colliding.contains(o))
     };
     // A page whose layout Brrrty can't render yet is refused when it would
     // be written; its content still serves the pages that read it.
@@ -2054,8 +2010,7 @@ fn build_once(
     // Render every page's content in 11ty's dependency order, then the
     // layouts, which can read any page's content.
     let pipeline = Pipeline {
-        engine: &engine,
-        loader: &loader,
+        langs: &langs,
         markdown,
         highlight: highlight.as_ref().filter(|p| p.options.has_format("md")),
     };
@@ -2065,6 +2020,7 @@ fn build_once(
         .map(|(i, p)| ContentPage {
             job: Job {
                 shown: &p.source.shown,
+                real: p.source.real.as_deref(),
                 body: &p.source.body,
                 body_line: p.source.body_line,
                 engines: p.source.engines,
@@ -2076,7 +2032,6 @@ fn build_once(
             page_number: p.page_number,
             item: page_item[i],
             renderable: content::renderable(&p.data),
-            unsupported: p.source.unsupported.as_ref(),
         })
         .collect();
     let state = CollectionsState {
@@ -2215,11 +2170,7 @@ fn build_once(
         .extend(shared_problems(from_layouts, "layout"));
     let mut explained: BTreeSet<usize> = BTreeSet::new();
     while let Some(j) = pointed.pop() {
-        if writes(&prepared[j])
-            || prepared[j].source.unsupported.is_some()
-            || !contents.renders(j)
-            || !explained.insert(j)
-        {
+        if writes(&prepared[j]) || !contents.renders(j) || !explained.insert(j) {
             continue;
         }
         if let Err((p, other)) = contents.content(j) {
@@ -2249,22 +2200,17 @@ fn build_once(
     finish(report, strict, start)
 }
 
-/// The problem for a template in a language Brrrty doesn't render yet.
+/// The problem for a template in a language Brrrty doesn't render yet:
+/// JavaScript.
 fn unsupported_template(shown: &Path) -> Problem {
-    let njk = shown
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("njk"));
-    let help = if njk {
-        "Nunjucks support is coming soon. Liquid, Markdown and HTML templates work now."
-    } else {
-        "JavaScript templates are coming soon. Liquid, Markdown and HTML templates work now."
-    };
     Problem::error(
         codes::TEMPLATE_UNSUPPORTED,
         "this template language is not supported yet",
     )
     .with_path(shown)
-    .with_help(help)
+    .with_help(
+        "JavaScript templates are coming soon. Liquid, Nunjucks, Markdown and HTML templates work now.",
+    )
 }
 
 /// The problem of a layout Brrrty can't render, when a template that
@@ -2350,7 +2296,6 @@ fn imports_gap(
 /// without a page would be wrong, so every read of `collections` is refused.
 fn collections_gap(
     unbuilt: usize,
-    unplaced: &[Problem],
     javascript: usize,
     computed: bool,
     js_data: usize,
@@ -2367,22 +2312,6 @@ fn collections_gap(
             "{unbuilt} {} could not be built, so the collections would be missing {}",
             plural(unbuilt, "template", "templates"),
             plural(unbuilt, "its page", "their pages")
-        ));
-    }
-    if let Some(first) = unplaced.first() {
-        let path = first
-            .path
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        let more = match unplaced.len() {
-            1 => String::new(),
-            2 => " (and 1 more template)".to_string(),
-            n => format!(" (and {} more templates)", n - 1),
-        };
-        return Some(format!(
-            "Brrrty can't tell where {path} goes in the collections: {}{more}",
-            first.message
         ));
     }
     if javascript > 0 {
