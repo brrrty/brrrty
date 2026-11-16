@@ -1,0 +1,20 @@
+[package]
+name = "brrrty-prism"
+version = "0.0.5"
+description = "Prism-compatible syntax highlighting for Brrrty, an Eleventy-compatible static site generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["static-site", "ssg", "eleventy", "11ty", "prism"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
+# The generators and the fuzz need Node; the probes are its output.
+exclude = ["tools/", "tests/fuzz.rs", "tests/fuzz/", "tests/probes.rs", "tests/probes/"]
+
+[dependencies]
+brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.0.5" }
+fancy-regex = { version = "=0.20.0", default-features = false, features = ["std", "perf", "unicode", "variable-lookbehinds"] }
+regex-syntax = "0.8.11"
+serde_json = { version = "1", features = ["preserve_order"] }

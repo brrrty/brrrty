@@ -1,0 +1,427 @@
+=== bash
+#!/usr/bin/env bash
+# Deploy the site; exit on the first error.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+NAME=${1:-world}
+for f in *.md; do
+  echo "Processing $f" >&2
+  sed -e 's/foo/bar/g' "$f" | grep -v '^#' > "${f%.md}.txt"
+done
+if [[ -n "$NAME" && $# -gt 0 ]]; then
+  printf '%s\n' "Hello, ${NAME}!"
+elif [ -f /etc/hosts ]; then
+  cat <<EOF > /tmp/out.conf
+server_name $NAME;
+EOF
+fi
+function greet() { local who="$1"; echo "hi $who"; return 0; }
+case "$OSTYPE" in
+  darwin*) brew install jq ;;
+  linux*)  sudo apt-get install -y jq ;;
+esac
+count=$(( count + 1 )); arr=(one two three); echo "${arr[@]}" 2>/dev/null
+ls -la ~/Code | awk '{print $9}' | xargs -I{} echo {} &
+$ docker run --rm -it -v "$(pwd)":/app node:20 npm test
+while read -r line; do echo "$line"; done < file.txt
+=== php
+<?php
+declare(strict_types=1);
+namespace App\Http\Controllers;
+use Illuminate\Support\Facades\DB;
+/**
+ * Fetch a user by id.
+ * @param int $id
+ */
+#[Route('/posts/{id}', methods: ['GET'])]
+final class UserController extends Controller implements JsonSerializable
+{
+    private const LIMIT = 0x1F;
+    public function __construct(private readonly Repo $repo) {}
+    public function show(int $id): ?array
+    {
+        $user = $this->repo->find($id) ?? null;
+        $name = "Hello {$user['name']} and $id\n";
+        $raw = 'single \'quoted\' string';
+        $sql = <<<SQL
+SELECT * FROM users WHERE id = :id
+SQL;
+        $now = <<<'EOT'
+literal $not_var
+EOT;
+        echo $name . PHP_EOL; // trailing comment
+        # hash comment
+        return array_map(fn($x) => $x * 2.5e3, [1, 2, 3]);
+    }
+}
+?>
+<p><?= htmlspecialchars($title) ?></p>
+=== javascript
+// @ts-check
+'use strict';
+const re = /ab+c\/[a-z]{2,}/gi;
+let total = 0, name = `Hello ${user.name ?? 'anon'}!`;
+async function* gen(a = 1, { b, c } = {}) {
+  for await (const x of items) yield x ** 2;
+}
+class Point extends Base {
+  #secret = 42n;
+  static from([x, y]) { return new Point(x, y); }
+  get length() { return Math.hypot(this.x, this.y); }
+}
+const obj = { 'quoted-key': 1, plain: 0b1010, hex: 0xFF, oct: 0o17, f: 1.5e-3 };
+document.querySelectorAll("a[href^='http']").forEach(el => el.target = '_blank');
+export default function handler(req, res) { return res.status(200).json({ ok: true }); }
+/* block
+   comment */ if (a !== b && c >= d || !e) { x += y; } else { x = y ? z : null; }
+const html = html`<div class="${cls}">${content}</div>`;
+label: for (let i = 0; i < 10; i++) { if (i % 2) continue label; }
+=== typescript
+import type { Request, Response } from 'express';
+interface User<T extends object = {}> { readonly id: number; name?: string; meta: T }
+type Maybe<T> = T | null | undefined;
+enum Color { Red = 'RED', Green = 'GREEN' }
+export abstract class Repo<T> implements Store {
+  constructor(private readonly db: Db, public name: string) { super(); }
+  async find(id: number): Promise<Maybe<T>> { return this.db.get<T>(id) as T; }
+}
+function assert(x: unknown): asserts x is string {}
+let tuple: [string, number] = ['a', 1]; const fn = <T,>(x: T): T => x;
+declare module 'foo' { export const bar: number; }
+=== jsx
+import React, { useState } from 'react';
+export function Counter({ start = 0 }) {
+  const [n, setN] = useState(start);
+  return (
+    <div className="counter" data-n={n} onClick={() => setN(n + 1)}>
+      <Label text={`Count: ${n}`} />
+      {n > 5 && <span style={{ color: 'red' }}>Too many!</span>}
+      <>fragment &amp; text</>
+    </div>
+  );
+}
+=== sql
+-- Find recent orders
+SELECT o.id, u.name AS "User Name", COUNT(*) AS total
+FROM orders o
+INNER JOIN users u ON u.id = o.user_id
+WHERE o.created_at >= NOW() - INTERVAL '7 days' AND o.status IN ('paid', 'shipped')
+GROUP BY o.id, u.name HAVING COUNT(*) > 1 ORDER BY total DESC LIMIT 10;
+/* multi
+   line */ INSERT INTO `logs` (`msg`, level) VALUES ("it's", 3), ('x', 0.5e2);
+CREATE TABLE IF NOT EXISTS t (id SERIAL PRIMARY KEY, data JSONB DEFAULT '{}'::jsonb);
+UPDATE users SET email = LOWER(email) WHERE email LIKE '%@EXAMPLE.COM' # mysql comment
+DELIMITER $$ CREATE PROCEDURE p() BEGIN SELECT @var := 1; END $$
+=== yaml
+%YAML 1.2
+---
+# Site config
+title: "My Site"
+url: https://example.com
+enabled: true
+count: 42
+ratio: 3.14
+date: 2024-01-15
+nothing: ~
+tags: [one, two, 'three']
+anchors: &base
+  name: base
+child:
+  <<: *base
+  script: |
+    echo "hi"
+    exit 0
+  folded: >-
+    some long
+    text
+list:
+  - key: value
+  - !!str 123
+...
+=== json
+{
+  "name": "example",
+  "version": "1.0.0",
+  "private": true,
+  "nothing": null,
+  "numbers": [1, -2.5, 3e10],
+  "nested": { "a\"b": "c\\d", "unicode": "\u00e9" }
+}
+=== ruby
+# frozen_string_literal: true
+require 'json'
+module Shop
+  class Order < ApplicationRecord
+    attr_reader :items
+    VERSION = '1.2.3'
+    def initialize(items = [], **opts)
+      @items = items
+      @@count ||= 0
+      $stdout.puts "Created #{items.size} items"
+    end
+    def total = items.sum { |i| i.price * 1.1 }
+    def to_s; %w[a b c].join(', ') + %Q(quoted #{self}); end
+  end
+end
+text = <<~HEREDOC
+  Indented #{interpolated}
+HEREDOC
+puts :symbol, :"quoted sym", /re(gex)?/i =~ 'Regex', 1_000_000, 0x1f
+=begin
+block comment
+=end
+=== python
+#!/usr/bin/env python3
+"""Module docstring."""
+from __future__ import annotations
+import os, sys
+@dataclass(frozen=True)
+class Point:
+    x: float = 0.0
+    def dist(self, other: "Point") -> float:
+        return ((self.x - other.x) ** 2) ** 0.5
+async def main(*args, **kwargs):
+    name = f"Hello {user!r:>10} and {{braces}}"
+    raw = r'C:\path\n' + b"bytes" + rb'raw bytes' + u'text'
+    data = '''triple
+    quoted'''
+    if x is not None and not y or z in w:
+        print(lambda a: a + 1, 0x1F, 1_000, 3.5j, 1e-5)
+    # comment
+    return [i for i in range(10) if i % 2 == 0]
+=== markdown
+---
+title: Front matter
+tags: [a, b]
+---
+# Heading 1
+Setext heading
+==============
+Some *emphasis*, **strong**, ~~strike~~, `inline code` and a [link](https://example.com "title").
+> A blockquote with _underscores_
+1. First
+2. Second
+   - nested item
+- [ ] task
+***
+![image](/img.png)
+| a | b |
+|---|:-:|
+| 1 | 2 |
+```js
+const x = 1;
+```
+    indented code
+<div>html block</div>
+[ref]: https://example.com
+=== ini
+; comment
+# another comment
+[section]
+key = value
+path="C:\Program Files\App"
+[other.section]
+enabled=true
+=== markup
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Page &amp; Title</title>
+  <style>body { color: #333; } a:hover { color: red !important; }</style>
+  <script>window.dataLayer = window.dataLayer || []; if (a < b) { go(); }</script>
+</head>
+<body class="home page" data-id='42'>
+  <!-- a comment -->
+  <a href="/about" title=unquoted>About &copy; &#169; &#xA9;</a>
+  <img src="x.png" alt="" />
+  <![CDATA[ raw <data> ]]>
+  <?xml-stylesheet href="style.xsl"?>
+  <svg:rect xmlns:svg="http://www.w3.org/2000/svg" width="10"/>
+</body>
+</html>
+=== css
+@charset "utf-8";
+@import url("theme.css") screen and (min-width: 600px);
+:root { --main-color: #ff0; --gap: calc(1rem + 2px); }
+/* comment */
+.btn:hover > a[href$=".pdf"]::after, #id.cls:not(.x) {
+  color: rgba(0, 0, 0, .5) !important;
+  background: url(data:image/png;base64,iVBOR) no-repeat;
+  font-family: "Helvetica Neue", sans-serif;
+}
+@media (max-width: 600px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+@supports (display: grid) and (not (display: inline-grid)) { div { display: grid; } }
+@font-face { font-family: 'X'; src: url('x.woff2') format('woff2'); }
+=== less
+@import (reference) "mixins.less";
+@primary: #428bca;
+@min768: ~"(min-width: 768px)";
+.mixin(@a; @b: 2) when (iscolor(@a)) { width: (@b * 10px); }
+.box { .mixin(#fff); &:extend(.btn all); &-title { color: darken(@primary, 10%); }
+  @media @min768 { float: left; } // line comment
+}
+@plugin "my-plugin"; @var: ~`"@{str}".toUpperCase()`;
+=== vim
+" Vim config
+set nocompatible
+let g:mapleader = ","
+nnoremap <leader>w :w<CR>
+if has('syntax') && !exists('g:syntax_on')
+  syntax enable
+endif
+autocmd BufWritePre *.py :%s/\s\+$//e
+function! MyFunc(arg) abort
+  return a:arg . 'x'
+endfunction
+=== liquid
+{% assign total = 0 %}
+{%- for item in collections.posts reversed limit:5 -%}
+  <h2>{{ item.data.title | escape | upcase }}</h2>
+  {% if item.url == page.url and forloop.first %}current{% elsif x > 1 %}x{% else %}y{% endif %}
+  {% comment %}hidden{% endcomment %}
+{%- endfor -%}
+{% raw %}{{ not parsed }}{% endraw %}
+{{ "now" | date: "%Y-%m-%d" }} {{ 3.5 | plus: 1 }}
+=== c
+#include <stdio.h>
+#include "local.h"
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+/* A struct */
+typedef struct node { int value; struct node *next; } node_t;
+static const char *msg = "hello\tworld\n";
+int main(int argc, char **argv) {
+    unsigned long n = 0xFFUL + 10u + 1.5e3f;
+    char c = '\'';
+    for (int i = 0; i < argc; ++i) { printf("%s %d\n", argv[i], i); }
+    // line comment
+    return n >= 0 ? 0 : -1;
+}
+=== nginx
+# nginx config
+user www-data;
+worker_processes auto;
+http {
+    include /etc/nginx/mime.types;
+    server {
+        listen 443 ssl http2;
+        server_name example.com www.example.com;
+        root /var/www/html;
+        location ~* \.(js|css|png)$ { expires 30d; add_header Cache-Control "public"; }
+        location / { try_files $uri $uri/ /index.php?$query_string; }
+        if ($http_user_agent ~ "bot") { return 403; }
+        rewrite ^/old/(.*)$ /new/$1 permanent;
+    }
+}
+=== perl
+#!/usr/bin/perl
+use strict;
+use warnings;
+my @list = (1, 2, 3);
+my %hash = (key => 'value', 'other' => "x$list[0]");
+sub greet { my ($name) = @_; return "Hello, $name!\n"; }
+foreach my $item (@list) { print "$item\n" if $item =~ m/\d+/; }
+$text =~ s/foo/bar/gi; $count = scalar(@list);
+open(my $fh, '<', $file) or die "Cannot open: $!";
+my $str = q{single}; my $str2 = qq{double $x};
+print <<"END";
+heredoc $var
+END
+__END__
+=== go
+package main
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Point is a point.
+type Point struct {
+	X, Y float64 `json:"x"`
+}
+
+func (p *Point) String() string { return fmt.Sprintf("(%v, %v)", p.X, p.Y) }
+
+func main() {
+	ch := make(chan int, 10)
+	go func() { ch <- 42 }()
+	s := `raw
+string`
+	r := 'x'
+	n := 0x1F + 1e3 + 2i
+	if v, ok := m["key"]; ok && !strings.HasPrefix(s, "a") {
+		fmt.Println(v, n, r)
+	}
+}
+=== toml
+# TOML config
+title = "TOML Example"
+[owner]
+name = 'Tom'
+dob = 1979-05-27T07:32:00-08:00
+[database]
+ports = [ 8001, 8001, 8002 ]
+enabled = true
+temp = -3.5e+2
+[[products]]
+"quoted key" = """
+multi
+line"""
+inline = { x = 1, y = 2 }
+=== rust
+//! Crate docs
+use std::collections::HashMap;
+#[derive(Debug, Clone)]
+pub struct Config<'a> { name: &'a str, values: HashMap<String, i64> }
+impl<'a> Config<'a> {
+    /// New config.
+    pub fn new(name: &'a str) -> Self { Self { name, values: HashMap::new() } }
+    fn get(&self, k: &str) -> Option<&i64> { self.values.get(k) }
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let s = r#"raw "string""#; let b = b'x'; let c = '\n';
+    let n = 1_000u32 + 0xffu32 + 1.5e3 as u32;
+    println!("{} {:?}", s, n);
+    match n { 0..=9 => {}, _ if n > 10 => (), _ => unreachable!() }
+    /* block */ Ok(())
+}
+=== r
+# R script
+library(dplyr)
+df <- data.frame(x = 1:10, y = rnorm(10))
+f <- function(a, b = 2L, ...) { a * b + 1e-3 }
+result <- df %>% filter(x > 5) %>% summarise(m = mean(y, na.rm = TRUE))
+if (is.na(x) || x == NULL) print('missing') else cat("ok\n")
+x[x > 0] <- NA_real_; TRUE & FALSE; Inf; NaN; 0x1F
+=== lua
+-- Lua module
+local M = {}
+local count = 0
+function M.greet(name, ...)
+  local msg = "Hello, " .. (name or "world") .. '!'
+  for i, v in ipairs({...}) do count = count + i end
+  return msg, #msg
+end
+--[[ block
+comment ]]
+local s = [[long
+string]]
+if x ~= nil and not y then print(0x1F, 3.5e2) elseif z then return end
+return M
+=== diff
+diff --git a/file.txt b/file.txt
+index 83db48f..bf269f4 100644
+--- a/file.txt
++++ b/file.txt
+@@ -1,3 +1,4 @@
+ unchanged line
+-removed line
++added line
++another
+! changed
+< old
+> new
+=== plain
+Just some plain text, with punctuation: commas, (parens) and "quotes".
+Numbers 123 and symbols #@$%^&*.

@@ -16,6 +16,7 @@ exclude = ["tools/", "tests/regex_probes.rs", "tests/sort_probes.rs", "tests/pro
 brrrty-core = { path = "../brrrty-core", version = "0.0.5" }
 brrrty-liquid = { path = "../brrrty-liquid", version = "0.0.5" }
 brrrty-js = { path = "../brrrty-js", version = "0.0.5" }
+brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.0.5" }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
 indexmap = "2"
 regex = "1.13.1"

@@ -26,15 +26,17 @@
 //! UTF-16 unit, so an emoji is one character to `.`; `^` and `$` with `m`
 //! break lines at `\n` only; `{` is never a plain character; and the `y`,
 //! `d` and `v` flags aren't supported.
+//!
+//! The pattern is read with `brrrty_jsregex`'s lexer, which follows Node's
+//! syntax (and is shared with `brrrty-prism`), so each part is judged by
+//! what it means in JavaScript.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use brrrty_jsregex::classes::{DIGIT, SPACE, WORD};
+use brrrty_jsregex::lex::{How, LexError, Lexer, Open, Tok};
 use regex::{Captures, Regex, RegexBuilder};
-
-/// JavaScript's `\s`.
-const SPACE: &str = r"\t\n\x0B\x0C\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF";
-const WORD: &str = "A-Za-z0-9_";
 
 /// A compiled JavaScript pattern.
 pub struct JsRegex {
@@ -161,253 +163,94 @@ const NO_BACKREF: &str = "backreferences aren't supported: Brrrty's regular expr
 /// Characters `\` may escape to themselves.
 const SYNTAX: &str = "^$\\.*+?()[]{}|/";
 
-fn hex(chars: &[char], at: usize, n: usize) -> bool {
-    chars.len() >= at + n && chars[at..at + n].iter().all(char::is_ascii_hexdigit)
+fn lex_error(e: LexError) -> String {
+    match e {
+        LexError::TrailingBackslash => "a backslash at the end of the pattern".into(),
+        LexError::UnclosedClass => "a character class is never closed".into(),
+        LexError::GroupName => "a group name must be ASCII letters, digits and `_`".into(),
+    }
+}
+
+fn escape_error(n: char) -> String {
+    format!(
+        "the escape `\\{n}` isn't supported: it means something different, or is an error, in Rust's regular expressions"
+    )
 }
 
 /// Rewrite a JavaScript pattern as one `regex` reads the same way. Only
 /// syntax that means exactly the same in both is accepted; anything else
-/// is refused, so a pattern never matches differently without notice.
+/// is refused, so a pattern never matches differently without notice. The
+/// pattern is read with `brrrty_jsregex`'s lexer, which follows Node.
 fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
-    let chars: Vec<char> = pattern.chars().collect();
+    let mut lex = Lexer::new(pattern);
     let mut out = String::new();
     let mut info = Info::default();
-    let mut i = 0;
     // Whether the last thing written can take a quantifier.
     let mut atom = false;
-    while i < chars.len() {
-        let c = chars[i];
-        i += 1;
-        match c {
-            '\\' => {
-                let Some(&n) = chars.get(i) else {
-                    return Err("a backslash at the end of the pattern".into());
-                };
-                i += 1;
+    while let Some(tok) = lex.next().map_err(lex_error)? {
+        match tok {
+            Tok::Char { c, how } => {
                 atom = true;
-                match n {
-                    's' | 'd' | 'w' => {
-                        info.cased |= n == 'w';
-                        let set = match n {
-                            's' => SPACE,
-                            'd' => "0-9",
-                            _ => WORD,
-                        };
-                        out.push('[');
-                        out.push_str(set);
-                        out.push(']');
-                    }
-                    'S' | 'D' | 'W' => {
-                        info.cased |= n == 'W';
-                        let set = match n {
-                            'S' => SPACE,
-                            'D' => "0-9",
-                            _ => WORD,
-                        };
-                        out.push_str("[^");
-                        out.push_str(set);
-                        out.push(']');
-                    }
-                    'b' => {
-                        out.push_str(r"(?-u:\b)");
-                        atom = false;
-                    }
-                    'B' => {
-                        out.push_str(r"(?-u:\B)");
-                        atom = false;
-                    }
-                    '0' if !chars.get(i).is_some_and(char::is_ascii_digit) => out.push_str(r"\x00"),
-                    '1'..='9' => return Err(NO_BACKREF.into()),
-                    'k' => return Err(NO_BACKREF.into()),
-                    'n' | 'r' | 't' | 'f' | 'v' => {
-                        out.push('\\');
-                        out.push(n);
-                    }
-                    'x' if hex(&chars, i, 2) => {
-                        info.cased = true;
-                        out.push_str("\\x");
-                        out.extend(&chars[i..i + 2]);
-                        i += 2;
-                    }
-                    'u' if hex(&chars, i, 4) => {
-                        info.cased = true;
-                        let unit =
-                            u32::from_str_radix(&chars[i..i + 4].iter().collect::<String>(), 16)
-                                .unwrap_or(0);
-                        if (0xD800..0xE000).contains(&unit) {
-                            return Err("an escaped surrogate isn't supported".into());
+                match how {
+                    How::Plain => match c {
+                        ']' | '}' => {
+                            return Err(format!(
+                                "a bare `{c}` isn't supported; escape it as `\\{c}`"
+                            ));
                         }
-                        out.push_str(&format!("\\x{{{unit:X}}}"));
-                        i += 4;
-                    }
-                    '/' => out.push('/'),
-                    n if SYNTAX.contains(n) => {
-                        out.push('\\');
-                        out.push(n);
-                    }
-                    n => {
-                        return Err(format!(
-                            "the escape `\\{n}` isn't supported: it means something different, or is an error, in Rust's regular expressions"
-                        ));
-                    }
-                }
-            }
-            '[' => {
-                atom = true;
-                out.push('[');
-                if chars.get(i) == Some(&'^') {
-                    out.push('^');
-                    i += 1;
-                }
-                if chars.get(i) == Some(&']') {
-                    return Err("an empty character class (`[]` or `[^]`) isn't supported".into());
-                }
-                // `prev_set`: the last item was `\d`, `\s` or `\w`.
-                let mut prev_set = false;
-                // The last item's character, and the start of a range
-                // whose end comes next.
-                let mut prev: Option<u32> = None;
-                let mut range_from: Option<u32> = None;
-                let mut closed = false;
-                while i < chars.len() {
-                    let c = chars[i];
-                    i += 1;
-                    let mut set = false;
-                    // The character this item stands for, if it is one.
-                    let mut item: Option<u32> = Some(c as u32);
-                    match c {
-                        ']' => {
-                            closed = true;
-                            break;
-                        }
-                        '\\' => {
-                            let Some(&n) = chars.get(i) else {
-                                return Err("a backslash at the end of the pattern".into());
-                            };
-                            i += 1;
-                            match n {
-                                's' | 'd' | 'w' => {
-                                    set = true;
-                                    item = None;
-                                    info.cased |= n == 'w';
-                                    out.push_str(match n {
-                                        's' => SPACE,
-                                        'd' => "0-9",
-                                        _ => WORD,
-                                    });
-                                }
-                                'b' => {
-                                    item = Some(8);
-                                    out.push_str(r"\x08")
-                                }
-                                '0' if !chars.get(i).is_some_and(char::is_ascii_digit) => {
-                                    item = Some(0);
-                                    out.push_str(r"\x00")
-                                }
-                                'n' | 'r' | 't' | 'f' | 'v' => {
-                                    item = Some(match n {
-                                        'n' => 10,
-                                        'r' => 13,
-                                        't' => 9,
-                                        'f' => 12,
-                                        _ => 11,
-                                    });
-                                    out.push('\\');
-                                    out.push(n);
-                                }
-                                'x' if hex(&chars, i, 2) => {
-                                    info.cased = true;
-                                    item = u32::from_str_radix(
-                                        &chars[i..i + 2].iter().collect::<String>(),
-                                        16,
-                                    )
-                                    .ok();
-                                    out.push_str("\\x");
-                                    out.extend(&chars[i..i + 2]);
-                                    i += 2;
-                                }
-                                'u' if hex(&chars, i, 4) => {
-                                    info.cased = true;
-                                    let unit = u32::from_str_radix(
-                                        &chars[i..i + 4].iter().collect::<String>(),
-                                        16,
-                                    )
-                                    .unwrap_or(0);
-                                    if (0xD800..0xE000).contains(&unit) {
-                                        return Err("an escaped surrogate isn't supported".into());
-                                    }
-                                    item = Some(unit);
-                                    out.push_str(&format!("\\x{{{unit:X}}}"));
-                                    i += 4;
-                                }
-                                '/' => {
-                                    item = Some('/' as u32);
-                                    out.push('/')
-                                }
-                                n if SYNTAX.contains(n) || n == '-' => {
-                                    item = Some(n as u32);
-                                    out.push('\\');
-                                    out.push(n);
-                                }
-                                n => {
-                                    return Err(format!(
-                                        "the escape `\\{n}` isn't supported in a character class"
-                                    ));
-                                }
-                            }
-                        }
-                        '-' => {
-                            // A range's ends must be single characters, and
-                            // `--` is a set difference in Rust.
-                            let next = chars.get(i).copied();
-                            if next == Some('-') {
-                                return Err("`--` in a character class isn't supported".into());
-                            }
-                            let next_set = next == Some('\\')
-                                && matches!(
-                                    chars.get(i + 1),
-                                    Some('d' | 's' | 'w' | 'D' | 'S' | 'W')
-                                );
-                            let range =
-                                next != Some(']') && !out.ends_with('[') && !out.ends_with("[^");
-                            if range && (prev_set || next_set) {
-                                return Err(
-                                    "a range with a class like `\\w` at an end isn't supported"
-                                        .into(),
-                                );
-                            }
-                            if range {
-                                range_from = prev.take();
-                                item = None;
-                            }
-                            out.push('-');
-                        }
-                        '[' | '&' | '~' => {
-                            out.push('\\');
+                        '{' => return Err(BRACE.into()),
+                        c => {
+                            info.cased |= c.is_ascii_alphabetic();
                             out.push(c);
                         }
-                        _ => {
-                            info.cased |= c.is_ascii_alphabetic();
-                            out.push(c)
+                    },
+                    How::Escape(n) => match n {
+                        '0' => out.push_str(r"\x00"),
+                        'n' | 'r' | 't' | 'f' | 'v' => {
+                            out.push('\\');
+                            out.push(n);
                         }
-                    }
-                    prev_set = set;
-                    if c != '-' || item.is_some() {
-                        match (range_from.take(), item) {
-                            (Some(from), Some(to)) => {
-                                info.surrogate_range |= from < 0xD800 && to > 0xDFFF;
-                                prev = None;
-                            }
-                            _ => prev = item,
+                        '/' => out.push('/'),
+                        n if SYNTAX.contains(n) => {
+                            out.push('\\');
+                            out.push(n);
                         }
+                        n => return Err(escape_error(n)),
+                    },
+                    How::Hex => {
+                        info.cased = true;
+                        out.push_str(&format!("\\x{:02X}", c as u32));
                     }
+                    How::Unicode => {
+                        info.cased = true;
+                        out.push_str(&format!("\\x{{{:X}}}", c as u32));
+                    }
+                    How::Control | How::BackslashC => return Err(escape_error('c')),
                 }
-                if !closed {
-                    return Err("a character class is never closed".into());
-                }
+            }
+            Tok::Surrogate(_) => return Err("an escaped surrogate isn't supported".into()),
+            Tok::ClassEscape(n) => {
+                atom = true;
+                info.cased |= n.eq_ignore_ascii_case(&'w');
+                out.push_str(if n.is_ascii_uppercase() { "[^" } else { "[" });
+                out.push_str(match n.to_ascii_lowercase() {
+                    's' => SPACE,
+                    'd' => DIGIT,
+                    _ => WORD,
+                });
                 out.push(']');
             }
-            '.' => {
+            Tok::Boundary { negate } => {
+                atom = false;
+                out.push_str(if negate { r"(?-u:\B)" } else { r"(?-u:\b)" });
+            }
+            Tok::Decimal(_) | Tok::NamedRef(_) => return Err(NO_BACKREF.into()),
+            Tok::Octal { letter } => return Err(escape_error(letter)),
+            Tok::ClassOpen { negated } => {
+                atom = true;
+                class(&mut lex, negated, &mut out, &mut info)?;
+            }
+            Tok::Dot => {
                 atom = true;
                 out.push_str(if dotall {
                     "(?s:.)"
@@ -415,34 +258,22 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                     r"[^\n\r\u2028\u2029]"
                 });
             }
-            '^' | '$' => {
+            Tok::Start | Tok::End => {
                 info.anchors = true;
                 atom = false;
-                out.push(c);
+                out.push(if tok == Tok::Start { '^' } else { '$' });
             }
-            '|' => {
+            Tok::Alt => {
                 atom = false;
-                out.push(c);
+                out.push('|');
             }
-            '(' => {
+            Tok::Open(open) => {
                 atom = false;
-                if chars.get(i) == Some(&'?') {
-                    let rest: String = chars[i + 1..].iter().take(2).collect();
-                    if rest.starts_with('=')
-                        || rest.starts_with('!')
-                        || rest == "<="
-                        || rest == "<!"
-                    {
-                        return Err(NO_LOOKAROUND.into());
-                    }
-                    if rest.starts_with(':') {
-                        out.push_str("(?:");
-                        i += 2;
-                    } else if rest.starts_with('<') {
-                        let end = chars[i + 2..].iter().position(|&c| c == '>');
-                        let name: String = end
-                            .map(|e| chars[i + 2..i + 2 + e].iter().collect())
-                            .unwrap_or_default();
+                match open {
+                    Open::Capture => out.push('('),
+                    Open::NonCapture => out.push_str("(?:"),
+                    Open::Look { .. } => return Err(NO_LOOKAROUND.into()),
+                    Open::Named(name) => {
                         let ok = name
                             .chars()
                             .next()
@@ -452,70 +283,167 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                             return Err("a group name must be ASCII letters, digits and `_`".into());
                         }
                         out.push_str(&format!("(?P<{name}>"));
-                        i += 2 + name.len() + 1;
-                    } else {
+                    }
+                    Open::Other => {
                         return Err("a group starting `(?` other than `(?:` and `(?<name>` isn't supported (Rust reads `(?i)` and the like as flags)".into());
                     }
-                } else {
-                    out.push('(');
                 }
             }
-            ')' => {
+            Tok::Close => {
                 atom = true;
                 out.push(')');
             }
-            '*' | '+' | '?' => {
-                if !atom {
-                    return Err(format!("`{c}` has nothing to repeat"));
+            Tok::Quant {
+                lazy, brace, op, ..
+            } => {
+                match brace {
+                    // `{n}`, `{n,}`, `{n,m}`; a bare `{` is a literal in
+                    // JavaScript and an error in Rust.
+                    Some(body) => {
+                        if !atom {
+                            return Err(BRACE.into());
+                        }
+                        out.push('{');
+                        out.push_str(&body);
+                        out.push('}');
+                    }
+                    None => {
+                        if !atom {
+                            return Err(format!("`{op}` has nothing to repeat"));
+                        }
+                        out.push(op);
+                    }
                 }
-                out.push(c);
-                if chars.get(i) == Some(&'?') {
+                if lazy {
                     out.push('?');
-                    i += 1;
                 }
                 atom = false;
             }
-            '{' => {
-                // `{n}`, `{n,}`, `{n,m}`; a bare `{` is a literal in
-                // JavaScript and an error in Rust.
-                let close = chars[i..].iter().position(|&c| c == '}');
-                let body: String = close
-                    .map(|e| chars[i..i + e].iter().collect())
-                    .unwrap_or_default();
-                let valid = {
-                    let mut parts = body.splitn(2, ',');
-                    let lo = parts.next().unwrap_or("");
-                    let hi = parts.next();
-                    !lo.is_empty()
-                        && lo.bytes().all(|b| b.is_ascii_digit())
-                        && hi.is_none_or(|h| h.bytes().all(|b| b.is_ascii_digit()))
-                };
-                if !valid || !atom {
-                    return Err("a `{` that isn't a `{n}`, `{n,}` or `{n,m}` quantifier isn't supported; escape it as `\\{`".into());
-                }
-                out.push('{');
-                out.push_str(&body);
-                out.push('}');
-                i += body.chars().count() + 1;
-                if chars.get(i) == Some(&'?') {
-                    out.push('?');
-                    i += 1;
-                }
-                atom = false;
-            }
-            ']' | '}' => {
-                return Err(format!(
-                    "a bare `{c}` isn't supported; escape it as `\\{c}`"
-                ));
-            }
-            _ => {
-                atom = true;
-                info.cased |= c.is_ascii_alphabetic();
-                out.push(c);
-            }
+            Tok::Dash | Tok::ClassClose => unreachable!("only in a class"),
         }
     }
     Ok((out, info))
+}
+
+const BRACE: &str =
+    "a `{` that isn't a `{n}`, `{n,}` or `{n,m}` quantifier isn't supported; escape it as `\\{`";
+
+/// The rest of a character class, after its `[` or `[^`.
+fn class(lex: &mut Lexer, negated: bool, out: &mut String, info: &mut Info) -> Result<(), String> {
+    out.push('[');
+    if negated {
+        out.push('^');
+    }
+    if lex.peek() == Ok(Some(Tok::ClassClose)) {
+        return Err("an empty character class (`[]` or `[^]`) isn't supported".into());
+    }
+    // `prev_set`: the last item was `\d`, `\s` or `\w`.
+    let mut prev_set = false;
+    // The last item's character, and the start of a range whose end comes
+    // next.
+    let mut prev: Option<u32> = None;
+    let mut range_from: Option<u32> = None;
+    loop {
+        let tok = lex.next().map_err(lex_error)?;
+        let mut set = false;
+        // The character this item stands for, if it is one.
+        let item: Option<u32>;
+        // Whether this is a `-` between the ends of a range.
+        let mut range = false;
+        match tok {
+            None => return Err(lex_error(LexError::UnclosedClass)),
+            Some(Tok::ClassClose) => break,
+            Some(Tok::Char { c, how }) => {
+                item = Some(c as u32);
+                match how {
+                    How::Plain => match c {
+                        '[' | '&' | '~' => {
+                            out.push('\\');
+                            out.push(c);
+                        }
+                        c => {
+                            info.cased |= c.is_ascii_alphabetic();
+                            out.push(c);
+                        }
+                    },
+                    How::Escape(n) => match n {
+                        'b' => out.push_str(r"\x08"),
+                        '0' => out.push_str(r"\x00"),
+                        'n' | 'r' | 't' | 'f' | 'v' => {
+                            out.push('\\');
+                            out.push(n);
+                        }
+                        '/' => out.push('/'),
+                        n if SYNTAX.contains(n) || n == '-' => {
+                            out.push('\\');
+                            out.push(n);
+                        }
+                        n => return Err(class_escape_error(n)),
+                    },
+                    How::Hex => {
+                        info.cased = true;
+                        out.push_str(&format!("\\x{:02X}", c as u32));
+                    }
+                    How::Unicode => {
+                        info.cased = true;
+                        out.push_str(&format!("\\x{{{:X}}}", c as u32));
+                    }
+                    How::Control | How::BackslashC => return Err(class_escape_error('c')),
+                }
+            }
+            Some(Tok::Surrogate(_)) => return Err("an escaped surrogate isn't supported".into()),
+            Some(Tok::ClassEscape(n)) if n.is_ascii_lowercase() => {
+                set = true;
+                item = None;
+                info.cased |= n == 'w';
+                out.push_str(match n {
+                    's' => SPACE,
+                    'd' => DIGIT,
+                    _ => WORD,
+                });
+            }
+            Some(Tok::ClassEscape(n)) | Some(Tok::Octal { letter: n }) => {
+                return Err(class_escape_error(n));
+            }
+            Some(Tok::Dash) => {
+                // A range's ends must be single characters, and `--` is a
+                // set difference in Rust.
+                let next = lex.peek();
+                if next == Ok(Some(Tok::Dash)) {
+                    return Err("`--` in a character class isn't supported".into());
+                }
+                let next_set = matches!(next, Ok(Some(Tok::ClassEscape(_))));
+                range = next != Ok(Some(Tok::ClassClose))
+                    && !out.ends_with('[')
+                    && !out.ends_with("[^");
+                if range && (prev_set || next_set) {
+                    return Err("a range with a class like `\\w` at an end isn't supported".into());
+                }
+                item = if range { None } else { Some('-' as u32) };
+                if range {
+                    range_from = prev.take();
+                }
+                out.push('-');
+            }
+            Some(_) => unreachable!("the lexer gives only class tokens in a class"),
+        }
+        prev_set = set;
+        if !range {
+            match (range_from.take(), item) {
+                (Some(from), Some(to)) => {
+                    info.surrogate_range |= from < 0xD800 && to > 0xDFFF;
+                    prev = None;
+                }
+                _ => prev = item,
+            }
+        }
+    }
+    out.push(']');
+    Ok(())
+}
+
+fn class_escape_error(n: char) -> String {
+    format!("the escape `\\{n}` isn't supported in a character class")
 }
 
 /// Whether `hir`, a pattern without the `u` flag, matches text with
