@@ -258,7 +258,8 @@ the script's own statements don't run.
   functions in it (a JavaScript `eleventyComputed` of functions) can't be
   data; port the computation into the template or a filter.
 - Not portable yet: data that reads files (`readFileSync`, `import` of a
-  JSON or CSV file), calls `git`, or imports other modules. There is no
+  JSON or CSV file), runs commands other than `git rev-parse HEAD` (which
+  is `git_head()`), or imports other modules. There is no
   `import` or file access in a data script.
 
 ## Plugins

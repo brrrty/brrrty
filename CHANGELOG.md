@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+Nunjucks:
+
+- `.njk` templates are built, with a Nunjucks 3.2.4 engine configured as 11ty 3.1.8 configures it: autoescaping on, `_includes` then the project folder as include roots, and `./` names relative to the including template. This replaces the refusal for `.njk` files.
+- Pages, layouts and includes can be Nunjucks, in any mix with Liquid and Markdown: a `.md` page in an `.njk` layout, and the reverse. An include of a file that isn't a template, such as a `.js` or `.css` file, is written as it is, byte for byte. Permalinks and computed data in `.njk` pages are Nunjucks, and `markdownTemplateEngine` and `htmlTemplateEngine` can be `"njk"`.
+- Expressions follow JavaScript: truthiness, `==` and `===`, `+` on strings and numbers, how `undefined` and `null` print, and the string, array, number and date methods a template calls. `if`, `for` (with `else`, `loop` and objects), `set`, `macro`, `call` and `caller`, `import` and `from`, `include` (with `ignore missing`), `extends`, `block` and `super()`, `raw`, `verbatim`, `filter` and `switch` work, with whitespace control (`{%-`, `-%}`).
+- Every Nunjucks built-in filter, 11ty's filters, the RSS plugin's filters and the config's Rhai filters run in Nunjucks. A `SafeString` stays safe through filters and macros as it does in Nunjucks.
+- Regular expression literals (`r/.../gi`) work with `replace`, `replaceAll`, `split`, `test`, the `replace` filter and printing. They match as JavaScript's do, with the same rules as `regex_replace` in scripts.
+- What Brrrty can't reproduce exactly is refused with the reason, never approximated: a method with no exact emulation, `random`, a `sort` or `dictsort` whose order would depend on V8's sort, async filters and tags, 11ty's `setAsync`, `getBundle` and `getBundleFileUrl`, printing a function (Nunjucks prints its JavaScript source), and the syntax highlighting plugin's Nunjucks `{% highlight %}` shortcode.
+- The engine has the Liquid engine's safety limits: nesting depth, loop and output size, and a parser that never backtracks. A crash in it refuses the page instead of stopping the build.
+
+Config:
+
+- `git_head()` gives the commit `git rev-parse HEAD` prints, for a config or data script that ports `execSync("git rev-parse HEAD")`. It reads the repository's files (`HEAD`, loose refs, `packed-refs`, and a linked worktree's `.git` file and `commondir`) from the project folder up, and starts no process. Outside a repository it is an error, which `try`/`catch` can turn into a default.
+- The regular expression matcher behind `regex_replace`, `regex_split` and `regex_test` moved to `brrrty-jsregex`, where Nunjucks uses it too.
+
+Syntax highlighting:
+
+- Markdown front matter inside a fence is written highlighted as YAML when a page 11ty renders before it loaded YAML, and refused, as before, when none does. Brrrty replays the order 11ty renders pages' content in.
+- The scan for languages that change grammars counts a Nunjucks `{% highlight %}` whose argument isn't one string, and any `{% highlight` whose arguments start on the next line, as any language.
+
 ## 0.0.6 - 2026-11-17
 
 Syntax highlighting:
