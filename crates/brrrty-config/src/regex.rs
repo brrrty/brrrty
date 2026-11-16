@@ -16,8 +16,8 @@
 //! `\p{..}`, `(?i)`, `[]`, a bare `{`, ...) is refused. Some text is
 //! refused too, where the result would differ: non-ASCII text with `i`,
 //! text with characters outside the BMP (emoji) when the pattern could
-//! split a surrogate pair, and text with `\r`, U+2028 or U+2029 when `m`
-//! is used with `^` or `$`.
+//! split a surrogate pair (see `astral_safe`), and text with `\r`, U+2028
+//! or U+2029 when `m` is used with `^` or `$`.
 //!
 //! The `regex` crate guarantees linear-time matching, so it has no
 //! lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`) and no backreferences (`\1`,
@@ -53,9 +53,10 @@ pub struct JsRegex {
 /// What a pattern uses, for the checks made against text.
 #[derive(Default, Clone, Copy)]
 struct Info {
-    /// `.`, a negated class or a negated class escape: these match half
-    /// of a surrogate pair in JavaScript.
-    matches_units: bool,
+    /// A class range that spans U+D800 to U+DFFF, such as `[\uD7FF-\uE000]`:
+    /// JavaScript's matches half of a surrogate pair, and Rust's has no
+    /// surrogates, nor anything outside the BMP.
+    surrogate_range: bool,
     /// `^` or `$`.
     anchors: bool,
     /// A letter (or `\w`, or an escape that may be one) that `i` would
@@ -129,7 +130,16 @@ fn build(pattern: &str, flags: &str) -> Result<JsRegex, String> {
                 .to_string()
         })?;
     let named = re.capture_names().flatten().next().is_some();
-    let astral_safe = !info.matches_units && !re.is_match("");
+    let hir = regex_syntax::ParserBuilder::new()
+        .case_insensitive(icase)
+        .multi_line(multi)
+        .build()
+        .parse(&translated)
+        .map_err(|e| e.to_string())?;
+    if repeats_nothing(&hir) {
+        return Err("a repeated or optional group that can match nothing, such as `(a*)?` or `(?:x|)*`, isn't supported: JavaScript skips a repetition that matches nothing and Rust doesn't, so the match or its groups can differ; make the inside match at least one character".into());
+    }
+    let astral_safe = !info.surrogate_range && !re.is_match("") && astral_safe(&hir);
     Ok(JsRegex {
         re,
         global,
@@ -185,7 +195,6 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                         out.push(']');
                     }
                     'S' | 'D' | 'W' => {
-                        info.matches_units = true;
                         info.cased |= n == 'W';
                         let set = match n {
                             'S' => SPACE,
@@ -201,7 +210,6 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                         atom = false;
                     }
                     'B' => {
-                        info.matches_units = true;
                         out.push_str(r"(?-u:\B)");
                         atom = false;
                     }
@@ -245,7 +253,6 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                 atom = true;
                 out.push('[');
                 if chars.get(i) == Some(&'^') {
-                    info.matches_units = true;
                     out.push('^');
                     i += 1;
                 }
@@ -254,11 +261,17 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                 }
                 // `prev_set`: the last item was `\d`, `\s` or `\w`.
                 let mut prev_set = false;
+                // The last item's character, and the start of a range
+                // whose end comes next.
+                let mut prev: Option<u32> = None;
+                let mut range_from: Option<u32> = None;
                 let mut closed = false;
                 while i < chars.len() {
                     let c = chars[i];
                     i += 1;
                     let mut set = false;
+                    // The character this item stands for, if it is one.
+                    let mut item: Option<u32> = Some(c as u32);
                     match c {
                         ']' => {
                             closed = true;
@@ -272,6 +285,7 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                             match n {
                                 's' | 'd' | 'w' => {
                                     set = true;
+                                    item = None;
                                     info.cased |= n == 'w';
                                     out.push_str(match n {
                                         's' => SPACE,
@@ -279,16 +293,32 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                                         _ => WORD,
                                     });
                                 }
-                                'b' => out.push_str(r"\x08"),
+                                'b' => {
+                                    item = Some(8);
+                                    out.push_str(r"\x08")
+                                }
                                 '0' if !chars.get(i).is_some_and(char::is_ascii_digit) => {
+                                    item = Some(0);
                                     out.push_str(r"\x00")
                                 }
                                 'n' | 'r' | 't' | 'f' | 'v' => {
+                                    item = Some(match n {
+                                        'n' => 10,
+                                        'r' => 13,
+                                        't' => 9,
+                                        'f' => 12,
+                                        _ => 11,
+                                    });
                                     out.push('\\');
                                     out.push(n);
                                 }
                                 'x' if hex(&chars, i, 2) => {
                                     info.cased = true;
+                                    item = u32::from_str_radix(
+                                        &chars[i..i + 2].iter().collect::<String>(),
+                                        16,
+                                    )
+                                    .ok();
                                     out.push_str("\\x");
                                     out.extend(&chars[i..i + 2]);
                                     i += 2;
@@ -303,11 +333,16 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                                     if (0xD800..0xE000).contains(&unit) {
                                         return Err("an escaped surrogate isn't supported".into());
                                     }
+                                    item = Some(unit);
                                     out.push_str(&format!("\\x{{{unit:X}}}"));
                                     i += 4;
                                 }
-                                '/' => out.push('/'),
+                                '/' => {
+                                    item = Some('/' as u32);
+                                    out.push('/')
+                                }
                                 n if SYNTAX.contains(n) || n == '-' => {
+                                    item = Some(n as u32);
                                     out.push('\\');
                                     out.push(n);
                                 }
@@ -338,6 +373,10 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                                         .into(),
                                 );
                             }
+                            if range {
+                                range_from = prev.take();
+                                item = None;
+                            }
                             out.push('-');
                         }
                         '[' | '&' | '~' => {
@@ -350,6 +389,15 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                         }
                     }
                     prev_set = set;
+                    if c != '-' || item.is_some() {
+                        match (range_from.take(), item) {
+                            (Some(from), Some(to)) => {
+                                info.surrogate_range |= from < 0xD800 && to > 0xDFFF;
+                                prev = None;
+                            }
+                            _ => prev = item,
+                        }
+                    }
                 }
                 if !closed {
                     return Err("a character class is never closed".into());
@@ -358,7 +406,6 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
             }
             '.' => {
                 atom = true;
-                info.matches_units = true;
                 out.push_str(if dotall {
                     "(?s:.)"
                 } else {
@@ -468,6 +515,127 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
     Ok((out, info))
 }
 
+/// Whether `hir`, a pattern without the `u` flag, matches text with
+/// characters outside the BMP the way JavaScript does. JavaScript sees each
+/// such character as two UTF-16 units (a surrogate pair) and Rust as one,
+/// so the two agree as long as no match, and no group in one, can start or
+/// end between the two halves, and nothing counts them as two.
+///
+/// Only a class that has characters outside the BMP (`.`, a negated class,
+/// `\S`, `\D`, `\W`) can match one half of a pair in JavaScript. Each must
+/// be a greedy, unbounded loop of its own (`[^>]+`, `.*`), and nothing that
+/// can come right after the loop may be such a class too. Then:
+///
+/// - The loop eats a pair whole, since it matches both halves.
+/// - A loop can only stop between the halves if what follows it matches
+///   there: it can't consume the second half (only those classes can), and
+///   `^`, `$` and `\b` are false between two halves. So JavaScript
+///   backtracks past that point, as Rust does past the character.
+/// - A match can't start at a second half: whatever matches from there
+///   matched from the first half too (the loop eats it), and JavaScript
+///   tries that first.
+/// - A pattern that can match the empty string is refused, since
+///   JavaScript then steps one unit past it, into a pair. So is `\B`,
+///   which is true between the halves.
+fn astral_safe(hir: &regex_syntax::hir::Hir) -> bool {
+    !nullable(hir) && safe(hir, false)
+}
+
+/// Whether `hir` has a repetition with optional iterations (`?`, `*`, `+`,
+/// `{n,m}` with m > n) over something that can match nothing. JavaScript
+/// fails an optional iteration that matches nothing and tries the next
+/// choice, where Rust accepts it: on `a`, `(?:b?|a)?` matches `a` in
+/// JavaScript and nothing in Rust, and `(a*)?` leaves its group undefined
+/// in JavaScript and empty in Rust.
+fn repeats_nothing(hir: &regex_syntax::hir::Hir) -> bool {
+    use regex_syntax::hir::HirKind;
+    match hir.kind() {
+        HirKind::Empty | HirKind::Look(_) | HirKind::Literal(_) | HirKind::Class(_) => false,
+        HirKind::Repetition(r) => {
+            (r.max != Some(r.min) && nullable(&r.sub)) || repeats_nothing(&r.sub)
+        }
+        HirKind::Capture(c) => repeats_nothing(&c.sub),
+        HirKind::Concat(xs) | HirKind::Alternation(xs) => xs.iter().any(repeats_nothing),
+    }
+}
+
+/// Whether a class can match something outside the BMP (and so, in
+/// JavaScript, half of a surrogate pair).
+fn wide(class: &regex_syntax::hir::Class) -> bool {
+    use regex_syntax::hir::Class;
+    match class {
+        Class::Unicode(c) => c.ranges().iter().any(|r| r.end() > '\u{FFFF}'),
+        Class::Bytes(_) => true,
+    }
+}
+
+/// Whether `hir` can match without consuming anything (assertions count
+/// as matching nothing).
+fn nullable(hir: &regex_syntax::hir::Hir) -> bool {
+    use regex_syntax::hir::HirKind;
+    match hir.kind() {
+        HirKind::Empty | HirKind::Look(_) => true,
+        HirKind::Literal(_) | HirKind::Class(_) => false,
+        HirKind::Repetition(r) => r.min == 0 || nullable(&r.sub),
+        HirKind::Capture(c) => nullable(&c.sub),
+        HirKind::Concat(xs) => xs.iter().all(nullable),
+        HirKind::Alternation(xs) => xs.iter().any(nullable),
+    }
+}
+
+/// Whether the first character `hir` consumes can be one a [`wide`] class
+/// matches.
+fn starts_wide(hir: &regex_syntax::hir::Hir) -> bool {
+    use regex_syntax::hir::HirKind;
+    match hir.kind() {
+        HirKind::Empty | HirKind::Look(_) | HirKind::Literal(_) => false,
+        HirKind::Class(c) => wide(c),
+        HirKind::Repetition(r) => starts_wide(&r.sub),
+        HirKind::Capture(c) => starts_wide(&c.sub),
+        HirKind::Concat(xs) => concat_starts_wide(xs),
+        HirKind::Alternation(xs) => xs.iter().any(starts_wide),
+    }
+}
+
+fn concat_starts_wide(xs: &[regex_syntax::hir::Hir]) -> bool {
+    for x in xs {
+        if starts_wide(x) {
+            return true;
+        }
+        if !nullable(x) {
+            return false;
+        }
+    }
+    false
+}
+
+/// The check behind [`astral_safe`]. `follow_wide`: what can come right
+/// after `hir` may start with a [`wide`] class.
+fn safe(hir: &regex_syntax::hir::Hir, follow_wide: bool) -> bool {
+    use regex_syntax::hir::{HirKind, Look};
+    match hir.kind() {
+        HirKind::Empty | HirKind::Literal(_) => true,
+        HirKind::Look(l) => !matches!(l, Look::WordAsciiNegate | Look::WordUnicodeNegate),
+        HirKind::Class(c) => !wide(c),
+        HirKind::Repetition(r) => match r.sub.kind() {
+            HirKind::Class(c) if wide(c) => {
+                r.greedy && r.max.is_none() && r.min <= 1 && !follow_wide
+            }
+            _ => {
+                let again = r.max != Some(1) && starts_wide(&r.sub);
+                safe(&r.sub, follow_wide || again)
+            }
+        },
+        HirKind::Capture(c) => safe(&c.sub, follow_wide),
+        HirKind::Concat(xs) => xs.iter().enumerate().all(|(i, x)| {
+            let rest = &xs[i + 1..];
+            let follow = concat_starts_wide(rest) || (rest.iter().all(nullable) && follow_wide);
+            safe(x, follow)
+        }),
+        HirKind::Alternation(xs) => xs.iter().all(|x| safe(x, follow_wide)),
+    }
+}
+
 /// The next character boundary after `i`.
 fn advance(s: &str, i: usize) -> usize {
     i + s[i..].chars().next().map_or(1, char::len_utf8)
@@ -480,7 +648,7 @@ impl JsRegex {
             return Err("the `i` flag is only supported for ASCII text: JavaScript and Rust fold the case of other characters differently".into());
         }
         if !self.unicode && !self.astral_safe && s.chars().any(|c| c as u32 > 0xFFFF) {
-            return Err("this pattern can't be used on text with characters outside the BMP (such as emoji): JavaScript sees each as two characters, and the pattern would match differently; add the `u` flag if that is what it should do".into());
+            return Err("this pattern can't be used on text with characters outside the BMP (such as emoji): JavaScript sees each as two characters, and a match could start, end or count between them; add the `u` flag if that is what it should do, or write `.` and negated classes like `[^>]` as greedy loops (`[^>]+`, `.*`) that a character such as `>` follows".into());
         }
         if self.multiline && self.info.anchors && s.contains(['\r', '\u{2028}', '\u{2029}']) {
             return Err("`^` and `$` with the `m` flag only break lines at `\\n` here, and JavaScript also breaks them at `\\r`, U+2028 and U+2029, which this text has".into());

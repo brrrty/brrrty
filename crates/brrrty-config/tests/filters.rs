@@ -548,6 +548,45 @@ fn excerpt_words_matches_javascript() {
     // JS throws a TypeError for a count of 0; so does the port.
     let e = r("{{ u | excerptWords: 0 }}", r#"{"u":"one two"}"#).unwrap_err();
     assert!(e.contains("Cannot read properties of undefined"), "{e}");
+    // Emoji, CJK and combining marks: neither pattern can split a
+    // surrogate pair, so text outside the BMP is fine.
+    let post =
+        r#"{"u":"<p>Ship it \ud83d\ude80 now, \u6f22\u5b57 e\u0301\ud83d\udc4d\ud83c\udffd!</p>"}"#;
+    assert_eq!(
+        r("{{ u | excerptWords: 4 }}", post).unwrap(),
+        "Ship it \u{1F680} now"
+    );
+    assert_eq!(
+        r("{{ u | excerptWords }}", post).unwrap(),
+        "Ship it \u{1F680} now, \u{6F22}\u{5B57} e\u{301}\u{1F44D}\u{1F3FD}!"
+    );
+    assert_eq!(
+        r(
+            "{{ u | excerptWords: 1 }}",
+            r#"{"u":"<b>\ud83d\ude00</b>\ud83d\ude00<i title=\"\ud83d\ude00\">x</i>"}"#
+        )
+        .unwrap(),
+        "\u{1F600}\u{1F600}x"
+    );
+}
+
+/// A filter's error names the function it happened in when the script
+/// named one, and never the internal name of the filter's closure.
+#[test]
+fn filter_errors_name_only_functions_the_script_named() {
+    let cfg = load(
+        "fn strip(s) { regex_replace(s, \".\", \"\", \"g\") }\n\
+         config.add_filter(\"direct\", |s| regex_replace(s, \".\", \"\", \"g\"));\n\
+         config.add_filter(\"named\", |s| strip(s));",
+    );
+    let emoji = r#"{"u":"\ud83d\ude00"}"#;
+    let e = render(&cfg, "{{ u | direct }}", emoji).unwrap_err();
+    assert!(e.contains("outside the BMP"), "{e}");
+    assert!(!e.contains("in function"), "{e}");
+    assert!(!e.contains("anon"), "{e}");
+    let e = render(&cfg, "{{ u | named }}", emoji).unwrap_err();
+    assert!(e.contains("(in function `strip`)"), "{e}");
+    assert!(!e.contains("anon"), "{e}");
 }
 
 /// The three filters a site written for markdown-it and Luxon needs. The expected values are
@@ -935,6 +974,11 @@ fn regex_patterns_that_would_match_differently_are_refused() {
         ("\u{1F600}", ""),
         ("é", "i"),
         ("a", "y"),
+        // JavaScript fails an optional repetition that matches nothing.
+        ("(a*)?", ""),
+        ("(?:b?|a)?", ""),
+        ("(?:x|)*", ""),
+        ("(\\s*)+", ""),
     ] {
         let p = load_err(&format!(
             "regex_test(\"a\", {}, {});",
@@ -959,6 +1003,26 @@ fn regex_text_that_would_match_differently_is_refused() {
     assert!(err(r#"regex_replace("\U0001F600", "(?:)", "-", "g")"#).contains("outside the BMP"));
     assert!(err(r#"regex_test("\U0001F600", "^.$")"#).contains("outside the BMP"));
     assert!(err(r#"regex_split("a\U0001F600", "\\S")"#).contains("outside the BMP"));
+    // Lazy, bounded or back-to-back loops can stop between the halves.
+    for pat in [
+        r"[^>]+?",
+        r"[^a]{1,3}",
+        r"[^a]+[^b]+",
+        r"[^a]+\\S",
+        r"([^a])+",
+        r"\\B",
+        r"[\\uD7FF-\\uE000]",
+    ] {
+        let msg = err(&format!(
+            r#"regex_replace("\U0001F600", "{pat}", "-", "g")"#
+        ));
+        assert!(msg.contains("outside the BMP"), "{pat}: {msg}");
+    }
+    // Greedy loops that something ASCII ends are fine: tag stripping.
+    assert_eq!(
+        eval(r#"regex_replace("<b>\U0001F600</b>.*\U0001F600", "<[^>]+>|\\.+", "", "g")"#),
+        s("\u{1F600}*\u{1F600}")
+    );
     // `^` and `$` with `m` also break at \r in JavaScript.
     assert!(err(r#"regex_replace("a\rb", "$", "!", "gm")"#).contains("`m` flag"));
     // The `u` flag makes JavaScript use code points too, so it is allowed.

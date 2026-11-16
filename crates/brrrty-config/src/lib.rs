@@ -358,7 +358,7 @@ fn syntax_problem(e: &ParseError) -> Problem {
 }
 
 /// A runtime error taken apart: the innermost error's text and position,
-/// and the function it happened in.
+/// and the innermost named function it happened in.
 pub(crate) struct ErrorParts {
     pub message: String,
     pub position: Position,
@@ -369,9 +369,13 @@ pub(crate) struct ErrorParts {
 pub(crate) fn error_parts(e: EvalAltResult) -> ErrorParts {
     let outer = e.position();
     let mut inner = e;
+    // The innermost function the script named: a closure's internal name
+    // (`anon$...`) says nothing the position doesn't.
     let mut function = None;
     while let EvalAltResult::ErrorInFunctionCall(name, _, err, _) = inner {
-        function.get_or_insert(name);
+        if !name.starts_with("anon$") {
+            function = Some(name);
+        }
         inner = *err;
     }
     let position = if inner.position().is_none() {

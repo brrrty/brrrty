@@ -336,15 +336,23 @@ else is an error naming the pattern, with the script's line:
   (`\1`, `\k<n>`);
 - no `\p{..}`, `\a`, `\A`, `\z`, `\c`, `\u{..}`; no `(?i)`-style groups;
   no `[]` or `[^]`; no bare `{`, `}` or `]`; no `--` or `\w` range ends in a
-  class; no flags other than `g i m s u`.
+  class; no flags other than `g i m s u`;
+- no repeated or optional group that can match nothing, such as `(a*)?`
+  or `(?:x|)*`: JavaScript skips a repetition that matches nothing and
+  Rust takes it, so the match or its groups would differ.
 
 Some text is refused, since the answer would differ:
 
 - non-ASCII text when `i` is used and the pattern has letters (Rust folds
   more characters, such as the Kelvin sign);
 - text with characters outside the BMP (emoji) when the pattern could split
-  a surrogate pair (`.`, a negated class, an empty match), unless you add
-  `u`;
+  a surrogate pair, unless you add `u`. JavaScript sees such a character as
+  two units, and `.`, a negated class (`[^>]`) and `\S`, `\D`, `\W` match
+  each unit alone. These are fine as greedy loops (`*` or `+`) that nothing
+  of the same kind follows, such as `(<([^>]+)>)`, `\S+` or `<.+>`. A single
+  one (`^.$`, `[^a]b`), a lazy or counted one (`[^>]+?`, `.{2}`), two in a
+  row (`[^a]+[^b]+`), `\B`, a range across U+D800 to U+DFFF, and a pattern
+  that can match nothing are refused;
 - text with `\r`, U+2028 or U+2029 when `m` is used with `^` or `$`.
 
 ## Checklist

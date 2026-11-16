@@ -40,6 +40,14 @@ pub struct FilterCtx {
     pub timezone: Tz,
 }
 
+impl FilterCtx {
+    /// The context a filter sees when Liquid's time zone is `timezone`,
+    /// for calling a filter outside a render.
+    pub fn new(timezone: Tz) -> Self {
+        Self { timezone }
+    }
+}
+
 /// A filter: `(input, positional arguments, keyword arguments, context)`.
 ///
 /// Keyword names are as written, so `'k': v` arrives as `'k'`. A keyword
