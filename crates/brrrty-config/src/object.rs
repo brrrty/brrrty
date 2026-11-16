@@ -613,4 +613,5 @@ pub fn register(e: &mut Engine) {
             format!("[object Object]{s}")
         });
     register_arrays(e);
+    crate::callbacks::register(e);
 }
