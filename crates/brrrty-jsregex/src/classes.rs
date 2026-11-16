@@ -85,6 +85,13 @@ fn keys() -> &'static UnitSet {
 /// Every unit that matches a member of `set` under `i`: those whose
 /// canonical unit is the canonical unit of a member.
 pub fn case_closure(set: &UnitSet) -> UnitSet {
+    // A single unit is by far the commonest (every letter of a keyword), and
+    // the general walk below reads the whole table for it.
+    if let [(lo, hi)] = set.ranges()
+        && lo == hi
+    {
+        return unit_closure(*lo);
+    }
     let keys = keys();
     // The canonical units of the members.
     let mut canon = set.minus(keys);
@@ -102,6 +109,25 @@ pub fn case_closure(set: &UnitSet) -> UnitSet {
         .map(|&(k, _)| (k, k))
         .collect();
     canon.minus(keys).union(&UnitSet::from_ranges(others))
+}
+
+/// `case_closure` of one unit: its canonical unit, and every unit that
+/// canonicalizes to it.
+fn unit_closure(u: u16) -> UnitSet {
+    static CLASSES: OnceLock<std::collections::HashMap<u16, Vec<u16>>> = OnceLock::new();
+    let classes = CLASSES.get_or_init(|| {
+        let mut m: std::collections::HashMap<u16, Vec<u16>> = std::collections::HashMap::new();
+        for &(k, c) in CANON {
+            m.entry(c).or_default().push(k);
+        }
+        m
+    });
+    let c = canonicalize(u);
+    let mut units: Vec<u16> = classes.get(&c).cloned().unwrap_or_default();
+    if !keys().contains(c) {
+        units.push(c);
+    }
+    UnitSet::from_ranges(units.into_iter().map(|x| (x, x)))
 }
 
 /// The units that `i` lets match some other unit.
@@ -146,6 +172,33 @@ mod tests {
         assert_eq!(canonicalize(0x00DF), 0x00DF);
         assert_eq!(canonicalize(0x03C3), 0x03A3);
         assert_eq!(canonicalize(0x03C2), 0x03A3);
+    }
+
+    /// The general walk, for comparing `unit_closure` with.
+    fn slow_closure(set: &UnitSet) -> UnitSet {
+        let keys = keys();
+        let mut canon = set.minus(keys);
+        let mapped: Vec<(u16, u16)> = CANON
+            .iter()
+            .filter(|&&(k, _)| set.contains(k))
+            .map(|&(_, c)| (c, c))
+            .collect();
+        canon = canon.union(&UnitSet::from_ranges(mapped));
+        let others: Vec<(u16, u16)> = CANON
+            .iter()
+            .filter(|&&(_, c)| canon.contains(c))
+            .map(|&(k, _)| (k, k))
+            .collect();
+        canon.minus(keys).union(&UnitSet::from_ranges(others))
+    }
+
+    #[test]
+    fn the_one_unit_fast_path_matches_the_general_walk() {
+        let cased = CANON.iter().flat_map(|&(k, c)| [k, c]);
+        for u in (0..=0x17F).chain((0..=u16::MAX).step_by(251)).chain(cased) {
+            let set = UnitSet::unit(u);
+            assert_eq!(case_closure(&set), slow_closure(&set), "{u:x}");
+        }
     }
 
     #[test]
