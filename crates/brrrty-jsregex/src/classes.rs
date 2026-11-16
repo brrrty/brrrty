@@ -194,8 +194,7 @@ mod tests {
 
     #[test]
     fn the_one_unit_fast_path_matches_the_general_walk() {
-        let cased = CANON.iter().flat_map(|&(k, c)| [k, c]);
-        for u in (0..=0x17F).chain((0..=u16::MAX).step_by(251)).chain(cased) {
+        for u in 0..=u16::MAX {
             let set = UnitSet::unit(u);
             assert_eq!(case_closure(&set), slow_closure(&set), "{u:x}");
         }

@@ -8,3 +8,8 @@ rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/brrrty/brrrty"
 homepage = "https://brrrty.com"
+
+# brrrty-jsregex's tests check every one of the 65,536 UTF-16 units, which
+# takes about a minute unoptimized.
+[profile.dev.package.brrrty-jsregex]
+opt-level = 3
