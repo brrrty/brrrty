@@ -363,7 +363,10 @@ the way 11ty does:
   file or not (Nunjucks pages, includes, pages refused for another
   reason), and a language a template writes (`` ```{{ lang }} ``) counts
   as any language. If one of them changes a grammar, every page that
-  highlights with that grammar is refused, naming the file and line;
+  highlights with that grammar is refused, naming the file and line.
+  Every page is rendered before any is written, and a language that only
+  shows up then (a fence built from data) redoes the build with it, so
+  it is refused the same way;
 - Prism looking a language up that 11ty may or may not have loaded by then,
   depending on the order it renders pages in. This happens in
   Markdown code (`` ```md ``) that has a fenced code block in a language,
