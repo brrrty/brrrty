@@ -252,6 +252,14 @@ pub(crate) fn add(a: &Val, b: &Val, ops: Ops) -> R<Val> {
         if sa.len() + sb.len() > ops.limit {
             return Err(too_big(ops));
         }
+        // `a ~ b` is `a + "" + b`: adding "" gives the same string, so it
+        // is shared instead of copied.
+        if sb.is_empty() {
+            return Ok(Val::V(Value::String(sa)));
+        }
+        if sa.is_empty() {
+            return Ok(Val::V(Value::String(sb)));
+        }
         let mut s = String::with_capacity(sa.len() + sb.len());
         s.push_str(&sa);
         s.push_str(&sb);
@@ -1543,7 +1551,14 @@ fn array_method(this: &Val, name: &str, args: &[Val], ops: Ops) -> R<Val> {
             }))
         }
         "concat" => {
+            // The size is checked before anything is copied, so a doubling
+            // array stops at the limit instead of several times past it.
+            let total = args.iter().fold(items.len(), |n, a| {
+                n.saturating_add(a.array_len().unwrap_or(1))
+            });
+            check_len(total, ops)?;
             let mut out = items;
+            out.reserve_exact(total - out.len());
             for a in args {
                 match a.array_items() {
                     Some(more) => out.extend(more),

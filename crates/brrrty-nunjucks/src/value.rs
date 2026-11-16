@@ -266,6 +266,15 @@ impl Val {
         matches!(self, Val::Arr(_) | Val::V(Value::Array(_)))
     }
 
+    /// How many items an array has, without copying them.
+    pub fn array_len(&self) -> Option<usize> {
+        match self {
+            Val::Arr(a) => Some(a.borrow().len()),
+            Val::V(Value::Array(a)) => Some(a.len()),
+            _ => None,
+        }
+    }
+
     /// The items of an array, data or the template's own.
     pub fn array_items(&self) -> Option<Vec<Val>> {
         match self {
