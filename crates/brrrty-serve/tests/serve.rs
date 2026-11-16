@@ -1399,11 +1399,14 @@ fn a_silent_browser_is_pinged_and_dropped_when_it_never_answers() {
         sockets.lock().unwrap().len() == 1
     });
     let ws = sockets.lock().unwrap()[0].clone();
-    assert_eq!(read_frame(&mut s).0, 0x9, "a ping after a quiet period");
-    // Answering keeps it open past another period...
-    send_frame(&mut s, 0xA, b"");
-    std::thread::sleep(Duration::from_millis(300));
-    assert!(ws.is_open());
+    // Answering every ping keeps it open across several periods. Each
+    // ping is answered as soon as it arrives, so a slow machine can't
+    // make an answered socket look silent.
+    for _ in 0..3 {
+        assert_eq!(read_frame(&mut s).0, 0x9, "a ping after a quiet period");
+        send_frame(&mut s, 0xA, b"");
+        assert!(ws.is_open());
+    }
     // ...and staying silent through a ping closes it.
     wait_until("the silent socket to close", || !ws.is_open());
 }
