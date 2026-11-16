@@ -42,7 +42,7 @@ fn site_with(
         }
         None => Default::default(),
     };
-    cfg.data = Some(data_runner(clock));
+    cfg.data = Some(data_runner(clock, t.path().to_path_buf()));
     let opts = BuildOptions {
         root: t.path().to_path_buf(),
         input: PathBuf::from("src"),
@@ -586,4 +586,77 @@ fn shadow_note_for_template_data_names_the_file() {
         .unwrap();
     assert!(!note.message.contains("this key"), "{}", note.message);
     assert!(note.message.contains("x.11tydata.rhai"), "{}", note.message);
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=Brrrty",
+            "-c",
+            "user.email=brrrty@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .expect("git runs");
+    assert!(out.status.success(), "git {args:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// `git_head()` is `git rev-parse HEAD` for the project, in the config and
+/// in data files; without a repository it is an error.
+#[test]
+fn git_head_is_the_commit_head_points_at() {
+    let files = [
+        ("src/_data/deploy.rhai", "#{ sha: git_head() }"),
+        (
+            "src/index.md",
+            "---\npermalink: out.html\n---\n{{ deploy.sha }} {{ sha }}",
+        ),
+    ];
+    let config = "config.add_global_data(\"sha\", git_head());\n#{}";
+    let (t, r) = site_with(&files, Clock::Fixed(NOON_MS), None);
+    let e = errors(&r);
+    assert!(
+        e.iter()
+            .any(|p| p.message.contains("not in a git repository")),
+        "{e:#?}"
+    );
+    write(t.path(), CONFIG_FILE, config);
+    let e = load_with(t.path(), Clock::Fixed(NOON_MS)).unwrap_err();
+    assert!(e[0].message.contains("not in a git repository"), "{e:#?}");
+
+    let t2 = tempfile::tempdir().unwrap();
+    for (name, body) in files.iter().chain([&(CONFIG_FILE, config)]) {
+        write(t2.path(), name, body);
+    }
+    git(t2.path(), &["init", "-q"]);
+    git(t2.path(), &["add", "-A"]);
+    git(t2.path(), &["commit", "-q", "-m", "one"]);
+    let sha = git(t2.path(), &["rev-parse", "HEAD"]);
+    let mut cfg = load_with(t2.path(), Clock::Fixed(NOON_MS))
+        .unwrap()
+        .unwrap()
+        .build_options();
+    cfg.data = Some(data_runner(Clock::Fixed(NOON_MS), t2.path().to_path_buf()));
+    let opts = BuildOptions {
+        root: t2.path().to_path_buf(),
+        input: PathBuf::from("src"),
+        output: PathBuf::from("_site"),
+        config: cfg,
+        ..Default::default()
+    };
+    let r = build(&opts, &brrrty_markdown::MarkdownIt::new());
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    let got = fs::read_to_string(t2.path().join("_site/out.html")).unwrap();
+    assert_eq!(got.trim(), format!("<p>{sha} {sha}</p>"));
+    drop(t);
 }

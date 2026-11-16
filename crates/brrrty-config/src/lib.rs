@@ -113,6 +113,7 @@ mod collections;
 mod convert;
 mod data;
 mod filters;
+mod git;
 mod glob;
 mod highlight;
 mod jshelpers;
@@ -267,10 +268,11 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(unreadable(e.to_string())),
     };
+    let root = root.to_path_buf();
     let run = std::thread::Builder::new()
         .name("brrrty-config".into())
         .stack_size(STACK_SIZE)
-        .spawn(move || brrrty_core::contain::catch(|| evaluate(&src, clock)));
+        .spawn(move || brrrty_core::contain::catch(|| evaluate(&src, clock, &root)));
     let crashed = |why: String| {
         Err(vec![
             Problem::error(
@@ -300,9 +302,9 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
 pub(crate) const BUG_HELP: &str = "this is a bug in Brrrty, not in your script. Please report it at https://github.com/brrrty/brrrty/issues";
 
 /// Run a script and read what it set. Problems have no path yet.
-fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
+fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Problem>> {
     api::start_clock();
-    let engine = api::engine(clock);
+    let engine = api::engine(clock, root);
     let (config, state) = api::Config::new();
     let mut scope = rhai::Scope::new();
     scope.push("config", config);

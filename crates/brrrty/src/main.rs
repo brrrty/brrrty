@@ -76,6 +76,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
     // `.rhai` data files work with or without a config file.
     config.data = Some(brrrty_config::data_runner(
         brrrty_config::Clock::from_env().unwrap_or(brrrty_config::Clock::System),
+        root.clone(),
     ));
     let opts = BuildOptions {
         input: args

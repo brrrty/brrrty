@@ -3,6 +3,7 @@
 //! `config` mirrors 11ty's `eleventyConfig` in snake_case. Each call records
 //! what it set in [`State`]; nothing runs until the whole script has.
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use brrrty_core::frontmatter::Data;
@@ -141,13 +142,14 @@ pub fn utc_string(ms: f64) -> String {
     )
 }
 
-/// An engine with Brrrty's limits and the config API registered.
-pub fn engine(clock: Clock) -> Engine {
-    engine_for(clock, crate::CONFIG_FILE.to_string())
+/// An engine with Brrrty's limits and the config API registered, for a
+/// project at `root`.
+pub fn engine(clock: Clock, root: &Path) -> Engine {
+    engine_for(clock, crate::CONFIG_FILE.to_string(), root)
 }
 
 /// [`engine`] for a script called `label` in `debug` output.
-pub fn engine_for(clock: Clock, label: String) -> Engine {
+pub fn engine_for(clock: Clock, label: String, root: &Path) -> Engine {
     let mut e = Engine::new();
     e.set_max_operations(MAX_OPERATIONS)
         .set_max_call_levels(MAX_CALL_LEVELS)
@@ -176,6 +178,12 @@ pub fn engine_for(clock: Clock, label: String) -> Engine {
     #[cfg(debug_assertions)]
     e.register_fn("__brrrty_test_panic", || -> () {
         panic!("deliberate test panic from a script")
+    });
+
+    // `execSync("git rev-parse HEAD")`, read from the repository's files.
+    let root = root.to_path_buf();
+    e.register_fn("git_head", move || -> Result<String, Box<EvalAltResult>> {
+        crate::git::head(&root).map_err(|why| runtime(format!("git_head(): {why}")))
     });
 
     e.register_type_with_name::<Config>("Config")

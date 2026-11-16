@@ -108,6 +108,7 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `new URL(u).hostname` | | `url_hostname(u)`, or `()` when `u` isn't an absolute URL |
 | `d.toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'})` | | `to_locale_date_string(d)` |
 | `Date.now()` | | `get_time(now())` (follows `SOURCE_DATE_EPOCH`) |
+| `execSync('git rev-parse HEAD')` | Scripts can't run commands | `git_head()`: the same commit, read from the repository's files (`HEAD`, loose refs, `packed-refs`, and a linked worktree's `.git` file and `commondir`) found from the project folder up. An error when the project isn't in a repository or `HEAD` has no commit yet |
 | `obj.x` on a missing key | | `()`, as `undefined` |
 | `arr[i]` with a float index | an error | `arr[n.to_int()]` |
 | `str[0]` | a `char` | `str.sub_string(0, 1)` (Rhai counts characters, JS counts UTF-16 units) |

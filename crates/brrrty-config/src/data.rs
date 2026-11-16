@@ -33,12 +33,13 @@ use crate::api::{
 use crate::convert::{to_dynamic, to_value};
 use crate::{Clock, STACK_SIZE, at, error_parts};
 
-/// The runner a build calls for each `.rhai` data file.
-pub fn data_runner(clock: Clock) -> DataRunner {
-    DataRunner(std::sync::Arc::new(move |req| run_file(req, clock)))
+/// The runner a build calls for each `.rhai` data file, in the project at
+/// `root`.
+pub fn data_runner(clock: Clock, root: std::path::PathBuf) -> DataRunner {
+    DataRunner(std::sync::Arc::new(move |req| run_file(req, clock, &root)))
 }
 
-fn run_file(req: &DataRequest, clock: Clock) -> Result<Value, Problem> {
+fn run_file(req: &DataRequest, clock: Clock, root: &std::path::Path) -> Result<Value, Problem> {
     let bytes = std::fs::read(req.file).map_err(|e| {
         Problem::error(
             codes::DATA_FILE_INVALID,
@@ -51,10 +52,13 @@ fn run_file(req: &DataRequest, clock: Clock) -> Result<Value, Problem> {
     })?;
     let global = req.global.clone();
     let label = req.shown.display().to_string();
+    let root = root.to_path_buf();
     let run = std::thread::Builder::new()
         .name("brrrty-data".into())
         .stack_size(STACK_SIZE)
-        .spawn(move || brrrty_core::contain::catch(|| evaluate(&src, &global, clock, &label)))
+        .spawn(move || {
+            brrrty_core::contain::catch(|| evaluate(&src, &global, clock, &label, &root))
+        })
         .map_err(|e| {
             Problem::error(
                 codes::BUILD_THREADS_FAILED,
@@ -81,9 +85,10 @@ pub(crate) fn evaluate(
     global: &Data,
     clock: Clock,
     label: &str,
+    root: &std::path::Path,
 ) -> Result<Value, Problem> {
     crate::api::start_clock();
-    let engine = crate::api::engine_for(clock, label.to_string());
+    let engine = crate::api::engine_for(clock, label.to_string(), root);
     let ast = engine.compile(src).map_err(|e| {
         let help = match &*e.0 {
             rhai::ParseErrorType::VariableUndefined(name) if name == "config" => {
