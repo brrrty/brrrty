@@ -1,12 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.0.6 - 2026-11-17
 
 Syntax highlighting:
 
 - Brrrty now highlights code the way `@11ty/eleventy-plugin-syntaxhighlight` does. Fenced code blocks in Markdown, the `{% highlight %}` Liquid tag and the plugin's options (`lineSeparator`, `errorOnInvalidLanguage`, `alwaysWrapLineHighlights`, `preAttributes`, `codeAttributes`, `trim`, `languages`, `templateFormats`) give the same HTML, byte for byte. `config.add_plugin("syntaxhighlight")` takes them as a map. This replaces the refusal for pages with a fenced code block or a `{% highlight %}` tag.
-- It is a port of Prism 1.30.0 itself: its 464 grammar patterns are translated to Rust regular expressions that match as JavaScript's do, and its tokenizer, hooks and line highlighting (`js {1,3-4}`, `diff-js`) run as they do in Node. Unknown languages and `text` come out as plain code with a `language-x` class, as the plugin writes them.
-- Highlighting is never approximated. A page whose highlighting Brrrty can't reproduce exactly is refused with the reason, and only that page. That is the case for a language Brrrty doesn't have the grammar for (a handful that change other grammars when they load, such as `regex` and `js-templates`), a pattern that would backtrack more than a budget allows, and Markdown with a fenced block or front matter inside a fence, which 11ty highlights differently depending on the order it rendered pages in. The `syntax-highlight-unsupported` problem names the reason, and `syntax-highlight-failed` is for where the plugin itself throws.
+- It is a port of Prism 1.30.0 itself: the grammars' 464 distinct regular expressions are translated to Rust regular expressions that match as JavaScript's do, and Prism's tokenizer, hooks and line highlighting (`` ```js/1-2,4 ``, `{% highlight js 1,3 %}`) and `diff-` languages run as they do in Node.
+- Brrrty has the grammars of 28 of Prism's 297 languages, the ones the test sites use: `bash` (`sh`, `shell`), `c`, `clike`, `css`, `diff`, `go`, `ini`, `javascript` (`js`), `json` (`webmanifest`), `jsx`, `less`, `liquid`, `lua`, `markdown` (`md`), `markup` (`html`, `xml`, `svg`, `mathml`, `ssml`, `atom`, `rss`), `markup-templating`, `nginx`, `perl`, `php`, `python` (`py`), `r`, `ruby` (`rb`), `rust`, `sql`, `toml`, `typescript` (`ts`), `vim` and `yaml` (`yml`), plus Prism's `plain` (`plaintext`, `txt`).
+- A name that isn't a Prism language or alias, such as `conf`, `zsh`, `console`, `terraform` or `JS`, is written as the plugin writes it: the code as it is, with a `language-x` class. So is `text`. With `errorOnInvalidLanguage`, such a name other than `text` fails the page with `syntax-highlight-failed`, where 11ty stops the build.
+- Highlighting is never approximated. A page whose highlighting Brrrty can't reproduce exactly is refused with the reason in a `syntax-highlight-unsupported` problem:
+  - a fence or `{% highlight %}` in one of the other 269 Prism languages, such as `java`, `kotlin`, `swift`, `cpp`, `csharp`, `scss`, `graphql`, `docker` or `shell-session`, or `njk`, which the plugin highlights as `django`;
+  - a page highlighting with a grammar that a language on another page changes. In 11ty, loading `regex`, `css-extras`, `js-extras`, `js-templates`, `jsdoc`, `javadoclike`, `phpdoc` or `php-extras` (among 21 such languages) changes the grammars of `javascript`, `css`, `php`, `markup` and what is built on them for every page rendered after. Brrrty scans every file under the input folder before it builds, Nunjucks pages and pages it refuses for other reasons included, and refuses the pages those grammars would highlight, naming the file and line that loads the language. The list comes from Prism's `components.json` and from loading each language in Node;
+  - a pattern that would backtrack more than a budget allows (on hostile input, reaching the budget can take a few seconds), and Markdown with a fenced block or front matter inside a fence, which 11ty highlights differently depending on the order it rendered pages in.
+
+  `syntax-highlight-failed` is for where the plugin itself throws, in a fence or a `{% highlight %}` tag.
 - Fixed: with the `code` rule off, Markdown still stops treating lines indented 4 or more spaces as continuing a list item, as markdown-it does.
 - Building is faster for pages with code in languages with long keyword lists, such as SQL: translating a case-insensitive pattern no longer reads Prism's whole case table for every letter.
 

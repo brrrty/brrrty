@@ -292,10 +292,49 @@ config.add_plugin("syntaxhighlight", #{ pre_attributes: pre });
 Markdown fences that name a language (`` ```js ``, `~~~php`, `` ```js/1-2 ``
 to mark lines) and the Liquid tag (`{% highlight js 1,3 %}...{% endhighlight %}`)
 are written as 11ty writes them, byte for byte: Prism's tokens, the
-language aliases (`sh`, `ts`, `html`, ...), `diff-` languages, line marks,
-and code in a language Prism doesn't have (written as it is, with its
-`language-` class). The plugin highlights 11ty's own Markdown, not the
-output of a `markdown` filter a config adds.
+language aliases (`sh`, `ts`, `html`, ...), `diff-` languages and line
+marks. The plugin highlights 11ty's own Markdown, not the output of a
+`markdown` filter a config adds.
+
+Brrrty has the grammars of 28 of Prism's 297 languages:
+
+| Language | Aliases |
+|---|---|
+| `bash` | `sh`, `shell` |
+| `c` | |
+| `clike` | |
+| `css` | |
+| `diff` | |
+| `go` | |
+| `ini` | |
+| `javascript` | `js` |
+| `json` | `webmanifest` |
+| `jsx` | |
+| `less` | |
+| `liquid` | |
+| `lua` | |
+| `markdown` | `md` |
+| `markup` | `html`, `xml`, `svg`, `mathml`, `ssml`, `atom`, `rss` |
+| `markup-templating` | |
+| `nginx` | |
+| `perl` | |
+| `php` | |
+| `python` | `py` |
+| `r` | |
+| `ruby` | `rb` |
+| `rust` | |
+| `sql` | |
+| `toml` | |
+| `typescript` | `ts` |
+| `vim` | |
+| `yaml` | `yml` |
+
+and Prism's own `plain` (`plaintext`, `txt`). `text`, and a name that is
+neither a Prism language nor an alias of one (`conf`, `zsh`, `console`,
+`terraform`, `JS`, `DIFF-js`, ...), are written as the plugin writes
+them: the code as it is, not escaped, with its `language-` class. Every
+other Prism language (`java`, `kotlin`, `cpp`, `scss`, `docker`, ...,
+and `njk`, which the plugin highlights as `django`) refuses the page.
 
 The options are 11ty's, in snake_case: `line_separator`,
 `error_on_invalid_language`, `always_wrap_line_highlights`, `trim`,
@@ -308,21 +347,38 @@ function for an attribute, and `init`, are refused.
 A page is refused, with the reason, when Brrrty can't highlight its code
 the way 11ty does:
 
-- a language Prism has that Brrrty doesn't have yet;
+- a language Prism has that Brrrty doesn't have yet (above);
+- a grammar that a language another page names would change. In 11ty,
+  Prism keeps every language any page loaded for the rest of the build,
+  and loading some languages changes others: `regex` reloads `javascript`
+  and everything built on it (`markup`, `css`, `php`, `markdown`,
+  `typescript`, `jsx`, `liquid`, `less`), `css-extras` and `js-extras` do
+  the same, `php-extras` changes `php`, `opencl` and `cilkc` change `c`,
+  `graphql` reloads `typescript` and `jsx`, and `java` reloads `jsx`. 21
+  languages do this (the
+  `mutators` in brrrty-prism's `grammars/prism.json`, from Prism's
+  `components.json` and from loading each one in Node). Before it builds,
+  Brrrty reads every fence's language and every `{% highlight %}`
+  argument in every file under the input folder, whether it renders the
+  file or not (Nunjucks pages, includes, pages refused for another
+  reason), and a language a template writes (`` ```{{ lang }} ``) counts
+  as any language. If one of them changes a grammar, every page that
+  highlights with that grammar is refused, naming the file and line;
 - Prism looking a language up that 11ty may or may not have loaded by then,
-  depending on the order it renders pages in. In 11ty, Prism keeps every
-  language any page loaded, for the rest of the build. This happens in
+  depending on the order it renders pages in. This happens in
   Markdown code (`` ```md ``) that has a fenced code block in a language,
   or front matter (unless YAML is surely loaded), and in `diff-x` code
   where `x` isn't surely loaded;
-- code where Prism's patterns would take too long, or where a Prism hook
+- code where Prism's patterns would take too long (on hostile input,
+  reaching the limit can take a few seconds), or where a Prism hook
   would run out of stack in Node;
 - a line range of a million lines or more.
 
 A page that reads a refused page's `templateContent` or `content` is
 refused too. Where the plugin throws (an attribute that isn't a string or
 a number, or `error_on_invalid_language` and a language Prism doesn't
-have), 11ty stops the build; Brrrty fails that page.
+have), 11ty stops the build; Brrrty fails that page with
+`syntax-highlight-failed`, in a fence or a `{% highlight %}` tag.
 
 Nunjucks is not supported yet, so neither is the plugin's Nunjucks
 shortcode. Without `add_plugin("syntaxhighlight")` code is written plain,
