@@ -8,7 +8,7 @@ use brrrty_js::Value;
 
 use super::cascade::{clean_tags, frozen_keys};
 use super::global::read_json;
-use super::jskeys::export_keys;
+use super::jskeys::{export_keys, module_kind};
 use super::{
     BUILD_KEYS, OVERRIDE_PREFIX, RESERVED, json_text, local_data_files, merge, reserved_keys,
     reserved_problem,
@@ -185,7 +185,7 @@ fn read_js(full: &Path, shown: &Path) -> LocalFile {
     let text = std::fs::read(full)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
-    let Some(keys) = export_keys(&text) else {
+    let Some(keys) = export_keys(&text, module_kind(full)) else {
         return LocalFile::Failed(
             Problem::error(
                 codes::DATA_JS_UNSUPPORTED,

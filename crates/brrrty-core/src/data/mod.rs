@@ -29,6 +29,7 @@ pub(crate) const BUILD_KEYS: &[&str] = &[
     "tags",
     "templateEngineOverride",
     "eleventyComputed",
+    "eleventyDataSchema",
     "pagination",
     "eleventyExcludeFromCollections",
     "dynamicPermalink",

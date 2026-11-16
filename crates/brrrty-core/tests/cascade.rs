@@ -568,3 +568,49 @@ fn json_over_a_javascript_global_key_is_still_refused_when_read() {
     assert!(p.message.contains("src/_data/site.js"), "{}", p.message);
     assert_eq!(read(root, "d/plain/index.html"), "plain");
 }
+
+/// Fix round 1: JavaScript files that only look like a plain export. 11ty
+/// writes each of the first three somewhere else (probed), and stops on
+/// the syntax errors, so every page under them is refused, never built.
+#[test]
+fn javascript_files_brrrty_cant_be_sure_of_refuse_every_page() {
+    for (name, src) in [
+        ("and", "module.exports = {x:1} && {permalink:\"/a/\"};"),
+        (
+            "bracket",
+            "module.exports = {x:1}; module[\"exports\"] = {permalink:\"/m/\"};",
+        ),
+        (
+            "define",
+            "Object.defineProperty(module,\"exports\",{value:{permalink:\"/d/\"}});",
+        ),
+        ("comma", "module.exports = {a: 1 b: 2};"),
+        ("brackets", "module.exports = { a: (1] };"),
+        (
+            "schema",
+            "module.exports = { eleventyDataSchema: function () { throw new Error('x'); } };",
+        ),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        write(root, "src/j/j.11tydata.js", src);
+        write(root, "src/j/p.liquid", "hi");
+        write(root, "src/ok.liquid", "ok");
+        let r = run(root);
+        let p = only_error(&r);
+        assert_eq!(p.code, codes::DATA_JS_UNSUPPORTED, "{name}");
+        assert_eq!(
+            p.path.as_deref(),
+            Some(Path::new("src/j/j.11tydata.js")),
+            "{name}"
+        );
+        assert!(
+            fs::read_dir(root.join("_site"))
+                .unwrap()
+                .flatten()
+                .all(|e| e.file_name() == "ok"),
+            "{name}: only ok/ is written"
+        );
+        assert_eq!(read(root, "ok/index.html"), "ok", "{name}");
+    }
+}
