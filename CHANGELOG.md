@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.9 - 2026-11-17
 
 - A build into an empty or new output folder is about 20% faster on macOS. On APFS, many threads creating files under the same folders fight over folder locks, so pages and passthrough files are now written by 4 threads of their own, and passthrough files are copied in parallel on every system. Passthrough copies whose destinations overlap (a file and a folder mapped to one path, or names that differ only by case or Unicode normalization on macOS) still run one at a time in walk order, so the output and the problems reported are the same as before.
 
