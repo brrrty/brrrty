@@ -251,3 +251,37 @@ fn hostile_inputs_do_not_panic() {
         seed = seed.wrapping_add(0x2545_f491_4f6c_dd1d);
     }
 }
+
+/// Runs `f` on a thread with a 2 MiB stack, the default for spawned
+/// threads.
+fn on_default_stack(f: fn()) {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn deep_dict_keys_are_refused_not_overflowed() {
+    on_default_stack(|| {
+        let keys = "{".repeat(10_000);
+        for src in [
+            format!("{{{{ {keys} }}}}"),
+            format!("{{{{ {{{keys} }}}}"),
+            format!("{{% set {keys} = 1 %}}"),
+            format!("{{% for {keys} in x %}}{{% endfor %}}"),
+            format!("{{% for a, {keys} in x %}}{{% endfor %}}"),
+            format!("{{% macro {keys}() %}}{{% endmacro %}}"),
+            format!("{{% call {keys} %}}{{% endcall %}}"),
+            format!("{{% from \"m\" import {keys} %}}"),
+            format!("{{% block {keys} %}}{{% endblock %}}"),
+            format!("{{{{ a | f({keys}) }}}}"),
+            format!("{{{{ a[{keys}] }}}}"),
+        ] {
+            let e = parse("t.njk", &src).unwrap_err();
+            assert_eq!(e.kind, ErrorKind::TooDeep, "{}: {e}", &src[..12]);
+        }
+    });
+}

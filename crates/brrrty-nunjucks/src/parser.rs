@@ -1278,7 +1278,11 @@ impl Parser<'_> {
                 );
             }
             if kind == Kind::LeftCurly {
-                let key = self.parse_primary(false)?;
+                // A key is a primary, not an expression, so this is the
+                // one recursion `parse_expression` does not count.
+                self.enter()?;
+                let key = grow(|| self.parse_primary(false))?;
+                self.expr_depth -= 1;
                 if !self.skip(Kind::Colon)? {
                     return self.fail(
                         "parseAggregate: expected colon after dict key",
