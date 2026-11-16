@@ -331,6 +331,16 @@ fn strftime(r: &Renderer<'_>, d: &LiquidDate, format: &str) -> R<String> {
         let width = m.get(2).map(|g| g.as_str());
         let code = m.get(4).unwrap().as_str().chars().next().unwrap();
         let has = |c: char| flags.contains(c);
+        // `%<width>N` builds its digits before any padding, so a width
+        // beyond the limit is refused first, as JavaScript refuses a
+        // string that long.
+        if code == 'N'
+            && let Some(w) = width.and_then(|w| w.parse::<f64>().ok())
+            && w > r.engine.output_limit as f64
+        {
+            return Err(RenderErr::new(ErrorKind::Limit, "Invalid string length")
+                .with_help("the width of %N is larger than Brrrty allows in one output"));
+        }
         let Some(text) = convert(d, code, has(':'), width) else {
             out.push_str(whole.as_str());
             continue;

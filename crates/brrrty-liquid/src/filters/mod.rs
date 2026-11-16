@@ -316,5 +316,33 @@ mod tests {
         let e = small(1 << 16);
         let err = run(&e, "{{ 0 | date: '%99999999Y' }}").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Limit);
+        // LiquidJS: "Invalid string length". These used to panic or
+        // allocate gigabytes.
+        for w in [
+            "99999999999999999999",
+            "1000000000",
+            "70000",
+            "999999999999",
+        ] {
+            let start = std::time::Instant::now();
+            for code in ['N', 'Y', 'e', 'L'] {
+                let src = format!("{{{{ 0 | date: '%{w}{code}' }}}}");
+                let err = run(&e, &src).unwrap_err();
+                assert_eq!(err.kind, ErrorKind::Limit, "{src}");
+            }
+            assert!(start.elapsed().as_secs() < 2);
+        }
+        // Real-limit engine: must fail fast, not build a gigabyte.
+        let real = Engine::new(EngineOptions {
+            strict_filters: true,
+            timezone: Tz::Utc,
+        });
+        let start = std::time::Instant::now();
+        for w in ["99999999999999999999", "1000000000"] {
+            let err = run(&real, &format!("{{{{ 0 | date: '%{w}N' }}}}")).unwrap_err();
+            assert_eq!(err.kind, ErrorKind::Limit);
+            assert_eq!(err.message, "Invalid string length");
+        }
+        assert!(start.elapsed().as_secs() < 2);
     }
 }

@@ -1,6 +1,7 @@
 //! The standard filters against LiquidJS 10.30.1.
 //!
-//! `probes/filters.json` holds templates run through LiquidJS with
+//! `probes/filters.json` is made by `tools/gen-filter-probes.cjs` (the command
+//! is in its header) and holds templates run through LiquidJS with
 //! `strictFilters: true`, with what each printed or the error it raised.
 //!
 //! - `plain` and `dates_utc` ran with `TZ=UTC` and are checked with both
