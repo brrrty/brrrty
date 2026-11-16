@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Syntax highlighting:
+
+- Brrrty now highlights code the way `@11ty/eleventy-plugin-syntaxhighlight` does. Fenced code blocks in Markdown, the `{% highlight %}` Liquid tag and the plugin's options (`lineSeparator`, `errorOnInvalidLanguage`, `alwaysWrapLineHighlights`, `preAttributes`, `codeAttributes`, `trim`, `languages`, `templateFormats`) give the same HTML, byte for byte. `config.add_plugin("syntaxhighlight")` takes them as a map. This replaces the refusal for pages with a fenced code block or a `{% highlight %}` tag.
+- It is a port of Prism 1.30.0 itself: its 464 grammar patterns are translated to Rust regular expressions that match as JavaScript's do, and its tokenizer, hooks and line highlighting (`js {1,3-4}`, `diff-js`) run as they do in Node. Unknown languages and `text` come out as plain code with a `language-x` class, as the plugin writes them.
+- Highlighting is never approximated. A page whose highlighting Brrrty can't reproduce exactly is refused with the reason, and only that page. That is the case for a language Brrrty doesn't have the grammar for (a handful that change other grammars when they load, such as `regex` and `js-templates`), a pattern that would backtrack more than a budget allows, and Markdown with a fenced block or front matter inside a fence, which 11ty highlights differently depending on the order it rendered pages in. The `syntax-highlight-unsupported` problem names the reason, and `syntax-highlight-failed` is for where the plugin itself throws.
+- Fixed: with the `code` rule off, Markdown still stops treating lines indented 4 or more spaces as continuing a list item, as markdown-it does.
+- Building is faster for pages with code in languages with long keyword lists, such as SQL: translating a case-insensitive pattern no longer reads Prism's whole case table for every letter.
+
 ## 0.0.5 - 2026-11-16
 
 Config written in Rhai:
