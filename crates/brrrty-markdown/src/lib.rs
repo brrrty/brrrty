@@ -5,6 +5,74 @@ pub trait MarkdownRenderer: Send + Sync {
     fn render(&self, source: &str) -> String;
 }
 
+/// markdown-it's table rule needs a `|` in the header row too, so `a\n|--` is a paragraph. The
+/// port's rule doesn't check that; this wraps it, and is registered where `tables::add` would be.
+struct PipeTable;
+
+impl markdown_it::parser::block::BlockRule for PipeTable {
+    fn check(state: &mut markdown_it::parser::block::BlockState) -> Option<()> {
+        use markdown_it::plugins::extra::tables::TableScanner;
+        state.get_line(state.line).contains('|').then_some(())?;
+        TableScanner::check(state)
+    }
+
+    fn run(
+        state: &mut markdown_it::parser::block::BlockState,
+    ) -> Option<(markdown_it::Node, usize)> {
+        use markdown_it::plugins::extra::tables::TableScanner;
+        state.get_line(state.line).contains('|').then_some(())?;
+        TableScanner::run(state)
+    }
+}
+
+fn add_tables(md: &mut markdown_it::MarkdownIt) {
+    // markdown-it tries `table` before every other block rule.
+    md.block.add_rule::<PipeTable>().before_all();
+}
+
+/// An empty blockquote is `<blockquote></blockquote>` in markdown-it; the port puts a newline
+/// inside it.
+#[derive(Debug)]
+struct EmptyBlockquote;
+
+impl markdown_it::NodeValue for EmptyBlockquote {
+    fn render(&self, _: &markdown_it::Node, fmt: &mut dyn markdown_it::Renderer) {
+        fmt.cr();
+        fmt.text_raw("<blockquote></blockquote>");
+        fmt.cr();
+    }
+}
+
+/// Fixes to the parsed tree where the port's output differs from markdown-it's:
+/// - a blockquote with nothing to show (or only reference definitions) is `<blockquote></blockquote>`;
+/// - a code span of only spaces keeps all its spaces (markdown-it strips one from each end only
+///   when there is something else inside).
+fn fix_tree(ast: &mut markdown_it::Node) {
+    use markdown_it::parser::inline::Text;
+    use markdown_it::plugins::cmark::block::blockquote::Blockquote;
+    use markdown_it::plugins::cmark::inline::backticks::CodeInline;
+    ast.walk_mut(|n, _| {
+        if n.is::<Blockquote>() && n.children.iter().all(|c| c.render().is_empty()) {
+            n.replace(EmptyBlockquote);
+        } else if let Some(code) = n.cast::<CodeInline>() {
+            let marker_len = code.marker_len;
+            let Some(span) = n.srcmap.map(|m| m.get_byte_offsets()) else {
+                return;
+            };
+            let outer = span.1 - span.0;
+            if let Some(text) = n.children.first_mut().and_then(|t| t.cast_mut::<Text>()) {
+                let len = text.content.len();
+                if len > 0
+                    && text.content.bytes().all(|b| b == b' ')
+                    && outer == len + 2 + 2 * marker_len
+                {
+                    text.content = " ".repeat(len + 2);
+                }
+            }
+        }
+    });
+}
+
 /// The markdown-it port (`markdown-it` 0.6.1) configured like 11ty's `Markdown.js`: CommonMark
 /// without the indented `code` rule, plus tables, strikethrough, and raw HTML. No linkify,
 /// typographer, or smart quotes.
@@ -35,7 +103,7 @@ impl MarkdownIt {
         block::paragraph::add(&mut md);
         markdown_it::plugins::html::add(&mut md);
         markdown_it::plugins::extra::strikethrough::add(&mut md);
-        markdown_it::plugins::extra::tables::add(&mut md);
+        add_tables(&mut md);
         MarkdownIt { md }
     }
 }
@@ -48,7 +116,9 @@ impl Default for MarkdownIt {
 
 impl MarkdownRenderer for MarkdownIt {
     fn render(&self, source: &str) -> String {
-        self.md.parse(source).render()
+        let mut ast = self.md.parse(source);
+        fix_tree(&mut ast);
+        ast.render()
     }
 }
 
@@ -66,7 +136,7 @@ fn default_parser() -> markdown_it::MarkdownIt {
     let mut md = markdown_it::MarkdownIt::new();
     markdown_it::plugins::cmark::add(&mut md);
     markdown_it::plugins::extra::strikethrough::add(&mut md);
-    markdown_it::plugins::extra::tables::add(&mut md);
+    add_tables(&mut md);
     md
 }
 
@@ -126,6 +196,7 @@ impl DefaultMarkdownIt {
         padded.push_str(source);
         padded.push(EDGE);
         let mut ast = self.inline.parse(&padded);
+        fix_tree(&mut ast);
         ast.walk_mut(|n, _| {
             if n.is::<Softbreak>() {
                 n.replace(RawBreak("\n"));
@@ -142,6 +213,7 @@ impl DefaultMarkdownIt {
     fn render_block(&self, source: &str) -> String {
         use markdown_it::plugins::cmark::block::fence::CodeFence;
         let mut ast = self.block.parse(source);
+        fix_tree(&mut ast);
         if !source.ends_with('\n') {
             // markdown-it leaves the newline off the last line of a fence that runs to the end of
             // the text; the port adds one.
@@ -151,7 +223,7 @@ impl DefaultMarkdownIt {
                 let Some(fence) = n.cast_mut::<CodeFence>() else {
                     return;
                 };
-                if end != source.len() || !fence.content.ends_with('\n') {
+                if end < source.trim_end_matches([' ', '\t']).len() {
                     return;
                 }
                 let lines = &source[start..end];
@@ -161,8 +233,19 @@ impl DefaultMarkdownIt {
                 let closed = lines.contains('\n')
                     && marks >= fence.marker_len
                     && body[marks..].trim_matches([' ', '\t']).is_empty();
-                if !closed {
+                if closed {
+                    return;
+                }
+                if fence.content.ends_with('\n') {
                     fence.content.pop();
+                }
+                // A last line of only spaces is empty to markdown-it.
+                let tail = fence.content.rfind('\n').map_or(0, |i| i + 1);
+                if fence.content[tail..]
+                    .bytes()
+                    .all(|b| b == b' ' || b == b'\t')
+                {
+                    fence.content.truncate(tail);
                 }
             });
         }

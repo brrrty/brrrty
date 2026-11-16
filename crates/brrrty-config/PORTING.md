@@ -111,12 +111,22 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   locale, and any but `en-US` is an error. So are the machine-dependent zones
   (`"local"`, `"system"`, `"default"`), and a zone *name* (`ZZZZ`, `ZZZZZ`,
   `ttt`, `tttt`, `fff`, ...) for an IANA zone before 1970 or at an instant
-  where ICU's name can't be told from the table. JavaScript's
+  where ICU's name can't be told from the table, and any time from 2100 in a zone with
+  daylight saving (the time zone data has no rules past 2099). JavaScript's
   `format = 'dd-LLL-yyyy'` default is `format ?? "dd-LLL-yyyy"`.
-- `markdown` and `markdown_inline` are `markdown-it` with no options, so HTML
+- `markdown` and `markdown_inline` are `markdown-it` 15.0.3 with no options, so HTML
   is **off** (11ty's own instance has it on) and the indented code rule is
   **on**. `null`, `()`, `""`, `0` and `false` give `""`, as `s || ''` does;
   any other value that isn't a string is an error, as in markdown-it.
+  They match markdown-it on about 200 pinned cases and on three random 6,000-input
+  runs, apart from the known gaps below; they are not proven identical for every input.
+  Known gaps (each a difference in the Rust port of markdown-it, left for later):
+  an emphasis marker next to an emoji or other symbol (`_a_😀` is `<em>` in
+  markdown-it); a single-column table whose header ends in `|` and whose delimiter
+  row has no pipe; an empty list item right after a blockquote's lazy line; a
+  reference definition with an odd destination (`[x]: /u[x]é`); and input that makes
+  the port panic (for example a strikethrough across a CRLF inside a list item),
+  which refuses that page with the panic text.
 
 ## `object()` and key order
 

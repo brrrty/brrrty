@@ -9,6 +9,10 @@
 const markdownIt = require(process.env.MARKDOWN_IT || (() => { throw new Error('set MARKDOWN_IT to the markdown-it package directory'); })());
 const md = markdownIt();
 
+// Found by tools/gen-markdown-fuzz.cjs and fixed.
+const FUZZ_BLOCK = ['>', '> ', '> >', '>  ', '* > ', '> [x]: /u', '> a\n\n>', '\n\n>', 'a\n|--', '[* \n|--', "' \r:-:", '## h\n|--', '2) x\n---:', 'a | b\n---|---', '>|\n|--', '```js\r\n\n  ', '```js\r><div>+ + \n ', '```\nx\n  ', '```\n  '];
+const FUZZ_INLINE = ['`    `', '`   `', '`  `', '` `', '`   a   `', '` a `', '`\n`', '`\n\n`', '`    `__# ', '\u00a0', '\u00a0x', 'x\u00a0', '\u00a0x\u00a0', ' \u00a0 ', '*\u00a0a*', '\u00a0*a*\u00a0'];
+
 const INLINE = [
   '', 'plain', '*em*', '**strong**', '***both***', '_em_ and __strong__', '`code`', '``a ` b``', '` a `', '`  `',
   '<b>bold</b>', '<script>alert(1)</script>', 'a < b > c & d', '&amp; &lt; &copy; &#35; &#x41; &bogus; &#0;', '&nbsp;x',
@@ -40,7 +44,7 @@ const BLOCK = [
   'Term\n: Definition', '* * *', '+ plus', 'a\\\nb', '\\# not heading', '1\\. not list', '[link]( <a b> )', '&#0; &#xD800; &#1234567;',
 ];
 
-const run = (fn, list) => list.map((s) => ({ s, out: fn(s) }));
+const run = (fn, list) => [...list, ...(list === BLOCK ? FUZZ_BLOCK : FUZZ_INLINE)].map((s) => ({ s, out: fn(s) }));
 process.stdout.write(JSON.stringify({
   markdown_it: '15.0.3',
   render: run((s) => md.render(s), BLOCK),

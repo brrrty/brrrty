@@ -19,6 +19,9 @@
 //!   that had two different names from 1970 to 2038. The names come from a
 //!   table made from Node's ICU (`luxon_zones.rs`).
 //! - An instant outside chrono's calendar (about year +-262143) in an IANA zone.
+//! - Any instant from 2100 in an IANA zone with daylight saving: chrono-tz has no rules past
+//!   2099, so it would give the standard offset all year. Zones without DST, fixed offsets
+//!   and UTC are fine.
 
 use brrrty_js::Tz;
 use brrrty_js::tz::{self, Fields};
@@ -339,6 +342,30 @@ struct Dt {
     offset: f64,
 }
 
+/// 2100-01-01T00:00:00Z. chrono-tz holds no rules past 2099, so after this a zone that
+/// changes its offset through the year would be given its standard offset all year.
+const RULES_END_MS: f64 = 4_102_444_800_000.0;
+
+/// Whether the zone's offset changes through 2099 (so it would be wrong in 2100 and later).
+fn has_rules_after_2099(tz: &chrono_tz::Tz) -> bool {
+    let offset = |month: u32| {
+        let t = chrono::NaiveDate::from_ymd_opt(2099, month, 15)
+            .and_then(|d| d.and_hms_opt(12, 0, 0))
+            .map(|d| d.and_utc().timestamp_millis());
+        t.and_then(|t| tz.timestamp_millis_opt(t).single())
+            .map(|d| d.offset().fix().local_minus_utc())
+    };
+    let first = offset(1);
+    (2..=12).any(|m| offset(m) != first)
+}
+
+fn zone_name_of(z: &Zone) -> String {
+    match z {
+        Zone::Iana { name, .. } => name.clone(),
+        Zone::Fixed(_) => "UTC".into(),
+    }
+}
+
 impl Dt {
     fn new(ts: f64, zone: Zone) -> Result<Option<Dt>, String> {
         let offset = match &zone {
@@ -350,6 +377,12 @@ impl Dt {
                             .into(),
                     );
                 };
+                if ts >= RULES_END_MS && has_rules_after_2099(tz) {
+                    return Err(format!(
+                        "luxon_format: `{}` has daylight saving rules, and Brrrty's time zone data has none from 2100, so it can't give that zone's time then",
+                        zone_name_of(&zone)
+                    ));
+                }
                 f64::from(at.offset().fix().local_minus_utc()) / 60.0
             }
         };

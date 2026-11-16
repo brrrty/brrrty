@@ -39,7 +39,8 @@ fn matches_luxon() {
         .iter()
         .filter(|(ms, e)| {
             !((e.contains("before 1970") && *ms < 0.0)
-                || (e.contains("outside the range") && ms.abs() > 8.0e15 / 40.0))
+                || (e.contains("outside the range") && ms.abs() > 8.0e15 / 40.0)
+                || (e.contains("from 2100") && *ms >= 4_102_444_800_000.0))
         })
         .collect();
     assert!(unexpected.is_empty(), "unexpected refusals: {unexpected:?}");
@@ -76,4 +77,24 @@ fn invalid_input_is_invalid_datetime() {
         );
     }
     assert_eq!(luxon_format(0.0, "", "utc", "en").unwrap(), "");
+}
+
+#[test]
+fn zones_with_dst_are_refused_from_2100() {
+    let july_2100 = 4_120_000_000_000.0;
+    let e = luxon_format(july_2100, "HH:mm", "America/New_York", "en-US").unwrap_err();
+    assert!(e.contains("from 2100"), "{e}");
+    // 2099 is fine, and so are zones with no DST, fixed offsets and UTC.
+    assert_eq!(
+        luxon_format(4_088_000_000_000.0, "HH:mm ZZ", "America/New_York", "en-US").unwrap(),
+        "15:33 -04:00"
+    );
+    assert_eq!(
+        luxon_format(july_2100, "HH:mm ZZ", "Asia/Tokyo", "en-US").unwrap(),
+        "13:26 +09:00"
+    );
+    assert_eq!(
+        luxon_format(july_2100, "HH:mm ZZ", "UTC+5", "en-US").unwrap(),
+        "09:26 +05:00"
+    );
 }

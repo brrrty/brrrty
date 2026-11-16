@@ -1,4 +1,4 @@
-//! `DefaultMarkdownIt` against markdown-it 15.0.3 with no options, byte for byte.
+//! `DefaultMarkdownIt` against markdown-it 15.0.3 with no options, on the pinned cases (see the known gaps in PORTING.md).
 //! The inputs and outputs are in `tests/probes/markdown_it.json`, made by
 //! `tools/gen-markdown-probes.cjs`.
 

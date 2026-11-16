@@ -121,6 +121,11 @@ for (const z of BAD_ZONES) for (const t of ['yyyy', 'ZZ', '']) add(DATES[0], z, 
 for (const t of NONTOKENS) add(DATES[0], 'utc', t);
 for (const t of COMBOS) for (const ms of [DATES[0], DATES[3], DATES[19], DATES[24]]) add(ms, 'utc', t);
 for (const t of COMBOS) add(DATES[0], 'America/New_York', t);
+// The end of the zone rules chrono-tz has (2099) and after: zones with DST are refused from 2100,
+// the rest are fine.
+for (const z of ['America/New_York', 'Europe/London', 'Australia/Lord_Howe', 'Asia/Tokyo', 'Asia/Kolkata', 'Pacific/Honolulu', 'America/Phoenix', 'Africa/Casablanca', 'Asia/Tehran', 'UTC+5', 'utc'])
+  for (const ms of [utc(2099, 7, 15, 12), utc(2099, 12, 31, 23, 59, 59, 999), utc(2100, 1, 1), utc(2100, 7, 15, 12), utc(2150, 7, 15, 12), utc(2500, 1, 1)])
+    for (const t of ['yyyy-MM-dd HH:mm ZZ', 'ZZZZ', 'tttt']) add(ms, z, t);
 // Invalid dates.
 for (const t of ['yyyy', '', 'dd-LLL-yyyy', "'x'"]) for (const z of ['utc', 'America/New_York']) add(null, z, t);
 

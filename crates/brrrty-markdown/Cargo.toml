@@ -10,7 +10,7 @@ homepage.workspace = true
 keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
 categories = ["command-line-utilities", "web-programming"]
 readme = false
-exclude = ["tools/", "tests/probes.rs", "tests/probes/"]
+exclude = ["tools/", "tests/probes.rs", "tests/fuzz.rs", "tests/probes/"]
 
 [dependencies]
 markdown-it = { version = "=0.6.1", default-features = false }
