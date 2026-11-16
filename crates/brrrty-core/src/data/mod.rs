@@ -1,7 +1,6 @@
 //! Page data: 11ty's deep merge, JavaScript key order, reserved names, and
 //! the data sources Brrrty doesn't read yet.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,6 +8,9 @@ use brrrty_js::Value;
 
 use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
+
+mod global;
+pub(crate) use global::{GlobalData, load_global};
 
 const OVERRIDE_PREFIX: &str = "override:";
 
@@ -168,28 +170,6 @@ pub(crate) fn key_line(text: &str, key: &str) -> Option<usize> {
         }
     }
     None
-}
-
-/// The top-level names global data files would set: one per file in
-/// `_data` (`.json`, `.mjs`, `.cjs`, `.js`) and one per folder.
-pub(crate) fn global_data_names(data_dir: &Path) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    let Ok(entries) = std::fs::read_dir(data_dir) else {
-        return names;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_dir() {
-            names.insert(name);
-        } else if let Some(stem) = ["json", "mjs", "cjs", "js"]
-            .iter()
-            .find_map(|ext| name.strip_suffix(&format!(".{ext}")))
-        {
-            names.insert(stem.to_string());
-        }
-    }
-    names
 }
 
 /// Template and directory data files that apply to the template at `rel`

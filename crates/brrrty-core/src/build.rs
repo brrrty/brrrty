@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use serde_json::Value as Json;
 
 use crate::data::{
-    global_data_names, js_object, key_line, local_data_files, merge, reserved_keys,
+    GlobalData, js_object, key_line, load_global, local_data_files, merge, reserved_keys,
     reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
@@ -92,6 +92,67 @@ struct Shared<'a> {
     globals: Data,
     /// The output folder as 11ty spells it in `page.outputPath`.
     output_shown: String,
+    /// Data from the JSON files in `_data`, under the page's own data.
+    user_data: Data,
+    /// Top-level global data keys Brrrty can't supply, and why.
+    withheld: BTreeMap<String, Withheld>,
+}
+
+/// Why a global data key has no value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Withheld {
+    /// A JavaScript data file sets it.
+    Js,
+    /// A data file under it failed to load, and was reported.
+    Failed,
+}
+
+/// Global data keys that change how a page is built, not only what it prints.
+/// A JavaScript data file setting one of these affects every page.
+const BUILD_KEYS: &[&str] = &[
+    "layout",
+    "permalink",
+    "date",
+    "tags",
+    "templateEngineOverride",
+    "eleventyComputed",
+    "pagination",
+    "eleventyExcludeFromCollections",
+    "dynamicPermalink",
+    "eleventyAllowMissingExtension",
+    "page",
+    "eleventy",
+    "pkg",
+];
+
+impl Shared<'_> {
+    /// Refuse a page whose result could depend on a global key Brrrty can't
+    /// supply: one that shapes every page's build, or one the page's own
+    /// data also sets and so would merge with.
+    fn check_withheld(&self, own: &Data, shown: &Path) -> Result<(), Problem> {
+        for (key, why) in &self.withheld {
+            let shapes_build = BUILD_KEYS.contains(&key.as_str()) || key.starts_with("override:");
+            let merges = own.contains_key(key.as_str());
+            if shapes_build || merges {
+                let reason = match why {
+                    Withheld::Js => "a JavaScript data file",
+                    Withheld::Failed => "a data file that failed to load",
+                };
+                let how = if shapes_build {
+                    "which changes how every page is built"
+                } else {
+                    "which this page's own data also sets"
+                };
+                return Err(Problem::error(
+                    codes::DATA_UNSUPPORTED,
+                    format!("global data key `{key}` comes from {reason}, {how}"),
+                )
+                .with_path(shown)
+                .with_help("Brrrty can't read JavaScript data files yet."));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 11ty's spelling of a folder: `./src/`, `../x/`, or an absolute path, with
@@ -201,7 +262,10 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         .with_help("Template and directory data files are in progress."));
     }
 
-    let layouts = match front.get("layout") {
+    let layout = front
+        .get("layout")
+        .or_else(|| shared.user_data.get("layout"));
+    let layouts = match layout {
         None => Vec::new(),
         Some(v) if !v.js_truthy() => Vec::new(),
         Some(Value::String(name)) => match shared.layouts.chain(name, &shown, &text) {
@@ -250,7 +314,11 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         merge(&mut layout_data, &layout.data);
     }
     layout_data.shift_remove("layout");
+    let mut own = layout_data.clone();
+    own.extend(front.iter().map(|(k, v)| (k.clone(), v.clone())));
+    shared.check_withheld(&own, &shown)?;
     let mut data = shared.globals.clone();
+    merge(&mut data, &shared.user_data);
     merge(&mut data, &layout_data);
     merge(&mut data, &front);
 
@@ -345,7 +413,7 @@ fn reject_unsupported_keys(data: &Data, shown: &Path) -> Result<(), Problem> {
 /// The problem for a page that read data Brrrty doesn't supply yet.
 fn missing_data_problem(
     undefined: &BTreeSet<String>,
-    data_names: &BTreeSet<String>,
+    withheld: &BTreeMap<String, Withheld>,
     data_dir: &Path,
 ) -> Option<Problem> {
     if undefined.contains("collections") {
@@ -357,23 +425,39 @@ fn missing_data_problem(
             .with_help("Collections are in progress."),
         );
     }
-    let used: Vec<String> = undefined
-        .intersection(data_names)
-        .map(|n| format!("`{n}`"))
+    let used: Vec<(&String, &Withheld)> = withheld
+        .iter()
+        .filter(|(k, _)| undefined.contains(k.as_str()))
         .collect();
     if used.is_empty() {
         return None;
+    }
+    let names = used
+        .iter()
+        .map(|(k, _)| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if used.iter().all(|(_, w)| **w == Withheld::Js) {
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                format!(
+                    "this page uses {names} from {}, which Brrrty doesn't read yet",
+                    data_dir.display()
+                ),
+            )
+            .with_help("JavaScript data files are in progress."),
+        );
     }
     Some(
         Problem::error(
             codes::DATA_UNSUPPORTED,
             format!(
-                "this page uses {} from {}, which Brrrty doesn't read yet",
-                used.join(", "),
+                "this page uses {names} from {}, which has a data file that failed to load",
                 data_dir.display()
             ),
         )
-        .with_help("Global data files are in progress."),
+        .with_help("Fix the data file errors reported above."),
     )
 }
 
@@ -572,7 +656,24 @@ fn build_in_pool(
     );
     let layouts = Layouts::new(&engine, input.clone(), input_rel.clone());
     let data_dir = input_rel.join("_data");
-    let data_names = global_data_names(&input.join("_data"));
+    let GlobalData {
+        value: user_value,
+        js_keys,
+        problems: data_problems,
+        unavailable,
+    } = load_global(&input, &root);
+    report.problems.extend(data_problems);
+    let user_data = match user_value {
+        Value::Object(o) => Arc::unwrap_or_clone(o),
+        _ => Data::new(),
+    };
+    let withheld: BTreeMap<String, Withheld> = unavailable
+        .into_iter()
+        .map(|key| {
+            let js = js_keys.iter().any(|r| r.key_path.first() == Some(&key));
+            (key, if js { Withheld::Js } else { Withheld::Failed })
+        })
+        .collect();
     let (globals, output_shown) = globals(opts, &root, &input_rel);
     let shared = Shared {
         input: &input,
@@ -580,6 +681,8 @@ fn build_in_pool(
         layouts: &layouts,
         globals,
         output_shown,
+        user_data,
+        withheld,
     };
 
     let loaded: Vec<Loaded> = discovery
@@ -666,7 +769,8 @@ fn build_in_pool(
                 data: &p.data,
                 layouts: &p.layouts,
             })?;
-            if let Some(problem) = missing_data_problem(&rendered.undefined, &data_names, &data_dir)
+            if let Some(problem) =
+                missing_data_problem(&rendered.undefined, &shared.withheld, &data_dir)
             {
                 return Err(problem.with_path(shown));
             }

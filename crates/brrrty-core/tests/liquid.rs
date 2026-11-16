@@ -658,10 +658,12 @@ fn deep_documents_do_not_overflow_the_stack() {
 fn pages_that_need_unsupported_data_are_errors() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(root, "src/_data/site.json", "{\"title\": \"S\"}");
-    write(root, "src/_data/nested/x.json", "{}");
+    write(root, "src/_data/site.js", "module.exports = {title: 'S'};");
+    write(root, "src/_data/nested/x.js", "module.exports = {};");
     write(root, "src/uses-data.md", "{{ site.title }}\n");
     write(root, "src/uses-dir.md", "{% if nested %}{% endif %}\n");
+    write(root, "src/_data/plain.json", "{\"n\": 1}");
+    write(root, "src/uses-json.md", "{{ plain.n }}\n");
     write(
         root,
         "src/uses-collections.liquid",
@@ -699,6 +701,8 @@ fn pages_that_need_unsupported_data_are_errors() {
     assert_eq!(by_path("src/other/thing.md").code, codes::DATA_UNSUPPORTED);
     assert_eq!(errors(&r).len(), 5, "{:#?}", r.problems);
     assert_eq!(read(root, "fine/index.html"), "<p>ab</p>\n");
+    // JSON data is read, so a page using only it builds.
+    assert_eq!(read(root, "uses-json/index.html"), "<p>1</p>\n");
     assert!(!root.join("_site/uses-data/index.html").exists());
 }
 

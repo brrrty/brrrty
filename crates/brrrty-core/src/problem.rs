@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub mod codes {
     pub const BUILD_THREADS_FAILED: &str = "build-threads-failed";
     pub const CWD_UNAVAILABLE: &str = "cwd-unavailable";
+    pub const DATA_FILE_INVALID: &str = "data-file-invalid";
     pub const DATA_RESERVED: &str = "data-reserved";
     pub const DATA_UNSUPPORTED: &str = "data-unsupported";
     pub const DATE_INVALID: &str = "date-invalid";

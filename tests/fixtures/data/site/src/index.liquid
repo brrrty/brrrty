@@ -1,0 +1,11 @@
+title={{ site.title }}
+tags={{ site.tags | join: "," }}
+x={{ site.nested.x }} p={{ site.nested.y.p }}
+meta={{ site.meta.deep }}
+site={{ site | json }}
+team={{ team | json }}
+empty={{ empty | json }}
+nothing={{ nothing | json }}
+list={{ list | json }}
+bom={{ bom.bom }}
+override={{ title }}
