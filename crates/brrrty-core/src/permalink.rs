@@ -79,8 +79,10 @@ fn default_permalink(rel: &Path) -> Permalink {
             _ => None,
         })
         .collect();
+    // 11ty's `_hasDuplicateFolder`: `posts/posts.md` is the folder's index.
     if let Some(stem) = rel.file_stem().map(|s| s.to_string_lossy().into_owned())
         && stem != "index"
+        && segments.last() != Some(&stem)
     {
         segments.push(stem);
     }
@@ -170,6 +172,31 @@ mod tests {
     }
     fn r(v: Json) -> Result<Permalink, Problem> {
         resolve_permalink(Path::new("c.md"), &fm(v))
+    }
+
+    /// Probed: a file named like its folder is the folder's index, matched
+    /// with case, and not at the top of the input folder.
+    #[test]
+    fn a_file_named_like_its_folder_is_its_index() {
+        let none = Data::new();
+        for (rel, url, out) in [
+            ("posts/posts.md", "/posts/", "posts/index.html"),
+            ("a/b/b.md", "/a/b/", "a/b/index.html"),
+            ("a/a.liquid", "/a/", "a/index.html"),
+            ("Up/up.md", "/Up/up/", "Up/up/index.html"),
+            (
+                "x/2020-01-01-x.md",
+                "/x/2020-01-01-x/",
+                "x/2020-01-01-x/index.html",
+            ),
+            ("src.md", "/src/", "src/index.html"),
+        ] {
+            assert_eq!(
+                resolve_permalink(Path::new(rel), &none).unwrap(),
+                w(url, out),
+                "{rel}"
+            );
+        }
     }
 
     #[test]
