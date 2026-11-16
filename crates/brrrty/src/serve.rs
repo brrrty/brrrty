@@ -580,7 +580,7 @@ impl Session {
                     self.current = Some(dir);
                 }
                 Err(e) => {
-                    eprintln!("Brrrty could not serve the new build: {e}");
+                    crate::say_err!("Brrrty could not serve the new build: {e}");
                     let _ = fs::remove_dir_all(&dir);
                     ok = false;
                 }
@@ -864,7 +864,7 @@ impl Session {
                 // keeps coming back can't loop.
                 let message = e.to_string();
                 if self.last_watch_error.as_deref() != Some(message.as_str()) {
-                    eprintln!("Brrrty's file watcher reported a problem: {message}");
+                    crate::say_err!("Brrrty's file watcher reported a problem: {message}");
                     self.last_watch_error = Some(message);
                 }
                 self.rewatch = true;

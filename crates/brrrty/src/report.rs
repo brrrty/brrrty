@@ -23,6 +23,16 @@ macro_rules! say {
     }};
 }
 
+/// `eprintln!` that ignores a closed stderr, as in `brrrty build 2>&1 | head -1`: the reader
+/// going away is not a failure, and the exit code stands.
+#[macro_export]
+macro_rules! say_err {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 #[derive(Debug)]
 struct Rendered {
     message: String,

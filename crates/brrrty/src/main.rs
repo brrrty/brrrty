@@ -1,4 +1,4 @@
-use std::io::{IsTerminal, Write as _};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -88,10 +88,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
     let root = match std::env::current_dir() {
         Ok(r) => r,
         Err(e) => {
-            let _ = writeln!(
-                std::io::stderr(),
-                "Brrrty could not find the current folder: {e}"
-            );
+            brrrty::say_err!("Brrrty could not find the current folder: {e}");
             return ExitCode::from(1);
         }
     };
@@ -126,7 +123,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     let root = match std::env::current_dir() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Brrrty could not find the current folder: {e}");
+            brrrty::say_err!("Brrrty could not find the current folder: {e}");
             return ExitCode::from(1);
         }
     };
@@ -136,7 +133,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     let interrupts = match Interrupts::install() {
         Ok(i) => i,
         Err(e) => {
-            eprintln!("Brrrty could not listen for Ctrl-C: {e}");
+            brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
             return ExitCode::from(1);
         }
     };
@@ -158,13 +155,13 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             return ExitCode::from(1);
         }
         Err(e) => {
-            eprintln!("Brrrty could not start serving: {e}");
+            brrrty::say_err!("Brrrty could not start serving: {e}");
             return ExitCode::from(1);
         }
     };
     // The first build's summary and problems are printed by now.
     if !session.first_ok() && args.strict {
-        eprintln!("The first build failed, so Brrrty stopped (--strict).");
+        brrrty::say_err!("The first build failed, so Brrrty stopped (--strict).");
         end_unserved(session, &root, color);
         return ExitCode::from(1);
     }
@@ -176,7 +173,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     let server = match brrrty_serve::Server::start(session.serving(), &args.host, args.port) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Brrrty could not start the server: {e}");
+            brrrty::say_err!("Brrrty could not start the server: {e}");
             end_unserved(session, &root, color);
             return ExitCode::from(1);
         }
