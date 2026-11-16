@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+Config written in Rhai:
+
+- `brrrty.config.rhai` at the project root is Brrrty's version of `eleventy.config.js`. When it exists, Brrrty reads it and ignores the JavaScript config. It sets `dir`, passthrough copy, `ignores`, global data, filters, collections and plugins. `PORTING.md` in `brrrty-config` shows how to port a JavaScript config, call by call.
+- Filters (`config.add_filter`) get their arguments the way 11ty passes them to a JavaScript filter, keyword arguments included. A filter that fails refuses only the page that used it, where 11ty stops the build.
+- Collections (`config.add_collection`) get 11ty's collection API: `get_all`, `get_all_sorted`, `get_filtered_by_tag`, `get_filtered_by_tags` and `get_filtered_by_glob`, with 11ty's glob matching. Items are read-only.
+- Helpers for what JavaScript does differently from Rhai: `object()` keeps keys in the order they were added, `truthy`, `js_string`, `js_concat`, `js_div`, `js_round`, `js_sort`, `js_sort_by`, `json_stringify`, and arrays get JavaScript's `sort`, `reverse` and `slice`. `regex_replace`, `regex_split` and `regex_test` take JavaScript patterns.
+- `luxon_format(date, format, zone)` formats dates as Luxon does, and `markdown(s)` and `markdown_inline(s)` render as `markdownIt()` does.
+- Data files can be Rhai scripts: `_data/name.rhai`, `page.11tydata.rhai` and `folder.11tydata.rhai`. A script's last expression, or its `fn data(global)`, is the data. A `.rhai` file replaces a JavaScript data file of the same name, with a note saying so.
+- Two global data files for one key (`a.json` and `a.rhai`) merge, as in 11ty.
+- `config.add_plugin("rss", #{ ... })` is 11ty's RSS feed plugin: Atom, RSS and JSON feeds, with its filters for Liquid.
+- `config.add_plugin("syntaxhighlight")` marks a site that uses 11ty's syntax highlighting plugin. Brrrty can't highlight yet, so pages with a fenced code block that names a language, or a `{% highlight %}` tag, are refused instead of written without highlighting.
+- `SOURCE_DATE_EPOCH` sets the time for Rhai's `now()` and for Liquid's `'now'` and `'today'`.
+- Scripts are limited in operations, time, call depth and size, and can't capture variables in closures, so a script can't hang the build or give different output from one run to the next. Errors point at the script's file, line and column.
+
+Regular expressions in scripts accept only what means the same in JavaScript and Rust. Text with emoji or other characters outside the BMP works with patterns where no match can stop between the two halves of such a character, such as `(<([^>]+)>)` or `\s+`. A pattern that could, or a repeated group that can match nothing, such as `(a*)?`, is refused with the reason.
+
+A Markdown render that crashes refuses its page with `markdown-render-failed` instead of stopping the build.
+
+New errors:
+
+- `config-syntax`, `config-error`, `config-invalid`, `config-limit`, `config-unreadable` and `config-unsupported`: a problem in `brrrty.config.rhai`, with its line and column.
+- `data-rhai-syntax`, `data-rhai-error` and `data-rhai-limit`: a problem in a `.rhai` data file. Only the pages that use its data are refused.
+- `data-rhai-shadows-js` (a note): a `.rhai` data file replaces a JavaScript one.
+- `syntax-highlight-unsupported`: a page needs syntax highlighting.
+- `feed-failed` and `feed-unsupported`: a feed that can't be built, or one Brrrty doesn't support yet, such as an unknown option or a feed path that is also a file.
+- `passthrough-unsupported`: a passthrough copy Brrrty can't do yet, such as a glob.
+- `source-date-epoch-invalid`: `SOURCE_DATE_EPOCH` isn't a whole number of seconds.
+- `markdown-render-failed`: Markdown rendering crashed on a page.
+
 ## 0.0.4 - 2026-11-16
 
 Data, permalinks, pagination and collections:
