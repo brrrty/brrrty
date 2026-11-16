@@ -210,7 +210,7 @@ fn a_second_ctrl_c_ends_it_at_once() {
 }
 
 #[test]
-fn quiet_prints_nothing_but_problems() {
+fn quiet_prints_only_the_server_line_and_problems() {
     let dir = site(&[("src/index.md", "# Hi\n")]);
     let port = free_port();
     let p = port.to_string();
@@ -229,7 +229,7 @@ fn quiet_prints_nothing_but_problems() {
     serve.signal(libc::SIGINT);
     let (status, out, err) = serve.wait();
     assert_eq!(status.code(), Some(0), "{err}");
-    assert!(out.is_empty(), "{out:?}");
+    assert_eq!(out, vec![format!("Server at http://localhost:{port}/")]);
     assert!(err.is_empty(), "{err}");
 }
 

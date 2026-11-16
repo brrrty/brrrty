@@ -184,13 +184,14 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             brrrty::say!("Watching…");
         }));
         brrrty::say!("Watching…");
-        brrrty::say!("Server at {}", shown_url(&server, args.port));
-        if !session.first_served() {
-            brrrty::say!(
-                "The first build stopped before writing any page: serving what {} held before, until a build gets that far.",
-                session.output().display()
-            );
-        }
+    }
+    // Printed under `--quiet` too, as 11ty does: the port may not be the one asked for.
+    brrrty::say!("Server at {}", shown_url(&server, args.port));
+    if !quiet && !session.first_served() {
+        brrrty::say!(
+            "The first build stopped before writing any page: serving what {} held before, until a build gets that far.",
+            session.output().display()
+        );
     }
     interrupts.stop_with(session.stop_handle());
     let finished = session.run(&server);
