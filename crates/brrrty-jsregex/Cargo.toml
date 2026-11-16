@@ -13,3 +13,5 @@ readme = false
 exclude = ["tools/"]
 
 [dependencies]
+regex = "1.13.1"
+regex-syntax = "0.8.11"

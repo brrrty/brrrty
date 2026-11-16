@@ -1,10 +1,9 @@
-//! JavaScript-style regular expressions for scripts, on the `regex` crate.
+//! JavaScript regular expressions run on the `regex` crate, for
+//! `brrrty-config`'s scripts and for Nunjucks's `r/.../` literals.
 //!
-//! `regex_replace(s, pattern, replacement, flags)`, `regex_split(s,
-//! pattern)` and `regex_test(s, pattern)` take a JavaScript pattern, the
-//! text between the slashes of `/.../`, and flags (`g`, `i`, `m`, `s`,
-//! `u`). A pattern is translated so the classes JavaScript defines mean
-//! the same here: `\s` is JavaScript's whitespace, `\d` and `\w` are ASCII
+//! [`compile`] takes a JavaScript pattern, the text between the slashes of
+//! `/.../`, and flags (`g`, `i`, `m`, `s`, `u`). A pattern is translated
+//! so the classes JavaScript defines mean the same here: `\s` is JavaScript's whitespace, `\d` and `\w` are ASCII
 //! only, `\b` is ASCII, and `.` stops at `\n`, `\r`, `\u2028` and `\u2029`.
 //! `replace` and `split` follow the JavaScript algorithms, including `$1`,
 //! `$&`, `$<name>` in replacements and captured groups in `split` results.
@@ -27,15 +26,15 @@
 //! break lines at `\n` only; `{` is never a plain character; and the `y`,
 //! `d` and `v` flags aren't supported.
 //!
-//! The pattern is read with `brrrty_jsregex`'s lexer, which follows Node's
+//! The pattern is read with this crate's lexer, which follows Node's
 //! syntax (and is shared with `brrrty-prism`), so each part is judged by
 //! what it means in JavaScript.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use brrrty_jsregex::classes::{DIGIT, SPACE, WORD};
-use brrrty_jsregex::lex::{How, LexError, Lexer, Open, Tok};
+use crate::classes::{DIGIT, SPACE, WORD};
+use crate::lex::{How, LexError, Lexer, Open, Tok};
 use regex::{Captures, Regex, RegexBuilder};
 
 /// A compiled JavaScript pattern.

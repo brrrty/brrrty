@@ -8,13 +8,16 @@
 //!   where a backtracking engine's answer can differ from JavaScript's.
 //! - [`classes`] has JavaScript's `\d`, `\s`, `\w`, line terminators and the
 //!   case folding of the `i` flag; [`set`] has sets of UTF-16 units.
+//! - [`matcher`] translates a pattern to the `regex` crate where it means
+//!   the same there, and runs `test`, `replace` and `split` as JavaScript
+//!   does; `brrrty-config`'s scripts and Nunjucks's `r/.../` use it.
 //!
-//! `brrrty-config` uses the lexer and classes to translate script patterns
-//! to the `regex` crate, and `brrrty-prism` uses the tree to translate
-//! Prism's grammars to `fancy-regex`.
+//! `brrrty-prism` uses the tree to translate Prism's grammars to
+//! `fancy-regex`.
 
 pub mod ast;
 mod canon_table;
 pub mod classes;
 pub mod lex;
+pub mod matcher;
 pub mod set;

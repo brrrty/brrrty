@@ -273,6 +273,10 @@ dependencies = [
 [[package]]
 name = "brrrty-jsregex"
 version = "0.0.6"
+dependencies = [
+ "regex",
+ "regex-syntax",
+]
 
 [[package]]
 name = "brrrty-liquid"
@@ -302,6 +306,7 @@ name = "brrrty-nunjucks"
 version = "0.0.6"
 dependencies = [
  "brrrty-js",
+ "brrrty-jsregex",
  "chrono",
  "indexmap",
  "serde",
