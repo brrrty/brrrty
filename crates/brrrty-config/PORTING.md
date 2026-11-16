@@ -52,18 +52,42 @@ config.add_filter("rate", Fn("rate").curry(rates));   // {{ 5 | rate: "b" }}
 ```
 
 (`global::NAME` constants can't be used: they exist only while the
-script's top level runs.)
+script's top level runs. A script that names one still loads, and the
+filter that reads it fails when it is called, with "Variable not found:
+global::NAME", which refuses the page that used it.)
 
 **Other things that would make output nondeterministic are refused**, and
 only the pages that hit them:
 
 - A filter that uses randomness: declare it with
   `config.add_nondeterministic_filter("name")`.
+- Rhai's `timestamp()`, which reads the real clock: it throws an error that
+  points to `now()`. Rhai's time functions (`elapsed` and the rest) aren't
+  there either.
 - A regular expression or text where Rust and JavaScript would differ
   (below).
 
 A filter that throws, returns something that isn't data, or runs too long
 refuses its page, with the template's position and the script's.
+
+**Time.** `now()` and Liquid's `'now'` and `'today'` follow
+`SOURCE_DATE_EPOCH` (whole seconds since 1970) when it is set, so every
+call in a build gives the same time. Without it, `now()` reads the system
+clock at each call, so two calls, or two filter calls on different pages,
+can differ, as `new Date()` does in 11ty.
+
+**`print` and `debug`.** `print(x)` writes `x` and a newline to standard
+output, and `debug(x)` writes the script's file name, line and position and
+`x` to standard error. Pages render in parallel, so lines from filters on
+different pages can come out in any order, mixed with Brrrty's own output.
+Neither changes what is built.
+
+**Crashes.** If Brrrty itself panics while running a script (a bug in
+Brrrty, never in the script), the panic is contained: at the top level of
+the config the build stops with a `config-error`, in a data file the pages
+that use its data are refused with `data-rhai-error`, and in a filter or
+collection only the pages that use it are refused. The message gives the
+panic's text; please report it.
 
 ## Rhai is not JavaScript
 
@@ -128,7 +152,8 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   reference definition with an odd destination (`[x]: /u[x]é`); a table after a
   blockquote's lazy line; a table indented four spaces; a `<div>` followed by a table;
   `> <!-- -->`; and input that makes the port panic (for example a strikethrough across
-  a CRLF inside a list item), which refuses that page with the panic text. In 11ty's own
+  a CRLF inside a list item, in a debug build of Brrrty, where the port's integer
+  overflow is checked), which makes the call an error with the panic text. In 11ty's own
   Markdown (markdown-it 14.3.3, which `.md` pages use), the same port also differs on a
   fence that runs to the end of the text (it adds a final newline), on an HTML block at
   the end of the text with no newline, on lines indented four spaces or more that the
@@ -220,8 +245,8 @@ the script's own statements don't run.
 
 - Each file runs once per build on a fresh engine: nothing carries from one
   file to the next, and a script can't see `config`.
-- `now()` follows `SOURCE_DATE_EPOCH`. `new Date().getFullYear()` is
-  `year(now())`.
+- `now()` follows `SOURCE_DATE_EPOCH`, and reads the system clock at each call
+  when it isn't set. `new Date().getFullYear()` is `year(now())`.
 - The Rhai limits apply. An error is a problem with the file, line and
   column, and only the pages that read the key are refused.
 - Precedence: a `.rhai` file wins over a `.json` or `.js` of the same key.
