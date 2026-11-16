@@ -8,7 +8,7 @@ use brrrty_js::{FilterEnv, FilterFn, Value};
 use chrono::DateTime;
 
 use super::feed::{date_to_rfc822_in, date_to_rfc3339, member, newest_date, now_ms};
-use super::{absolute_url, absolute_url_no_base};
+use super::{absolute_url_checked, absolute_url_no_base};
 
 const REFUSE: &str = brrrty_js::REFUSAL_PREFIX;
 
@@ -67,9 +67,14 @@ fn date_to_rfc822_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Resu
 }
 
 /// `getNewestCollectionItemDate(collection, emptyFallbackDate)`.
-fn newest_filter(input: &Value, args: &[Value], _env: &FilterEnv) -> Result<Value, String> {
+fn newest_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result<Value, String> {
     let fallback = || -> Result<Value, String> {
         match args.first() {
+            // `emptyFallbackDate || new Date()` returns that argument
+            // itself, which a SafeString would stay safe through.
+            Some(_) if env.args_safe.first().copied().unwrap_or(false) => Err(format!(
+                "{REFUSE}can't return a SafeString given as `emptyFallbackDate` from `getNewestCollectionItemDate`"
+            )),
             Some(v) if v.js_truthy() => Ok(v.clone()),
             _ => date_value(now_ms()),
         }
@@ -99,16 +104,15 @@ fn absolute_url_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result
     let url = input.to_js_string_in(env.timezone);
     let made = match args.first() {
         None | Some(Value::Undefined) => absolute_url_no_base(&url),
-        Some(base) => {
-            let base = base.to_js_string_in(env.timezone);
-            // `absolute_url` hands back its input when the URL is invalid.
-            let joined = absolute_url(&url, &base);
-            (joined != url).then_some(joined)
-        }
+        Some(base) => absolute_url_checked(&url, &base.to_js_string_in(env.timezone)),
     };
     Ok(match made {
         Some(s) => Value::String(s.into()),
-        None => input.clone(),
+        None => {
+            // `return url`: the input itself, so a SafeString stays safe.
+            env.returns_input();
+            input.clone()
+        }
     })
 }
 

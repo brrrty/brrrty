@@ -121,6 +121,14 @@ pub fn absolute_url(url: &str, base: &str) -> String {
         .unwrap_or_else(|_| url.to_string())
 }
 
+/// `new URL(url, base)`, or `None` when that throws.
+pub(crate) fn absolute_url_checked(url: &str, base: &str) -> Option<String> {
+    url::Url::parse(base)
+        .and_then(|b| base::join(&b, url))
+        .ok()
+        .map(|u| u.to_string())
+}
+
 /// `new URL(url, base)` with no `base` (`undefined`).
 pub(crate) fn absolute_url_no_base(url: &str) -> Option<String> {
     url::Url::parse(url).ok().map(|u| u.to_string())

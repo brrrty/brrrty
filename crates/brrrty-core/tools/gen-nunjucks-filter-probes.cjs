@@ -39,6 +39,14 @@ const templates = [
   '{{ "A b" | slug }}', '{{ "A b" | slugify }}', '{{ "a/b" | url }}', '{{ "x" | log }}',
   '{{ "x" | rssDate }}', '{{ "x" | rssLastUpdatedDate }}',
   '{{ "x" | nosuchfilter }}',
+  // SafeString inputs and arguments.
+  '{{ ("a&b" | safe) | absoluteUrl("nope") }}', '{{ ("a&b" | safe) | absoluteUrl }}', '{{ ("a&b" | safe) | absoluteUrl(base) }}',
+  '{{ ("/a&b" | safe) | absoluteUrl(base) }}', '{{ ("https://x.com/" | safe) | absoluteUrl }}', '{{ ("https://x.com/a&b" | safe) | absoluteUrl | dump }}',
+  '{{ ("a&b" | safe) | absoluteUrl("nope") | dump }}', '{{ "a" | absoluteUrl(("https://x.com/" | safe)) }}',
+  '{{ ("<x>" | safe) | getNewestCollectionItemDate }}', '{{ ("" | safe) | getNewestCollectionItemDate("<f>") }}',
+  '{{ [] | getNewestCollectionItemDate(("<x>" | safe)) }}', '{{ [] | getNewestCollectionItemDate(("<x>" | safe)) | dump }}', '{{ [] | getNewestCollectionItemDate("<x>") | dump }}',
+  '{{ ("<x>" | safe) | dateToRfc3339 }}', '{{ ("<x>" | safe) | dateToRfc822 }}',
+  '{{ ("A <b>" | safe) | slug }}', '{{ ("A <b>" | safe) | slugify | dump }}', '{{ ("/a/<b>" | safe) | url }}', '{{ ("<b>" | safe) | log | dump }}',
 ];
 
 const dates = (v) => {

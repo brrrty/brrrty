@@ -160,7 +160,7 @@ fn run_user(
     env.args_safe = safe.get(1..).unwrap_or(&[]).to_vec();
     // The keyword arguments, taken apart from the last object argument.
     if let Some(Val::Obj(o)) = args.last()
-        && args.len() > 1 + usize::from(false)
+        && args.len() > 1
         && o.has("__keywords")
     {
         for k in o.keys() {

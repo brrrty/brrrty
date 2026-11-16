@@ -141,6 +141,82 @@
   {
    "t": "{{ \"x\" | nosuchfilter }}",
    "err": "Error: filter not found: nosuchfilter"
+  },
+  {
+   "t": "{{ (\"a&b\" | safe) | absoluteUrl(\"nope\") }}",
+   "out": "a&b"
+  },
+  {
+   "t": "{{ (\"a&b\" | safe) | absoluteUrl }}",
+   "out": "a&b"
+  },
+  {
+   "t": "{{ (\"a&b\" | safe) | absoluteUrl(base) }}",
+   "out": "https://example.com/blog/a&amp;b"
+  },
+  {
+   "t": "{{ (\"/a&b\" | safe) | absoluteUrl(base) }}",
+   "out": "https://example.com/a&amp;b"
+  },
+  {
+   "t": "{{ (\"https://x.com/\" | safe) | absoluteUrl }}",
+   "out": "https://x.com/"
+  },
+  {
+   "t": "{{ (\"https://x.com/a&b\" | safe) | absoluteUrl | dump }}",
+   "out": "&quot;https://x.com/a&amp;b&quot;"
+  },
+  {
+   "t": "{{ (\"a&b\" | safe) | absoluteUrl(\"nope\") | dump }}",
+   "out": "{&quot;val&quot;:&quot;a&amp;b&quot;,&quot;length&quot;:3}"
+  },
+  {
+   "t": "{{ \"a\" | absoluteUrl((\"https://x.com/\" | safe)) }}",
+   "out": "https://x.com/a"
+  },
+  {
+   "t": "{{ (\"<x>\" | safe) | getNewestCollectionItemDate }}",
+   "err": "TypeError: collection.map is not a function"
+  },
+  {
+   "t": "{{ (\"\" | safe) | getNewestCollectionItemDate(\"<f>\") }}",
+   "out": "&lt;f&gt;"
+  },
+  {
+   "t": "{{ [] | getNewestCollectionItemDate((\"<x>\" | safe)) }}",
+   "out": "<x>"
+  },
+  {
+   "t": "{{ [] | getNewestCollectionItemDate((\"<x>\" | safe)) | dump }}",
+   "out": "{&quot;val&quot;:&quot;&lt;x&gt;&quot;,&quot;length&quot;:3}"
+  },
+  {
+   "t": "{{ [] | getNewestCollectionItemDate(\"<x>\") | dump }}",
+   "out": "&quot;&lt;x&gt;&quot;"
+  },
+  {
+   "t": "{{ (\"<x>\" | safe) | dateToRfc3339 }}",
+   "err": "TypeError: dateObj.toISOString is not a function"
+  },
+  {
+   "t": "{{ (\"<x>\" | safe) | dateToRfc822 }}",
+   "err": "RangeError: Invalid time value"
+  },
+  {
+   "t": "{{ (\"A <b>\" | safe) | slug }}",
+   "out": "a-lessbgreater"
+  },
+  {
+   "t": "{{ (\"A <b>\" | safe) | slugify | dump }}",
+   "out": "&quot;a-b&quot;"
+  },
+  {
+   "t": "{{ (\"/a/<b>\" | safe) | url }}",
+   "err": "TypeError: The \"path\" argument must be of type string. Received an instance of String"
+  },
+  {
+   "t": "{{ (\"<b>\" | safe) | log | dump }}",
+   "out": "{&quot;val&quot;:&quot;&lt;b&gt;&quot;,&quot;length&quot;:3}"
   }
  ]
 }
