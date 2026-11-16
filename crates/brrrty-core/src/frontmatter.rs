@@ -381,4 +381,63 @@ mod tests {
         assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
         assert!(p.message.contains("alias"), "{}", p.message);
     }
+
+    /// Aliases count at their anchored depth, so a chain of them is capped too.
+    #[test]
+    fn alias_chains_are_depth_capped() {
+        let mut t = String::from("---\nl0: &a0 [x]\n");
+        for i in 1..30_000 {
+            t.push_str(&format!("l{i}: &a{i} [*a{}]\n", i - 1));
+        }
+        t.push_str("---\n");
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || {
+                let p = split_front_matter(&t).unwrap_err();
+                assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
+                assert!(p.line.is_some());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn merge_chains_are_bounded_and_fast() {
+        let mut t = String::from("---\nm0: &a0 {k0: 1}\n");
+        for i in 1..3000 {
+            t.push_str(&format!("m{i}: &a{i} {{<<: [*a{}], k{i}: 1}}\n", i - 1));
+        }
+        t.push_str("---\n");
+        let start = std::time::Instant::now();
+        let p = split_front_matter(&t).unwrap_err();
+        assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
+        assert!(p.line.is_some());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn shallow_aliases_and_billion_laughs_stay_fast() {
+        let mut t = String::from("---\na: &a [x, y]\n");
+        for i in 0..1000 {
+            t.push_str(&format!("k{i}: *a\n"));
+        }
+        let (m, _) = split_front_matter(&format!("{t}---\n")).unwrap();
+        assert_eq!(m.len(), 1001);
+        let mut laughs = String::from("---\nl0: &l0 [x, x, x, x, x, x, x, x, x]\n");
+        for i in 1..10 {
+            let p = i - 1;
+            laughs.push_str(&format!(
+                "l{i}: &l{i} [*l{p}, *l{p}, *l{p}, *l{p}, *l{p}, *l{p}, *l{p}, *l{p}, *l{p}]\n"
+            ));
+        }
+        laughs.push_str("---\n");
+        let start = std::time::Instant::now();
+        let (m, _) = split_front_matter(&laughs).unwrap();
+        assert_eq!(m.len(), 10);
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        // A few merges are normal.
+        let (m, _) = split_front_matter("---\nb: &b {x: 1}\nc:\n  <<: *b\n---\n").unwrap();
+        assert_eq!(m.len(), 2);
+    }
 }

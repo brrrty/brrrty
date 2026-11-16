@@ -47,6 +47,7 @@ pub(crate) fn load(text: &str) -> Result<Value, YamlError> {
                 ));
             }
             builder.anchors.clear();
+            builder.merged = 0;
             if let Some(Ok((next, _))) = events.peek()
                 && matches!(next, Event::DocumentEnd)
             {
@@ -68,8 +69,17 @@ fn error(span: Span, message: impl Into<String>) -> YamlError {
 
 #[derive(Default)]
 struct Builder {
-    anchors: HashMap<usize, Value>,
+    /// Anchored values with their nesting height.
+    anchors: HashMap<usize, (Value, usize)>,
+    /// Nesting height of the value `node` returned last (0 for a scalar).
+    height: usize,
+    /// Entries copied by `<<` merges so far.
+    merged: usize,
 }
+
+/// The most entries `<<` merges may copy in one document. Chained merges copy
+/// quadratically, and real front matter needs a handful.
+const MAX_MERGED: usize = 100_000;
 
 impl Builder {
     fn next<'a>(&self, events: &mut Events<'a>) -> Result<(Event<'a>, Span), YamlError> {
@@ -92,23 +102,31 @@ impl Builder {
         let (event, span) = self.next(events)?;
         let (value, anchor) = match event {
             Event::Alias(id) => {
-                return self
+                let (value, height) = self
                     .anchors
                     .get(&id)
                     .cloned()
-                    .ok_or_else(|| error(span, "unidentified alias"));
+                    .ok_or_else(|| error(span, "unidentified alias"))?;
+                // An alias is the anchored value at this depth, so it counts in full.
+                check_depth(depth + height, span)?;
+                self.height = height;
+                return Ok(value);
             }
             Event::Scalar(text, style, anchor, tag) => {
+                self.height = 0;
                 (scalar(&text, style, tag.as_deref(), span)?, anchor)
             }
             Event::SequenceStart(anchor, tag) => {
                 check_collection_tag(tag.as_deref(), "seq", span)?;
                 check_depth(depth + 1, span)?;
                 let mut items = Vec::new();
+                let mut deepest = 0;
                 while !matches!(events.peek(), Some(Ok((Event::SequenceEnd, _)))) {
                     items.push(self.node(events, depth + 1)?);
+                    deepest = deepest.max(self.height);
                 }
                 self.next(events)?;
+                self.height = deepest + 1;
                 (Value::Array(Arc::new(items)), anchor)
             }
             Event::MappingStart(anchor, tag) => {
@@ -119,7 +137,7 @@ impl Builder {
             _ => return Err(error(span, "unexpected YAML structure")),
         };
         if anchor != 0 {
-            self.anchors.insert(anchor, value.clone());
+            self.anchors.insert(anchor, (value.clone(), self.height));
         }
         Ok(value)
     }
@@ -128,6 +146,7 @@ impl Builder {
         let mut map: IndexMap<String, Value> = IndexMap::new();
         // Keys that came from a `<<` merge; an explicit key may replace those.
         let mut overridable: HashSet<String> = HashSet::new();
+        let mut deepest = 0;
         while !matches!(events.peek(), Some(Ok((Event::MappingEnd, _)))) {
             let is_merge = matches!(
                 events.peek(),
@@ -142,7 +161,9 @@ impl Builder {
                 return Err(error(key_span, "an alias can't be used as a mapping key"));
             }
             let key = self.node(events, depth)?;
+            deepest = deepest.max(self.height);
             let value = self.node(events, depth)?;
+            deepest = deepest.max(self.height);
             if is_merge {
                 let sources: Vec<Value> = match &value {
                     Value::Array(items) => items.iter().cloned().collect(),
@@ -155,6 +176,10 @@ impl Builder {
                             "cannot merge mappings; the provided source object is unacceptable",
                         ));
                     };
+                    self.merged += source.len();
+                    if self.merged > MAX_MERGED {
+                        return Err(error(key_span, "too many keys merged with `<<`"));
+                    }
                     for (k, v) in source.iter() {
                         if !map.contains_key(k) {
                             map.insert(k.clone(), v.clone());
@@ -172,6 +197,7 @@ impl Builder {
             map.insert(key, value);
         }
         self.next(events)?;
+        self.height = deepest + 1;
         Ok(Value::Object(Arc::new(map)))
     }
 }
