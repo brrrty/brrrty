@@ -74,8 +74,8 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `7 / 2` is `3.5` | `7 / 2` is `3` (integer literals) | `js_div(7, 2)`, or write `7.0 / 2`. Numbers that come from data are floats already. |
 | `a + b` | `+` is Rhai's: strings join, numbers add, mixed is an error | `js_concat(a, b)` (string if either side is a string, array, object or date; else the numeric sum, `undefined` is `NaN`) |
 | `String(v)`, `` `${v}` `` | `to_string()` is Rhai's for arrays and maps | `js_string(v)` (`[1,null]` is `1,`, objects are `[object Object]`) |
-| `arr.sort()` | `sort()` compares values, in place | `js_sort(arr)`: by `String(item)` in UTF-16 order, `undefined` last, returns a new array |
-| `arr.sort((a, b) => ...)` | `sort(fn)` needs `-1/0/1` integers and sorts in place | `js_sort_by(arr, \|a, b\| ...)`: any number (fractions, `NaN` is 0) or a bool; same result as V8, including for short arrays with sloppy comparators |
+| `arr.sort()` | Brrrty replaces Rhai's `sort()` with JavaScript's | `arr.sort()`: by `String(item)` in UTF-16 order (`[3, 10, 2]` gives `[10, 2, 3]`), `undefined` last, in place, and returns the array. `js_sort(arr)` gives the same as a new array |
+| `arr.sort((a, b) => ...)` | Brrrty replaces Rhai's `sort(fn)` with JavaScript's | `arr.sort(\|a, b\| ...)` or `js_sort_by(arr, \|a, b\| ...)`: any number (fractions, `NaN` is 0) or a bool; same result as V8, including for short arrays with sloppy comparators. A comparator that throws or calls a missing function is an error, as in JS |
 | `Math.round(x)` | `round()` rounds halves away from zero | `js_round(x)`: halves round up (`-4.5` is `-4`), `-0` stays `-0` |
 | `if (x)` | Only `bool` is allowed | `if truthy(x)` |
 | `x \|\| y` | `\|\|` needs bools | `if truthy(x) { x } else { y }` |
@@ -169,7 +169,7 @@ snake_case:
 | `arr.reverse()` | `arr.reverse()` (returns the array, like JS) |
 | `arr.slice(a, b)` | `arr.slice(a, b)` (JS's, negative indexes included) |
 | `arr.map(f)`, `arr.filter(f)` | `arr.map(\|x\| ...)`, `arr.filter(\|x\| ...)` |
-| `arr.sort(f)` | `js_sort_by(arr, \|a, b\| ...)` |
+| `arr.sort(f)`, `arr.sort()` | `arr.sort(\|a, b\| ...)`, `arr.sort()` (JavaScript's; see above) |
 | `arr.forEach(f)` | `for x in arr { ... }` |
 | `{}` built in a loop | `object()` |
 
@@ -183,8 +183,8 @@ with every page and collection, so changing one in JS changes it
 everywhere. Brrrty can't follow that, so setting a property of an item
 (or of anything read through it, like `post.data`) is an error, and an
 array read through an item (`post.data.tags`) can be looped over, indexed,
-measured with `len()` and searched with `contains`, but not changed:
-`to_array()` copies it. Whatever you return (an array, an `object()`, a map,
+measured with `len()` and searched with `contains`, but not changed (no
+`push`, `sort` or `reverse`): `to_array()` copies it. Whatever you return (an array, an `object()`, a map,
 nested any way) keeps the items as they are, so a template still reads
 their `url`, `data` and `templateContent`.
 

@@ -576,3 +576,99 @@ config.add_filter("tc", |p| p.templateContent);
         assert_eq!(out(&t, &format!("{page}/index.html")).unwrap(), body);
     }
 }
+
+/// `sort` is JavaScript's `Array.prototype.sort`, in place and returning
+/// the array: a comparator's number or bool result counts as V8 counts it
+/// (probed with Node 26), and no comparator sorts by `String(item)`.
+#[test]
+fn sort_is_javascripts() {
+    let script = r#"
+config.add_collection("r", |api| {
+    let o = object();
+    o.bool = [3, 1, 2].sort(|a, b| a > b);
+    o.float = [0.5, 0.2, 0.9].sort(|a, b| a - b);
+    o.frac = [3, 1, 2].sort(|a, b| (b - a) / 10.0);
+    o.empty = [].sort(|a, b| a - b);
+    o.plain = [3, 1, 2, 10].sort();
+    o.less = [5, 1, 4].sort(|a, b| a < b);
+    o.text = [3, 1, 2].sort(|a, b| "x");
+    let a = [2, 1];
+    a.sort();
+    o.inplace = a;
+    o
+});
+"#;
+    let (t, r) = site(
+        script,
+        &[(
+            "list.liquid",
+            &*Box::leak(format!("{LIST}{{{{ collections.r | json }}}}").into_boxed_str()),
+        )],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "list.txt").unwrap(),
+        r#"{"bool":[3,1,2],"float":[0.2,0.5,0.9],"frac":[3,2,1],"empty":[],"plain":[1,10,2,3],"less":[5,1,4],"text":[3,1,2],"inplace":[1,2]}"#
+    );
+}
+
+/// A comparator that fails is the collection's error, never a silent
+/// unsorted result.
+#[test]
+fn a_failing_comparator_refuses_the_collection() {
+    for (cmp, why) in [
+        ("|a, b| { throw \"cmp broke\" }", "cmp broke"),
+        ("|a, b| nope(a, b)", "nope"),
+    ] {
+        let (t, r) = site(
+            &format!("config.add_collection(\"c\", |api| [3, 1, 2].sort({cmp}));"),
+            &[(
+                "list.liquid",
+                &*Box::leak(format!("{LIST}{{{{ collections.c | json }}}}").into_boxed_str()),
+            )],
+        );
+        assert!(
+            errors(&r)
+                .iter()
+                .any(|p| p.message.contains("collection `c`") && p.message.contains(why)),
+            "{cmp}: {:#?}",
+            r.problems
+        );
+        assert!(out(&t, "list.txt").is_none(), "{cmp}");
+    }
+}
+
+/// Arrays read through an item can't be sorted in place; the error says
+/// how to copy one. A callback's error never shows Rhai's internal name.
+#[test]
+fn frozen_arrays_and_anonymous_functions_explain_themselves() {
+    for (body, want, not) in [
+        (
+            "|api| { let p = api.get_all()[0]; p.data.tags.sort(); [] }",
+            "to_array()",
+            "",
+        ),
+        ("|| []", "anonymous function", "anon$"),
+    ] {
+        let (_t, r) = site(
+            &format!("config.add_collection(\"c\", {body});"),
+            &[
+                ("a.md", "---\ndate: 2020-01-01\ntags: [y, x]\n---\n"),
+                (
+                    "list.liquid",
+                    &*Box::leak(format!("{LIST}{{{{ collections.c | size }}}}").into_boxed_str()),
+                ),
+            ],
+        );
+        let p = errors(&r)
+            .into_iter()
+            .find(|p| p.message.contains("collection `c`"))
+            .unwrap_or_else(|| panic!("{body}: {:#?}", r.problems));
+        assert!(p.message.contains(want), "{body}: {}", p.message);
+        assert!(
+            not.is_empty() || !p.message.contains(not),
+            "{body}: {}",
+            p.message
+        );
+    }
+}

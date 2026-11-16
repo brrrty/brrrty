@@ -41,8 +41,10 @@
 //! yet) or changes an item refuses only the pages that read it. See the
 //! `collections` and `glob` modules.
 //!
-//! Arrays get JavaScript's `reverse()` (it returns the array) and
-//! `slice(start, end)`.
+//! Arrays get JavaScript's `reverse()` (it returns the array),
+//! `slice(start, end)`, `sort()` (by `String(item)`) and `sort(|a, b| ..)`
+//! (any number or bool result; a comparator that fails is an error), in
+//! place of Rhai's own `sort`, which skips a failing comparator.
 //!
 //! Scripts also get `regex_replace(s, pattern, replacement, flags)`,
 //! `regex_split(s, pattern)` and `regex_test(s, pattern)` with JavaScript
@@ -379,12 +381,32 @@ pub(crate) fn error_parts(e: EvalAltResult) -> ErrorParts {
     if let Some(f) = function {
         message.push_str(&format!(" (in function `{f}`)"));
     }
+    let message = readable(&message);
     ErrorParts {
         message,
         position,
         code,
         limit,
     }
+}
+
+/// Rhai's message, with names a script never wrote made readable: a
+/// closure's internal name (`anon$1f2e...`) becomes "an anonymous
+/// function", and a call that doesn't exist on an array read through an
+/// item says how to copy it.
+fn readable(message: &str) -> String {
+    static ANON: std::sync::LazyLock<::regex::Regex> = std::sync::LazyLock::new(|| {
+        ::regex::Regex::new(r"`?anon\$[0-9a-f]+`?").expect("valid pattern")
+    });
+    let mut out = ANON
+        .replace_all(message, "an anonymous function")
+        .into_owned();
+    if out.contains("Function not found") && out.contains("frozen_array") {
+        out.push_str(
+            "; an array read through a collection item is read-only, so copy it first with `to_array()`",
+        );
+    }
+    out
 }
 
 /// A runtime error as one problem.

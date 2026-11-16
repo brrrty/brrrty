@@ -1239,3 +1239,29 @@ fn a_function_has_no_hash_in_its_text() {
         format!("{want}|{want}|{want}")
     );
 }
+
+/// A comparator that throws in a filter's `sort` refuses the page; a
+/// working one sorts as JavaScript does.
+#[test]
+fn a_filter_sort_with_a_failing_comparator_refuses_its_page() {
+    let (t, r) = site(
+        "config.add_filter(\"bad\", |v| v.sort(|a, b| { throw \"cmp broke\" }));\nconfig.add_filter(\"good\", |v| v.sort(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 }));\n",
+        &[
+            (
+                "good.liquid",
+                "{{ '3,1,2' | split: ',' | good | join: ',' }}",
+            ),
+            ("bad.liquid", "{{ '3,1,2' | split: ',' | bad | join: ',' }}"),
+        ],
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/good/index.html")).unwrap(),
+        "1,2,3"
+    );
+    assert!(!t.path().join("_site/bad/index.html").exists());
+    assert!(
+        r.problems.iter().any(|p| p.message.contains("cmp broke")),
+        "{:#?}",
+        r.problems
+    );
+}

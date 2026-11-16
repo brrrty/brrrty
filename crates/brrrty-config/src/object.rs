@@ -304,6 +304,14 @@ fn set(o: &mut JsObject, key: ImmutableString, v: Dynamic) -> Result<(), Box<Eva
     Ok(())
 }
 
+/// `sort` or `reverse` on an array read through an item: JavaScript would
+/// change the item's own array.
+fn frozen_change(what: &str) -> Box<EvalAltResult> {
+    read_only(format!(
+        "it calls `{what}` on an array read through a collection item, which would change the item's own array. Copy it first with `to_array()`"
+    ))
+}
+
 /// JavaScript's `ToIntegerOrInfinity` for an array index argument, then
 /// the `relativeStart` clamp of `Array.prototype.slice`.
 fn relative(v: &Dynamic, len: usize, default: usize) -> Result<usize, Box<EvalAltResult>> {
@@ -363,6 +371,24 @@ fn register_arrays(e: &mut Engine) {
                 } else {
                     Err(EvalAltResult::ErrorArrayBounds(a.0.len(), i, Position::NONE).into())
                 }
+            },
+        )
+        .register_fn(
+            "sort",
+            |_: &mut FrozenArray| -> Result<Array, Box<EvalAltResult>> {
+                Err(frozen_change("sort"))
+            },
+        )
+        .register_fn(
+            "sort",
+            |_: &mut FrozenArray, _: rhai::FnPtr| -> Result<Array, Box<EvalAltResult>> {
+                Err(frozen_change("sort"))
+            },
+        )
+        .register_fn(
+            "reverse",
+            |_: &mut FrozenArray| -> Result<Array, Box<EvalAltResult>> {
+                Err(frozen_change("reverse"))
             },
         )
         .register_fn("to_string", |_: &mut FrozenArray| "[array]".to_string())

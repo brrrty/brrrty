@@ -173,6 +173,23 @@ pub fn register(e: &mut Engine) {
     e.register_fn("js_concat", |a: Dynamic, b: Dynamic| js_concat(&a, &b));
     e.register_fn("js_sort", js_sort);
     e.register_fn("js_sort_by", js_sort_by);
+    // `arr.sort()` and `arr.sort(fn)` are JavaScript's, in place and
+    // returning the array, instead of Rhai's: Rhai's skips a comparator
+    // that fails and wants an integer result, so a port could sort
+    // differently from JavaScript without a word.
+    e.register_fn(
+        "sort",
+        |ctx: NativeCallContext, arr: &mut Array, f: FnPtr| -> Res<Array> {
+            let sorted = js_sort_by(ctx, arr.clone(), f)?;
+            *arr = sorted.clone();
+            Ok(sorted)
+        },
+    );
+    e.register_fn("sort", |arr: &mut Array| -> Res<Array> {
+        let sorted = js_sort(arr.clone())?;
+        *arr = sorted.clone();
+        Ok(sorted)
+    });
     e.register_fn("js_div", |a: Dynamic, b: Dynamic| -> Res<FLOAT> {
         Ok(float(&a, "js_div")? / float(&b, "js_div")?)
     });
