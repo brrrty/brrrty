@@ -408,6 +408,32 @@ fn a_page_on_a_rebound_name_cannot_listen() {
 }
 
 #[test]
+fn closed_tabs_leave_no_threads_behind_without_a_rebuild() {
+    // More tabs than the server's socket cap (64), opened and closed one after another
+    // with no rebuild in between, as navigating around a site does.
+    let t = site();
+    with_live(t.path(), |live| {
+        live.settle();
+        for _ in 0..80 {
+            let mut ws = live.socket();
+            assert_eq!(json(&ws.recv().unwrap())["type"], "connected");
+            drop(ws);
+            wait_for("the closed tab's writer to end", || {
+                live.live.writer_threads() == 0
+            });
+        }
+        assert_eq!(live.live.clients(), 0);
+        // Many at once are bounded by the open sockets, and all end when they close.
+        let open: Vec<Client> = (0..10).map(|_| live.socket()).collect();
+        wait_for("ten writers", || live.live.writer_threads() == 10);
+        drop(open);
+        wait_for("no writers", || live.live.writer_threads() == 0);
+        let mut ws = live.socket();
+        assert_eq!(json(&ws.recv().unwrap())["type"], "connected");
+    });
+}
+
+#[test]
 fn a_failed_first_build_is_shown_to_pages_that_connect() {
     let t = site();
     write(t.path(), "src/index.md", page("{% if %}"));

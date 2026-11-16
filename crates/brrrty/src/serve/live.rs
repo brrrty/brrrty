@@ -12,8 +12,10 @@
 //! Brrrty also logs a build error to pages that connect while it stands, and reports
 //! problems writing the output folder the same way.
 
-use std::sync::mpsc::{self, SyncSender};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use brrrty_core::{Problem, Severity};
 use brrrty_serve::{Handled, HtmlPage, HtmlRewrite, Incoming, Reply, RunningServer, WebSocket};
@@ -36,28 +38,46 @@ pub const SCRIPT_TAG: &str = r#"<script type="module" src="/.brrrty/reload-clien
 /// reading, and is dropped.
 const QUEUE: usize = 16;
 
+/// How often an idle writer checks that its page is still there. A page that closes is
+/// noticed by the server's reader at once; its writer ends within this.
+const WRITER_CHECK: Duration = Duration::from_millis(100);
+
 /// One connected page. Its messages go through a queue that a thread of its own writes out,
-/// so a page that reads slowly or not at all holds up only itself, never a rebuild.
+/// so a page that reads slowly or not at all holds up only itself, never a rebuild. The thread
+/// ends as soon as the page's socket closes, so writers never outnumber open sockets, which
+/// the server caps.
 struct Page {
     ws: WebSocket,
     queue: SyncSender<Arc<str>>,
 }
 
 impl Page {
-    fn new(ws: WebSocket) -> Option<Page> {
+    fn new(ws: WebSocket, writers: Arc<AtomicUsize>) -> Option<Page> {
         let (queue, rx) = mpsc::sync_channel::<Arc<str>>(QUEUE);
         let writer = ws.clone();
-        std::thread::Builder::new()
+        writers.fetch_add(1, Ordering::SeqCst);
+        let counted = Arc::clone(&writers);
+        let spawned = std::thread::Builder::new()
             .name("brrrty-live-reload".into())
             .spawn(move || {
-                for message in rx {
-                    if writer.send_text(&message).is_err() {
-                        break;
+                loop {
+                    match rx.recv_timeout(WRITER_CHECK) {
+                        Ok(message) => {
+                            if writer.send_text(&message).is_err() {
+                                break;
+                            }
+                        }
+                        Err(RecvTimeoutError::Timeout) if writer.is_open() => {}
+                        Err(_) => break,
                     }
                 }
                 writer.close();
-            })
-            .ok()?;
+                counted.fetch_sub(1, Ordering::SeqCst);
+            });
+        if spawned.is_err() {
+            writers.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
         Some(Page { ws, queue })
     }
 
@@ -74,6 +94,8 @@ impl Page {
 #[derive(Default)]
 struct State {
     pages: Vec<Page>,
+    /// Writer threads still running.
+    writers: Arc<AtomicUsize>,
     /// The `error` message for the problems that stand, sent to each page that connects.
     error: Option<Arc<str>>,
 }
@@ -118,12 +140,14 @@ impl LiveReload {
     }
 
     fn connected(&self, ws: WebSocket) {
-        let Some(page) = Page::new(ws.clone()) else {
+        let writers = Arc::clone(&self.lock().writers);
+        let Some(page) = Page::new(ws.clone(), writers) else {
             ws.close();
             return;
         };
         // Queued under the lock, so no rebuild's message can come before these.
         let mut state = self.lock();
+        state.pages.retain(|p| p.ws.is_open());
         let mut ok = page.send(&Arc::from(r#"{"type":"connected"}"#));
         if let Some(error) = &state.error {
             ok = ok && page.send(error);
@@ -142,6 +166,12 @@ impl LiveReload {
         let mut state = self.lock();
         state.pages.retain(|p| p.ws.is_open());
         state.pages.len()
+    }
+
+    /// How many writer threads are running; never more than the open sockets.
+    #[doc(hidden)]
+    pub fn writer_threads(&self) -> usize {
+        self.lock().writers.load(Ordering::SeqCst)
     }
 
     /// Tell the open pages about a rebuild. Never waits on a page.
