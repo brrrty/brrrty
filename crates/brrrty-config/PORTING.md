@@ -363,7 +363,8 @@ the way 11ty does:
   argument in every file under the input folder, whether it renders the
   file or not (Nunjucks pages, includes, pages refused for another
   reason), and a language a template writes (`` ```{{ lang }} ``) counts
-  as any language. If one of them changes a grammar, every page that
+  as any language, as does a `{% highlight` whose arguments start on the
+  next line. If one of them changes a grammar, every page that
   highlights with that grammar is refused, naming the file and line.
   Every page is rendered before any is written, and a language that only
   shows up then (a fence built from data) redoes the build with it, so
@@ -371,8 +372,11 @@ the way 11ty does:
 - Prism looking a language up that 11ty may or may not have loaded by then,
   depending on the order it renders pages in. This happens in
   Markdown code (`` ```md ``) that has a fenced code block in a language,
-  or front matter (unless YAML is surely loaded), and in `diff-x` code
-  where `x` isn't surely loaded;
+  and in `diff-x` code where `x` isn't surely loaded. Front matter in
+  Markdown code is highlighted as YAML only once YAML is loaded: Brrrty
+  replays the order 11ty renders pages' content in (one at a time), and
+  writes the page when a page 11ty renders before it loaded YAML (or the
+  same page did, earlier), and refuses it otherwise;
 - code where Prism's patterns would take too long (on hostile input,
   reaching the limit can take a few seconds), or where a Prism hook
   would run out of stack in Node;
@@ -384,8 +388,10 @@ a number, or `error_on_invalid_language` and a language Prism doesn't
 have), 11ty stops the build; Brrrty fails that page with
 `syntax-highlight-failed`, in a fence or a `{% highlight %}` tag.
 
-Nunjucks is not supported yet, so neither is the plugin's Nunjucks
-shortcode. Without `add_plugin("syntaxhighlight")` code is written plain,
+In Nunjucks the plugin adds a paired shortcode, `{% highlight "js 1,3" %}`,
+which Brrrty doesn't run yet: a Nunjucks page that uses it is refused.
+Its argument is an expression, so the build-wide check above counts any
+argument other than one string as any language. Without `add_plugin("syntaxhighlight")` code is written plain,
 which is wrong for a site whose 11ty config adds the plugin: add it.
 
 ### `rss`
