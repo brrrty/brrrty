@@ -1,4 +1,5 @@
-//! Parses every template and include in the Liquid conformance cases.
+//! The Liquid conformance cases: every template must parse like LiquidJS,
+//! and the cases in [`GATED_FILES`] must render like it.
 //!
 //! `probes/conformance_parse_errors.json` lists every case template that
 //! LiquidJS 10.30.1 rejects at parse time, with the message, line and
@@ -23,8 +24,13 @@ struct Case {
     name: String,
     group: String,
     template: String,
+    /// JSON. A missing `data` means `{}`.
+    data: Option<String>,
     #[serde(default)]
     includes: BTreeMap<String, String>,
+    /// Which `.toml` file the case is in. Filled in by `load`.
+    #[serde(skip)]
+    file: String,
 }
 
 #[derive(Deserialize)]
@@ -49,9 +55,14 @@ fn load() -> Vec<Case> {
     paths
         .iter()
         .flat_map(|p| {
-            toml::from_str::<File>(&fs::read_to_string(p).unwrap())
+            let file = p.file_name().unwrap().to_string_lossy().into_owned();
+            let mut cases = toml::from_str::<File>(&fs::read_to_string(p).unwrap())
                 .unwrap()
-                .case
+                .case;
+            for c in &mut cases {
+                c.file = file.clone();
+            }
+            cases
         })
         .collect()
 }
@@ -160,4 +171,127 @@ fn every_conformance_template_parses_like_liquidjs() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(rejected, pinned.len(), "every pinned error was seen");
     assert_eq!(matched_positions.len(), 9, "every .error with a position");
+}
+
+/// The case files that must render exactly like LiquidJS. Each task that
+/// adds engine features extends this list.
+const GATED_FILES: &[&str] = &[
+    "tags.toml",
+    "operators.toml",
+    "truthiness.toml",
+    "whitespace.toml",
+];
+
+/// Cases in gated files that need a feature a later task adds. Each entry
+/// names the task that removes it.
+const DEFERRED: &[(&str, &str)] = &[
+    ("assign_filter", "Task 5: upcase"),
+    ("assign_number", "Task 5: plus"),
+    ("assign_array_filter", "Task 5: split"),
+    ("capture_filter", "Task 5: split, last"),
+    ("echo_tag", "Task 5: upcase"),
+    ("range_in_condition", "Task 5: join"),
+    ("default_filter_falsy", "Task 5: default"),
+    ("default_allow_false", "Task 5: default"),
+    ("undefined_plus_filter", "Task 5: append"),
+    ("ws_dash_inside_expr", "Task 5: minus"),
+];
+
+/// Serves a case's `includes`.
+struct MapLoader<'a>(&'a BTreeMap<String, String>);
+
+impl brrrty_liquid::Loader for MapLoader<'_> {
+    fn load(&self, name: &str) -> Option<(String, String)> {
+        self.0.get(name).map(|s| (name.to_string(), s.clone()))
+    }
+}
+
+enum Outcome {
+    Pass,
+    Fail(String),
+}
+
+fn run_case(case: &Case) -> Outcome {
+    use brrrty_liquid::{Engine, EngineOptions, Tz};
+    let expected = cases_dir().join("expected");
+    let want_out = fs::read_to_string(expected.join(format!("{}.out", case.name))).ok();
+    let engine = Engine::new(EngineOptions {
+        strict_filters: true,
+        timezone: Tz::Utc,
+    });
+    let data: serde_json::Value =
+        serde_json::from_str(case.data.as_deref().unwrap_or("{}")).unwrap();
+    let data = brrrty_js::Value::from_json(&data);
+    let got = engine
+        .parse(&case.name, &case.template)
+        .and_then(|t| engine.render(&t, &data, &MapLoader(&case.includes)));
+    match (want_out, got) {
+        (Some(want), Ok(got)) if want == got => Outcome::Pass,
+        (Some(want), Ok(got)) => Outcome::Fail(format!("want {want:?}, got {got:?}")),
+        (Some(want), Err(e)) => Outcome::Fail(format!("want {want:?}, got error {e}")),
+        (None, Err(_)) => Outcome::Pass,
+        (None, Ok(got)) => Outcome::Fail(format!("want an error, got {got:?}")),
+    }
+}
+
+#[test]
+fn gated_cases_render_like_liquidjs() {
+    let cases = load();
+    for (name, _) in DEFERRED {
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name == *name && GATED_FILES.contains(&c.file.as_str())),
+            "{name}: deferred but not a case in a gated file"
+        );
+    }
+    // (file, group) -> (passed, total)
+    let mut table: BTreeMap<(String, String), (usize, usize)> = BTreeMap::new();
+    let mut failures = Vec::new();
+    let mut deferred_passing = Vec::new();
+    for case in &cases {
+        let outcome = run_case(case);
+        let row = table
+            .entry((case.file.clone(), case.group.clone()))
+            .or_default();
+        row.1 += 1;
+        let gated = GATED_FILES.contains(&case.file.as_str());
+        let deferred = DEFERRED.iter().any(|(n, _)| *n == case.name);
+        match outcome {
+            Outcome::Pass => {
+                row.0 += 1;
+                if gated && deferred {
+                    deferred_passing.push(case.name.as_str());
+                }
+            }
+            Outcome::Fail(why) if gated && !deferred => {
+                failures.push(format!("{} ({}): {why}", case.name, case.file))
+            }
+            Outcome::Fail(_) => {}
+        }
+    }
+    println!("| file | group | gated | pass | total |");
+    println!("|---|---|---|---|---|");
+    let (mut pass, mut total) = (0, 0);
+    for ((file, group), (p, t)) in &table {
+        let gated = if GATED_FILES.contains(&file.as_str()) {
+            "yes"
+        } else {
+            "no"
+        };
+        println!("| {file} | {group} | {gated} | {p} | {t} |");
+        pass += p;
+        total += t;
+    }
+    println!("| all | | | {pass} | {total} |");
+    println!("deferred: {}", DEFERRED.len());
+    if !deferred_passing.is_empty() {
+        println!("deferred cases that already pass: {deferred_passing:?}");
+    }
+    assert!(
+        failures.is_empty(),
+        "{} gated cases fail:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }

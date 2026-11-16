@@ -3,19 +3,38 @@
 //!
 //! [`parse`] turns a template into a [`Template`]. Parse errors carry the
 //! LiquidJS message and the line and column LiquidJS reports, plus a hint
-//! where one helps.
+//! where one helps. An [`Engine`] holds the filters and options, checks
+//! filters as it parses ([`Engine::parse`]) and renders templates
+//! ([`Engine::render`]).
 
 pub mod ast;
+mod context;
+mod engine;
 mod error;
 mod lexer;
+mod ops;
 mod parser;
+mod render;
+mod tags;
 
 pub use ast::Template;
+pub use engine::{Engine, EngineOptions, FilterCtx, FilterFn, Loader, Tz};
 pub use error::{ErrorKind, LiquidError};
 
 /// Parses `source`. `template_name` names the template in errors.
+///
+/// This checks syntax only. [`Engine::parse`] also rejects unknown filters
+/// when `strict_filters` is on.
 pub fn parse(template_name: &str, source: &str) -> Result<Template, LiquidError> {
-    let mut parser = parser::Parser::new();
+    parse_checked(template_name, source, None)
+}
+
+pub(crate) fn parse_checked(
+    template_name: &str,
+    source: &str,
+    check: parser::Check<'_>,
+) -> Result<Template, LiquidError> {
+    let mut parser = parser::Parser::new(check);
     match parser.parse_source(source) {
         Ok(nodes) => Ok(Template {
             name: template_name.to_string(),

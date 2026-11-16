@@ -13,6 +13,12 @@ pub enum ErrorKind {
     Unclosed,
     /// Tags or expressions nest more than 256 levels deep.
     TooDeep,
+    /// A filter name that no filter uses, with `strict_filters` on.
+    UnknownFilter,
+    /// An error while rendering, such as one a filter returns.
+    Render,
+    /// A loop, range or output larger than Brrrty allows.
+    Limit,
 }
 
 /// An error with its position in the template source.

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::{DateTime, FixedOffset};
 use indexmap::IndexMap;
 
-use crate::number::js_number_to_string;
+use crate::number::{js_number_to_string, js_string_to_number};
 
 /// A JavaScript-like value. Objects keep their insertion order.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +78,38 @@ impl Value {
         }
     }
 
+    /// JavaScript's `Number(v)`. Arrays and objects go through their
+    /// string form, as `ToPrimitive` does; a `Date` is its time in
+    /// milliseconds.
+    pub fn to_js_number(&self) -> f64 {
+        match self {
+            Value::Undefined => f64::NAN,
+            Value::Null => 0.0,
+            Value::Bool(b) => f64::from(u8::from(*b)),
+            Value::Number(n) => *n,
+            Value::String(s) => js_string_to_number(s),
+            Value::Array(_) | Value::Object(_) => js_string_to_number(&self.to_js_string()),
+            Value::Date(d) => d.timestamp_millis() as f64,
+        }
+    }
+
+    /// An object's entries in JavaScript's own-key order: keys that are
+    /// array indexes (`"0"` to `"4294967294"`, written canonically) come
+    /// first in numeric order, then the other keys in insertion order. This
+    /// is the order `Object.keys` and `for...in` give.
+    pub fn js_entries(o: &IndexMap<String, Value>) -> Vec<(&String, &Value)> {
+        let mut index: Vec<(u32, (&String, &Value))> = Vec::new();
+        let mut rest = Vec::new();
+        for (k, v) in o {
+            match array_index(k) {
+                Some(i) => index.push((i, (k, v))),
+                None => rest.push((k, v)),
+            }
+        }
+        index.sort_by_key(|(i, _)| *i);
+        index.into_iter().map(|(_, e)| e).chain(rest).collect()
+    }
+
     /// Property lookup. Only `.length` is special-cased (UTF-16 length for strings); Liquid's
     /// `.size`, `.first` and `.last` belong to `brrrty-liquid`.
     pub fn get(&self, key: &str) -> Value {
@@ -125,6 +157,13 @@ impl Value {
             _ => Value::Undefined,
         }
     }
+}
+
+/// `key` as an array index, if it is one written canonically: `"7"` but not
+/// `"07"`, `"-1"` or `"4294967295"`.
+pub fn array_index(key: &str) -> Option<u32> {
+    let n: u32 = key.parse().ok()?;
+    (n != u32::MAX && n.to_string() == key).then_some(n)
 }
 
 #[cfg(test)]
@@ -210,6 +249,61 @@ mod tests {
         assert_eq!(Value::Number(1e21).to_js_string(), "1e+21");
         assert_eq!(s("hi").to_js_string(), "hi");
         assert_eq!(arr(vec![]).to_js_string(), "");
+    }
+
+    #[test]
+    fn to_js_number_matches_node() {
+        // node: Number(undefined), Number(null), Number(true), Number([2]),
+        // Number([1,2]), Number([]), Number({}), Number(new Date(0)), Number(' 0x10 ')
+        assert!(Value::Undefined.to_js_number().is_nan());
+        assert_eq!(Value::Null.to_js_number(), 0.0);
+        assert_eq!(Value::Bool(true).to_js_number(), 1.0);
+        assert_eq!(arr(vec![Value::Number(2.0)]).to_js_number(), 2.0);
+        assert!(
+            arr(vec![Value::Number(1.0), Value::Number(2.0)])
+                .to_js_number()
+                .is_nan()
+        );
+        assert_eq!(arr(vec![]).to_js_number(), 0.0);
+        assert!(obj(&[]).to_js_number().is_nan());
+        assert_eq!(date().to_js_number(), 0.0);
+        assert_eq!(s(" 0x10 ").to_js_number(), 16.0);
+    }
+
+    #[test]
+    fn js_entries_put_index_keys_first() {
+        // node: Object.keys({b:1,"1":2,a:3,"0":4,"4294967295":5,"4294967294":6,"-1":7,"01":8,"1.5":9})
+        let keys = [
+            "b",
+            "1",
+            "a",
+            "0",
+            "4294967295",
+            "4294967294",
+            "-1",
+            "01",
+            "1.5",
+        ];
+        let o: IndexMap<String, Value> =
+            keys.iter().map(|k| (k.to_string(), Value::Null)).collect();
+        let got: Vec<&str> = Value::js_entries(&o)
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "0",
+                "1",
+                "4294967294",
+                "b",
+                "a",
+                "4294967295",
+                "-1",
+                "01",
+                "1.5"
+            ]
+        );
     }
 
     #[test]

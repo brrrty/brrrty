@@ -2,8 +2,8 @@
 //! constructors one for one.
 
 use crate::ast::{
-    Binding, Branch, Expr, FilePath, For, Include, Layout, Literal, Node, Output, Render, Tablerow,
-    Tag, TagKind, Text, Trim, When,
+    Binding, Branch, Expr, FilePath, FilteredValue, For, Include, Layout, Literal, Node, Output,
+    Render, Tablerow, Tag, TagKind, Text, Trim, When,
 };
 use crate::error::{ErrorKind, Located, ParseErr};
 use crate::lexer::{
@@ -52,15 +52,28 @@ impl Stream {
     }
 }
 
-pub(crate) struct Parser {
+pub(crate) struct Parser<'f> {
     depth: usize,
+    check: Check<'f>,
 }
 
 type Res<T> = Result<T, ParseErr>;
 
-impl Parser {
-    pub fn new() -> Parser {
-        Parser { depth: 0 }
+/// Checks a filtered value as LiquidJS's `Value` constructor does, which
+/// is where `strictFilters` rejects unknown filters. `None` checks nothing.
+pub(crate) type Check<'f> = Option<&'f dyn Fn(&FilteredValue) -> Res<()>>;
+
+/// Runs `check` on a value LiquidJS builds a `Value` from.
+fn checked(check: Check<'_>, value: FilteredValue) -> Res<FilteredValue> {
+    if let Some(check) = check {
+        check(&value)?;
+    }
+    Ok(value)
+}
+
+impl<'f> Parser<'f> {
+    pub fn new(check: Check<'f>) -> Parser<'f> {
+        Parser { depth: 0, check }
     }
 
     /// LiquidJS's `Parser.parse`: tokenize everything first, then parse.
@@ -108,6 +121,7 @@ impl Parser {
             Token::Output(o) => {
                 let mut c = Cursor::new(src.input, o.content.0, o.content.1, &src.spans);
                 let value = c.read_filtered_value()?;
+                let value = checked(self.check, value).map_err(|e| e.locate(o.begin))?;
                 Ok(Node::Output(Output {
                     span: src.spans.span(o.begin, o.end),
                     trim: Trim {
@@ -149,7 +163,7 @@ impl Parser {
     fn parse_tag(&mut self, src: &Source<'_>, t: &TagToken, stream: &mut Stream) -> Res<TagKind> {
         let c = Cursor::new(src.input, t.args_begin, t.content.1, &src.spans);
         match t.name.as_str() {
-            "assign" => assign(c),
+            "assign" => assign(c, self.check),
             "for" => self.for_tag(src, t, c, stream),
             "capture" => self.capture(src, t, c, stream),
             "case" => self.case(src, t, c, stream),
@@ -171,7 +185,7 @@ impl Parser {
             "unless" => self.unless(src, t, c, stream),
             "break" => Ok(TagKind::Break),
             "continue" => Ok(TagKind::Continue),
-            "echo" => echo(c),
+            "echo" => echo(c, self.check),
             "liquid" => self.liquid(src, c),
             "#" => inline_comment(src, t),
             _ => Err(unknown_tag(&t.name)),
@@ -206,9 +220,10 @@ impl Parser {
         mut c: Cursor<'_>,
         stream: &mut Stream,
     ) -> Res<TagKind> {
+        let check = self.check;
         let mut branches = vec![Branch {
             span: src.spans.span(t.begin, t.end),
-            condition: c.read_filtered_value()?,
+            condition: checked(check, c.read_filtered_value()?)?,
             body: Vec::new(),
         }];
         let mut else_body: Option<Vec<Node>> = None;
@@ -224,7 +239,7 @@ impl Parser {
                     let mut c = Cursor::new(src.input, tag.args_begin, tag.content.1, &src.spans);
                     branches.push(Branch {
                         span: src.spans.span(tag.begin, tag.end),
-                        condition: c.read_filtered_value()?,
+                        condition: checked(check, c.read_filtered_value()?)?,
                         body: Vec::new(),
                     });
                     Ok(Handled::Yes)
@@ -265,9 +280,10 @@ impl Parser {
         mut c: Cursor<'_>,
         stream: &mut Stream,
     ) -> Res<TagKind> {
+        let check = self.check;
         let mut branches = vec![Branch {
             span: src.spans.span(t.begin, t.end),
-            condition: c.read_filtered_value()?,
+            condition: checked(check, c.read_filtered_value()?)?,
             body: Vec::new(),
         }];
         let mut else_body = Vec::new();
@@ -283,7 +299,7 @@ impl Parser {
                     let mut c = Cursor::new(src.input, tag.args_begin, tag.content.1, &src.spans);
                     branches.push(Branch {
                         span: src.spans.span(tag.begin, tag.end),
-                        condition: c.read_filtered_value()?,
+                        condition: checked(check, c.read_filtered_value()?)?,
                         body: Vec::new(),
                     });
                     sink = Sink::Branch;
@@ -324,7 +340,7 @@ impl Parser {
         mut c: Cursor<'_>,
         stream: &mut Stream,
     ) -> Res<TagKind> {
-        let value = c.read_filtered_value()?;
+        let value = checked(self.check, c.read_filtered_value()?)?;
         let mut whens: Vec<When> = Vec::new();
         let mut else_body = Vec::new();
         let mut else_count = 0;
@@ -673,7 +689,7 @@ fn identifier(mut c: Cursor<'_>) -> String {
     c.read_identifier_text().to_string()
 }
 
-fn assign(mut c: Cursor<'_>) -> Res<TagKind> {
+fn assign(mut c: Cursor<'_>, check: Check<'_>) -> Res<TagKind> {
     let name = c.read_identifier_text().to_string();
     if name.is_empty() {
         return Err(c
@@ -685,16 +701,16 @@ fn assign(mut c: Cursor<'_>) -> Res<TagKind> {
         return Err(c.error(ErrorKind::Syntax, "expected \"=\"", c.p).into());
     }
     c.advance();
-    let value = c.read_filtered_value()?;
+    let value = checked(check, c.read_filtered_value()?)?;
     Ok(TagKind::Assign { name, value })
 }
 
-fn echo(mut c: Cursor<'_>) -> Res<TagKind> {
+fn echo(mut c: Cursor<'_>, check: Check<'_>) -> Res<TagKind> {
     c.skip_blank();
     let value = if c.end() {
         None
     } else {
-        Some(c.read_filtered_value()?)
+        Some(checked(check, c.read_filtered_value()?)?)
     };
     Ok(TagKind::Echo { value })
 }
@@ -865,7 +881,7 @@ fn unknown_tag(name: &str) -> ParseErr {
 }
 
 /// Levenshtein distance.
-fn distance(a: &str, b: &str) -> usize {
+pub(crate) fn distance(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
     let mut row: Vec<usize> = (0..=b.len()).collect();
     for (i, ca) in a.chars().enumerate() {

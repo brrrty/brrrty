@@ -1,0 +1,1086 @@
+[
+ {
+  "src": "{{ a }}",
+  "data": {
+   "a": [
+    1,
+    2
+   ]
+  },
+  "out": "12"
+ },
+ {
+  "src": "{{ a }}",
+  "data": {
+   "a": [
+    [
+     1,
+     [
+      2,
+      [
+       3
+      ]
+     ]
+    ],
+    null,
+    "x",
+    true,
+    false
+   ]
+  },
+  "out": "123xtruefalse"
+ },
+ {
+  "src": "{{ a }}",
+  "data": {
+   "a": [
+    {
+     "x": 1
+    },
+    [
+     {}
+    ]
+   ]
+  },
+  "out": "[object Object][object Object]"
+ },
+ {
+  "src": "{{ a }}",
+  "data": {
+   "a": {
+    "b": 1
+   }
+  },
+  "out": "[object Object]"
+ },
+ {
+  "src": "{{ a }}|{{ b }}|{{ c }}|{{ d }}|{{ e }}|{{ f }}|{{ g }}",
+  "data": {
+   "a": 1e+21,
+   "b": 0,
+   "c": 0.000001,
+   "d": 1e-7,
+   "e": 123456789012345680000,
+   "f": 0.1,
+   "g": -1.25
+  },
+  "out": "1e+21|0|0.000001|1e-7|123456789012345680000|0.1|-1.25"
+ },
+ {
+  "src": "[{{ nil }}|{{ null }}|{{ empty }}|{{ blank }}|{{ true }}|{{ false }}]",
+  "data": {},
+  "out": "[||||true|false]"
+ },
+ {
+  "src": "{{ d }}",
+  "data": {
+   "d": {
+    "$date": "2020-05-04T03:02:01Z"
+   }
+  },
+  "out": "Mon May 04 2020 03:02:01 GMT+0000 (Coordinated Universal Time)"
+ },
+ {
+  "src": "{{ d }}",
+  "data": {
+   "d": {
+    "$date": "1969-12-31T23:59:59.500Z"
+   }
+  },
+  "out": "Wed Dec 31 1969 23:59:59 GMT+0000 (Coordinated Universal Time)"
+ },
+ {
+  "src": "{% for i in xs %}{{ forloop }}|{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "{\"i\":0,\"length\":2,\"name\":\"i-xs\"}|{\"i\":1,\"length\":2,\"name\":\"i-xs\"}|"
+ },
+ {
+  "src": "{% for i in xs %}{{ forloop }}{% endfor %}",
+  "data": {
+   "xs": [
+    "a\"b"
+   ]
+  },
+  "out": "{\"i\":0,\"length\":1,\"name\":\"i-xs\"}"
+ },
+ {
+  "src": "{% tablerow i in xs cols:2 %}{{ tablerowloop }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">{\"i\":0,\"length\":1,\"name\":\"i-xs\",\"cols\":2}</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs cols:'2' %}{{ tablerowloop }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">{\"i\":0,\"length\":1,\"name\":\"i-xs\",\"cols\":\"2\"}</td></tr>"
+ },
+ {
+  "src": "{{ (1..3) }}|{{ (3..1) }}",
+  "data": {},
+  "out": "123|"
+ },
+ {
+  "src": "{{ 1 == 1 }}|{{ 1 and 'x' }}|{{ nil or false }}|{{ not 1 }}|{{ nil == nil }}",
+  "data": {},
+  "out": "true|true|false|false|true"
+ },
+ {
+  "src": "{% assign x = 1 == 1 %}{{ x }}",
+  "data": {},
+  "out": "true"
+ },
+ {
+  "src": "{{ 'a' | nosuch }}",
+  "data": {},
+  "err": "undefined filter: nosuch, line:1, col:1",
+  "stage": "parse"
+ },
+ {
+  "src": "{{ a.size }}|{{ s.size }}|{{ o.size }}|{{ n.size }}|{{ z.size }}|{{ t.size }}|{{ d.size }}|{{ os.size }}|{{ u.size }}",
+  "data": {
+   "a": [
+    1,
+    2,
+    3
+   ],
+   "s": "hé😀",
+   "o": {
+    "a": 1,
+    "b": 2
+   },
+   "n": 5,
+   "z": null,
+   "t": true,
+   "d": {
+    "$date": "2020-01-01T00:00:00Z"
+   },
+   "os": {
+    "size": "big"
+   }
+  },
+  "out": "3|4|2||||0|big|"
+ },
+ {
+  "src": "[{{ size }}]",
+  "data": {},
+  "out": "[0]"
+ },
+ {
+  "src": "[{{ size }}]",
+  "data": {
+   "a": 1,
+   "b": 2
+  },
+  "out": "[0]"
+ },
+ {
+  "src": "[{{ first }}|{{ last }}|{{ length }}]",
+  "data": {
+   "a": 1
+  },
+  "out": "[||]"
+ },
+ {
+  "src": "{{ a.first }}|{{ a.last }}|{{ s.first }}|{{ e.first }}|{{ o.first }}|{{ o.last }}",
+  "data": {
+   "a": [
+    1,
+    2,
+    3
+   ],
+   "s": "abc",
+   "e": [],
+   "o": {
+    "first": "F",
+    "last": "L"
+   }
+  },
+  "out": "1|3|||F|L"
+ },
+ {
+  "src": "{{ a[-1] }}|{{ a[-3] }}|{{ a[-4] }}|{{ a[1.5] }}|{{ a['1'] }}|{{ a['-1'] }}|{{ a.length }}|{{ a[3] }}",
+  "data": {
+   "a": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "3|1|||2||3|"
+ },
+ {
+  "src": "{{ s[0] }}|{{ s[-1] }}|{{ s.length }}|{{ s['1'] }}|{{ s[1] }}|{{ s[9] }}",
+  "data": {
+   "s": "héllo"
+  },
+  "out": "h||5|é|é|"
+ },
+ {
+  "src": "{{ o[nil] }}|{{ o[true] }}|{{ o[1] }}|{{ o[k] }}|{{ o[xs] }}",
+  "data": {
+   "o": {
+    "1": 3,
+    "null": 1,
+    "true": 2,
+    "undefined": 4,
+    "1,2": 5
+   },
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "1|2|3|4|5"
+ },
+ {
+  "src": "{{ [k] }}|{{ [0] }}",
+  "data": {
+   "0": "zero",
+   "k": "a",
+   "a": 5
+  },
+  "out": "5|zero"
+ },
+ {
+  "src": "[{{ nil.x }}|{{ empty.size }}|{{ 'abc'.size }}|{{ (1..3).size }}|{{ (1..3).first }}|{{ (1..3).last }}|{{ 'abc'.first }}]",
+  "data": {},
+  "out": "[||3|3|1|3|]"
+ },
+ {
+  "src": "[{{ a.b.c }}|{{ a.0 }}|{{ x.size }}]",
+  "data": {
+   "x": false
+  },
+  "out": "[||]"
+ },
+ {
+  "src": "{{ a.0 }}|{{ a.1.b }}",
+  "data": {
+   "a": [
+    5,
+    {
+     "b": 6
+    }
+   ]
+  },
+  "out": "5|6"
+ },
+ {
+  "src": "{{ o.k }}|{{ o['k'] }}|{{ o[\"k\"] }}",
+  "data": {
+   "o": {
+    "k": "v"
+   }
+  },
+  "out": "v|v|v"
+ },
+ {
+  "src": "[{{ o.toString }}|{{ o.constructor }}|{{ a.push }}|{{ s.toUpperCase }}]",
+  "data": {
+   "o": {},
+   "a": [],
+   "s": "x"
+  },
+  "out": "[|||]"
+ },
+ {
+  "src": "{% if n < 1 %}y{% else %}n{% endif %}",
+  "data": {
+   "n": null
+  },
+  "out": "y"
+ },
+ {
+  "src": "{% if nil < 1 %}y{% else %}n{% endif %}{% if 1 > nil %}y{% else %}n{% endif %}",
+  "data": {},
+  "out": "nn"
+ },
+ {
+  "src": "{% if '10' < '9' %}y{% else %}n{% endif %}",
+  "data": {},
+  "out": "y"
+ },
+ {
+  "src": "{% if 'abc' > 1 %}a{% endif %}{% if 'abc' < 1 %}b{% endif %}{% if '2' > 1 %}c{% endif %}{% if ' 2 ' > 1 %}d{% endif %}{% if '' < 1 %}e{% endif %}{% if true > 0 %}f{% endif %}",
+  "data": {},
+  "out": "cdef"
+ },
+ {
+  "src": "{% if a > 1 %}a{% endif %}{% if b > 1 %}b{% endif %}{% if o > 1 %}c{% endif %}{% if o == o %}d{% endif %}{% if d > 0 %}e{% endif %}{% if d < 1 %}f{% endif %}",
+  "data": {
+   "a": [
+    2
+   ],
+   "b": [
+    1,
+    2
+   ],
+   "o": {},
+   "d": {
+    "$date": "2020-01-01T00:00:00Z"
+   }
+  },
+  "out": "ade"
+ },
+ {
+  "src": "{% if d == d %}a{% endif %}{% if d == e %}b{% endif %}{% if d >= e %}c{% endif %}",
+  "data": {
+   "d": {
+    "$date": "2020-01-01T00:00:00Z"
+   },
+   "e": {
+    "$date": "2020-01-01T00:00:00Z"
+   }
+  },
+  "out": "ac"
+ },
+ {
+  "src": "{% if u > -1 %}a{% endif %}{% if '0x10' > 15 %}b{% endif %}{% if '1e3' > 999 %}c{% endif %}{% if 'Infinity' > 1 %}d{% endif %}{% if 'inf' > 1 %}e{% endif %}{% if '1_0' > 1 %}f{% endif %}{% if '-0x10' < 0 %}g{% endif %}{% if '0b11' == 3 %}h{% endif %}{% if '.5' > 0 %}i{% endif %}{% if '5.' > 4 %}j{% endif %}",
+  "data": {},
+  "out": "bcdij"
+ },
+ {
+  "src": "{% if 'a' < 'B' %}a{% endif %}{% if 'é' > 'z' %}b{% endif %}{% if '😀' > '￿' %}c{% endif %}",
+  "data": {},
+  "out": "b"
+ },
+ {
+  "src": "{% if a == b %}a{% endif %}{% if o == p %}b{% endif %}{% assign q = o %}{% if o == q %}c{% endif %}{% if 1 == 1.0 %}d{% endif %}{% if nil == null %}e{% endif %}{% if nothing == nil %}f{% endif %}{% if n == nil %}g{% endif %}{% if n == nothing %}h{% endif %}",
+  "data": {
+   "a": [
+    [
+     1,
+     "x"
+    ],
+    [
+     null
+    ]
+   ],
+   "b": [
+    [
+     1,
+     "x"
+    ],
+    [
+     null
+    ]
+   ],
+   "o": {
+    "k": 1
+   },
+   "p": {
+    "k": 1
+   },
+   "n": null
+  },
+  "out": "acdefg"
+ },
+ {
+  "src": "{% if empty == empty %}a{% endif %}{% if blank == empty %}b{% endif %}{% if empty == blank %}c{% endif %}{% if nil == empty %}d{% endif %}{% if false == blank %}e{% endif %}{% if blank == false %}f{% endif %}{% if s == blank %}g{% endif %}{% if o == empty %}h{% endif %}{% if 0 == empty %}i{% endif %}{% if w == blank %}j{% endif %}{% if a == empty %}k{% endif %}{% if nil == blank %}l{% endif %}{% if blank == blank %}m{% endif %}{% if nothing == empty %}n{% endif %}{% if nothing == blank %}o{% endif %}",
+  "data": {
+   "s": null,
+   "o": {},
+   "w": " \n\t",
+   "a": [
+    " "
+   ]
+  },
+  "out": "efghjo"
+ },
+ {
+  "src": "{% if empty > 1 %}a{% endif %}{% if 1 < empty %}b{% endif %}{% if nil >= nil %}c{% endif %}{% if nil <= nil %}d{% endif %}{% if nil != nil %}e{% endif %}{% if empty != empty %}f{% endif %}{% if '' != empty %}g{% endif %}{% if e2 == empty %}h{% endif %}{% if ea == blank %}i{% endif %}{% if eo == blank %}j{% endif %}",
+  "data": {
+   "e2": "",
+   "ea": [],
+   "eo": {}
+  },
+  "out": "fhij"
+ },
+ {
+  "src": "{% if empty < 1 %}a{% endif %}{% if 1 > empty %}b{% endif %}{% if empty == '' %}c{% endif %}{% if blank == '  ' %}d{% endif %}",
+  "data": {},
+  "out": "cd"
+ },
+ {
+  "src": "{% if s contains 1 %}a{% endif %}{% if t contains nil %}b{% endif %}{% if xs contains nil %}c{% endif %}{% if ys contains empty %}d{% endif %}{% if s contains '' %}e{% endif %}{% if nothing contains nothing %}f{% endif %}{% if 5 contains 5 %}g{% endif %}{% if zs contains a %}h{% endif %}{% if s contains u %}i{% endif %}{% if s contains xs2 %}j{% endif %}",
+  "data": {
+   "s": "a1",
+   "t": "anull",
+   "xs": [
+    null
+   ],
+   "ys": [
+    ""
+   ],
+   "zs": [
+    [
+     1
+    ]
+   ],
+   "a": [
+    1
+   ],
+   "xs2": [
+    "a",
+    1
+   ]
+  },
+  "out": "abcdeh"
+ },
+ {
+  "src": "{% if uu contains 'undef' %}a{% endif %}{% if s contains nothing %}b{% endif %}{% if xs contains 1.0 %}c{% endif %}{% if xs contains '1' %}d{% endif %}",
+  "data": {
+   "uu": "undefined",
+   "s": "xundefinedx",
+   "xs": [
+    1
+   ]
+  },
+  "out": "abc"
+ },
+ {
+  "src": "{% for i in (1..1) %}{% if forloop contains 'name' %}a{% endif %}{% endfor %}",
+  "data": {},
+  "out": "a"
+ },
+ {
+  "src": "{% if not nil %}a{% endif %}{% if not 0 %}b{% endif %}{% if not '' %}c{% endif %}{% if not empty %}d{% endif %}",
+  "data": {},
+  "out": "a"
+ },
+ {
+  "src": "{% if a and b or c %}y{% else %}n{% endif %}",
+  "data": {
+   "a": false,
+   "b": true,
+   "c": true
+  },
+  "out": "n"
+ },
+ {
+  "src": "{% for i in (1.5..3) %}{{ i }},{% endfor %}|{% for i in ('1'..'3') %}{{ i }},{% endfor %}|{% for i in (a..2) %}{{ i }},{% endfor %}|{% for i in (-2..0) %}{{ i }},{% endfor %}|{% for i in (1..3.5) %}{{ i }},{% endfor %}|{% for i in (0..0) %}{{ i }},{% endfor %}",
+  "data": {
+   "a": "x"
+  },
+  "out": "1.5,2.5,3.5,|1,2,3,||-2,-1,0,|1,2,3,4,|0,"
+ },
+ {
+  "src": "{% for i in (nil..2) %}{{ i }},{% endfor %}|{% for i in (t..2) %}{{ i }},{% endfor %}|{% for i in (u..2) %}{{ i }},{% endfor %}",
+  "data": {
+   "t": true
+  },
+  "out": "0,1,2,|1,2,|"
+ },
+ {
+  "src": "{% for i in xs limit:-1 %}{{ i }}{% endfor %}|{% for i in xs offset:-1 %}{{ i }}{% endfor %}|{% for i in xs limit:'2' %}{{ i }}{% endfor %}|{% for i in xs offset:1.5 %}{{ i }}{% endfor %}|{% for i in xs limit:nil %}{{ i }}{% endfor %}|{% for i in xs limit:0 %}{{ i }}{% else %}E{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  "out": "123|4|12|234||"
+ },
+ {
+  "src": "{% for i in xs reversed limit:2 %}{{ i }}{% endfor %}|{% for i in xs reversed offset:1 %}{{ i }}{% endfor %}|{% for i in xs limit:1 limit:2 %}{{ i }}{% endfor %}|{% for i in xs limit:3 offset:2 %}{{ i }}{% endfor %}|{% for i in xs offset:'x' %}{{ i }}{% endfor %}|{% for i in xs limit:'x' %}{{ i }}{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  "out": "21|432|12|34|1234|"
+ },
+ {
+  "src": "{% for i in xs limit:2 %}{{ i }}{% endfor %}|{% for i in xs offset:continue limit:2 %}{{ i }}{% endfor %}|{% for i in xs offset:continue %}{{ i }}{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ]
+  },
+  "out": "12|34|5"
+ },
+ {
+  "src": "{% for i in xs offset:continue limit:2 %}{{ i }}{% endfor %}|{% for i in xs offset:continue limit:2 %}{{ i }}{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ]
+  },
+  "out": "12|12"
+ },
+ {
+  "src": "{% for i in xs limit:2 %}{{ i }}{% endfor %}|{% for i in xs limit:2 offset:continue %}{{ i }}{% endfor %}|{% for j in xs offset:continue %}{{ j }}{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ]
+  },
+  "out": "12|34|12345"
+ },
+ {
+  "src": "{% for i in xs limit:2, offset:1 %}{{ i }}{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ]
+  },
+  "out": "23"
+ },
+ {
+  "src": "{% for i in xs limit:2 %}{{ forloop.length }}{{ forloop.last }}{% endfor %}|{% for i in (1..3) %}{{ forloop.name }}{% endfor %}|{% for i in xs reversed %}{{ forloop.name }}{% break %}{% endfor %}|{% for i in xs %}{{ forloop.i }}{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "2false2true|i-(1..3)i-(1..3)i-(1..3)|i-xs|012"
+ },
+ {
+  "src": "{% for i in xs %}{% assign f = forloop %}{% endfor %}{{ f.index }}|{{ f.name }}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "4|i-xs"
+ },
+ {
+  "src": "{% for kv in o %}{{ kv[0] }}{% endfor %}",
+  "data": {
+   "o": {
+    "0": 4,
+    "1": 2,
+    "b": 1,
+    "a": 3,
+    "-1": 5,
+    "01": 6
+   }
+  },
+  "out": "01ba-101"
+ },
+ {
+  "src": "{% for x in s %}[{{ x }}]{% endfor %}|{% for x in n %}[{{ x }}]{% else %}N{% endfor %}|{% for x in z %}[{{ x }}]{% else %}Z{% endfor %}|{% for x in d %}[{{ x }}]{% else %}D{% endfor %}|{% for x in e %}[{{ x }}]{% else %}E{% endfor %}|{% for x in aa %}[{{ x }}]{% endfor %}|{% for x in t %}[{{ x }}]{% else %}T{% endfor %}",
+  "data": {
+   "s": "abc",
+   "n": 5,
+   "z": null,
+   "d": {
+    "$date": "2020-01-01T00:00:00Z"
+   },
+   "e": "",
+   "aa": [
+    [
+     1,
+     2
+    ],
+    null
+   ],
+   "t": true
+  },
+  "out": "[abc]|N|Z|D|E|[12][]|T"
+ },
+ {
+  "src": "{% for x in nil %}a{% else %}N{% endfor %}{% for x in empty %}a{% else %}E{% endfor %}{% for x in 'ab' %}{{ x }}{% endfor %}{% for x in 5 %}a{% else %}F{% endfor %}",
+  "data": {},
+  "out": "NEabF"
+ },
+ {
+  "src": "{% for i in xs %}{% assign i = 9 %}{{ i }}{% endfor %}{{ i }}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "129"
+ },
+ {
+  "src": "{% for i in xs %}{% for j in xs %}{{ forloop.index }}{% endfor %}{{ forloop.index }};{% endfor %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "121;122;"
+ },
+ {
+  "src": "{% assign forloop = 5 %}{{ forloop }}{% for i in (1..1) %}{{ forloop.index }}{% endfor %}{{ forloop }}",
+  "data": {},
+  "out": "515"
+ },
+ {
+  "src": "{% for i in xs %}{{ i }}{% endfor %}",
+  "data": {
+   "xs": [
+    null,
+    1,
+    null
+   ]
+  },
+  "out": "1"
+ },
+ {
+  "src": "{% for i in xs %}{{ i }}{% endfor %}{{ i }}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ],
+   "i": "data"
+  },
+  "out": "12data"
+ },
+ {
+  "src": "{% assign i = 'a' %}{% for i in xs %}{{ i }}{% endfor %}{{ i }}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "12a"
+ },
+ {
+  "src": "a{% break %}b",
+  "data": {},
+  "out": "a"
+ },
+ {
+  "src": "a{% continue %}b{{ 'c' }}",
+  "data": {},
+  "out": "a"
+ },
+ {
+  "src": "{% if true %}a{% break %}b{% endif %}c",
+  "data": {},
+  "out": "a"
+ },
+ {
+  "src": "{% for i in (1..3) %}{% if i == 2 %}{% break %}{% endif %}{{ i }}{% endfor %}after",
+  "data": {},
+  "out": "1after"
+ },
+ {
+  "src": "{% for i in (1..2) %}{% for j in (1..3) %}{% if j == 2 %}{% break %}{% endif %}{{ i }}{{ j }} {% endfor %}{% endfor %}",
+  "data": {},
+  "out": "11 21 "
+ },
+ {
+  "src": "{% for i in (1..3) %}{% capture c %}x{% break %}y{% endcapture %}[{{ c }}]{% endfor %}z",
+  "data": {},
+  "out": "z"
+ },
+ {
+  "src": "{% for i in (1..3) %}{% capture c %}x{% continue %}y{% endcapture %}[{{ c }}]{% endfor %}z",
+  "data": {},
+  "out": "z"
+ },
+ {
+  "src": "{% for i in e %}{% else %}a{% break %}b{% endfor %}c",
+  "data": {
+   "e": []
+  },
+  "out": "a"
+ },
+ {
+  "src": "{% tablerow i in (1..3) %}{{ i }}{% break %}x{% endtablerow %}after",
+  "data": {},
+  "out": "<tr class=\"row1\"><td class=\"col1\">1</td><td class=\"col2\">2</td><td class=\"col3\">3</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in (1..3) %}{{ i }}{% if i == 2 %}{% break %}{% endif %}x{% endtablerow %}after",
+  "data": {},
+  "out": "<tr class=\"row1\"><td class=\"col1\">1x</td><td class=\"col2\">2</td><td class=\"col3\">3</td></tr>"
+ },
+ {
+  "src": "{% for i in (1..3) %}{% continue %}{{ i }}{% endfor %}{{ 'z' }}",
+  "data": {},
+  "out": "z"
+ },
+ {
+  "src": "{% case 1 %}{% when 1 %}a{% when 1 %}b{% endcase %}",
+  "data": {},
+  "out": "ab"
+ },
+ {
+  "src": "{% case x %}{% when 1, 1 %}a{% when 2 or 1 %}b{% endcase %}",
+  "data": {
+   "x": 1
+  },
+  "out": "ab"
+ },
+ {
+  "src": "{% case x %}{% when empty %}E{% when blank %}B{% endcase %}|{% case nil %}{% when nil %}N{% endcase %}|{% case a %}{% when b %}A{% endcase %}|{% case n %}{% when nothing %}U{% endcase %}",
+  "data": {
+   "x": "",
+   "a": [
+    1
+   ],
+   "b": [
+    1
+   ],
+   "n": null
+  },
+  "out": "EB|N|A|"
+ },
+ {
+  "src": "{% case 1 %}{% else %}a{% else %}b{% endcase %}|{% case 1 %}{% when 2 %}x{% else %}a{% when 1 %}c{% endcase %}",
+  "data": {},
+  "out": "a|ac"
+ },
+ {
+  "src": "{% case '1' %}{% when 1 %}num{% else %}str{% endcase %}",
+  "data": {},
+  "out": "str"
+ },
+ {
+  "src": "{% unless true %}a{% elsif true %}b{% endunless %}|{% unless false %}a{% elsif true %}b{% endunless %}|{% unless true %}a{% elsif false %}b{% else %}c{% endunless %}",
+  "data": {},
+  "out": "b|a|c"
+ },
+ {
+  "src": "{% increment x %}{% increment x %}{{ x }}",
+  "data": {
+   "x": 5
+  },
+  "out": "567"
+ },
+ {
+  "src": "{% increment x %}{% increment x %}{{ x }}",
+  "data": {
+   "x": "5"
+  },
+  "out": "012"
+ },
+ {
+  "src": "{% assign x = 10 %}{% increment x %}{{ x }}",
+  "data": {},
+  "out": "010"
+ },
+ {
+  "src": "{% increment x %}{{ x }}{% assign x = 10 %}{% increment x %}{{ x }}",
+  "data": {},
+  "out": "01110"
+ },
+ {
+  "src": "{% increment x %}{% decrement x %}{% decrement x %}{{ x }}",
+  "data": {},
+  "out": "00-1-1"
+ },
+ {
+  "src": "{% increment %}{% increment %}{% decrement %}",
+  "data": {},
+  "out": "011"
+ },
+ {
+  "src": "{% for x in (1..2) %}{% increment x %}{% endfor %}{{ x }}",
+  "data": {},
+  "out": "012"
+ },
+ {
+  "src": "{% decrement y %}{{ y }}{% increment y %}",
+  "data": {
+   "y": 1.5
+  },
+  "out": "0.50.50.5"
+ },
+ {
+  "src": "{% capture x %}5{% endcapture %}{% increment x %}{{ x }}",
+  "data": {},
+  "out": "05"
+ },
+ {
+  "src": "{% cycle 0, 1 %}|{% cycle 0, 1 %}|{% cycle 0, 1 %}",
+  "data": {},
+  "out": "|1|"
+ },
+ {
+  "src": "{% cycle false, true %}|{% cycle false, true %}|{% cycle nil, 'a' %}|{% cycle nil, 'a' %}",
+  "data": {},
+  "out": "|true||a"
+ },
+ {
+  "src": "{% cycle g: 'a','b' %}{% cycle g: 'a','b' %}{% cycle 'a','b' %}",
+  "data": {},
+  "out": "aba"
+ },
+ {
+  "src": "{% cycle 'a','b' %}{% cycle 'a', 'b' %}{% cycle 'a' ,'b' %}{% cycle  'a','b'  %}",
+  "data": {},
+  "out": "aaab"
+ },
+ {
+  "src": "{% cycle 1: 'a','b' %}{% cycle '1': 'a','b' %}{% cycle g: 'a','b' %}{% cycle h: 'a','b' %}",
+  "data": {
+   "g": 1,
+   "h": "1"
+  },
+  "out": "abab"
+ },
+ {
+  "src": "{% for i in (1..2) %}{% for j in (1..2) %}{% cycle 'x','y','z' %}{% endfor %}{% endfor %}",
+  "data": {},
+  "out": "xyzx"
+ },
+ {
+  "src": "{% cycle xs, 'b' %}{% cycle xs, 'b' %}{% cycle o %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ],
+   "o": {
+    "a": 1
+   }
+  },
+  "out": "12b[object Object]"
+ },
+ {
+  "src": "{% cycle 'a' | nosuch, 'b' %}",
+  "data": {},
+  "err": "undefined filter: nosuch, line:1, col:1",
+  "stage": "render"
+ },
+ {
+  "src": "x\n  {% cycle 'b', 'a' | nosuch %}{% cycle 'b', 'a' | nosuch %}",
+  "data": {},
+  "err": "undefined filter: nosuch, line:2, col:32",
+  "stage": "render"
+ },
+ {
+  "src": "{% tablerow i in xs cols:0 %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">1</td><td class=\"col2\">2</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs cols:'2' %}{{ i }}{{ tablerowloop.col_last }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">1false</td><td class=\"col2\">2false</td></tr><tr class=\"row2\"><td class=\"col1\">3false</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs cols:3 %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">1</td><td class=\"col2\">2</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs offset:1 limit:'1' %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">2</td><td class=\"col2\">3</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs offset:'1' limit:1 %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">2</td><td class=\"col2\">3</td></tr>"
+ },
+ {
+  "src": "[{% tablerow i in xs %}{{ i }}{% endtablerow %}]",
+  "data": {
+   "xs": []
+  },
+  "out": "[]"
+ },
+ {
+  "src": "{% tablerow i in xs cols:2 %}{{ tablerowloop.col }}{{ tablerowloop.col0 }}{{ tablerowloop.col_first }}{{ tablerowloop.col_last }}{{ tablerowloop.row }}{{ tablerowloop.index }}{{ tablerowloop.length }}{{ tablerowloop.first }}{{ tablerowloop.last }}{{ tablerowloop.rindex }}{{ tablerowloop.cols }}[{{ forloop.index }}]{% endtablerow %}",
+  "data": {
+   "xs": [
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">10truefalse113truefalse32[]</td><td class=\"col2\">21falsetrue123falsefalse22[]</td></tr><tr class=\"row2\"><td class=\"col1\">10truefalse233falsetrue12[]</td></tr>"
+ },
+ {
+  "src": "{% tablerow c in 'abc' %}{{ c }}{% endtablerow %}",
+  "data": {},
+  "out": "<tr class=\"row1\"><td class=\"col1\">abc</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs cols:1.5 %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">1</td><td class=\"col2\">2</td><td class=\"col1.5\">3</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs cols:'x' %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "<td class=\"colNaN\">1</td><td class=\"colNaN\">2</td></tr>"
+ },
+ {
+  "src": "{% tablerow i in xs limit:-1 %}{{ i }}{% endtablerow %}|{% tablerow i in xs offset:-1 %}{{ i }}{% endtablerow %}|{% tablerow i in xs reversed %}{{ i }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2,
+    3
+   ]
+  },
+  "out": "<tr class=\"row1\"><td class=\"col1\">1</td><td class=\"col2\">2</td></tr>||<tr class=\"row1\"><td class=\"col1\">1</td><td class=\"col2\">2</td><td class=\"col3\">3</td></tr>"
+ },
+ {
+  "src": "{% tablerow in xs %}{{ tablerowloop.index }}{% endtablerow %}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "err": "illegal tag: {% tablerow in xs %}, line:1, col:1",
+  "stage": "parse"
+ },
+ {
+  "src": "{% capture 'q' %}x{% endcapture %}{{ q }}|{% capture \"r\" %}y{% endcapture %}{{ r }}",
+  "data": {},
+  "out": "x|y"
+ },
+ {
+  "src": "{% for i in (1..2) %}{% capture c %}{{ i }}{% endcapture %}{% endfor %}{{ c }}",
+  "data": {},
+  "out": "2"
+ },
+ {
+  "src": "{% capture a %}new{% endcapture %}{{ a }}",
+  "data": {
+   "a": "data"
+  },
+  "out": "new"
+ },
+ {
+  "src": "{% assign x = nil %}{% if x == nil %}a{% endif %}{% assign e = empty %}{% if '' == e %}b{% endif %}[{{ e }}]",
+  "data": {},
+  "out": "ab[]"
+ },
+ {
+  "src": "{% assign x = xs %}{{ x.size }}{% assign y = (1..4) %}{{ y.last }}",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "24"
+ },
+ {
+  "src": "{% assign x = a.b %}[{{ x }}]{% assign y = 'a' %}{% assign y = nothing %}[{{ y }}]",
+  "data": {},
+  "out": "[][]"
+ },
+ {
+  "src": "[{% echo %}|{% echo nil %}|{% echo xs %}|{% echo 1 == 1 %}]",
+  "data": {
+   "xs": [
+    1,
+    2
+   ]
+  },
+  "out": "[||12|true]"
+ },
+ {
+  "src": "{% liquid\nfor i in (1..3)\n  if i == 2\n    continue\n  endif\n  echo i\nendfor\ncase 1\nwhen 1\n  echo 'one'\nendcase\ncapture c\n  echo 'cap'\nendcapture\necho c\n%}",
+  "data": {},
+  "out": "13onecap"
+ },
+ {
+  "src": "{% layout none %}x{{ 'y' }}",
+  "data": {},
+  "out": "xy"
+ },
+ {
+  "src": "{% block a %}b[{{ block.super }}]|{{ block }}{% endblock %}c",
+  "data": {},
+  "out": "b[]|[object Object]c"
+ },
+ {
+  "src": "{% block %}b{% endblock %}",
+  "data": {},
+  "out": "b"
+ },
+ {
+  "src": "a{% raw %} {{ x }} {% endraw %}b{% comment %}x{% endcomment %}c{% # z %}d",
+  "data": {},
+  "out": "a {{ x }} bcd"
+ },
+ {
+  "src": "{{ s }}",
+  "data": {
+   "s": "<b>&amp;\"'</b>"
+  },
+  "out": "<b>&amp;\"'</b>"
+ }
+]

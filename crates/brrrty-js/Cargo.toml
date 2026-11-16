@@ -14,4 +14,4 @@ readme = false
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
 indexmap = "2"
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

@@ -3,5 +3,5 @@
 mod number;
 mod value;
 
-pub use number::js_number_to_string;
-pub use value::Value;
+pub use number::{is_js_whitespace, js_number_to_string, js_string_to_number};
+pub use value::{Value, array_index};
