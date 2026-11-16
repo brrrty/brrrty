@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.7 - 2026-11-17
 
 Nunjucks:
 
@@ -11,11 +11,19 @@ Nunjucks:
 - Regular expression literals (`r/.../gi`) work with `replace`, `replaceAll`, `split`, `test`, the `replace` filter and printing. They match as JavaScript's do, with the same rules as `regex_replace` in scripts.
 - What Brrrty can't reproduce exactly is refused with the reason, never approximated: a method with no exact emulation, `random`, a `sort` or `dictsort` whose order would depend on V8's sort, async filters and tags, 11ty's `setAsync`, `getBundle` and `getBundleFileUrl`, printing a function (Nunjucks prints its JavaScript source), the syntax highlighting plugin's Nunjucks `{% highlight %}` shortcode, a `SafeString` passed to a config (Rhai) filter or to an RSS filter that every engine has (JavaScript would pass an object, not a string), options to `slug` and `slugify`, and a time zone argument to `dateToRfc822`.
 - The engine has the Liquid engine's safety limits: nesting depth, loop and output size, and a parser that never backtracks. A crash in it refuses the page instead of stopping the build.
+- A render may run 3,000,000 loop iterations in all, across nested loops, includes and macros, so nested loops are stopped in seconds.
+- A filter that lists a collection item's properties (`urlencode`, `dictsort`, `list`, `dump`) is refused, as `for k, v in item` is: 11ty prints its `template` object and content there. Counting or testing the names in `collections` (`length`, `in`, `dictsort`) is refused when the site has an 11ty config that may add collections.
 
 Config:
 
 - `git_head()` gives the commit `git rev-parse HEAD` prints, for a config or data script that ports `execSync("git rev-parse HEAD")`. It reads the repository's files (`HEAD`, loose refs, `packed-refs`, and a linked worktree's `.git` file and `commondir`) from the project folder up, and starts no process. Outside a repository it is an error, which `try`/`catch` can turn into a default.
+- A script filter that lists the names in `collections` (`keys()`, `len()`, `contains()`, `for k in`) under an 11ty config, or changes a collection item, is refused.
+- `map`, `filter` and `reduce` with an anonymous function run about twice as fast, and `regex_split` with a pattern without groups is faster.
 - The regular expression matcher behind `regex_replace`, `regex_split` and `regex_test` moved to `brrrty-jsregex`, where Nunjucks uses it too.
+
+CLI:
+
+- `brrrty build 2>&1 | head -1` no longer aborts with exit code 134 when the pipe closes: printing stops and the build's own exit code stands.
 
 Syntax highlighting:
 
