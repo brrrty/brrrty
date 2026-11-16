@@ -214,9 +214,9 @@ fn priority(path: &Path) -> usize {
 
 /// A JSON data file as 11ty reads it: a leading byte order mark is dropped
 /// and a blank file is `{}`. The error is serde's message and its position.
-type JsonError = (String, Option<(usize, usize)>);
+pub(crate) type JsonError = (String, Option<(usize, usize)>);
 
-fn read_json(file: &Path) -> Result<Value, JsonError> {
+pub(crate) fn read_json(file: &Path) -> Result<Value, JsonError> {
     let bytes = std::fs::read(file).map_err(|e| (format!("cannot read file: {e}"), None))?;
     let text = String::from_utf8_lossy(&bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);

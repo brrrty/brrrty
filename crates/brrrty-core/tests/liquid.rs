@@ -682,24 +682,24 @@ fn pages_that_need_unsupported_data_are_errors() {
             .unwrap_or_else(|| panic!("no problem for {rel}: {:#?}", r.problems))
     };
     let d = by_path("src/uses-data.md");
-    assert_eq!(d.code, codes::DATA_UNSUPPORTED);
+    assert_eq!(d.code, codes::DATA_JS_UNSUPPORTED);
     assert_eq!(
         d.message,
-        "this page uses `site` from src/_data, which Brrrty doesn't read yet"
+        "this page uses `site` from src/_data/site.js, a JavaScript data file"
     );
-    assert_eq!(by_path("src/uses-dir.md").code, codes::DATA_UNSUPPORTED);
+    assert_eq!(by_path("src/uses-dir.md").code, codes::DATA_JS_UNSUPPORTED);
     let c = by_path("src/uses-collections.liquid");
     assert_eq!(
         c.message,
         "this page uses `collections`, which Brrrty doesn't build yet"
     );
+    // Directory data is read now: its layout applies, and here is missing.
     let posts = by_path("src/posts/one.md");
-    assert_eq!(
-        posts.message,
-        "data file src/posts/posts.json applies to this page, and Brrrty doesn't read data files yet"
-    );
-    assert_eq!(by_path("src/other/thing.md").code, codes::DATA_UNSUPPORTED);
-    assert_eq!(errors(&r).len(), 5, "{:#?}", r.problems);
+    assert_eq!(posts.code, codes::LAYOUT_MISSING);
+    assert_eq!(posts.message, "layout `x` not found");
+    // A JavaScript data file that exports no keys changes nothing.
+    assert_eq!(read(root, "other/thing/index.html"), "<p>plain</p>\n");
+    assert_eq!(errors(&r).len(), 4, "{:#?}", r.problems);
     assert_eq!(read(root, "fine/index.html"), "<p>ab</p>\n");
     // JSON data is read, so a page using only it builds.
     assert_eq!(read(root, "uses-json/index.html"), "<p>1</p>\n");

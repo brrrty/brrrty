@@ -181,7 +181,7 @@ fn size_first_and_last_from_javascript_are_refused() {
         let r = run(root);
         let errs = errors(&r);
         assert_eq!(errs.len(), 1, "{key}: {:#?}", r.problems);
-        assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED, "{key}");
+        assert_eq!(errs[0].code, codes::DATA_JS_UNSUPPORTED, "{key}");
         assert_eq!(errs[0].path.as_deref(), Some(Path::new("src/a.liquid")));
         assert!(!root.join("_site/a/index.html").exists(), "{key}");
         assert_eq!(read(root, "b/index.html"), "plain");
@@ -249,7 +249,7 @@ fn counters_from_javascript_data_are_refused() {
     let r = run(root);
     let errs = errors(&r);
     assert_eq!(errs.len(), 1, "{:#?}", r.problems);
-    assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED);
+    assert_eq!(errs[0].code, codes::DATA_JS_UNSUPPORTED);
     assert!(!root.join("_site/a/index.html").exists());
     assert_eq!(read(root, "b/index.html"), "plain");
 }

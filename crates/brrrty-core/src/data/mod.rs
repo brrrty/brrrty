@@ -1,5 +1,5 @@
-//! Page data: 11ty's deep merge, JavaScript key order, reserved names, and
-//! the data sources Brrrty doesn't read yet.
+//! Page data: 11ty's deep merge, JavaScript key order, reserved names,
+//! global data, directory and template data files, and the cascade.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,10 +9,34 @@ use brrrty_js::Value;
 use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 
+mod cascade;
+mod dir;
 mod global;
+mod jskeys;
+pub(crate) use cascade::{clean_tags, frozen_keys, page_data};
+pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
 
-const OVERRIDE_PREFIX: &str = "override:";
+pub(crate) const OVERRIDE_PREFIX: &str = "override:";
+
+/// Data keys that change how a page is built, not only what it prints.
+/// A JavaScript data file setting one of these affects every page it
+/// applies to, read or not.
+pub(crate) const BUILD_KEYS: &[&str] = &[
+    "layout",
+    "permalink",
+    "date",
+    "tags",
+    "templateEngineOverride",
+    "eleventyComputed",
+    "pagination",
+    "eleventyExcludeFromCollections",
+    "dynamicPermalink",
+    "eleventyAllowMissingExtension",
+    "page",
+    "eleventy",
+    "pkg",
+];
 
 /// 11ty's `Merge` (from `@11ty/eleventy-utils`), which builds the data
 /// cascade with `dataDeepMerge` on, the default:
@@ -95,7 +119,7 @@ pub(crate) fn json_text(v: &Value) -> String {
 }
 
 /// Top-level names 11ty sets itself and refuses from data.
-const RESERVED: &[&str] = &["content", "collections"];
+pub(crate) const RESERVED: &[&str] = &["content", "collections"];
 /// `page` properties 11ty sets itself and refuses from data.
 const RESERVED_PAGE: &[&str] = &[
     "date",

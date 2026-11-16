@@ -14,7 +14,8 @@ use rayon::prelude::*;
 use serde_json::Value as Json;
 
 use crate::data::{
-    GlobalData, js_object, key_line, load_global, local_data_files, merge, reserved_keys,
+    BUILD_KEYS, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags, frozen_keys,
+    frozen_problem, js_help, js_object, key_line, load_global, merge, page_data, reserved_keys,
     reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
@@ -70,6 +71,8 @@ struct Prepared {
     engines: Engines,
     data: IndexMap<String, Value>,
     layouts: Vec<Arc<LayoutFile>>,
+    /// Keys left out of `data` because Brrrty can't supply their value.
+    withheld: Vec<(String, Withheld)>,
 }
 
 /// What loading one template gave.
@@ -81,6 +84,8 @@ enum Loaded {
     Failed(Problem),
     /// A problem in a layout file, the same for every page that uses it.
     LayoutFailed(Problem),
+    /// A problem in a data file, the same for every page it applies to.
+    DataFailed(Problem),
 }
 
 /// What every page shares while loading.
@@ -88,68 +93,53 @@ struct Shared<'a> {
     input: &'a Path,
     input_rel: &'a Path,
     layouts: &'a Layouts<'a>,
-    /// `eleventy` and `pkg`, the data 11ty supplies to every page.
-    globals: Data,
     /// The output folder as 11ty spells it in `page.outputPath`.
     output_shown: String,
-    /// Data from the JSON files in `_data`, under the page's own data.
-    user_data: Data,
+    /// Global data: `_data`, then `eleventy` and `pkg`.
+    global: Data,
     /// Top-level global data keys Brrrty can't supply, and why.
     withheld: BTreeMap<String, Withheld>,
+    /// Directory and template data files.
+    dir_data: &'a DirDataIndex,
+    data_dir: PathBuf,
 }
 
-/// Why a global data key has no value.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Why a data key has no value.
+#[derive(Clone, PartialEq, Eq)]
 enum Withheld {
-    /// A JavaScript data file sets it.
-    Js,
-    /// A data file under it failed to load, and was reported.
+    /// This JavaScript data file sets it.
+    Js(PathBuf),
+    /// A global data file under it failed to load, and was reported.
     Failed,
 }
 
-/// Global data keys that change how a page is built, not only what it prints.
-/// A JavaScript data file setting one of these affects every page.
-const BUILD_KEYS: &[&str] = &[
-    "layout",
-    "permalink",
-    "date",
-    "tags",
-    "templateEngineOverride",
-    "eleventyComputed",
-    "pagination",
-    "eleventyExcludeFromCollections",
-    "dynamicPermalink",
-    "eleventyAllowMissingExtension",
-    "page",
-    "eleventy",
-    "pkg",
-];
-
 impl Shared<'_> {
-    /// Refuse a page whose result could depend on a global key Brrrty can't
-    /// supply: one that shapes every page's build, or one the page's own
-    /// data also sets and so would merge with.
-    fn check_withheld(&self, own: &Data, shown: &Path) -> Result<(), Problem> {
+    /// Refuse every page when a global key Brrrty can't supply changes how
+    /// pages are built.
+    fn check_withheld(&self) -> Result<(), Problem> {
         for (key, why) in &self.withheld {
-            let shapes_build = BUILD_KEYS.contains(&key.as_str()) || key.starts_with("override:");
-            let merges = own.contains_key(key.as_str());
-            if shapes_build || merges {
-                let reason = match why {
-                    Withheld::Js => "a JavaScript data file",
-                    Withheld::Failed => "a data file that failed to load",
-                };
-                let how = if shapes_build {
-                    "which changes how every page is built"
-                } else {
-                    "which this page's own data also sets"
-                };
-                return Err(Problem::error(
-                    codes::DATA_UNSUPPORTED,
-                    format!("global data key `{key}` comes from {reason}, {how}"),
-                )
-                .with_path(shown)
-                .with_help("Brrrty can't read JavaScript data files yet."));
+            let clean = key.strip_prefix(OVERRIDE_PREFIX).unwrap_or(key);
+            if !BUILD_KEYS.contains(&clean) {
+                continue;
             }
+            return Err(match why {
+                Withheld::Js(file) => Problem::error(
+                    codes::DATA_JS_UNSUPPORTED,
+                    format!(
+                        "this JavaScript data file sets `{key}`, which changes how every page is built"
+                    ),
+                )
+                .with_path(file)
+                .with_help(js_help(file)),
+                Withheld::Failed => Problem::error(
+                    codes::DATA_UNSUPPORTED,
+                    format!(
+                        "global data key `{key}` comes from a data file that failed to load, which changes how every page is built"
+                    ),
+                )
+                .with_path(&self.data_dir)
+                .with_help("Fix the data file errors reported above."),
+            });
         }
         Ok(())
     }
@@ -234,6 +224,69 @@ fn load(shared: &Shared<'_>, rel: &Path) -> Loaded {
     }
 }
 
+/// The layout chain `layout` names, for the page at `shown`.
+fn layout_chain(
+    shared: &Shared<'_>,
+    layout: Option<&Value>,
+    shown: &Path,
+    text: &str,
+) -> Result<Result<Vec<Arc<LayoutFile>>, Loaded>, Problem> {
+    match layout {
+        None => Ok(Ok(Vec::new())),
+        Some(v) if !v.js_truthy() => Ok(Ok(Vec::new())),
+        Some(Value::String(name)) => match shared.layouts.chain(name, shown, text) {
+            Ok(chain) => Ok(Ok(chain)),
+            Err(ChainError::Page(p)) => Err(p),
+            Err(ChainError::Layout(p)) => Ok(Err(Loaded::LayoutFailed(p))),
+        },
+        Some(other) => Err(at(
+            Problem::error(
+                codes::LAYOUT_INVALID,
+                format!(
+                    "`layout` must be a layout name, found {}",
+                    crate::data::json_text(other)
+                ),
+            )
+            .with_path(shown)
+            .with_help("write the layout's name, like `layout: base`"),
+            key_line(text, "layout"),
+        )),
+    }
+}
+
+/// The problem for `tags` that are neither a string nor a list.
+fn tags_problem(bad: &Value) -> Problem {
+    Problem::error(
+        codes::TAGS_INVALID,
+        format!(
+            "`tags` must be a string or a list, found {}",
+            crate::data::json_text(bad)
+        ),
+    )
+    .with_help("11ty stops the whole build here.")
+}
+
+/// Where a page's merged `key` comes from, for messages: `None` for front
+/// matter, else the data file, layout or data folder.
+fn source_of(
+    key: &str,
+    front: &Data,
+    local: &Local,
+    layouts: &[Arc<LayoutFile>],
+    data_dir: &Path,
+) -> Option<String> {
+    if front.contains_key(key) {
+        return None;
+    }
+    if let Some(file) = local.source.get(key) {
+        return Some(file.display().to_string());
+    }
+    if let Some(l) = layouts.iter().find(|l| l.data.contains_key(key)) {
+        return Some(format!("layout {}", l.shown.display()));
+    }
+    Some(data_dir.display().to_string())
+}
+
 fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     let shown = shared.input_rel.join(rel);
     let full = shared.input.join(rel);
@@ -246,50 +299,10 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
             .with_path(&shown)
             .with_help("save the file as UTF-8")
     })?;
-    let (front, body) = split_front_matter(&text).map_err(|p| p.with_path(&shown))?;
+    let (mut front, body) = split_front_matter(&text).map_err(|p| p.with_path(&shown))?;
 
-    // Data files can set anything, a layout or permalink included, so check
-    // them before reading anything else into the page.
-    if let Some(file) = local_data_files(shared.input, shared.input_rel, rel).first() {
-        return Err(Problem::error(
-            codes::DATA_UNSUPPORTED,
-            format!(
-                "data file {} applies to this page, and Brrrty doesn't read data files yet",
-                file.display()
-            ),
-        )
-        .with_path(&shown)
-        .with_help("Template and directory data files are in progress."));
-    }
-
-    let layout = front
-        .get("layout")
-        .or_else(|| shared.user_data.get("layout"));
-    let layouts = match layout {
-        None => Vec::new(),
-        Some(v) if !v.js_truthy() => Vec::new(),
-        Some(Value::String(name)) => match shared.layouts.chain(name, &shown, &text) {
-            Ok(chain) => chain,
-            Err(ChainError::Page(p)) => return Err(p),
-            Err(ChainError::Layout(p)) => return Ok(Loaded::LayoutFailed(p)),
-        },
-        Some(other) => {
-            return Err(at(
-                Problem::error(
-                    codes::LAYOUT_INVALID,
-                    format!(
-                        "`layout` must be a layout name, found {}",
-                        crate::data::json_text(other)
-                    ),
-                )
-                .with_path(&shown)
-                .with_help("write the layout's name, like `layout: base`"),
-                key_line(&text, "layout"),
-            ));
-        }
-    };
-
-    // 11ty refuses reserved names anywhere in the data.
+    // 11ty refuses reserved names and bad `tags` anywhere in the data, and
+    // additions to its frozen `eleventy` and `pkg`.
     let reserved = reserved_keys(&front);
     if !reserved.is_empty() {
         let key = reserved[0].split('.').next().unwrap_or("");
@@ -298,41 +311,93 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
             key_line(&text, key),
         ));
     }
-    for layout in &layouts {
-        let reserved = reserved_keys(&layout.data);
+    if let Err(bad) = clean_tags(&mut front) {
+        return Err(at(
+            tags_problem(&bad).with_path(&shown),
+            key_line(&text, "tags"),
+        ));
+    }
+    let frozen = frozen_keys(&front);
+    if let Some(key) = frozen.first() {
+        return Err(at(
+            frozen_problem(&frozen).with_path(&shown),
+            key_line(&text, key),
+        ));
+    }
+    if let Err(p) = shared.check_withheld() {
+        return Ok(Loaded::DataFailed(p));
+    }
+    let local = match shared.dir_data.local(rel) {
+        Ok(l) => l,
+        Err(p) => return Ok(Loaded::DataFailed(p.clone())),
+    };
+
+    // The layout whose front matter joins the data is the first truthy
+    // `layout` of front matter, data files and global data; the one that
+    // wraps the page is the merged `layout` (probed).
+    let data_layout = [
+        front.get("layout"),
+        local.data.get("layout"),
+        shared.global.get("layout"),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|v| v.js_truthy());
+    let data_layouts = match layout_chain(shared, data_layout, &shown, &text)? {
+        Ok(chain) => chain,
+        Err(loaded) => return Ok(loaded),
+    };
+    let mut layout_data = Data::new();
+    for layout in data_layouts.iter().rev() {
+        let mut d = layout.data.clone();
+        let reserved = reserved_keys(&d);
         if !reserved.is_empty() {
             return Ok(Loaded::LayoutFailed(
                 reserved_problem(&reserved).with_path(&layout.shown),
             ));
         }
-    }
-
-    // The layout chain's data, farthest first and without `layout`, then the
-    // page's own, over the data 11ty supplies.
-    let mut layout_data = Data::new();
-    for layout in layouts.iter().rev() {
-        merge(&mut layout_data, &layout.data);
+        if let Err(bad) = clean_tags(&mut d) {
+            return Ok(Loaded::LayoutFailed(
+                tags_problem(&bad).with_path(&layout.shown),
+            ));
+        }
+        let frozen = frozen_keys(&d);
+        if !frozen.is_empty() {
+            return Ok(Loaded::LayoutFailed(
+                frozen_problem(&frozen).with_path(&layout.shown),
+            ));
+        }
+        merge(&mut layout_data, &d);
     }
     layout_data.shift_remove("layout");
-    let mut own = layout_data.clone();
-    own.extend(front.iter().map(|(k, v)| (k.clone(), v.clone())));
-    shared.check_withheld(&own, &shown)?;
-    // 11ty merges its `eleventy` data over `_data` (deeply), then replaces
-    // `pkg` outright with the project's package.json.
-    let mut data = Data::new();
-    merge(&mut data, &shared.user_data);
-    let mut eleventy = Data::new();
-    if let Some(v) = shared.globals.get("eleventy") {
-        eleventy.insert("eleventy".to_string(), v.clone());
-    }
-    merge(&mut data, &eleventy);
-    if let Some(v) = shared.globals.get("pkg") {
-        data.insert("pkg".to_string(), v.clone());
-    }
-    merge(&mut data, &layout_data);
-    merge(&mut data, &front);
 
-    reject_unsupported_keys(&data, &shown)?;
+    let mut data = page_data(&shared.global, &layout_data, &local.data, &front);
+
+    let layouts = match data.get("layout") {
+        v if v == data_layout => data_layouts.clone(),
+        v => match layout_chain(shared, v, &shown, &text)? {
+            Ok(chain) => chain,
+            Err(loaded) => return Ok(loaded),
+        },
+    };
+
+    // Keys whose value Brrrty can't know are left out, so a page that reads
+    // one is caught when it renders.
+    let mut withheld: Vec<(String, Withheld)> = shared
+        .withheld
+        .iter()
+        .map(|(k, w)| (k.clone(), w.clone()))
+        .collect();
+    for (key, file) in &local.js {
+        withheld.retain(|(k, _)| k != key);
+        withheld.push((key.clone(), Withheld::Js(file.clone())));
+    }
+    for (key, _) in &withheld {
+        data.shift_remove(key);
+    }
+
+    let source = |key: &str| source_of(key, &front, &local, &data_layouts, &shared.data_dir);
+    reject_unsupported_keys(&data, &shown, source)?;
     let meta = fs::metadata(&full).ok();
     let modified = meta
         .as_ref()
@@ -343,7 +408,16 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         .and_then(|m| m.created().ok())
         .unwrap_or(modified);
     let date = resolve_date(&data, &shown, created, modified).map_err(|p| p.with_path(&shown))?;
-    let permalink = resolve_permalink(rel, &data).map_err(|p| p.with_path(&shown))?;
+    let permalink = resolve_permalink(rel, &data).map_err(|p| {
+        let mut p = p.with_path(&shown);
+        if p.code == codes::PERMALINK_TEMPLATED
+            && let Some(from) = source("permalink")
+        {
+            p.message = format!("Templated permalink from {from} isn't supported yet");
+            p.help = Some("Templated permalinks are coming soon.".to_string());
+        }
+        p
+    })?;
     let Permalink::Write { url, output_rel } = permalink else {
         return Ok(Loaded::Skip);
     };
@@ -393,27 +467,46 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         engines,
         data: values,
         layouts,
+        withheld,
     })))
 }
 
-/// Front matter keys that change a page's output in ways Brrrty can't reproduce yet.
+/// Keys that change a page's output in ways Brrrty can't reproduce yet.
 const UNSUPPORTED_KEYS: &[&str] = &["pagination", "eleventyComputed"];
 
 /// Refuse pages that 11ty would process further than Brrrty can yet, instead of writing
-/// output that silently differs.
-fn reject_unsupported_keys(data: &Data, shown: &Path) -> Result<(), Problem> {
-    let keys: Vec<String> = UNSUPPORTED_KEYS
+/// output that silently differs. `source` says where a key comes from
+/// (`None` for front matter).
+fn reject_unsupported_keys(
+    data: &Data,
+    shown: &Path,
+    source: impl Fn(&str) -> Option<String>,
+) -> Result<(), Problem> {
+    let found: Vec<(&str, Option<String>)> = UNSUPPORTED_KEYS
         .iter()
         .filter(|k| data.contains_key(**k))
-        .map(|k| format!("`{k}`"))
+        .map(|k| (*k, source(k)))
         .collect();
-    if keys.is_empty() {
+    if found.is_empty() {
         return Ok(());
     }
-    let message = if keys.len() == 1 {
-        format!("Front matter key {} isn't supported yet", keys[0])
+    let all_front = found.iter().all(|(_, s)| s.is_none());
+    let keys: Vec<String> = found
+        .iter()
+        .map(|(k, s)| match s {
+            Some(from) => format!("`{k}` (from {from})"),
+            None => format!("`{k}`"),
+        })
+        .collect();
+    let what = if all_front {
+        "Front matter key"
     } else {
-        format!("Front matter keys {} aren't supported yet", keys.join(", "))
+        "Data key"
+    };
+    let message = if keys.len() == 1 {
+        format!("{what} {} isn't supported yet", keys[0])
+    } else {
+        format!("{what}s {} aren't supported yet", keys.join(", "))
     };
     Err(Problem::error(codes::FRONT_MATTER_UNSUPPORTED, message)
         .with_path(shown)
@@ -423,7 +516,7 @@ fn reject_unsupported_keys(data: &Data, shown: &Path) -> Result<(), Problem> {
 /// The problem for a page that read data Brrrty doesn't supply yet.
 fn missing_data_problem(
     undefined: &BTreeSet<String>,
-    withheld: &BTreeMap<String, Withheld>,
+    withheld: &[(String, Withheld)],
     data_dir: &Path,
 ) -> Option<Problem> {
     if undefined.contains("collections") {
@@ -435,35 +528,57 @@ fn missing_data_problem(
             .with_help("Collections are in progress."),
         );
     }
-    let used: Vec<(&String, &Withheld)> = withheld
+    let used: Vec<&(String, Withheld)> = withheld
         .iter()
         .filter(|(k, _)| undefined.contains(k.as_str()))
         .collect();
     if used.is_empty() {
         return None;
     }
-    let names = used
-        .iter()
-        .map(|(k, _)| format!("`{k}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    if used.iter().all(|(_, w)| **w == Withheld::Js) {
+    let names = |list: &[&(String, Withheld)]| {
+        list.iter()
+            .map(|(k, _)| format!("`{k}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut files: Vec<&PathBuf> = Vec::new();
+    for (_, w) in &used {
+        if let Withheld::Js(f) = w
+            && !files.contains(&f)
+        {
+            files.push(f);
+        }
+    }
+    if let Some(first) = files.first() {
+        let js: Vec<&(String, Withheld)> = used
+            .iter()
+            .copied()
+            .filter(|(_, w)| matches!(w, Withheld::Js(_)))
+            .collect();
+        let list = files
+            .iter()
+            .map(|f| f.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let noun = if files.len() == 1 {
+            "a JavaScript data file"
+        } else {
+            "JavaScript data files"
+        };
         return Some(
             Problem::error(
-                codes::DATA_UNSUPPORTED,
-                format!(
-                    "this page uses {names} from {}, which Brrrty doesn't read yet",
-                    data_dir.display()
-                ),
+                codes::DATA_JS_UNSUPPORTED,
+                format!("this page uses {} from {list}, {noun}", names(&js)),
             )
-            .with_help("JavaScript data files are in progress."),
+            .with_help(js_help(first)),
         );
     }
     Some(
         Problem::error(
             codes::DATA_UNSUPPORTED,
             format!(
-                "this page uses {names} from {}, which has a data file that failed to load",
+                "this page uses {} from {}, which has a data file that failed to load",
+                names(&used),
                 data_dir.display()
             ),
         )
@@ -471,8 +586,9 @@ fn missing_data_problem(
     )
 }
 
-/// One problem per distinct layout problem, saying how many pages it stopped.
-fn layout_problems(found: Vec<Problem>) -> Vec<Problem> {
+/// One problem per distinct layout or data file problem, saying how many
+/// pages it stopped. `noun` names what the pages use.
+fn shared_problems(found: Vec<Problem>, noun: &str) -> Vec<Problem> {
     let mut counted: Vec<(Problem, usize)> = Vec::new();
     for p in found {
         match counted.iter_mut().find(|(q, _)| *q == p) {
@@ -484,9 +600,9 @@ fn layout_problems(found: Vec<Problem>) -> Vec<Problem> {
         .into_iter()
         .map(|(mut p, n)| {
             let pages = if n == 1 {
-                "1 page uses this layout and was not written.".to_string()
+                format!("1 page uses this {noun} and was not written.")
             } else {
-                format!("{n} pages use this layout and were not written.")
+                format!("{n} pages use this {noun} and were not written.")
             };
             p.help = Some(match p.help.take() {
                 Some(h) if h.ends_with('.') => format!("{h} {pages}"),
@@ -680,19 +796,37 @@ fn build_in_pool(
     let withheld: BTreeMap<String, Withheld> = unavailable
         .into_iter()
         .map(|key| {
-            let js = js_keys.iter().any(|r| r.key_path.first() == Some(&key));
-            (key, if js { Withheld::Js } else { Withheld::Failed })
+            let js = js_keys.iter().find(|r| r.key_path.first() == Some(&key));
+            let why = match js {
+                Some(r) => Withheld::Js(r.file.clone()),
+                None => Withheld::Failed,
+            };
+            (key, why)
         })
         .collect();
     let (globals, output_shown) = globals(opts, &root, &input_rel);
+    // 11ty merges its `eleventy` data over `_data` (deeply), then replaces
+    // `pkg` outright with the project's package.json.
+    let mut global = Data::new();
+    merge(&mut global, &user_data);
+    let mut eleventy = Data::new();
+    if let Some(v) = globals.get("eleventy") {
+        eleventy.insert("eleventy".to_string(), v.clone());
+    }
+    merge(&mut global, &eleventy);
+    if let Some(v) = globals.get("pkg") {
+        global.insert("pkg".to_string(), v.clone());
+    }
+    let dir_data = DirDataIndex::load(&input, &input_rel, &discovery.templates);
     let shared = Shared {
         input: &input,
         input_rel: &input_rel,
         layouts: &layouts,
-        globals,
         output_shown,
-        user_data,
+        global,
         withheld,
+        dir_data: &dir_data,
+        data_dir: data_dir.clone(),
     };
 
     let loaded: Vec<Loaded> = discovery
@@ -702,15 +836,22 @@ fn build_in_pool(
         .collect();
     let mut prepared = Vec::new();
     let mut from_layouts = Vec::new();
+    let mut from_data = Vec::new();
     for item in loaded {
         match item {
             Loaded::Page(p) => prepared.push(*p),
             Loaded::Skip => {}
             Loaded::Failed(p) => report.problems.push(p),
             Loaded::LayoutFailed(p) => from_layouts.push(p),
+            Loaded::DataFailed(p) => from_data.push(p),
         }
     }
-    report.problems.extend(layout_problems(from_layouts));
+    report
+        .problems
+        .extend(shared_problems(from_layouts, "layout"));
+    report
+        .problems
+        .extend(shared_problems(from_data, "data file"));
     if strict && has_error(&report) {
         return finish(report, strict, start);
     }
@@ -779,8 +920,7 @@ fn build_in_pool(
                 data: &p.data,
                 layouts: &p.layouts,
             })?;
-            if let Some(problem) =
-                missing_data_problem(&rendered.undefined, &shared.withheld, &data_dir)
+            if let Some(problem) = missing_data_problem(&rendered.undefined, &p.withheld, &data_dir)
             {
                 return Err(problem.with_path(shown));
             }
