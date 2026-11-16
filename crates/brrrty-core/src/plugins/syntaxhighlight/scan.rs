@@ -192,7 +192,8 @@ fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
                 // The arguments go on to another line, or Nunjucks
                 // evaluates them as an expression other than one string:
                 // the language could be any.
-                if word.is_empty() || (nunjucks && !one_string(args)) {
+                let cut = word.is_empty() && !args.contains("%}");
+                if cut || (nunjucks && !word.is_empty() && !one_string(args)) {
                     let written = args.split("%}").next().unwrap_or("");
                     let written = written.trim().trim_end_matches('-').trim_end();
                     add(&format!("{{{{ {written} }}}}"));
@@ -312,9 +313,12 @@ mod tests {
             }
         }
         // Liquid reads the first word as written; only a tag cut at the
-        // line could be any language.
+        // line could be any language, not one without arguments.
         assert_eq!(
-            languages("{% highlight lang %}\n{% highlight\n", false),
+            languages(
+                "{% highlight lang %}\n{% highlight\n{% highlight %}x{% endhighlight %}\n",
+                false
+            ),
             vec![(1, "lang".to_string()), (2, "{{  }}".to_string())]
         );
     }
