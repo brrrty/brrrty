@@ -44,8 +44,8 @@ const WRITER_CHECK: Duration = Duration::from_millis(100);
 
 /// One connected page. Its messages go through a queue that a thread of its own writes out,
 /// so a page that reads slowly or not at all holds up only itself, never a rebuild. The thread
-/// ends as soon as the page's socket closes, so writers never outnumber open sockets, which
-/// the server caps.
+/// ends within [`WRITER_CHECK`] of the page's socket closing, so the writers running are the
+/// open sockets, which the server caps, plus those closed in the last moment.
 struct Page {
     ws: WebSocket,
     queue: SyncSender<Arc<str>>,
@@ -168,7 +168,8 @@ impl LiveReload {
         state.pages.len()
     }
 
-    /// How many writer threads are running; never more than the open sockets.
+    /// How many writer threads are running: one per open socket, plus any whose socket closed
+    /// in the last 100 ms.
     #[doc(hidden)]
     pub fn writer_threads(&self) -> usize {
         self.lock().writers.load(Ordering::SeqCst)

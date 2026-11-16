@@ -487,6 +487,29 @@ Some text is refused, since the answer would differ:
   that can match nothing are refused;
 - text with `\r`, U+2028 or U+2029 when `m` is used with `^` or `$`.
 
+## `brrrty serve`
+
+`brrrty serve` stands in for `eleventy --serve`; no config change is needed.
+The pages it writes are the same as `brrrty build` writes, and
+`eleventy.env.runMode` is `"serve"`. What is different:
+
+- It listens on `localhost` only. Pass `--host 0.0.0.0` to reach it from
+  another device, where 11ty listens on every address.
+- It refuses `..` (encoded or not) and symlinks that point outside the output
+  folder.
+- A first build with errors leaves the server running instead of exiting;
+  use `--strict` for 11ty's exit.
+- Every file under the input folder is watched, and deleting one rebuilds.
+  So are passthrough sources outside it and the config and ignore files.
+  `addWatchTarget` has no equivalent yet: a file outside those isn't watched,
+  so save a file inside the input folder to rebuild after editing it.
+  `setWatchJavaScriptDependencies` and `setWatchThrottleWaitTime` have nothing
+  to port.
+- Pages load `/.brrrty/reload-client.js` instead of `/.11ty/reload-client.js`,
+  and stylesheets swapped on an edit get `?_brrrty=` instead of `?_11ty=`.
+- While it runs, builds are made in `<output>/.brrrty-serve/`. Leave that name
+  out of anything that deploys the output folder by hand while a session runs.
+
 ## Checklist
 
 1. Port one filter or collection at a time. Keep the JS next to it while you work.

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+`brrrty serve`:
+
+- `brrrty serve` builds the site, serves it, and rebuilds on every change, as `eleventy --serve` does. It takes `--port` (8080, moving up to 10 ports on when it is taken), `--host` (`localhost`), `--input`, `--output`, `--passthrough`, `--quiet` and `--strict`. It prints `Server at <url>`, `File changed: <path>` and `Watching…` as 11ty does.
+- Live reload: pages get a script that patches in an edit to the page's own template, swaps an edited stylesheet, and reloads for anything else, and logs build errors in the browser console, as 11ty's dev server does.
+- The output folder is kept up to date after every good build. Builds are made in `<output>/.brrrty-serve/`, which is removed on exit; `brrrty build` removes one a killed session left behind.
+- Ctrl-C stops cleanly and exits 0, with the last good build in the output folder and the port released. A second Ctrl-C quits at once. SIGTERM stops the same way and then ends by the signal.
+- `eleventy.env.runMode` is `"serve"` while serving.
+
+Where `brrrty serve` differs from `eleventy --serve`:
+
+- It listens on `localhost` only, unless `--host` says otherwise, and on that address answers only requests whose `Host` names this machine.
+- It never serves a file outside the output folder: `..` in any encoding and symlinks that point outside get a 404, and malformed URLs a 400.
+- A first build that fails keeps the server running and serves the output folder as it was; the first edit that builds takes over. `--strict` exits with status 1 instead, as 11ty does.
+- Any change under the input folder, a deleted file included, starts a rebuild.
+- The live-reload socket refuses pages from other sites.
+- Paths under `/.brrrty/` (`reload-client.js`, `morphdom.js`, `live`) are reserved while serving, as `/.11ty/` is in 11ty.
+
 ## 0.0.7 - 2026-11-17
 
 Nunjucks:
