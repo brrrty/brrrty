@@ -1446,3 +1446,50 @@ fn liquid_drops_given_to_a_filter_refuse_the_page() {
         ":|null:null"
     );
 }
+
+// ---- the same filters in the Nunjucks engine ----
+
+/// A Rhai filter registered in a Nunjucks engine, rendering `tpl`.
+fn render_njk(cfg: &SiteConfig, tpl: &str, json: &str) -> Result<String, String> {
+    use brrrty_nunjucks::{Engine, EngineOptions};
+    struct NoIncludes;
+    impl brrrty_nunjucks::Loader for NoIncludes {
+        fn load(&self, _: &str) -> Result<(String, String), brrrty_nunjucks::LoadError> {
+            Err(Default::default())
+        }
+    }
+    let mut e = Engine::new(EngineOptions {
+        timezone: brrrty_nunjucks::Tz::Utc,
+        autoescape: true,
+    });
+    brrrty_core::register_nunjucks_filters(&mut e, &cfg.filters, false);
+    let t = e.compile("t.njk", tpl).map_err(|e| e.to_string())?;
+    e.render(&t, &data(json), &NoIncludes)
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn a_rhai_filter_runs_in_nunjucks_with_the_arguments_as_written() {
+    let cfg = load(r#"config.add_filter("f", |v, a, b, c| `${v}|${a}|${b}|${c}`);"#);
+    assert_eq!(
+        render_njk(&cfg, "{{ s | f(1, 'x') }}", r#"{"s": "in"}"#).unwrap(),
+        "in|1|x|"
+    );
+    // Nunjucks passes keyword arguments as a last object, as 11ty does to
+    // a JavaScript filter, so the keyword arrives where a positional would.
+    assert_eq!(
+        render_njk(&cfg, "{{ s | f(k=1) }}", r#"{"s": "in"}"#).unwrap(),
+        "in|[object Object]||"
+    );
+}
+
+#[test]
+fn a_rhai_filter_replaces_a_nunjucks_one_and_refuses_a_safe_string() {
+    let cfg = load(r#"config.add_filter("upper", |v| `[${v}]`);"#);
+    assert_eq!(
+        render_njk(&cfg, "{{ s | upper }}", r#"{"s": "a"}"#).unwrap(),
+        "[a]"
+    );
+    let err = render_njk(&cfg, "{{ (s | safe) | upper }}", r#"{"s": "a"}"#).unwrap_err();
+    assert!(err.contains("SafeString"), "{err}");
+}

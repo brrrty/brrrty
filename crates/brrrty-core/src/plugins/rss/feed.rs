@@ -170,7 +170,7 @@ fn out(v: &Value) -> String {
 
 /// `obj.key`, as Nunjucks's `memberLookup` reads it: nothing from
 /// `undefined` or `null`.
-fn member(obj: &Value, key: &str) -> Value {
+pub(crate) fn member(obj: &Value, key: &str) -> Value {
     match obj {
         Value::Object(o) => traps::read(o, key, o.get(key).cloned()).unwrap_or(Value::Undefined),
         other => other.get(key),
@@ -225,7 +225,12 @@ const MONTHS: [&str; 12] = [
 /// before 1 or after 9999 are refused: `Intl` prints them in ways the
 /// plugin doesn't take apart cleanly.
 pub(crate) fn date_to_rfc822(ms: f64) -> Result<String, String> {
-    let Some(f) = brrrty_js::tz::fields(Tz::Local, ms) else {
+    date_to_rfc822_in(Tz::Local, ms)
+}
+
+/// [`date_to_rfc822`] in the zone `tz` (what the process's zone is).
+pub(crate) fn date_to_rfc822_in(tz: Tz, ms: f64) -> Result<String, String> {
+    let Some(f) = brrrty_js::tz::fields(tz, ms) else {
         return Err("RangeError: Invalid time value".into());
     };
     if !(1..=9999).contains(&f.year) {
@@ -256,7 +261,7 @@ pub(crate) fn date_to_rfc822(ms: f64) -> Result<String, String> {
 }
 
 /// `new Date()`, frozen by `SOURCE_DATE_EPOCH`.
-fn now_ms() -> f64 {
+pub(crate) fn now_ms() -> f64 {
     match brrrty_js::clock::source_date_epoch() {
         Ok(Some(ms)) => ms as f64,
         _ => brrrty_js::clock::system_now_ms(),
@@ -265,7 +270,7 @@ fn now_ms() -> f64 {
 
 /// `getNewestCollectionItemDate(collection)`: the latest `date`, or now
 /// for an empty collection.
-fn newest_date(items: &[Value]) -> Result<f64, String> {
+pub(crate) fn newest_date(items: &[Value]) -> Result<f64, String> {
     if items.is_empty() {
         return Ok(now_ms());
     }

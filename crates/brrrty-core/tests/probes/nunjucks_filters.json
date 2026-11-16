@@ -1,0 +1,146 @@
+{
+ "data": {
+  "d": "__DATE__2020-05-05T10:20:30.123Z",
+  "d0": "__DATE__1970-01-01T00:00:00.000Z",
+  "posts": [
+   {
+    "url": "/a/",
+    "date": "__DATE__2020-01-01T00:00:00Z"
+   },
+   {
+    "url": "/b/",
+    "date": "__DATE__2021-03-04T05:06:07Z"
+   },
+   {
+    "url": "/c/",
+    "date": "__DATE__2019-12-31T23:59:59Z"
+   }
+  ],
+  "n": 0,
+  "s": "text",
+  "u8": "/p/q?x=1",
+  "base": "https://example.com/blog/"
+ },
+ "probes": [
+  {
+   "t": "{{ d | dateToRfc3339 }}",
+   "out": "2020-05-05T10:20:30Z"
+  },
+  {
+   "t": "{{ d0 | dateToRfc3339 }}",
+   "out": "1970-01-01T00:00:00Z"
+  },
+  {
+   "t": "{{ d | dateToRfc822 }}",
+   "out": "Tue, 05 May 2020 10:20:30 +0000"
+  },
+  {
+   "t": "{{ d0 | dateToRfc822 }}",
+   "out": "Thu, 01 Jan 1970 00:00:00 +0000"
+  },
+  {
+   "t": "{{ n | dateToRfc822 }}",
+   "out": "Thu, 01 Jan 1970 00:00:00 +0000"
+  },
+  {
+   "t": "{{ posts[0].date | dateToRfc822 }}",
+   "out": "Wed, 01 Jan 2020 00:00:00 +0000"
+  },
+  {
+   "t": "{{ posts | getNewestCollectionItemDate | dateToRfc3339 }}",
+   "out": "2021-03-04T05:06:07Z"
+  },
+  {
+   "t": "{{ posts | getNewestCollectionItemDate | dateToRfc822 }}",
+   "out": "Thu, 04 Mar 2021 05:06:07 +0000"
+  },
+  {
+   "t": "{{ posts | getNewestCollectionItemDate }}",
+   "out": "Thu Mar 04 2021 05:06:07 GMT+0000 (Coordinated Universal Time)"
+  },
+  {
+   "t": "{{ [] | getNewestCollectionItemDate(\"fallback\") }}",
+   "out": "fallback"
+  },
+  {
+   "t": "{{ undefined | getNewestCollectionItemDate(\"fallback\") }}",
+   "out": "fallback"
+  },
+  {
+   "t": "{{ posts | eleventyFeedHasUrl | length }}",
+   "out": "3"
+  },
+  {
+   "t": "{{ u8 | absoluteUrl(base) }}",
+   "out": "https://example.com/p/q?x=1"
+  },
+  {
+   "t": "{{ \"../x\" | absoluteUrl(base) }}",
+   "out": "https://example.com/x"
+  },
+  {
+   "t": "{{ \"https://other.org/y\" | absoluteUrl(base) }}",
+   "out": "https://other.org/y"
+  },
+  {
+   "t": "{{ \"bad\" | absoluteUrl(\"nope\") }}",
+   "out": "bad"
+  },
+  {
+   "t": "{{ \"http://a.com/x y\" | absoluteUrl }}",
+   "out": "http://a.com/x%20y"
+  },
+  {
+   "t": "{{ undefined | absoluteUrl(\"https://x.com\") }}",
+   "out": "https://x.com/undefined"
+  },
+  {
+   "t": "{{ \"/x\" | absoluteUrl }}",
+   "out": "/x"
+  },
+  {
+   "t": "{{ 5 | absoluteUrl(base) }}",
+   "out": "https://example.com/blog/5"
+  },
+  {
+   "t": "{{ \"x\" | dateToRfc3339 }}",
+   "err": "TypeError: dateObj.toISOString is not a function"
+  },
+  {
+   "t": "{{ undefined | dateToRfc3339 }}",
+   "err": "TypeError: Cannot read properties of undefined (reading 'toISOString')"
+  },
+  {
+   "t": "{{ null | dateToRfc822 }}",
+   "out": "Thu, 01 Jan 1970 00:00:00 +0000"
+  },
+  {
+   "t": "{{ \"A b\" | slug }}",
+   "out": "a-b"
+  },
+  {
+   "t": "{{ \"A b\" | slugify }}",
+   "out": "a-b"
+  },
+  {
+   "t": "{{ \"a/b\" | url }}",
+   "out": "a/b"
+  },
+  {
+   "t": "{{ \"x\" | log }}",
+   "out": "x"
+  },
+  {
+   "t": "{{ \"x\" | rssDate }}",
+   "err": "Error: The `rssDate` filter was removed. Use `dateToRfc3339` (for Atom) or `dateToRfc822` (for RSS) instead."
+  },
+  {
+   "t": "{{ \"x\" | rssLastUpdatedDate }}",
+   "err": "Error: The `rssLastUpdatedDate` filter was removed. Use `getNewestCollectionItemDate | dateToRfc3339` (for Atom) or `getNewestCollectionItemDate | dateToRfc822` (for RSS) instead."
+  },
+  {
+   "t": "{{ \"x\" | nosuchfilter }}",
+   "err": "Error: filter not found: nosuchfilter"
+  }
+ ]
+}

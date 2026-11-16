@@ -27,5 +27,6 @@ url = "2.5.8"
 
 [dev-dependencies]
 brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.6" }
+brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.6" }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 tempfile = "3.27.0"

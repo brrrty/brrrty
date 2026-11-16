@@ -9,6 +9,7 @@ pub mod contain;
 mod content;
 mod data;
 pub mod discover;
+pub mod filters;
 pub mod frontmatter;
 pub mod helpers;
 pub mod ignore_files;
@@ -28,6 +29,7 @@ mod yaml;
 
 pub use build::{BuildReport, build};
 pub use discover::{Discovery, discover};
+pub use filters::register_nunjucks_filters;
 pub use frontmatter::split_front_matter;
 pub use js::js_truthy;
 pub use options::{

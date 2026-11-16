@@ -17,6 +17,7 @@
 
 pub mod base;
 pub(crate) mod feed;
+pub(crate) mod nunjucks;
 pub mod posthtml;
 pub mod urls;
 
@@ -106,6 +107,11 @@ pub fn universal_filters() -> Vec<(&'static str, brrrty_liquid::ArgsFilterFn)> {
     feed::universal_filters()
 }
 
+/// The filters the plugin adds to Nunjucks only (see [`universal_filters`]).
+pub fn nunjucks_filters() -> Vec<(&'static str, brrrty_js::FilterFn)> {
+    nunjucks::filters()
+}
+
 /// The plugin's `absoluteUrl(url, base)`: `new URL(url, base)`, or `url`
 /// when that throws.
 pub fn absolute_url(url: &str, base: &str) -> String {
@@ -113,6 +119,11 @@ pub fn absolute_url(url: &str, base: &str) -> String {
         .and_then(|b| base::join(&b, url))
         .map(|u| u.to_string())
         .unwrap_or_else(|_| url.to_string())
+}
+
+/// `new URL(url, base)` with no `base` (`undefined`).
+pub(crate) fn absolute_url_no_base(url: &str) -> Option<String> {
+    url::Url::parse(url).ok().map(|u| u.to_string())
 }
 
 /// The plugin's `htmlToAbsoluteUrls(html, base)` (a Nunjucks filter):

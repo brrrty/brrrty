@@ -11,7 +11,7 @@ keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
 categories = ["command-line-utilities", "web-programming"]
 readme = false
 # Calibration scripts for src/order.rs; they need Node, Python and 11ty.
-exclude = ["tools/", "tests/luxon.rs", "tests/probes/luxon.json", "tests/rss.rs", "tests/probes/posthtml.json"]
+exclude = ["tools/", "tests/luxon.rs", "tests/probes/luxon.json", "tests/rss.rs", "tests/probes/posthtml.json", "tests/nunjucks_filters.rs", "tests/probes/nunjucks_filters.json"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
@@ -19,6 +19,7 @@ brrrty-js = { path = "../brrrty-js", version = "0.0.6" }
 brrrty-liquid = { path = "../brrrty-liquid", version = "0.0.6" }
 brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.6" }
 brrrty-prism = { path = "../brrrty-prism", version = "0.0.6" }
+brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.6" }
 globset = "0.4.19"
 ignore = "0.4.34"
 indexmap = "2"
@@ -30,4 +31,5 @@ url = "2.5.8"
 chrono-tz = { version = "0.10", default-features = false }
 
 [dev-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
 tempfile = "3.27.0"
