@@ -15,7 +15,7 @@ use chrono::{DateTime, FixedOffset};
 use rhai::{Array, Dynamic, Map};
 
 use crate::api::JsDate;
-use crate::object::JsObject;
+use crate::object::{JsNull, JsObject};
 
 /// How deeply data may nest. Deeper data is refused rather than walked, so
 /// converting it can't overflow the stack.
@@ -26,7 +26,7 @@ pub fn to_value(v: &Dynamic) -> Result<Value, String> {
     to_value_at(v, 0)
 }
 
-fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
+pub(crate) fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
     if depth > MAX_DEPTH {
         return Err(format!("data nests deeper than {MAX_DEPTH} levels"));
     }
@@ -66,13 +66,10 @@ fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
         return Ok(Value::Object(Arc::new(out)));
     }
     if let Some(o) = v.read_lock::<JsObject>() {
-        // Insertion order: that is how a `Value` object is kept, and its
-        // readers list the keys in JavaScript's order.
-        let mut out = Data::new();
-        for (k, x) in o.0.iter() {
-            out.insert(k.clone(), to_value_at(x, depth + 1)?);
-        }
-        return Ok(Value::Object(Arc::new(out)));
+        return o.to_value(depth);
+    }
+    if v.is::<JsNull>() {
+        return Ok(Value::Null);
     }
     if let Some(d) = v.read_lock::<JsDate>() {
         return date_value(d.0)
@@ -90,26 +87,18 @@ pub fn date_value(ms: f64) -> Option<Value> {
     Some(Value::Date(utc.with_timezone(&FixedOffset::east_opt(0)?)))
 }
 
-/// `v` as a Rhai value. `null` and `undefined` both become `()`.
+/// `v` as a Rhai value. `undefined` is `()` and `null` is [`JsNull`].
+/// Every number is a float, so arithmetic is JavaScript's (`7 / 2` is
+/// `3.5`). An object is shared, not copied.
 pub fn to_dynamic(v: &Value) -> Dynamic {
     match v {
-        Value::Undefined | Value::Null => Dynamic::UNIT,
+        Value::Undefined => Dynamic::UNIT,
+        Value::Null => Dynamic::from(JsNull),
         Value::Bool(b) => Dynamic::from_bool(*b),
-        Value::Number(n) => {
-            if n.fract() == 0.0
-                && n.abs() < 9.007_199_254_740_992e15
-                && !(*n == 0.0 && n.is_sign_negative())
-            {
-                Dynamic::from_int(*n as rhai::INT)
-            } else {
-                Dynamic::from_float(*n)
-            }
-        }
+        Value::Number(n) => Dynamic::from_float(*n),
         Value::String(s) => Dynamic::from(s.to_string()),
         Value::Array(a) => Dynamic::from_array(a.iter().map(to_dynamic).collect()),
-        Value::Object(o) => Dynamic::from(JsObject(
-            o.iter().map(|(k, x)| (k.clone(), to_dynamic(x))).collect(),
-        )),
+        Value::Object(o) => Dynamic::from(JsObject::Shared(o.clone())),
         Value::Date(d) => Dynamic::from(JsDate(d.timestamp_millis() as f64)),
     }
 }
@@ -195,8 +184,9 @@ mod tests {
                 _ => assert_eq!(back, v),
             }
         }
+        assert_eq!(to_value(&to_dynamic(&Value::Null)).unwrap(), Value::Null);
         assert_eq!(
-            to_value(&to_dynamic(&Value::Null)).unwrap(),
+            to_value(&to_dynamic(&Value::Undefined)).unwrap(),
             Value::Undefined
         );
     }

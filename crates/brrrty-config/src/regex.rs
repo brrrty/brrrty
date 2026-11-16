@@ -9,6 +9,16 @@
 //! `replace` and `split` follow the JavaScript algorithms, including `$1`,
 //! `$&`, `$<name>` in replacements and captured groups in `split` results.
 //!
+//! Only syntax that means exactly the same in JavaScript and in Rust is
+//! accepted: literals, `\d \s \w \b` and their negations, `\n \r \t \f \v \0
+//! \xHH \uHHHH`, escaped punctuation, `.`, `^`, `$`, `|`, groups `(...)`,
+//! `(?:...)`, `(?<name>...)`, quantifiers and classes. Anything else (`\a`,
+//! `\p{..}`, `(?i)`, `[]`, a bare `{`, ...) is refused. Some text is
+//! refused too, where the result would differ: non-ASCII text with `i`,
+//! text with characters outside the BMP (emoji) when the pattern could
+//! split a surrogate pair, and text with `\r`, U+2028 or U+2029 when `m`
+//! is used with `^` or `$`.
+//!
 //! The `regex` crate guarantees linear-time matching, so it has no
 //! lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`) and no backreferences (`\1`,
 //! `\k<name>`). A pattern with either is refused with an error naming the
@@ -31,6 +41,23 @@ pub struct JsRegex {
     re: Regex,
     pub global: bool,
     named: bool,
+    icase: bool,
+    multiline: bool,
+    unicode: bool,
+    info: Info,
+    /// The pattern behaves the same on text with characters outside the
+    /// BMP, which JavaScript (without `u`) sees as two units each.
+    astral_safe: bool,
+}
+
+/// What a pattern uses, for the checks made against text.
+#[derive(Default, Clone, Copy)]
+struct Info {
+    /// `.`, a negated class or a negated class escape: these match half
+    /// of a surrogate pair in JavaScript.
+    matches_units: bool,
+    /// `^` or `$`.
+    anchors: bool,
 }
 
 type Cache = HashMap<(String, String), Arc<JsRegex>>;
@@ -61,14 +88,15 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Arc<JsRegex>, String> {
 }
 
 fn build(pattern: &str, flags: &str) -> Result<JsRegex, String> {
-    let (mut global, mut icase, mut multi, mut dotall) = (false, false, false, false);
+    let (mut global, mut icase, mut multi, mut dotall, mut unicode) =
+        (false, false, false, false, false);
     for f in flags.chars() {
         let slot = match f {
             'g' => &mut global,
             'i' => &mut icase,
             'm' => &mut multi,
             's' => &mut dotall,
-            'u' => continue,
+            'u' => &mut unicode,
             'y' | 'd' | 'v' => return Err(format!("the `{f}` flag isn't supported")),
             _ => return Err(format!("`{f}` isn't a regular expression flag")),
         };
@@ -77,7 +105,13 @@ fn build(pattern: &str, flags: &str) -> Result<JsRegex, String> {
         }
         *slot = true;
     }
-    let translated = translate(pattern, dotall)?;
+    if icase && !pattern.is_ascii() {
+        return Err("the `i` flag is only supported for patterns that are ASCII: JavaScript and Rust fold the case of other characters differently".into());
+    }
+    if !unicode && pattern.chars().any(|c| c as u32 > 0xFFFF) {
+        return Err("a character outside the BMP needs the `u` flag, which makes JavaScript see it as one character and not two".into());
+    }
+    let (translated, info) = translate(pattern, dotall)?;
     let re = RegexBuilder::new(&translated)
         .case_insensitive(icase)
         .multi_line(multi)
@@ -92,116 +126,332 @@ fn build(pattern: &str, flags: &str) -> Result<JsRegex, String> {
                 .to_string()
         })?;
     let named = re.capture_names().flatten().next().is_some();
-    Ok(JsRegex { re, global, named })
+    let astral_safe = !info.matches_units && !re.is_match("");
+    Ok(JsRegex {
+        re,
+        global,
+        named,
+        icase,
+        multiline: multi,
+        unicode,
+        info,
+        astral_safe,
+    })
 }
 
 const NO_LOOKAROUND: &str = "lookaround (lookahead and lookbehind) isn't supported: Brrrty's regular expressions have no lookaround or backreferences, so write the pattern without them";
 const NO_BACKREF: &str = "backreferences aren't supported: Brrrty's regular expressions have no lookaround or backreferences, so write the pattern without them";
 
-/// Rewrite a JavaScript pattern as one `regex` reads the same way.
-fn translate(pattern: &str, dotall: bool) -> Result<String, String> {
+/// Characters `\` may escape to themselves.
+const SYNTAX: &str = "^$\\.*+?()[]{}|/";
+
+fn hex(chars: &[char], at: usize, n: usize) -> bool {
+    chars.len() >= at + n && chars[at..at + n].iter().all(char::is_ascii_hexdigit)
+}
+
+/// Rewrite a JavaScript pattern as one `regex` reads the same way. Only
+/// syntax that means exactly the same in both is accepted; anything else
+/// is refused, so a pattern never matches differently without notice.
+fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut out = String::new();
-    let mut in_class = false;
+    let mut info = Info::default();
     let mut i = 0;
+    // Whether the last thing written can take a quantifier.
+    let mut atom = false;
     while i < chars.len() {
         let c = chars[i];
         i += 1;
-        if c == '\\' {
-            let Some(&n) = chars.get(i) else {
-                return Err("a backslash at the end of the pattern".into());
-            };
-            i += 1;
-            match n {
-                's' | 'd' | 'w' => {
-                    let set = match n {
-                        's' => SPACE,
-                        'd' => "0-9",
-                        _ => WORD,
-                    };
-                    if in_class {
-                        out.push_str(set);
-                    } else {
+        match c {
+            '\\' => {
+                let Some(&n) = chars.get(i) else {
+                    return Err("a backslash at the end of the pattern".into());
+                };
+                i += 1;
+                atom = true;
+                match n {
+                    's' | 'd' | 'w' => {
+                        let set = match n {
+                            's' => SPACE,
+                            'd' => "0-9",
+                            _ => WORD,
+                        };
                         out.push('[');
                         out.push_str(set);
                         out.push(']');
                     }
-                }
-                'S' | 'D' | 'W' => {
-                    if in_class {
-                        return Err(format!("`\\{n}` inside a character class isn't supported"));
+                    'S' | 'D' | 'W' => {
+                        info.matches_units = true;
+                        let set = match n {
+                            'S' => SPACE,
+                            'D' => "0-9",
+                            _ => WORD,
+                        };
+                        out.push_str("[^");
+                        out.push_str(set);
+                        out.push(']');
                     }
-                    let set = match n {
-                        'S' => SPACE,
-                        'D' => "0-9",
-                        _ => WORD,
-                    };
-                    out.push_str("[^");
-                    out.push_str(set);
-                    out.push(']');
+                    'b' => {
+                        out.push_str(r"(?-u:\b)");
+                        atom = false;
+                    }
+                    'B' => {
+                        info.matches_units = true;
+                        out.push_str(r"(?-u:\B)");
+                        atom = false;
+                    }
+                    '0' if !chars.get(i).is_some_and(char::is_ascii_digit) => out.push_str(r"\x00"),
+                    '1'..='9' => return Err(NO_BACKREF.into()),
+                    'k' => return Err(NO_BACKREF.into()),
+                    'n' | 'r' | 't' | 'f' | 'v' => {
+                        out.push('\\');
+                        out.push(n);
+                    }
+                    'x' if hex(&chars, i, 2) => {
+                        out.push_str("\\x");
+                        out.extend(&chars[i..i + 2]);
+                        i += 2;
+                    }
+                    'u' if hex(&chars, i, 4) => {
+                        let unit =
+                            u32::from_str_radix(&chars[i..i + 4].iter().collect::<String>(), 16)
+                                .unwrap_or(0);
+                        if (0xD800..0xE000).contains(&unit) {
+                            return Err("an escaped surrogate isn't supported".into());
+                        }
+                        out.push_str(&format!("\\x{{{unit:X}}}"));
+                        i += 4;
+                    }
+                    '/' => out.push('/'),
+                    n if SYNTAX.contains(n) => {
+                        out.push('\\');
+                        out.push(n);
+                    }
+                    n => {
+                        return Err(format!(
+                            "the escape `\\{n}` isn't supported: it means something different, or is an error, in Rust's regular expressions"
+                        ));
+                    }
                 }
-                'b' if in_class => out.push_str(r"\x08"),
-                'b' => out.push_str(r"(?-u:\b)"),
-                'B' if !in_class => out.push_str(r"(?-u:\B)"),
-                '0' => out.push_str(r"\x00"),
-                '1'..='9' if !in_class => return Err(NO_BACKREF.into()),
-                'k' => return Err(NO_BACKREF.into()),
-                'c' => return Err("`\\c` control escapes aren't supported".into()),
-                n if n.is_ascii_alphanumeric() => {
-                    out.push('\\');
-                    out.push(n);
-                }
-                n => push_literal(&mut out, n),
             }
-            continue;
-        }
-        if in_class {
-            match c {
-                ']' => {
-                    in_class = false;
-                    out.push(']');
-                }
-                '[' | '&' | '~' => {
-                    out.push('\\');
-                    out.push(c);
-                }
-                _ => out.push(c),
-            }
-            continue;
-        }
-        match c {
             '[' => {
-                in_class = true;
+                atom = true;
                 out.push('[');
                 if chars.get(i) == Some(&'^') {
+                    info.matches_units = true;
                     out.push('^');
                     i += 1;
                 }
-            }
-            '.' if dotall => out.push_str("(?s:.)"),
-            '.' => out.push_str(r"[^\n\r\u2028\u2029]"),
-            '(' if chars.get(i) == Some(&'?') => {
-                let rest: String = chars[i + 1..].iter().take(2).collect();
-                if rest.starts_with('=') || rest.starts_with('!') || rest == "<=" || rest == "<!" {
-                    return Err(NO_LOOKAROUND.into());
+                if chars.get(i) == Some(&']') {
+                    return Err("an empty character class (`[]` or `[^]`) isn't supported".into());
                 }
-                out.push('(');
+                // `prev_set`: the last item was `\d`, `\s` or `\w`.
+                let mut prev_set = false;
+                let mut closed = false;
+                while i < chars.len() {
+                    let c = chars[i];
+                    i += 1;
+                    let mut set = false;
+                    match c {
+                        ']' => {
+                            closed = true;
+                            break;
+                        }
+                        '\\' => {
+                            let Some(&n) = chars.get(i) else {
+                                return Err("a backslash at the end of the pattern".into());
+                            };
+                            i += 1;
+                            match n {
+                                's' | 'd' | 'w' => {
+                                    set = true;
+                                    out.push_str(match n {
+                                        's' => SPACE,
+                                        'd' => "0-9",
+                                        _ => WORD,
+                                    });
+                                }
+                                'b' => out.push_str(r"\x08"),
+                                '0' if !chars.get(i).is_some_and(char::is_ascii_digit) => {
+                                    out.push_str(r"\x00")
+                                }
+                                'n' | 'r' | 't' | 'f' | 'v' => {
+                                    out.push('\\');
+                                    out.push(n);
+                                }
+                                'x' if hex(&chars, i, 2) => {
+                                    out.push_str("\\x");
+                                    out.extend(&chars[i..i + 2]);
+                                    i += 2;
+                                }
+                                'u' if hex(&chars, i, 4) => {
+                                    let unit = u32::from_str_radix(
+                                        &chars[i..i + 4].iter().collect::<String>(),
+                                        16,
+                                    )
+                                    .unwrap_or(0);
+                                    if (0xD800..0xE000).contains(&unit) {
+                                        return Err("an escaped surrogate isn't supported".into());
+                                    }
+                                    out.push_str(&format!("\\x{{{unit:X}}}"));
+                                    i += 4;
+                                }
+                                '/' => out.push('/'),
+                                n if SYNTAX.contains(n) || n == '-' => {
+                                    out.push('\\');
+                                    out.push(n);
+                                }
+                                n => {
+                                    return Err(format!(
+                                        "the escape `\\{n}` isn't supported in a character class"
+                                    ));
+                                }
+                            }
+                        }
+                        '-' => {
+                            // A range's ends must be single characters, and
+                            // `--` is a set difference in Rust.
+                            let next = chars.get(i).copied();
+                            if next == Some('-') {
+                                return Err("`--` in a character class isn't supported".into());
+                            }
+                            let next_set = next == Some('\\')
+                                && matches!(
+                                    chars.get(i + 1),
+                                    Some('d' | 's' | 'w' | 'D' | 'S' | 'W')
+                                );
+                            let range =
+                                next != Some(']') && !out.ends_with('[') && !out.ends_with("[^");
+                            if range && (prev_set || next_set) {
+                                return Err(
+                                    "a range with a class like `\\w` at an end isn't supported"
+                                        .into(),
+                                );
+                            }
+                            out.push('-');
+                        }
+                        '[' | '&' | '~' => {
+                            out.push('\\');
+                            out.push(c);
+                        }
+                        _ => out.push(c),
+                    }
+                    prev_set = set;
+                }
+                if !closed {
+                    return Err("a character class is never closed".into());
+                }
+                out.push(']');
             }
-            _ => out.push(c),
+            '.' => {
+                atom = true;
+                info.matches_units = true;
+                out.push_str(if dotall {
+                    "(?s:.)"
+                } else {
+                    r"[^\n\r\u2028\u2029]"
+                });
+            }
+            '^' | '$' => {
+                info.anchors = true;
+                atom = false;
+                out.push(c);
+            }
+            '|' => {
+                atom = false;
+                out.push(c);
+            }
+            '(' => {
+                atom = false;
+                if chars.get(i) == Some(&'?') {
+                    let rest: String = chars[i + 1..].iter().take(2).collect();
+                    if rest.starts_with('=')
+                        || rest.starts_with('!')
+                        || rest == "<="
+                        || rest == "<!"
+                    {
+                        return Err(NO_LOOKAROUND.into());
+                    }
+                    if rest.starts_with(':') {
+                        out.push_str("(?:");
+                        i += 2;
+                    } else if rest.starts_with('<') {
+                        let end = chars[i + 2..].iter().position(|&c| c == '>');
+                        let name: String = end
+                            .map(|e| chars[i + 2..i + 2 + e].iter().collect())
+                            .unwrap_or_default();
+                        let ok = name
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                        if !ok {
+                            return Err("a group name must be ASCII letters, digits and `_`".into());
+                        }
+                        out.push_str(&format!("(?P<{name}>"));
+                        i += 2 + name.len() + 1;
+                    } else {
+                        return Err("a group starting `(?` other than `(?:` and `(?<name>` isn't supported (Rust reads `(?i)` and the like as flags)".into());
+                    }
+                } else {
+                    out.push('(');
+                }
+            }
+            ')' => {
+                atom = true;
+                out.push(')');
+            }
+            '*' | '+' | '?' => {
+                if !atom {
+                    return Err(format!("`{c}` has nothing to repeat"));
+                }
+                out.push(c);
+                if chars.get(i) == Some(&'?') {
+                    out.push('?');
+                    i += 1;
+                }
+                atom = false;
+            }
+            '{' => {
+                // `{n}`, `{n,}`, `{n,m}`; a bare `{` is a literal in
+                // JavaScript and an error in Rust.
+                let close = chars[i..].iter().position(|&c| c == '}');
+                let body: String = close
+                    .map(|e| chars[i..i + e].iter().collect())
+                    .unwrap_or_default();
+                let valid = {
+                    let mut parts = body.splitn(2, ',');
+                    let lo = parts.next().unwrap_or("");
+                    let hi = parts.next();
+                    !lo.is_empty()
+                        && lo.bytes().all(|b| b.is_ascii_digit())
+                        && hi.is_none_or(|h| h.bytes().all(|b| b.is_ascii_digit()))
+                };
+                if !valid || !atom {
+                    return Err("a `{` that isn't a `{n}`, `{n,}` or `{n,m}` quantifier isn't supported; escape it as `\\{`".into());
+                }
+                out.push('{');
+                out.push_str(&body);
+                out.push('}');
+                i += body.chars().count() + 1;
+                if chars.get(i) == Some(&'?') {
+                    out.push('?');
+                    i += 1;
+                }
+                atom = false;
+            }
+            ']' | '}' => {
+                return Err(format!(
+                    "a bare `{c}` isn't supported; escape it as `\\{c}`"
+                ));
+            }
+            _ => {
+                atom = true;
+                out.push(c);
+            }
         }
     }
-    if in_class {
-        return Err("a character class is never closed".into());
-    }
-    Ok(out)
-}
-
-/// A character JavaScript escaped for no reason, as a literal.
-fn push_literal(out: &mut String, c: char) {
-    if "\\.+*?()|[]{}^$#&-~".contains(c) {
-        out.push('\\');
-    }
-    out.push(c);
+    Ok((out, info))
 }
 
 /// The next character boundary after `i`.
@@ -210,12 +460,28 @@ fn advance(s: &str, i: usize) -> usize {
 }
 
 impl JsRegex {
-    pub fn is_match(&self, s: &str) -> bool {
-        self.re.is_match(s)
+    /// Refuse text the pattern would treat differently from JavaScript.
+    fn check(&self, s: &str) -> Result<(), String> {
+        if self.icase && !s.is_ascii() {
+            return Err("the `i` flag is only supported for ASCII text: JavaScript and Rust fold the case of other characters differently".into());
+        }
+        if !self.unicode && !self.astral_safe && s.chars().any(|c| c as u32 > 0xFFFF) {
+            return Err("this pattern can't be used on text with characters outside the BMP (such as emoji): JavaScript sees each as two characters, and the pattern would match differently; add the `u` flag if that is what it should do".into());
+        }
+        if self.multiline && self.info.anchors && s.contains(['\r', '\u{2028}', '\u{2029}']) {
+            return Err("`^` and `$` with the `m` flag only break lines at `\\n` here, and JavaScript also breaks them at `\\r`, U+2028 and U+2029, which this text has".into());
+        }
+        Ok(())
+    }
+
+    pub fn is_match(&self, s: &str) -> Result<bool, String> {
+        self.check(s)?;
+        Ok(self.re.is_match(s))
     }
 
     /// `s.replace(re, replacement)`: every match with `g`, else the first.
-    pub fn replace(&self, s: &str, replacement: &str) -> String {
+    pub fn replace(&self, s: &str, replacement: &str) -> Result<String, String> {
+        self.check(s)?;
         let mut out = String::new();
         let mut last = 0;
         let mut at = 0;
@@ -237,7 +503,7 @@ impl JsRegex {
             }
         }
         out.push_str(&s[last.min(s.len())..]);
-        out
+        Ok(out)
     }
 
     /// JavaScript's replacement patterns: `$$ $& $` $' $n $nn $<name>`.
@@ -313,13 +579,14 @@ impl JsRegex {
     /// `s.split(re)`: the pieces between matches, with each match's
     /// captured groups between them (`None` for a group that didn't take
     /// part).
-    pub fn split(&self, s: &str) -> Vec<Option<String>> {
+    pub fn split(&self, s: &str) -> Result<Vec<Option<String>>, String> {
+        self.check(s)?;
         if s.is_empty() {
-            return if self.re.is_match(s) {
+            return Ok(if self.re.is_match(s) {
                 Vec::new()
             } else {
                 vec![Some(String::new())]
-            };
+            });
         }
         let mut out = Vec::new();
         let mut p = 0;
@@ -346,6 +613,6 @@ impl JsRegex {
             q = p;
         }
         out.push(Some(s[p..].to_string()));
-        out
+        Ok(out)
     }
 }

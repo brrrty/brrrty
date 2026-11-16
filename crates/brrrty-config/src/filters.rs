@@ -35,9 +35,12 @@ pub struct Runtime {
     pub ast: AST,
 }
 
-/// Stack for one filter call. Rhai recurses on Rust's stack, and render
-/// threads are small. The memory is only used as deep as the call goes.
-const CALL_STACK: usize = 256 * 1024 * 1024;
+/// A call that starts with less than this much stack left runs on a new
+/// stack of [`CALL_STACK`] bytes. Rhai recurses on Rust's stack, and a debug
+/// build's frames are big. Render threads have 16 MiB, so most calls
+/// don't need a new one.
+const STACK_RED_ZONE: usize = 12 * 1024 * 1024;
+const CALL_STACK: usize = 128 * 1024 * 1024;
 
 /// How many arguments (the value included) the script function takes, not
 /// counting the ones a closure captured.
@@ -76,8 +79,24 @@ fn call(
     if let Some(n) = arity {
         argv.resize(n, Dynamic::UNIT);
     }
-    let run = || stacker::grow(CALL_STACK, || f.call::<Dynamic>(&rt.engine, &rt.ast, argv));
-    match std::panic::catch_unwind(AssertUnwindSafe(run)) {
+    // Variables a closure captured are shared by every call, and 11ty
+    // would carry changes to them from page to page, in order. Pages render
+    // in parallel here, so a filter that changes one is refused.
+    let before = (!f.curry().is_empty()).then(|| captured(f));
+    let run = || {
+        stacker::maybe_grow(STACK_RED_ZONE, CALL_STACK, || {
+            f.call::<Dynamic>(&rt.engine, &rt.ast, argv)
+        })
+    };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(run));
+    if let Some(before) = before
+        && captured(f) != before
+    {
+        return Err(format!(
+            "filter `{name}` changed a variable it captured from the script. 11ty keeps that change from one page to the next, in page order, and Brrrty renders pages in parallel, so it can't give the same output; keep state out of filters (compute it before the filter, or pass it in as an argument)"
+        ));
+    }
+    match result {
         Err(panic) => {
             let why = panic
                 .downcast_ref::<&str>()
@@ -90,6 +109,14 @@ fn call(
         Ok(Ok(result)) => to_value(&result)
             .map_err(|why| format!("filter `{name}` returned a value that can't be data: {why}")),
     }
+}
+
+/// What a closure's captured variables hold now, as text.
+fn captured(f: &FnPtr) -> Vec<String> {
+    f.curry()
+        .iter()
+        .map(|d| format!("{:?}", d.flatten_clone()))
+        .collect()
 }
 
 /// A Rhai error as one line: what went wrong, and where in the script.

@@ -32,6 +32,19 @@
 //! backreferences (see the `regex` module for the other differences), and
 //! `url_hostname(s)`, `date(ms)`, `to_locale_date_string(d)`.
 //!
+//! ## Values
+//!
+//! Every JavaScript number arrives as a float, so `n / 2` is `3.5` for
+//! `7` and prints as JavaScript prints it (`5`, not `5.0`); a literal like
+//! `7` written in the script is still a Rhai integer, so write `7.0` to
+//! divide as JavaScript does. `undefined` is `()`. `null` is `null_value()`
+//! (also `NULL`): it equals `()` and is falsy, and it comes back out as
+//! `null`. A key of an object that holds `null` reads as `()`. `truthy(v)`
+//! is JavaScript's `if (v)`. A filter that changes a variable it captured
+//! from the script is refused, since 11ty would carry the change from page
+//! to page in order and Brrrty renders pages in parallel; keep filters
+//! pure.
+//!
 //! ## Key order
 //!
 //! A JavaScript object keeps its keys in the order they were added (integer

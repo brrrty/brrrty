@@ -713,3 +713,203 @@ fn string_filters_match_javascript() {
     );
     assert_eq!(r("{{ t | date }}", "{}"), "Invalid Date");
 }
+
+// ---- fix round 1 ----
+
+#[test]
+fn null_survives_a_filter_as_a_scalar_an_object_key_and_an_array_item() {
+    // 11ty prints `null` for each of these through an identity filter.
+    let cfg = load(r#"config.add_filter("id", |v| v);"#);
+    let r = |tpl: &str, json: &str| render(&cfg, tpl, json).unwrap();
+    assert_eq!(r("{{ n | id | json }}", r#"{"n":null}"#), "null");
+    assert_eq!(
+        r(
+            "{{ o | id | json }}",
+            r#"{"o":{"a":null,"b":1,"c":{"d":null}}}"#
+        ),
+        r#"{"a":null,"b":1,"c":{"d":null}}"#
+    );
+    assert_eq!(
+        r("{{ a | id | json }}", r#"{"a":[null,1,[null],{"k":null}]}"#),
+        r#"[null,1,[null],{"k":null}]"#
+    );
+}
+
+#[test]
+fn null_is_unit_to_a_script_and_can_be_made_on_purpose() {
+    let cfg = load(
+        r#"config.add_filter("isnull", |v| v == ());
+           config.add_filter("key", |o| o.k);
+           config.add_filter("keyisnull", |o| o.k == ());
+           config.add_filter("mk", |v| null_value());
+           config.add_filter("setnull", |v| { let o = object(); o.a = null_value(); o.b = (); o });
+           config.add_filter("falsy", |v| truthy(v));
+           config.add_filter("copy", |o| { let c = object(); for k in o { c[k] = o[k]; } c });
+           config.add_filter("cnst", |v| NULL);"#,
+    );
+    let r = |tpl: &str, json: &str| render(&cfg, tpl, json).unwrap();
+    assert_eq!(r("{{ n | isnull }}", r#"{"n":null}"#), "true");
+    assert_eq!(r("{{ n | falsy }}", r#"{"n":null}"#), "false");
+    assert_eq!(r("{{ o | keyisnull }}", r#"{"o":{"k":null}}"#), "true");
+    assert_eq!(r("{{ o | key | json }}", r#"{"o":{"k":null}}"#), "");
+    assert_eq!(r("{{ 1 | mk | json }}", "{}"), "null");
+    assert_eq!(r("{{ 1 | cnst | json }}", "{}"), "null");
+    // `o.b = ()` is `undefined`, which JSON drops.
+    assert_eq!(r("{{ 1 | setnull | json }}", "{}"), r#"{"a":null}"#);
+    // Copying key by key through `o[k]` keeps `null` as undefined; the
+    // object itself keeps its nulls when it isn't changed.
+    assert_eq!(
+        r("{{ o | copy | json }}", r#"{"o":{"k":null,"j":1}}"#),
+        r#"{"j":1}"#
+    );
+}
+
+#[test]
+fn changing_a_shared_object_does_not_change_the_pages_data() {
+    let cfg = load(r#"config.add_filter("add", |o| { o.x = 1; o.keys() });"#);
+    let e = engine(&cfg);
+    let t = e
+        .parse("t.liquid", "{{ o | add | json }}{{ o | json }}")
+        .unwrap();
+    let d = data(r#"{"o":{"z":1}}"#);
+    assert_eq!(
+        e.render(&t, &d, &NoPartials).unwrap(),
+        r#"["z","x"]{"z":1}"#
+    );
+}
+
+#[test]
+fn numbers_are_javascripts() {
+    let cfg = load(
+        r#"config.add_filter("half", |n| n / 2);
+           config.add_filter("sum", |n| n + 0.2);
+           config.add_filter("mod", |n, m| n % m);
+           config.add_filter("show", |n| `${n}|` + n + "|" + n.to_string());
+           config.add_filter("kind", |n| type_of(n));"#,
+    );
+    let r = |tpl: &str| render(&cfg, tpl, "{}").unwrap();
+    assert_eq!(r("{{ 7 | half }}"), "3.5");
+    assert_eq!(r("{{ 0.1 | sum }}"), "0.30000000000000004");
+    assert_eq!(r("{{ 7 | mod: 3 }}"), "1");
+    assert_eq!(r("{{ -7 | mod: 3 }}"), "-1");
+    assert_eq!(r("{{ 5.5 | mod: 2 }}"), "1.5");
+    assert_eq!(r("{{ 7 | kind }}"), "f64");
+    // 2^53 + 1 is 2^53 in JavaScript too; and 5e21 prints as JS prints it.
+    assert_eq!(r("{{ 9007199254740993 | half }}"), "4503599627370496");
+    assert_eq!(r("{{ 10000000000000000000000 | half }}"), "5e+21");
+    // Whole numbers print without `.0`.
+    assert_eq!(r("{{ 5 | show }}"), "5|5|5");
+    assert_eq!(r("{{ 1.5 | show }}"), "1.5|1.5|1.5");
+}
+
+#[test]
+fn a_filter_that_changes_a_captured_variable_is_refused() {
+    let (t, r) = site(
+        "let counter = 0;\nconfig.add_filter(\"count\", |v| { counter += 1; counter });\nlet pure = 5;\nconfig.add_filter(\"p\", |v| v + pure);\nfn helper(x) { x }\nconfig.add_filter(\"h\", |v| helper(v));\nlet memo = ();\nconfig.add_filter(\"memo\", |v| { if memo == () { memo = 7; } memo });",
+        &[
+            ("a.liquid", "{{ 1 | count }}"),
+            ("b.liquid", "{{ 1 | p }}-{{ 2 | h }}"),
+        ],
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/b/index.html")).unwrap(),
+        "6-2"
+    );
+    assert!(!t.path().join("_site/a/index.html").exists());
+    let p = r
+        .problems
+        .iter()
+        .find(|p| p.code == codes::LIQUID_RENDER)
+        .unwrap();
+    assert!(
+        p.message.contains("changed a variable it captured"),
+        "{}",
+        p.message
+    );
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/a.liquid")));
+}
+
+#[test]
+fn deep_recursion_in_a_filter_works_on_a_small_stack() {
+    let cfg = load(
+        "fn depth(n) { if n == 0 { 0 } else { 1 + depth(n - 1) } }\nconfig.add_filter(\"deep\", |v| depth(60));",
+    );
+    let h = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || render(&cfg, "{{ 1 | deep }}", "{}"))
+        .unwrap();
+    assert_eq!(h.join().unwrap().unwrap(), "60");
+}
+
+#[test]
+fn regex_patterns_that_would_match_differently_are_refused() {
+    // Each of these compiles in Rust but means something else in
+    // JavaScript, so it is an error rather than a silent difference.
+    for (pat, flags) in [
+        (r"\a", ""),
+        (r"\A", ""),
+        (r"\p{L}", ""),
+        (r"\p{L}", "u"),
+        ("[]]", ""),
+        ("[^]", ""),
+        ("(?i)a", ""),
+        ("(?s)a", ""),
+        (r"\z", ""),
+        (r"\cJ", ""),
+        (r"\u{61}", ""),
+        ("a{", ""),
+        ("a{,2}", ""),
+        ("}", ""),
+        ("[a--b]", ""),
+        (r"[\w-a]", ""),
+        ("*a", ""),
+        ("^*", ""),
+        ("\u{1F600}", ""),
+        ("é", "i"),
+        ("a", "y"),
+    ] {
+        let p = load_err(&format!(
+            "regex_test(\"a\", {}, {});",
+            json(pat),
+            json(flags)
+        ));
+        assert_eq!(p.code, codes::CONFIG_INVALID, "{pat} {flags}: {p:?}");
+    }
+}
+
+#[test]
+fn regex_text_that_would_match_differently_is_refused() {
+    let err = |expr: &str| {
+        let p = load_err(&format!("let x = {expr};"));
+        assert_eq!(p.code, codes::CONFIG_INVALID, "{expr}: {p:?}");
+        p.message
+    };
+    // The Kelvin sign folds to `k` in Rust's `i`, and not in JavaScript's.
+    assert!(err(r#"regex_test("\u212A", "k", "i")"#).contains("`i` flag"));
+    // Emoji are two units in JavaScript: `.`, a negated class and an
+    // empty match can land between them.
+    assert!(err(r#"regex_replace("\U0001F600", "(?:)", "-", "g")"#).contains("outside the BMP"));
+    assert!(err(r#"regex_test("\U0001F600", "^.$")"#).contains("outside the BMP"));
+    assert!(err(r#"regex_split("a\U0001F600", "\\S")"#).contains("outside the BMP"));
+    // `^` and `$` with `m` also break at \r in JavaScript.
+    assert!(err(r#"regex_replace("a\rb", "$", "!", "gm")"#).contains("`m` flag"));
+    // The `u` flag makes JavaScript use code points too, so it is allowed.
+    assert_eq!(
+        eval(r#"regex_replace("\U0001F600", "(?:)", "-", "gu")"#),
+        s("-\u{1F600}-")
+    );
+    // Patterns that can't split a pair are fine with emoji around.
+    assert_eq!(
+        eval(r#"regex_replace("\U0001F600 a", "\\s+", "_", "g")"#),
+        s("\u{1F600}_a")
+    );
+    // And `m` without `^`/`$`, or without \r, is fine.
+    assert_eq!(
+        eval(r#"regex_replace("a\r\nb", "b", "!", "gm")"#),
+        s("a\r\n!")
+    );
+    assert_eq!(
+        eval(r#"regex_replace("a\nb", "$", "!", "gm")"#),
+        s("a!\nb!")
+    );
+}

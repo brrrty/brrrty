@@ -109,11 +109,7 @@ fn time_clip(ms: f64) -> f64 {
 
 /// A number of milliseconds, or `NaN`, as Rhai sees it.
 fn number(n: f64) -> Dynamic {
-    if n.is_finite() {
-        Dynamic::from_int(n as INT)
-    } else {
-        Dynamic::from_float(n)
-    }
+    Dynamic::from_float(n)
 }
 
 const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -242,8 +238,21 @@ pub fn engine(clock: Clock) -> Engine {
     e.register_fn("date_to_utc_string", |d: &mut JsDate| utc_string(d.0));
     e.register_fn("get_time", |d: &mut JsDate| number(d.0));
     e.register_fn("year", |d: &mut JsDate| match tz::fields(Tz::Local, d.0) {
-        Some(f) => Dynamic::from_int(f.year as INT),
+        Some(f) => Dynamic::from_float(f.year as f64),
         None => Dynamic::from_float(f64::NAN),
+    });
+    // Numbers print as JavaScript prints them: `5`, not `5.0`.
+    e.register_fn("to_string", |n: rhai::FLOAT| {
+        brrrty_js::js_number_to_string(n)
+    });
+    e.register_fn("to_debug", |n: rhai::FLOAT| {
+        brrrty_js::js_number_to_string(n)
+    });
+    e.register_fn("+", |s: ImmutableString, n: rhai::FLOAT| {
+        format!("{s}{}", brrrty_js::js_number_to_string(n))
+    });
+    e.register_fn("+", |n: rhai::FLOAT, s: ImmutableString| {
+        format!("{}{s}", brrrty_js::js_number_to_string(n))
     });
     e.register_fn("to_string", |d: &mut JsDate| {
         tz::date_to_string(Tz::Local, d.0)
@@ -290,15 +299,20 @@ fn register_text(e: &mut Engine) {
     }
     e.register_fn(
         "regex_replace",
-        move |s: &str, p: &str, r: &str, f: &str| -> Res<String> { Ok(re(p, f)?.replace(s, r)) },
+        move |s: &str, p: &str, r: &str, f: &str| -> Res<String> {
+            re(p, f)?.replace(s, r).map_err(runtime)
+        },
     );
     e.register_fn(
         "regex_replace",
-        move |s: &str, p: &str, r: &str| -> Res<String> { Ok(re(p, "")?.replace(s, r)) },
+        move |s: &str, p: &str, r: &str| -> Res<String> {
+            re(p, "")?.replace(s, r).map_err(runtime)
+        },
     );
     let split = move |s: &str, p: &str, f: &str| -> Res<rhai::Array> {
         Ok(re(p, f)?
             .split(s)
+            .map_err(runtime)?
             .into_iter()
             .map(|x| x.map_or(Dynamic::UNIT, Dynamic::from))
             .collect())
@@ -308,11 +322,11 @@ fn register_text(e: &mut Engine) {
         split(s, p, f)
     });
     e.register_fn("regex_test", move |s: &str, p: &str| -> Res<bool> {
-        Ok(re(p, "")?.is_match(s))
+        re(p, "")?.is_match(s).map_err(runtime)
     });
     e.register_fn(
         "regex_test",
-        move |s: &str, p: &str, f: &str| -> Res<bool> { Ok(re(p, f)?.is_match(s)) },
+        move |s: &str, p: &str, f: &str| -> Res<bool> { re(p, f)?.is_match(s).map_err(runtime) },
     );
     // `new URL(s).hostname`, or `()` when `s` isn't an absolute URL.
     e.register_fn("url_hostname", |s: Dynamic| -> Dynamic {
