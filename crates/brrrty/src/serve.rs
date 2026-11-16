@@ -531,7 +531,7 @@ impl Session {
     fn rebuild(&mut self, server: &RunningServer, changed: &[PathBuf]) {
         if !self.settings.quiet {
             for p in changed {
-                println!("File changed: {}", shown(p));
+                crate::say!("File changed: {}", shown(p));
             }
         }
         self.last_changed = changed.to_vec();
@@ -558,7 +558,7 @@ impl Session {
                         } else {
                             ("pages", "their templates have")
                         };
-                        println!("Kept {kept} {noun} from the last build, as {clause} errors");
+                        crate::say!("Kept {kept} {noun} from the last build, as {clause} errors");
                     }
                     self.retire(old);
                     self.mirror(&dir, built.entries);

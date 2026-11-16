@@ -184,12 +184,12 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     session.live_reload(&server);
     if !quiet {
         session.on_rebuild(std::sync::Arc::new(|_: &brrrty::serve::Rebuild| {
-            println!("Watching…");
+            brrrty::say!("Watching…");
         }));
-        println!("Watching…");
-        println!("Server at {}", shown_url(&server, args.port));
+        brrrty::say!("Watching…");
+        brrrty::say!("Server at {}", shown_url(&server, args.port));
         if !session.first_served() {
-            println!(
+            brrrty::say!(
                 "The first build stopped before writing any page: serving what {} held before, until a build gets that far.",
                 session.output().display()
             );

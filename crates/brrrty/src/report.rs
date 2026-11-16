@@ -13,6 +13,16 @@ use miette::{
 
 use crate::bug::{environment, issue_url};
 
+/// `println!` that ignores a closed stdout, as in `brrrty serve | head -1`: the reader going
+/// away is not a failure.
+#[macro_export]
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+
 #[derive(Debug)]
 struct Rendered {
     message: String,
@@ -163,9 +173,7 @@ pub fn render_problem(p: &Problem, root: &Path, color: bool) -> String {
 /// then the problems on stderr. `root` is where problem paths are relative to.
 pub fn print_build(report: &brrrty_core::BuildReport, root: &Path, quiet: bool, color: bool) {
     if !quiet {
-        // A closed stdout (`| head -1`) is not a failure of the build.
-        let _ = writeln!(
-            std::io::stdout(),
+        crate::say!(
             "Wrote {} files, copied {} files in {:.2} seconds (brrrty {})",
             report.written,
             report.copied,
