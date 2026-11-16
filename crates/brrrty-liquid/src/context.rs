@@ -285,7 +285,11 @@ impl<'a> Context<'a> {
         }
         match self.data {
             Value::Object(o) => o.get(key).cloned(),
-            _ => None,
+            // A filter can use a string or an array as the data, as
+            // LiquidJS's `Object(value)` does: `length` and indexes are
+            // its own properties.
+            Value::Null | Value::Undefined => None,
+            other => crate::ops::own_property(other, key),
         }
     }
 

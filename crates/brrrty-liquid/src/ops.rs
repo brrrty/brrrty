@@ -203,20 +203,8 @@ pub(crate) fn template_string(v: &Val, tz: Tz) -> String {
 }
 
 /// `Date.prototype.toString` in `tz`.
-///
-/// For `Tz::Local` the zone's long name, which JavaScript prints in
-/// parentheses, is left out: it comes from ICU and is not knowable here.
 fn date_string(d: &chrono::DateTime<chrono::FixedOffset>, tz: Tz) -> String {
-    match tz {
-        Tz::Utc => d
-            .with_timezone(&chrono::Utc)
-            .format("%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)")
-            .to_string(),
-        Tz::Local => d
-            .with_timezone(&chrono::Local)
-            .format("%a %b %d %Y %H:%M:%S GMT%z")
-            .to_string(),
-    }
+    crate::tz::date_to_string(tz, d.timestamp_millis() as f64)
 }
 
 /// LiquidJS's `stringify`, which outputs use: strings as they are, null
@@ -308,7 +296,7 @@ pub(crate) fn read_property(obj: &Val, key: &Value) -> Val {
     })
 }
 
-fn own_property(v: &Value, key: &str) -> Option<Value> {
+pub(crate) fn own_property(v: &Value, key: &str) -> Option<Value> {
     match v {
         Value::Array(a) => match key {
             "length" => Some(Value::Number(a.len() as f64)),

@@ -387,6 +387,29 @@ enum ExprTok {
     Val(Expr),
 }
 
+/// `new Tokenizer(input).readScopeValue()`: a variable path such as
+/// `a.b[0]`, read from the start of `input`. Anything after the path is
+/// ignored. `None` when `input` does not start with a name.
+pub(crate) fn parse_scope_value(input: &str) -> Result<Option<Expr>, Located> {
+    let mut c = Cursor::bare(input, 0, input.len());
+    c.skip_blank();
+    let begin = c.p;
+    let segments = c.read_properties(true)?;
+    if segments.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Expr::Path {
+        span: c.span(begin, c.p),
+        root: None,
+        segments,
+    }))
+}
+
+/// `new Tokenizer(input).readFilteredValue()`: a value and its filters.
+pub(crate) fn parse_filtered_value(input: &str) -> Result<FilteredValue, Located> {
+    Cursor::bare(input, 0, input.len()).read_filtered_value()
+}
+
 /// LiquidJS's `Tokenizer`: a position `p` reading `input` up to `n`.
 pub(crate) struct Cursor<'a> {
     pub input: &'a str,

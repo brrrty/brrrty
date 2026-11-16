@@ -210,8 +210,10 @@ dependencies = [
  "brrrty-js",
  "chrono",
  "indexmap",
+ "regex",
  "serde",
  "serde_json",
+ "sha2",
  "stacker",
  "toml",
 ]

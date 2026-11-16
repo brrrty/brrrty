@@ -7,9 +7,10 @@ use std::sync::Arc;
 use brrrty_js::Value;
 
 use crate::ast::FilteredValue;
+use crate::context::Val;
 use crate::error::{ErrorKind, ParseErr};
 use crate::parser::distance;
-use crate::render::Renderer;
+use crate::render::{R, Renderer};
 use crate::{LiquidError, Template};
 
 /// The time zone dates are printed and formatted in. LiquidJS uses the
@@ -60,9 +61,22 @@ pub trait Loader: Send + Sync {
     fn load(&self, name: &str) -> Option<(String, String)>;
 }
 
+/// A registered filter: one the embedder added, or one of the standard set.
+#[derive(Clone)]
+pub(crate) enum Filter {
+    User(FilterFn),
+    /// A standard filter. It gets the renderer, for the time zone, the
+    /// size limit and the filters that evaluate expressions, and every
+    /// argument as written: a keyword argument arrives as a `[name, value]`
+    /// array, as LiquidJS passes it.
+    Builtin(Builtin),
+}
+
+pub(crate) type Builtin = fn(&mut Renderer<'_>, &Val, &[Val]) -> R<Value>;
+
 pub struct Engine {
     pub(crate) options: EngineOptions,
-    pub(crate) filters: HashMap<String, FilterFn>,
+    pub(crate) filters: HashMap<String, Filter>,
     /// Bytes a render may write in all, captures included.
     pub(crate) output_limit: usize,
 }
@@ -72,9 +86,11 @@ const OUTPUT_LIMIT: usize = 512 * 1024 * 1024;
 
 impl Engine {
     pub fn new(opts: EngineOptions) -> Engine {
+        let mut filters = HashMap::new();
+        crate::filters::register(&mut filters);
         Engine {
             options: opts,
-            filters: HashMap::new(),
+            filters,
             output_limit: OUTPUT_LIMIT,
         }
     }
@@ -83,9 +99,10 @@ impl Engine {
         &self.options
     }
 
-    /// Adds or replaces the filter `name`.
+    /// Adds or replaces the filter `name`. A new filter replaces a standard
+    /// one of the same name.
     pub fn register_filter(&mut self, name: &str, f: FilterFn) {
-        self.filters.insert(name.to_string(), f);
+        self.filters.insert(name.to_string(), Filter::User(f));
     }
 
     /// Parses `source` and, with `strict_filters`, rejects any filter that

@@ -11,11 +11,14 @@ pub mod ast;
 mod context;
 mod engine;
 mod error;
+mod filters;
 mod lexer;
 mod ops;
 mod parser;
 mod render;
 mod tags;
+mod tz;
+mod zones;
 
 pub use ast::Template;
 pub use engine::{Engine, EngineOptions, FilterCtx, FilterFn, Loader, Tz};

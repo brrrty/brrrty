@@ -1,11 +1,13 @@
 //! Renders a parsed template, as LiquidJS's `Render.renderTemplates` and
 //! the tag `render` methods do.
 
+use std::sync::Arc;
+
 use brrrty_js::Value;
 
 use crate::ast::{BinaryOp, Expr, FilterArg, FilteredValue, HashArg, Literal, Node, Segment, Span};
 use crate::context::{Context, Val};
-use crate::engine::{Engine, FilterCtx, Loader, Tz};
+use crate::engine::{Engine, Filter, FilterCtx, Loader, Tz};
 use crate::error::{ErrorKind, LiquidError};
 use crate::lexer::grow;
 use crate::ops::{self, Cmp};
@@ -162,40 +164,100 @@ impl<'a> Renderer<'a> {
                 }
             }
         }
+        let engine = self.engine;
         let mut v = self.eval(&fv.expr)?;
         for f in &fv.filters {
-            let mut args = Vec::new();
-            let mut kwargs = Vec::new();
-            for arg in &f.args {
-                match arg {
-                    FilterArg::Positional(e) => args.push(self.eval(e)?.to_value()),
-                    FilterArg::Keyword { name, value } => {
-                        let value = match value {
-                            Some(e) => self.eval(e)?.to_value(),
-                            None => Value::Undefined,
-                        };
-                        kwargs.push((name.clone(), value));
+            let filter = engine.filters.get(&f.name);
+            let out = match filter {
+                Some(Filter::Builtin(run)) => {
+                    let mut argv = Vec::with_capacity(f.args.len());
+                    for arg in &f.args {
+                        argv.push(match arg {
+                            FilterArg::Positional(e) => self.eval(e)?,
+                            FilterArg::Keyword { name, value } => {
+                                let value = match value {
+                                    Some(e) => match self.eval(e)? {
+                                        // A drop is an object in JavaScript, so
+                                        // it is truthy inside the pair.
+                                        Val::Nil | Val::Empty | Val::Blank | Val::Block => {
+                                            Value::Object(Default::default())
+                                        }
+                                        other => other.to_value(),
+                                    },
+                                    None => Value::Undefined,
+                                };
+                                Val::V(Value::Array(Arc::new(vec![
+                                    Value::String(name.as_str().into()),
+                                    value,
+                                ])))
+                            }
+                        });
                     }
+                    let out = run(self, &v, &argv)?;
+                    self.check_size(&out)?;
+                    out
                 }
-            }
-            let Some(filter) = self.engine.filters.get(&f.name) else {
-                if self.engine.options.strict_filters {
+                Some(Filter::User(run)) => {
+                    let mut args = Vec::new();
+                    let mut kwargs = Vec::new();
+                    for arg in &f.args {
+                        match arg {
+                            FilterArg::Positional(e) => args.push(self.eval(e)?.to_value()),
+                            FilterArg::Keyword { name, value } => {
+                                let value = match value {
+                                    Some(e) => self.eval(e)?.to_value(),
+                                    None => Value::Undefined,
+                                };
+                                kwargs.push((name.clone(), value));
+                            }
+                        }
+                    }
+                    let ctx = FilterCtx {
+                        timezone: self.tz(),
+                    };
+                    let out = run(&v.to_value(), &args, &kwargs, &ctx)
+                        .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
+                    self.check_size(&out)?;
+                    out
+                }
+                None if self.engine.options.strict_filters => {
                     return Err(self.unknown_filter(&f.name));
                 }
                 // LiquidJS's `identify`: the input passes through.
-                continue;
+                None => continue,
             };
-            let ctx = FilterCtx {
-                timezone: self.tz(),
-            };
-            let out = filter(&v.to_value(), &args, &kwargs, &ctx)
-                .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
             v = Val::V(out);
         }
         Ok(v)
     }
 
-    fn unknown_filter(&self, name: &str) -> RenderErr {
+    /// Keeps a filter's result under the output limit, so a loop that
+    /// doubles a string through filters stops with an error instead of
+    /// using up the machine's memory.
+    pub fn check_size(&self, v: &Value) -> R<()> {
+        let size = match v {
+            Value::String(s) => s.len(),
+            Value::Array(a) => a.len().saturating_mul(std::mem::size_of::<Value>()),
+            _ => return Ok(()),
+        };
+        self.check_bytes(size)
+    }
+
+    /// Errors when a filter is about to build something of `bytes` bytes
+    /// that is over the output limit.
+    pub fn check_bytes(&self, bytes: usize) -> R<()> {
+        let limit = self.engine.output_limit;
+        if bytes > limit {
+            return Err(RenderErr::new(
+                ErrorKind::Limit,
+                format!("a filter produced more than {} MiB", limit / (1024 * 1024)),
+            )
+            .with_help("look for a loop that keeps doubling a string or an array"));
+        }
+        Ok(())
+    }
+
+    pub fn unknown_filter(&self, name: &str) -> RenderErr {
         let (message, help) = self.engine.unknown_filter(name);
         RenderErr::Plain {
             kind: ErrorKind::UnknownFilter,
