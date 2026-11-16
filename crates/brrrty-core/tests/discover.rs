@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 fn opts(root: &Path, input: &str, output: &str) -> BuildOptions {
     BuildOptions {
+        write_to: None,
+        run_mode: Default::default(),
         root: root.to_path_buf(),
         input: PathBuf::from(input),
         output: PathBuf::from(output),

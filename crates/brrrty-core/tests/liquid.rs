@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 fn opts(root: &Path) -> BuildOptions {
     BuildOptions {
+        write_to: None,
+        run_mode: Default::default(),
         root: root.to_path_buf(),
         input: PathBuf::from("src"),
         output: PathBuf::from("_site"),

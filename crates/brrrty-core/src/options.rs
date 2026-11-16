@@ -15,6 +15,33 @@ pub struct BuildOptions {
     pub strict: bool,
     /// What the project's config file set.
     pub config: ConfigOptions,
+    /// Write the site here instead of the output folder. The output folder
+    /// still names the site everywhere 11ty shows it (`page.outputPath`,
+    /// `eleventy.directories.output`) and is still left out of the input.
+    /// `brrrty serve` builds into a fresh folder each time this way.
+    pub write_to: Option<PathBuf>,
+    /// How 11ty was started, as `eleventy.env.runMode` shows it.
+    pub run_mode: RunMode,
+}
+
+/// How 11ty was started (`eleventy.env.runMode`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RunMode {
+    /// `eleventy`, `brrrty build`.
+    #[default]
+    Build,
+    /// `eleventy --serve`, `brrrty serve`.
+    Serve,
+}
+
+impl RunMode {
+    /// The name 11ty gives it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RunMode::Build => "build",
+            RunMode::Serve => "serve",
+        }
+    }
 }
 
 /// What a config file (`brrrty.config.rhai`) set, besides the folders,
@@ -312,6 +339,15 @@ impl BuildOptions {
         resolve(&self.root_dir()?.join(&self.output))
     }
 
+    /// Where files are written: [`BuildOptions::write_to`] when set, otherwise the output
+    /// folder.
+    pub fn write_dir(&self) -> Result<PathBuf, Problem> {
+        match &self.write_to {
+            Some(w) => resolve(&self.root_dir()?.join(w)),
+            None => self.output_dir(),
+        }
+    }
+
     /// Refuse a missing input folder, and an output folder that is the root, the input dir,
     /// or an ancestor of the input dir.
     pub fn validate(&self) -> Result<(), Problem> {
@@ -375,6 +411,7 @@ mod tests {
             passthrough: vec![],
             strict: false,
             config: ConfigOptions::default(),
+            ..BuildOptions::default()
         };
         assert_eq!(o("./src/").input_rel().unwrap(), PathBuf::from("src"));
         assert_eq!(o(".").input_rel().unwrap(), PathBuf::new());

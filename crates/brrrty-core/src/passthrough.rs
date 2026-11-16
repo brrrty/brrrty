@@ -28,7 +28,10 @@ pub(crate) struct PassthroughResult {
 /// Running state while walking passthrough entries.
 struct Copier<'a> {
     root: &'a Path,
+    /// Where files are written.
     out: &'a Path,
+    /// The output folder, which is `out` unless the build writes elsewhere.
+    output: &'a Path,
     pages: &'a HashMap<PathBuf, PathBuf>,
     /// Every `(source file, destination)` pair found while walking, in walk order.
     plan: Vec<(PathBuf, PathBuf)>,
@@ -45,8 +48,15 @@ pub(crate) fn copy_passthrough_avoiding(
     opts: &BuildOptions,
     pages: &HashMap<PathBuf, PathBuf>,
 ) -> PassthroughResult {
-    let dirs = (|| Ok::<_, Problem>((opts.root_dir()?, opts.input_dir()?, opts.output_dir()?)))();
-    let (root, input, out) = match dirs {
+    let dirs = (|| {
+        Ok::<_, Problem>((
+            opts.root_dir()?,
+            opts.input_dir()?,
+            opts.write_dir()?,
+            opts.output_dir()?,
+        ))
+    })();
+    let (root, input, out, output) = match dirs {
         Ok(d) => d,
         Err(p) => {
             return PassthroughResult {
@@ -60,6 +70,7 @@ pub(crate) fn copy_passthrough_avoiding(
     let mut c = Copier {
         root: &root,
         out: &out,
+        output: &output,
         pages,
         plan: Vec::new(),
         copied: 0,
@@ -200,7 +211,7 @@ fn config_path(opts: &BuildOptions, entry: &Path) -> PathBuf {
 
 fn collect_entry(source: &Path, dest: &Path, c: &mut Copier) {
     // Never copy the output folder into itself.
-    if source == c.out {
+    if source == c.out || source == c.output {
         return;
     }
     let meta = match fs::metadata(source) {

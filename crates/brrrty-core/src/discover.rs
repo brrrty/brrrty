@@ -36,6 +36,7 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     let root = opts.root_dir()?;
     let input = opts.input_dir()?;
     let output = opts.output_dir()?;
+    let write_dir = opts.write_dir()?;
     let input_rel = opts.input_rel()?;
 
     let mut rules = IgnoreRules::load(&root, &input, &input_rel)?;
@@ -59,7 +60,7 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         .filter_entry(move |e| {
             let p = e.path();
             let is_dir = e.file_type().is_some_and(|t| t.is_dir());
-            if is_dir && (p == output || p == includes || p == data) {
+            if is_dir && (p == output || p == write_dir || p == includes || p == data) {
                 return false;
             }
             if e.file_name() == "node_modules" {

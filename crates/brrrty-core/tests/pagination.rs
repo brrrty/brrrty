@@ -25,6 +25,8 @@ fn exists(root: &Path, rel: &str) -> bool {
 fn run(root: &Path) -> BuildReport {
     build(
         &BuildOptions {
+            write_to: None,
+            run_mode: Default::default(),
             root: root.to_path_buf(),
             input: PathBuf::from("src"),
             output: PathBuf::from("_site"),

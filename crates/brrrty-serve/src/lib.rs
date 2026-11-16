@@ -327,12 +327,32 @@ impl RunningServer {
     /// than renaming over the folder being served; a request that has
     /// resolved a file in a directory that vanishes gets a 404.
     pub fn set_root(&self, output: &Path) -> Result<(), ServeError> {
+        self.swap_root(output).map(drop)
+    }
+
+    /// [`RunningServer::set_root`], giving back the folder that was being
+    /// served so the caller can tell when the last request using it is done
+    /// ([`RetiredRoot::in_use`]) before removing it.
+    pub fn swap_root(&self, output: &Path) -> Result<RetiredRoot, ServeError> {
         let root = Root::new(output).map_err(|source| ServeError::Root {
             path: output.display().to_string(),
             source,
         })?;
-        *self.shared.root.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(root);
-        Ok(())
+        let old = std::mem::replace(
+            &mut *self.shared.root.write().unwrap_or_else(|e| e.into_inner()),
+            Arc::new(root),
+        );
+        Ok(RetiredRoot(old))
+    }
+
+    /// The folder being served, as its real path.
+    pub fn root(&self) -> std::path::PathBuf {
+        self.shared
+            .root
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .canonical
+            .clone()
     }
 
     /// Rewrite HTML responses with `hook`, or stop doing so with `None`.
@@ -362,6 +382,23 @@ impl RunningServer {
         for (_, c) in conns {
             let _ = c.shutdown(Shutdown::Both);
         }
+    }
+}
+
+/// A folder the server stopped serving ([`RunningServer::swap_root`]).
+pub struct RetiredRoot(Arc<Root>);
+
+impl RetiredRoot {
+    /// The folder, as its real path.
+    pub fn path(&self) -> &Path {
+        &self.0.canonical
+    }
+
+    /// Whether a request that started before the swap still holds the
+    /// folder. A request holds it while it finds its file; once the file is
+    /// open, removing the folder no longer affects the response on Unix.
+    pub fn in_use(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
     }
 }
 

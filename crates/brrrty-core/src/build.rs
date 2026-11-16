@@ -304,7 +304,7 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
         "generator": format!("Eleventy v{ELEVENTY_VERSION}"),
         "env": {
             "source": "cli",
-            "runMode": "build",
+            "runMode": opts.run_mode.as_str(),
             "root": root.display().to_string(),
         },
         "directories": {
@@ -1480,7 +1480,7 @@ fn build_once(
             }
         }
     }
-    let (root, input, out) = match (opts.root_dir(), opts.input_dir(), opts.output_dir()) {
+    let (root, input, out) = match (opts.root_dir(), opts.input_dir(), opts.write_dir()) {
         (Ok(r), Ok(i), Ok(o)) => (r, i, o),
         (Err(p), _, _) | (_, Err(p), _) | (_, _, Err(p)) => {
             report.problems.push(p);

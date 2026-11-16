@@ -837,6 +837,38 @@ fn set_root_follows_a_folder_replaced_in_place() {
 }
 
 #[test]
+fn swap_root_reports_when_the_old_folder_is_no_longer_used() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let (entered_tx, entered) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    // The hook runs while the request still holds its folder: hold it there.
+    srv.set_html_hook(Some(Arc::new(move |page| {
+        let _ = entered_tx.send(());
+        let _ = release_rx.lock().unwrap().recv();
+        HtmlRewrite {
+            body: page.body.to_string(),
+            headers: vec![],
+        }
+    })));
+    std::thread::scope(|s| {
+        let pending = s.spawn(|| get(&srv, "/about"));
+        entered.recv().unwrap();
+        let other = f.parent.join("other");
+        write(&other, "index.html", "other home");
+        let retired = srv.swap_root(&other).unwrap();
+        assert_eq!(retired.path(), fs::canonicalize(&f.site).unwrap());
+        assert!(retired.in_use());
+        release.send(()).unwrap();
+        // The request finishes against the folder it started with.
+        assert_eq!(pending.join().unwrap().text(), "about page");
+        assert!(!retired.in_use());
+        assert_eq!(srv.root(), fs::canonicalize(&other).unwrap());
+    });
+}
+
+#[test]
 fn the_hook_rewrites_html_only() {
     let f = fixture(true);
     let srv = start(&f);

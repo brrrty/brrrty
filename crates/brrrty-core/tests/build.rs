@@ -9,6 +9,8 @@ fn opts(root: &Path) -> BuildOptions {
 
 fn opts_with_passthrough(root: &Path, pt: &[&str]) -> BuildOptions {
     BuildOptions {
+        write_to: None,
+        run_mode: Default::default(),
         root: root.to_path_buf(),
         input: PathBuf::from("src"),
         output: PathBuf::from("_site"),
@@ -935,4 +937,35 @@ fn renderer_panics_refuse_their_pages_on_every_thread() {
         );
         assert!(!t.path().join(format!("_site/bad{i}/index.html")).exists());
     }
+}
+
+#[test]
+fn write_to_writes_elsewhere_but_keeps_the_output_spelling() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "index.md",
+        "{{ page.outputPath }} {{ eleventy.directories.output }} {{ eleventy.env.runMode }}",
+    );
+    write(root, "img/a.png", "png");
+    // An old build in the real output folder must not be read as input.
+    write(root, "_site/old/index.html", "old");
+    let stage = root.join("_site/.stage/1");
+    let o = BuildOptions {
+        input: PathBuf::from("."),
+        write_to: Some(stage.clone()),
+        run_mode: brrrty_core::RunMode::Serve,
+        ..opts_with_passthrough(root, &["img"])
+    };
+    let r = build(&o, &MarkdownIt::new());
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(
+        read(stage.join("index.html")),
+        "<p>./_site/index.html ./_site/ serve</p>\n"
+    );
+    assert_eq!(read(stage.join("img/a.png")), "png");
+    assert!(!stage.join("old").exists());
+    assert!(!stage.join("_site").exists());
+    assert!(!root.join("_site/index.html").exists());
 }

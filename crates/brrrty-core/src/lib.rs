@@ -35,7 +35,7 @@ pub use frontmatter::split_front_matter;
 pub use js::js_truthy;
 pub use options::{
     BuildOptions, CollectionError, CollectionFn, CollectionInput, CollectionPage, ConfigCollection,
-    ConfigFilter, ConfigOptions, DataFn, DataRequest, DataRunner, PassthroughEntry,
+    ConfigFilter, ConfigOptions, DataFn, DataRequest, DataRunner, PassthroughEntry, RunMode,
     TemplateEngines, TemplateLanguage, UndatedPage,
 };
 pub use page::{Page, file_path_stem, file_slug, resolve_date};
