@@ -53,22 +53,37 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-/// Microtasks the engine for a language takes to load.
+/// Microtasks the engine for a language takes to load: from the first
+/// `TemplateEngineManager.getEngine(name)` call to its cached promise
+/// settling (`import()` of the already-loaded engine module, then the
+/// constructor). Measured with `tools/order-calibration` (`events.mjs -v`: "call engine" to
+/// "settle engine").
 fn engine_cost(language: &str) -> usize {
     match language {
+        // `Liquid.js` engine.
         "liquid" => 10,
+        // `Html.js` engine.
         "html" => 17,
+        // `Markdown.js` engine (and anything else, which Brrrty refuses).
         _ => 25,
     }
 }
 
-/// From the engine to the call of the layout's `getData()`.
+/// `Template.#getData`: from resuming after the template's engine (in
+/// `getTemplateRender`) to calling `layout.getData()`: the rest of reading
+/// its front matter and the second `getTemplateRender`. Measured with
+/// `tools/order-calibration`.
 const TO_LAYOUT: usize = 13;
-/// From the engine to the end, with no layout.
+/// `Template.#getData` with no layout: from resuming after the engine to
+/// `TemplateMap.add` pushing the entry (merge, `addPage`, `getMappedDate`,
+/// `getTemplateMapEntries`). Measured with `tools/order-calibration`.
 const PLAIN: usize = 19;
-/// From the layout's data to the end.
+/// From resuming after `layout.getData()` to `TemplateMap.add` pushing the
+/// entry. Measured with `tools/order-calibration`.
 const AFTER_LAYOUT: usize = 6;
-/// From the layout file's engine to its front matter.
+/// `TemplateContent.#getFrontMatterData` of a layout file: from resuming
+/// after the layout's engine to its front matter promise settling (reading
+/// and parsing the file). Measured with `tools/order-calibration`.
 const FRONT_MATTER: usize = 10;
 
 /// One template, as the order sees it.
@@ -165,9 +180,13 @@ struct Promise {
 enum Job {
     /// Resume the process `n` microtasks from when this job was queued.
     Delay(usize, usize),
-    /// The thenable job of an async wrapper around a shared promise.
+    /// The thenable job of an async wrapper (`async f() { return cached }`)
+    /// around a shared promise: one microtask after the call. If the promise
+    /// has settled, its caller resumes 2 microtasks later (call + 3);
+    /// otherwise it subscribes. Checked with `tools/order-calibration`.
     Thenable(usize, usize),
-    /// A subscriber's reaction to a settled shared promise.
+    /// A subscriber's reaction to a settled shared promise: the wrapper
+    /// settles, and its caller resumes one microtask later (settle + 2).
     Reaction(usize),
 }
 
@@ -317,6 +336,8 @@ impl<'a> Sim<'a> {
                 if step == 0 {
                     Next::Use(Shared::FrontMatter(i))
                 } else if step % 2 == 1 {
+                    // `#getTemplateLayoutMap` resumes one microtask after
+                    // `getTemplateLayoutMapEntry` settles.
                     Next::Hop(1)
                 } else {
                     match self.instances[i].1.clone().and_then(|n| self.layout(&n)) {

@@ -298,6 +298,12 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
 }
 
 /// The version of 11ty whose output Brrrty reproduces.
+///
+/// When bumping it: rerun `crates/brrrty-core/tools/order-calibration`
+/// (`calibrate.py`, see its README) until it reports 0 mismatches, updating
+/// `src/order.rs` if 11ty's loading steps changed; then rerun
+/// `cargo xtask fixtures-refresh order` and
+/// `cargo xtask fixtures-refresh order-data`.
 const ELEVENTY_VERSION: &str = "3.1.8";
 
 fn at(p: Problem, line: Option<usize>) -> Problem {

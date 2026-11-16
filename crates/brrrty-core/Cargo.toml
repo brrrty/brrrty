@@ -10,6 +10,8 @@ homepage.workspace = true
 keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
 categories = ["command-line-utilities", "web-programming"]
 readme = false
+# Calibration scripts for src/order.rs; they need Node, Python and 11ty.
+exclude = ["tools/"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
