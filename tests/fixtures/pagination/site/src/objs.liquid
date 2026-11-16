@@ -1,0 +1,8 @@
+---
+pagination:
+  data: d.people
+  size: 1
+  alias: person
+permalink: "/people/{{ person.name | slug }}/"
+---
+{{ person.name }} {{ person | json }}|{{ page.url }}|{{ pagination.links | json }}

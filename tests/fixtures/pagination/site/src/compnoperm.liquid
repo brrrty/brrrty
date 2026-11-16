@@ -1,0 +1,9 @@
+---
+s: [a, b]
+pagination:
+  data: s
+  size: 1
+eleventyComputed:
+  x: "{{ pagination.pageNumber }}"
+---
+{{ x }}|{{ page.url }}

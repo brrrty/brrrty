@@ -1,0 +1,1 @@
+{"arr":["a","b","c","d","e"],"obj":{"zeta":"Z","2":"two","alpha":"A","1":"one"},"nested":{"deep":{"list":[10,20,30]}},"people":[{"name":"Ann","id":1},{"name":"Bob","id":2},{"name":"Cy","id":3}],"empty":[],"emptyobj":{}}

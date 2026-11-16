@@ -1,0 +1,8 @@
+---
+s: [a, b]
+pagination:
+  data: s
+  size: 1
+permalink: "/up/../dd2/{{ pagination.pageNumber }}/"
+---
+{{ pagination.links | json }}|{{ page.url }}|{{ pagination.hrefs | json }}

@@ -1,0 +1,10 @@
+---
+s: [a, b, c]
+pagination:
+  data: s
+  size: 1
+  alias: letter
+eleventyComputed:
+  permalink: "/cp/{{ letter }}/"
+---
+{{ page.url }}|{{ pagination.hrefs | json }}|{{ pagination.links | json }}

@@ -1,0 +1,8 @@
+---
+s: [2020-01-02, 2021-03-04]
+pagination:
+  data: s
+  size: 1
+  alias: when
+---
+{{ when | date: "%Y" }}|{{ pagination.items | json }}

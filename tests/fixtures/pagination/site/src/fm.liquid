@@ -1,0 +1,12 @@
+---
+things:
+  - x
+  - y
+pagination:
+  data: things
+  size: 1
+  alias: thing
+  extra: hello
+  before: notafunction
+---
+{{ thing }}|{{ pagination | json }}

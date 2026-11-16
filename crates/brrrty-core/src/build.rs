@@ -23,9 +23,10 @@ use crate::frontmatter::{Data, split_front_matter};
 use crate::layout::{ChainError, LayoutFile, Layouts};
 use crate::loader::FsLoader;
 use crate::options::BuildOptions;
-use crate::page::{Page, file_path_stem, file_slug, resolve_date};
+use crate::page::{file_path_stem, file_slug, resolve_date};
+use crate::paginate::{Links, Spec};
 use crate::passthrough::copy_passthrough_avoiding;
-use crate::permalink::{Locator, Permalink};
+use crate::permalink::{Located, Locator, Permalink};
 use crate::problem::{Problem, Severity, codes};
 use crate::render::{Engines, Job, Pipeline, body_line, engines_for};
 
@@ -62,24 +63,43 @@ fn contained_output_path(out: &Path, rel: &Path) -> Option<PathBuf> {
     is_inside(out, &full).then_some(full)
 }
 
-struct Prepared {
-    page: Page,
-    output_rel: PathBuf,
-    /// The page's path relative to the project root.
+/// What every page of one template shares.
+struct Source {
+    /// Relative to the input folder.
+    input_path: PathBuf,
+    /// The template's path relative to the project root.
     shown: PathBuf,
+    body: String,
     body_line: usize,
     engines: Engines,
-    data: IndexMap<String, Value>,
     layouts: Vec<Arc<LayoutFile>>,
-    /// Keys left out of `data` because Brrrty can't supply their value.
+    /// Keys left out of the data because Brrrty can't supply their value.
     withheld: Vec<(String, Withheld)>,
+}
+
+/// One page to write: a template, or one page pagination made from it.
+struct Prepared {
+    source: Arc<Source>,
+    output_rel: PathBuf,
+    data: IndexMap<String, Value>,
+    /// `pagination.pageNumber` of a generated page.
+    page_number: Option<usize>,
+}
+
+impl Prepared {
+    /// The page as problems name it.
+    fn label(&self) -> String {
+        match self.page_number {
+            Some(n) => format!("{} (pagination page {n})", self.source.shown.display()),
+            None => self.source.shown.display().to_string(),
+        }
+    }
 }
 
 /// What loading one template gave.
 enum Loaded {
-    Page(Box<Prepared>),
-    /// `permalink: false`.
-    Skip,
+    /// The pages to write: none for `permalink: false` or empty pagination.
+    Pages(Vec<Prepared>),
     /// A problem with this page.
     Failed(Problem),
     /// A problem in a layout file, the same for every page that uses it.
@@ -399,7 +419,6 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     }
 
     let source = |key: &str| source_of(key, &front, &local, &data_layouts, &shared.data_dir);
-    reject_unsupported_keys(&data, &shown, source)?;
     let meta = fs::metadata(&full).ok();
     let modified = meta
         .as_ref()
@@ -443,6 +462,13 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     // The permalink renders with the page's data, before `page.url` and
     // `page.outputPath` exist. With computed data, 11ty runs it as the
     // entries that set them, in their place in the order.
+    let from = |key: &str| {
+        if data.contains_key(key) && !front.contains_key(key) {
+            source(key)
+        } else {
+            None
+        }
+    };
     let locator = Locator {
         engine: shared.engine,
         loader: shared.loader,
@@ -450,65 +476,259 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         shown: &shown,
         output_shown: &shared.output_shown,
         raw: engines == Engines::Raw,
-        from: if data.contains_key("permalink") && !front.contains_key("permalink") {
-            source("permalink")
-        } else {
-            None
-        },
+        from: from("permalink"),
         line: front
             .contains_key("permalink")
             .then(|| key_line(&text, "permalink"))
             .flatten(),
+        subdir: None,
     };
-    let mut undefined = BTreeSet::new();
-    let (values, permalink) = match &plan {
-        Some(plan) => {
-            let applied = plan.apply(
-                shared.engine,
-                shared.loader,
-                &shown,
-                &values,
-                &mut undefined,
-                &locator,
-            )?;
-            (applied.data, applied.permalink)
-        }
-        None => {
-            let found = locator.locate(&values, &mut undefined)?;
-            let mut values = values;
-            if let Some(Value::Object(page)) = values.get_mut("page") {
-                let page = Arc::make_mut(page);
-                page.insert("url".into(), found.url);
-                page.insert("outputPath".into(), found.output_path);
-            }
-            (values, found.permalink)
-        }
-    };
-    // A permalink or computed value that read data Brrrty can't supply
-    // would put the page in the wrong place.
-    if let Some(problem) = missing_data_problem(&undefined, &withheld, &shared.data_dir) {
-        return Err(problem.with_path(&shown));
-    }
-    let Permalink::Write { output_rel, .. } = permalink else {
-        return Ok(Loaded::Skip);
-    };
-
-    Ok(Loaded::Page(Box::new(Prepared {
+    let source = Arc::new(Source {
+        input_path: rel.to_path_buf(),
+        shown: shown.clone(),
+        body: body.to_string(),
         body_line: body_line(&text, body),
-        page: Page {
-            input_path: rel.to_path_buf(),
-            file_slug: file_slug(rel),
-            date,
-            data,
-            body: body.to_string(),
-        },
-        output_rel,
-        shown,
         engines,
-        data: values,
         layouts,
         withheld,
-    })))
+    });
+    let place = Place {
+        shared,
+        plan: plan.as_ref(),
+        locator: &locator,
+        source: &source,
+    };
+    let spec = Spec::new(&values).map_err(|p| {
+        pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
+    })?;
+    let pages = match spec {
+        None => {
+            let mut undefined = BTreeSet::new();
+            let (data, permalink) = place.locate(values, &locator, &mut undefined)?;
+            place.check_undefined(&undefined)?;
+            match permalink {
+                Permalink::Write { output_rel, .. } => vec![Prepared {
+                    source: source.clone(),
+                    output_rel,
+                    data,
+                    page_number: None,
+                }],
+                Permalink::Skip => Vec::new(),
+            }
+        }
+        Some(spec) => place.paginate(&spec, &values).map_err(|p| {
+            if p.path.is_some() {
+                p
+            } else {
+                pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
+            }
+        })?,
+    };
+    Ok(Loaded::Pages(pages))
+}
+
+/// A pagination problem, placed at `pagination:` in the front matter, or
+/// naming the data file or layout it comes from.
+fn pagination_problem(
+    mut p: Problem,
+    from: Option<String>,
+    line: Option<usize>,
+    shown: &Path,
+) -> Problem {
+    match from {
+        Some(from) => p.message = format!("{} (`pagination` from {from})", p.message),
+        None => p = at(p, line),
+    }
+    p.with_path(shown)
+}
+
+/// How one template's pages are placed: their permalinks, `page.url` and
+/// `page.outputPath`, and computed data.
+struct Place<'a, 'b> {
+    shared: &'a Shared<'b>,
+    plan: Option<&'a ComputedPlan>,
+    locator: &'a Locator<'a>,
+    source: &'a Arc<Source>,
+}
+
+/// `data` with `page.url` and `page.outputPath` set from `found`, at the
+/// end of `page`, as 11ty sets them.
+fn with_location(mut data: Data, found: &Located) -> Data {
+    if let Some(Value::Object(page)) = data.get_mut("page") {
+        let page = Arc::make_mut(page);
+        page.insert("url".into(), found.url.clone());
+        page.insert("outputPath".into(), found.output_path.clone());
+    }
+    data
+}
+
+impl Place<'_, '_> {
+    /// Locate the page with `locator` and set `page.url` and
+    /// `page.outputPath`: computed data does it as its first entries, in
+    /// their place in the order.
+    fn locate(
+        &self,
+        values: Data,
+        locator: &Locator<'_>,
+        undefined: &mut BTreeSet<String>,
+    ) -> Result<(Data, Permalink), Problem> {
+        match self.plan {
+            Some(plan) => {
+                let applied = plan.apply(
+                    self.shared.engine,
+                    self.shared.loader,
+                    locator.shown,
+                    &values,
+                    undefined,
+                    locator,
+                )?;
+                Ok((applied.data, applied.permalink))
+            }
+            None => {
+                let found = locator.locate(&values, undefined)?;
+                Ok((with_location(values, &found), found.permalink))
+            }
+        }
+    }
+
+    /// A permalink or computed value that read data Brrrty can't supply
+    /// would put the page in the wrong place.
+    fn check_undefined(&self, undefined: &BTreeSet<String>) -> Result<(), Problem> {
+        match missing_data_problem(undefined, &self.source.withheld, &self.shared.data_dir) {
+            Some(problem) => Err(problem.with_path(&self.source.shown)),
+            None => Ok(()),
+        }
+    }
+
+    /// The pages pagination makes, as `Pagination.getPageTemplates` does:
+    /// every page is located first, then each gets `pagination.hrefs` and
+    /// `pagination.links` and runs its computed data. An error on any page
+    /// refuses them all, since every page lists every other.
+    fn paginate(&self, spec: &Spec, values: &Data) -> Result<Vec<Prepared>, Problem> {
+        let root = spec.path.first().map(String::as_str).unwrap_or("");
+        if root == "collections" {
+            return Err(Problem::error(
+                codes::PAGINATION_UNSUPPORTED,
+                format!(
+                    "pagination over collections is coming in this release (`{}`)",
+                    spec.key()
+                ),
+            )
+            .with_help("Pagination over other data works now; collections are in progress."));
+        }
+        if self.source.withheld.iter().any(|(k, _)| k == root) {
+            self.check_undefined(&BTreeSet::from([root.to_string()]))?;
+        }
+        // 11ty crashes on `permalink: {}` here (`templateRender has not yet
+        // initialized`).
+        let permalink = match values.get("permalink") {
+            None | Some(Value::Null) => match values.get("eleventyComputed") {
+                Some(Value::Object(c)) => c.get("permalink"),
+                _ => None,
+            },
+            v => v,
+        };
+        if matches!(permalink, Some(Value::Object(o)) if o.is_empty()) {
+            return Err(Problem::error(
+                codes::PERMALINK_INVALID,
+                "`permalink: {}` with pagination stops 11ty",
+            )
+            .with_path(&self.source.shown)
+            .with_help(
+                "11ty stops the whole build here. Remove `permalink`, or give each page its own.",
+            ));
+        }
+        // Without a permalink to place them, pages after the first get a
+        // folder named by their number.
+        let has_permalink = values.get("permalink").is_some_and(Value::js_truthy)
+            || matches!(values.get("eleventyComputed"), Some(Value::Object(c))
+                if c.get("permalink").is_some_and(Value::js_truthy));
+
+        let paging = spec.expand(values)?;
+        let base = paging.base(values);
+        let on_page = |n: usize| {
+            move |mut p: Problem| {
+                p.message = format!("{} (pagination page {n})", p.message);
+                p.with_path(&self.source.shown)
+            }
+        };
+
+        // Every page's first location, for `hrefs` and `links`.
+        type First = (Located, BTreeSet<String>);
+        // A page (none for `permalink: false`) and what it read undefined.
+        type Generated = (Option<Prepared>, BTreeSet<String>);
+        let first: Vec<Result<First, Problem>> = (0..paging.len())
+            .into_par_iter()
+            .map(|n| {
+                let data = paging.page_data(&base, n, None).map_err(on_page(n))?;
+                let locator = Locator {
+                    subdir: (n > 0 && !has_permalink).then_some(n),
+                    ..self.locator.clone()
+                };
+                let mut undefined = BTreeSet::new();
+                let found = locator.locate(&data, &mut undefined).map_err(on_page(n))?;
+                Ok((found, undefined))
+            })
+            .collect();
+        let first: Vec<First> = first.into_iter().collect::<Result<_, _>>()?;
+        let mut undefined = BTreeSet::new();
+        for (_, u) in &first {
+            undefined.extend(u.iter().cloned());
+        }
+        self.check_undefined(&undefined)?;
+        let links = Links::new(
+            first.iter().map(|(f, _)| f.url.clone()).collect(),
+            first
+                .iter()
+                .filter_map(|(f, _)| f.link.clone())
+                .map(|l| Value::String(l.into()))
+                .collect(),
+        );
+
+        let pages: Vec<Result<Generated, Problem>> = first
+            .into_par_iter()
+            .enumerate()
+            .map(|(n, (found, _))| {
+                let data = paging
+                    .page_data(&base, n, Some(&links))
+                    .map_err(on_page(n))?;
+                // 11ty sets `page.url` and `page.outputPath` from the first
+                // location; computed data runs them again in its order.
+                let data = with_location(data, &found);
+                let mut undefined = BTreeSet::new();
+                let (data, permalink) = match self.plan {
+                    None => (data, found.permalink),
+                    Some(_) => {
+                        let locator = Locator {
+                            subdir: (n > 0 && !has_permalink).then_some(n),
+                            ..self.locator.clone()
+                        };
+                        self.locate(data, &locator, &mut undefined)
+                            .map_err(on_page(n))?
+                    }
+                };
+                let page = match permalink {
+                    Permalink::Write { output_rel, .. } => Some(Prepared {
+                        source: self.source.clone(),
+                        output_rel,
+                        data,
+                        page_number: Some(n),
+                    }),
+                    Permalink::Skip => None,
+                };
+                Ok((page, undefined))
+            })
+            .collect();
+        let mut out = Vec::with_capacity(pages.len());
+        let mut undefined = BTreeSet::new();
+        for page in pages {
+            let (page, u) = page?;
+            undefined.extend(u);
+            out.extend(page);
+        }
+        self.check_undefined(&undefined)?;
+        Ok(out)
+    }
 }
 
 /// The page's computed data, if it has any: refused when 11ty would abort,
@@ -527,48 +747,6 @@ fn computed_plan(
         }
     }
     ComputedPlan::new(data, raw).map_err(|p| at(p.with_path(shown), line))
-}
-
-/// Keys that change a page's output in ways Brrrty can't reproduce yet.
-const UNSUPPORTED_KEYS: &[&str] = &["pagination"];
-
-/// Refuse pages that 11ty would process further than Brrrty can yet, instead of writing
-/// output that silently differs. `source` says where a key comes from
-/// (`None` for front matter).
-fn reject_unsupported_keys(
-    data: &Data,
-    shown: &Path,
-    source: impl Fn(&str) -> Option<String>,
-) -> Result<(), Problem> {
-    let found: Vec<(&str, Option<String>)> = UNSUPPORTED_KEYS
-        .iter()
-        .filter(|k| data.contains_key(**k))
-        .map(|k| (*k, source(k)))
-        .collect();
-    if found.is_empty() {
-        return Ok(());
-    }
-    let all_front = found.iter().all(|(_, s)| s.is_none());
-    let keys: Vec<String> = found
-        .iter()
-        .map(|(k, s)| match s {
-            Some(from) => format!("`{k}` (from {from})"),
-            None => format!("`{k}`"),
-        })
-        .collect();
-    let what = if all_front {
-        "Front matter key"
-    } else {
-        "Data key"
-    };
-    let message = if keys.len() == 1 {
-        format!("{what} {} isn't supported yet", keys[0])
-    } else {
-        format!("{what}s {} aren't supported yet", keys.join(", "))
-    };
-    Err(Problem::error(codes::FRONT_MATTER_UNSUPPORTED, message)
-        .with_path(shown)
-        .with_help("Pagination is in progress."))
 }
 
 /// The problem for a page that read data Brrrty doesn't supply yet.
@@ -899,8 +1077,7 @@ fn build_in_pool(
     let mut from_data = Vec::new();
     for item in loaded {
         match item {
-            Loaded::Page(p) => prepared.push(*p),
-            Loaded::Skip => {}
+            Loaded::Pages(pages) => prepared.extend(pages),
             Loaded::Failed(p) => report.problems.push(p),
             Loaded::LayoutFailed(p) => from_layouts.push(p),
             Loaded::DataFailed(p) => from_data.push(p),
@@ -917,34 +1094,28 @@ fn build_in_pool(
     }
 
     // Detect outputs that two or more pages claim.
-    let mut by_output: BTreeMap<&Path, Vec<&Path>> = BTreeMap::new();
+    let mut by_output: BTreeMap<&Path, Vec<&Prepared>> = BTreeMap::new();
     for p in &prepared {
-        by_output
-            .entry(p.output_rel.as_path())
-            .or_default()
-            .push(p.page.input_path.as_path());
+        by_output.entry(p.output_rel.as_path()).or_default().push(p);
     }
-    let mut colliding: Vec<PathBuf> = Vec::new();
-    for (output, inputs) in &by_output {
-        if inputs.len() > 1 {
-            let list: Vec<String> = inputs
-                .iter()
-                .map(|i| input_rel.join(i).display().to_string())
-                .collect();
+    let mut colliding: BTreeSet<PathBuf> = BTreeSet::new();
+    for (output, pages) in &by_output {
+        if pages.len() > 1 {
+            let list: Vec<String> = pages.iter().map(|p| p.label()).collect();
             report.problems.push(
                 Problem::error(
                     codes::OUTPUT_COLLISION,
                     format!(
                         "{} pages write to {}: {}",
-                        inputs.len(),
+                        pages.len(),
                         output.display(),
                         list.join(", ")
                     ),
                 )
-                .with_path(input_rel.join(inputs[0]))
+                .with_path(&pages[0].source.shown)
                 .with_help("give each page a unique permalink"),
             );
-            colliding.push(output.to_path_buf());
+            colliding.insert(output.to_path_buf());
         }
     }
     prepared.retain(|p| !colliding.contains(&p.output_rel));
@@ -961,7 +1132,8 @@ fn build_in_pool(
     let results: Vec<Result<(), Problem>> = prepared
         .par_iter()
         .map(|p| {
-            let shown = &p.shown;
+            let src = &p.source;
+            let shown = &src.shown;
             let Some(dest) = contained_output_path(&out, &p.output_rel) else {
                 return Err(Problem::error(
                     codes::OUTPUT_ESCAPES,
@@ -974,13 +1146,14 @@ fn build_in_pool(
             };
             let rendered = pipeline.render(&Job {
                 shown,
-                body: &p.page.body,
-                body_line: p.body_line,
-                engines: p.engines,
+                body: &src.body,
+                body_line: src.body_line,
+                engines: src.engines,
                 data: &p.data,
-                layouts: &p.layouts,
+                layouts: &src.layouts,
             })?;
-            if let Some(problem) = missing_data_problem(&rendered.undefined, &p.withheld, &data_dir)
+            if let Some(problem) =
+                missing_data_problem(&rendered.undefined, &src.withheld, &data_dir)
             {
                 return Err(problem.with_path(shown));
             }
@@ -996,10 +1169,20 @@ fn build_in_pool(
             })
         })
         .collect();
+    // The pages of one template often fail the same way: say it once.
+    let mut seen = BTreeSet::new();
     for r in results {
         match r {
             Ok(()) => report.written += 1,
-            Err(p) => report.problems.push(p),
+            Err(p) => {
+                let key = format!(
+                    "{}|{:?}|{:?}|{:?}|{}",
+                    p.code, p.path, p.line, p.column, p.message
+                );
+                if seen.insert(key) {
+                    report.problems.push(p);
+                }
+            }
         }
     }
     if strict && has_error(&report) {
@@ -1008,7 +1191,12 @@ fn build_in_pool(
 
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
-        .map(|p| (out.join(&p.output_rel), input_rel.join(&p.page.input_path)))
+        .map(|p| {
+            (
+                out.join(&p.output_rel),
+                input_rel.join(&p.source.input_path),
+            )
+        })
         .collect();
     let pt = copy_passthrough_avoiding(opts, &pages);
     // A passthrough file that replaced a page means that page was not really written.

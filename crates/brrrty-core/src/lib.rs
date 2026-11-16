@@ -13,6 +13,7 @@ mod layout;
 mod loader;
 pub mod options;
 pub mod page;
+mod paginate;
 pub mod passthrough;
 pub mod permalink;
 pub mod problem;

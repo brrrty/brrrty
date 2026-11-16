@@ -1,0 +1,8 @@
+---
+s: [a, b]
+pagination:
+  data: s
+  size: 1
+permalink: "rel/x{{ pagination.pageNumber }}.html"
+---
+{{ pagination.links | json }}|{{ page.url }}

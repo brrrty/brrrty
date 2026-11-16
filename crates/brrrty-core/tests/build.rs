@@ -359,36 +359,36 @@ fn input_that_is_a_file_is_a_clear_error() {
     assert_eq!(r.problems[0].path.as_deref(), Some(Path::new("src")));
 }
 
+/// Probed: pagination from a page or from a layout's front matter.
 #[test]
-fn pagination_is_still_an_error() {
+fn pages_and_layouts_paginate() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(root, "src/b.md", "---\npagination:\n  data: x\n---\nbody\n");
+    write(
+        root,
+        "src/b.md",
+        "---\ns: [1, 2]\npagination:\n  data: s\n  size: 1\n---\nb{{ pagination.items[0] }}\n",
+    );
     // A layout's front matter is page data too.
     write(
         root,
         "src/_includes/paged.liquid",
-        "---\npagination:\n  data: x\n---\n{{ content }}",
+        "---\npagination:\n  data: s\n  size: 1\n---\n[{{ content }}]",
     );
-    write(root, "src/d.md", "---\nlayout: paged\n---\nbody\n");
+    write(
+        root,
+        "src/d.md",
+        "---\nlayout: paged\ns: [x, y]\n---\n{{ pagination.items[0] }} {{ page.url }}\n",
+    );
     write(root, "src/c.md", "---\ntitle: ok\ntags: [x]\n---\nbody\n");
     let r = build(&opts(root), &MarkdownIt::new());
-    let b = r
-        .problems
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/b.md")))
-        .unwrap();
-    assert_eq!(b.code, codes::FRONT_MATTER_UNSUPPORTED);
-    assert!(b.message.contains("`pagination`"), "{}", b.message);
-    assert_eq!(b.help.as_deref(), Some("Pagination is in progress."));
-    let d = r
-        .problems
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/d.md")))
-        .unwrap();
-    assert!(d.message.contains("`pagination`"), "{}", d.message);
+    assert_eq!(error_count(&r), 0, "{:?}", r.problems);
+    let read = |rel: &str| fs::read_to_string(root.join("_site").join(rel)).unwrap();
+    assert_eq!(read("b/index.html"), "<p>b1</p>\n");
+    assert_eq!(read("b/1/index.html"), "<p>b2</p>\n");
+    assert_eq!(read("d/index.html"), "[<p>x /d/</p>\n]");
+    assert_eq!(read("d/1/index.html"), "[<p>y /d/1/</p>\n]");
     assert!(root.join("_site/c/index.html").exists());
-    assert_eq!(error_count(&r), 2, "{:?}", r.problems);
 }
 
 #[test]

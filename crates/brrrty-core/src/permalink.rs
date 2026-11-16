@@ -25,12 +25,24 @@ pub enum Permalink {
 ///
 /// `rel_to_input` is the source file path relative to the input directory.
 pub fn resolve_permalink(rel_to_input: &Path, front_matter: &Data) -> Result<Permalink, Problem> {
-    resolve_value(rel_to_input, front_matter.get("permalink"), front_matter)
+    resolve_value(
+        rel_to_input,
+        front_matter.get("permalink"),
+        front_matter,
+        None,
+    )
 }
 
 /// Resolve a rendered `permalink` value. `data` is only read for
-/// `eleventyAllowMissingExtension`.
-fn resolve_value(rel: &Path, permalink: Option<&Value>, data: &Data) -> Result<Permalink, Problem> {
+/// `eleventyAllowMissingExtension`. `subdir` is a generated page's number,
+/// the folder 11ty adds to a default permalink.
+fn resolve_value(
+    rel: &Path,
+    permalink: Option<&Value>,
+    data: &Data,
+    subdir: Option<usize>,
+) -> Result<Permalink, Problem> {
+    let default_permalink = |rel: &Path| default_permalink(rel, subdir);
     match permalink {
         None => Ok(default_permalink(rel)),
         Some(Value::Bool(false)) => Ok(Permalink::Skip),
@@ -117,7 +129,7 @@ fn build(segments: &[String], trailing_slash: bool) -> Permalink {
     Permalink::Write { url, output_rel }
 }
 
-fn default_permalink(rel: &Path) -> Permalink {
+fn default_permalink(rel: &Path, subdir: Option<usize>) -> Permalink {
     let mut segments: Vec<String> = rel
         .parent()
         .into_iter()
@@ -133,6 +145,10 @@ fn default_permalink(rel: &Path) -> Permalink {
         && segments.last() != Some(&stem)
     {
         segments.push(stem);
+    }
+    // Pagination's extra folder goes before `index.html`.
+    if let Some(n) = subdir {
+        segments.push(n.to_string());
     }
     build(&segments, true)
 }
@@ -202,11 +218,15 @@ pub(crate) struct Located {
     pub url: Value,
     /// `page.outputPath`: the path as 11ty spells it, or `false`.
     pub output_path: Value,
+    /// What `pagination.links` lists for the page: `"/"` and the output
+    /// path as the permalink spells it, or `None` when nothing is written.
+    pub link: Option<String>,
 }
 
 /// Renders a page's permalink against its data and resolves it. Built once
 /// per page; pagination calls [`Locator::locate`] again for each page it
 /// generates, with that page's data.
+#[derive(Clone)]
 pub(crate) struct Locator<'a> {
     pub engine: &'a Engine,
     pub loader: &'a dyn Loader,
@@ -223,6 +243,9 @@ pub(crate) struct Locator<'a> {
     pub from: Option<String>,
     /// The line of `permalink:` in the page's front matter.
     pub line: Option<usize>,
+    /// For a generated page after the first, when no `permalink` places
+    /// it: its number, the folder 11ty adds to the default permalink.
+    pub subdir: Option<usize>,
 }
 
 impl Locator<'_> {
@@ -294,7 +317,7 @@ impl Locator<'_> {
             }
             other => other.cloned(),
         };
-        let permalink = resolve_value(self.rel, rendered.as_ref(), data)?;
+        let permalink = resolve_value(self.rel, rendered.as_ref(), data, self.subdir)?;
         let (url, output_path) = match &permalink {
             Permalink::Write { url, output_rel } => {
                 let path: Vec<String> = output_rel
@@ -308,10 +331,12 @@ impl Locator<'_> {
             }
             Permalink::Skip => (Value::Bool(false), Value::Bool(false)),
         };
+        let link = link(rendered.as_ref(), &permalink);
         Ok(Located {
             permalink,
             url,
             output_path,
+            link,
         })
     }
 
@@ -347,6 +372,60 @@ impl Locator<'_> {
             .map_err(fail)?;
         undefined.extend(r.undefined);
         Ok(r.output)
+    }
+}
+
+/// `"/"` plus 11ty's `toOutputPath()`: the permalink as written, with
+/// `index.html` after a final `/` and Node's path normalization, so `/a/`
+/// gives `//a/index.html` (probed). A default permalink is the output path.
+fn link(rendered: Option<&Value>, permalink: &Permalink) -> Option<String> {
+    let Permalink::Write { output_rel, .. } = permalink else {
+        return None;
+    };
+    let build = match rendered {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.as_ref()),
+        Some(Value::Object(o)) => match o.get("build") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.as_ref()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let path = match build {
+        Some(s) if s.ends_with('/') => node_normalize(&format!("{s}index.html")),
+        Some(s) => node_normalize(s),
+        None => output_rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/"),
+    };
+    Some(format!("/{path}"))
+}
+
+/// Node's `path.normalize` with eleventy-utils' trailing-slash trim: `.`
+/// steps go, `..` steps remove the one before (or stay at the start of a
+/// relative path), and runs of `/` are one.
+fn node_normalize(p: &str) -> String {
+    let absolute = p.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in p.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|l| *l != "..") {
+                    parts.pop();
+                } else if !absolute {
+                    parts.push("..");
+                }
+            }
+            s => parts.push(s),
+        }
+    }
+    let joined = parts.join("/");
+    match (absolute, joined.is_empty()) {
+        (true, _) => format!("/{joined}"),
+        (false, true) => ".".to_string(),
+        (false, false) => joined,
     }
 }
 
@@ -398,6 +477,52 @@ mod tests {
                 "{rel}"
             );
         }
+    }
+
+    /// Probed: `pagination.links` spellings.
+    #[test]
+    fn links_follow_the_permalink_as_written() {
+        let s = |x: &str| Value::String(x.into());
+        let w = |out: &str| Permalink::Write {
+            url: String::new(),
+            output_rel: out.into(),
+        };
+        let l = |v: Option<Value>, out: &str| link(v.as_ref(), &w(out));
+        assert_eq!(
+            l(Some(s("/blog/")), "blog/index.html").unwrap(),
+            "//blog/index.html"
+        );
+        assert_eq!(
+            l(Some(s("rel/x0.html")), "rel/x0.html").unwrap(),
+            "/rel/x0.html"
+        );
+        assert_eq!(
+            l(Some(s("/up/../d/0/")), "d/0/index.html").unwrap(),
+            "//d/0/index.html"
+        );
+        assert_eq!(
+            l(Some(s("../0/q.html")), "0/q.html").unwrap(),
+            "/../0/q.html"
+        );
+        assert_eq!(l(None, "list/1/index.html").unwrap(), "/list/1/index.html");
+        assert_eq!(l(Some(s("")), "c/index.html").unwrap(), "/c/index.html");
+        assert_eq!(link(Some(&Value::Bool(false)), &Permalink::Skip), None);
+    }
+
+    #[test]
+    fn default_permalinks_take_the_page_folder() {
+        assert_eq!(
+            default_permalink(Path::new("list.liquid"), Some(2)),
+            w("/list/2/", "list/2/index.html")
+        );
+        assert_eq!(
+            default_permalink(Path::new("index.liquid"), Some(1)),
+            w("/1/", "1/index.html")
+        );
+        assert_eq!(
+            default_permalink(Path::new("posts/posts.md"), Some(1)),
+            w("/posts/1/", "posts/1/index.html")
+        );
     }
 
     #[test]

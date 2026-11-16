@@ -1,0 +1,9 @@
+---
+pagination:
+  data: d.arr
+  size: 4
+title: T
+---
+{% for p in pagination %}{{ p[0] }},{% endfor %}
+PAGE:{% for p in page %}{{ p[0] }},{% endfor %}
+ALIAS=[{{ pagination.alias }}]

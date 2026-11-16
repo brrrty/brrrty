@@ -1,0 +1,8 @@
+---
+pagination:
+  data: d.empty
+  size: 1
+  generatePageOnEmptyData: true
+  alias: x
+---
+GEN1 {{ pagination | json }}|x={{ x | json }}|{{ page.url }}

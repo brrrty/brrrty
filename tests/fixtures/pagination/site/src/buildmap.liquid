@@ -1,0 +1,9 @@
+---
+s: [1, 2]
+pagination:
+  data: s
+  size: 1
+permalink:
+  build: "/b/{{ pagination.pageNumber }}/"
+---
+{{ page.url }} {{ pagination.links | json }}

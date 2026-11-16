@@ -1,0 +1,11 @@
+---
+s: [a, b, c]
+pagination:
+  data: s
+  size: 1
+  alias: letter
+eleventyComputed:
+  title: "Letter {{ letter }}"
+  u: "{{ page.url }}"
+---
+{{ title }}|{{ u }}|{{ page.url }}

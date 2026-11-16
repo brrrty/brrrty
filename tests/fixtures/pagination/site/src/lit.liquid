@@ -1,0 +1,9 @@
+---
+"a.b": [lit1, lit2]
+a:
+  b: [nest1, nest2]
+pagination:
+  data: a.b
+  size: 1
+---
+{{ pagination.items | json }}

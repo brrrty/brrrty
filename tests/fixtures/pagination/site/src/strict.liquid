@@ -1,0 +1,8 @@
+---
+s: [1, "1", 2, true, null, "x"]
+pagination:
+  data: s
+  size: 1
+  filter: [1, null]
+---
+{{ pagination.items | json }}|{{ pagination.pages | json }}

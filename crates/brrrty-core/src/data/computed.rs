@@ -240,13 +240,19 @@ impl Plan {
                 unsupported(format!("computed key `{key}` can't be set: {why}")).with_path(shown)
             })?;
         }
-        // The data is a JavaScript object: index-like keys come first.
-        let ordered: IndexMap<String, Value> = Value::js_entries(&data)
-            .into_iter()
-            .map(|(k, v)| (k.clone(), super::js_value(v)))
-            .collect();
+        // The data is a JavaScript object: index-like keys come first. The
+        // base is in that order already, so only the objects a computed
+        // value was set in can be out of it; the rest stay shared.
+        for step in &self.steps {
+            reorder_along(&mut data, &step.path);
+            if matches!(step.value, Value::Array(_))
+                && let Some(Value::Object(own)) = data.get_mut("eleventyComputed")
+            {
+                reorder_along(Arc::make_mut(own), &step.path);
+            }
+        }
         Ok(Applied {
-            data: ordered,
+            data,
             permalink: permalink.expect("`page.outputPath` is always an entry"),
         })
     }
@@ -337,7 +343,7 @@ fn collect(object: &Data, path: &mut Vec<String>, out: &mut Vec<Leaf>) -> Result
 /// `lodash.set` on plain data. A parent that is missing, null or a
 /// primitive becomes a new object; an array or date parent, or an index-like
 /// key under a new parent (lodash would make an array), is refused.
-fn set_path(root: &mut Data, path: &[String], value: Value) -> Result<(), String> {
+pub(crate) fn set_path(root: &mut Data, path: &[String], value: Value) -> Result<(), String> {
     let (first, rest) = path.split_first().expect("path has a key");
     let Some(next) = rest.first() else {
         root.insert(first.clone(), value);
@@ -359,6 +365,22 @@ fn set_path(root: &mut Data, path: &[String], value: Value) -> Result<(), String
             root.insert(first.clone(), Value::Object(Arc::new(fresh)));
             Ok(())
         }
+    }
+}
+
+/// Put `root` and each object on `path` below it in JavaScript key order.
+fn reorder_along(root: &mut Data, path: &[String]) {
+    if root.keys().any(|k| brrrty_js::array_index(k).is_some()) {
+        *root = Value::js_entries(root)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+    }
+    if let Some((first, rest)) = path.split_first()
+        && !rest.is_empty()
+        && let Some(Value::Object(o)) = root.get_mut(first.as_str())
+    {
+        reorder_along(Arc::make_mut(o), rest);
     }
 }
 

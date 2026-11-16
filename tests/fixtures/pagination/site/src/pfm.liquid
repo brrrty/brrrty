@@ -1,0 +1,9 @@
+---
+s: [a, b]
+pagination:
+  data: s
+  size: 1
+page:
+  custom: 1
+---
+{% for p in page %}{{ p[0] }},{% endfor %}

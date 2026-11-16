@@ -457,14 +457,18 @@ fn a_templated_permalink_from_a_data_file_renders() {
 }
 
 #[test]
-fn unsupported_keys_from_data_files_name_the_file() {
+fn pagination_errors_from_data_files_name_the_file() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(root, "src/p/p.json", r#"{"pagination": {"data": "x"}}"#);
+    write(
+        root,
+        "src/p/p.json",
+        r#"{"pagination": {"data": "x", "size": 1}}"#,
+    );
     write(root, "src/p/a.liquid", "x");
     let r = run(root);
     let p = only_error(&r);
-    assert_eq!(p.code, codes::FRONT_MATTER_UNSUPPORTED);
+    assert_eq!(p.code, codes::PAGINATION_INVALID);
     assert!(p.message.contains("src/p/p.json"), "{}", p.message);
 }
 

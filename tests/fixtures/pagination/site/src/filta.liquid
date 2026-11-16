@@ -1,0 +1,8 @@
+---
+pagination:
+  data: d.arr
+  size: 1
+  filter: [a, e]
+  reverse: true
+---
+{{ pagination.items | json }}|{{ page.url }}|{{ pagination.hrefs | json }}

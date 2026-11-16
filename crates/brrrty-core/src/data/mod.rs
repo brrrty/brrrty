@@ -15,7 +15,7 @@ mod dir;
 mod global;
 mod jskeys;
 pub(crate) use cascade::{clean_tags, frozen_keys, page_data};
-pub(crate) use computed::Plan as ComputedPlan;
+pub(crate) use computed::{Plan as ComputedPlan, set_path};
 pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
 

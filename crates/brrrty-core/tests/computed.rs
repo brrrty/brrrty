@@ -202,25 +202,20 @@ fn computed_paths_that_lodash_turns_into_arrays_are_refused() {
     assert_eq!(read(t.path(), "good/index.html"), r#"{"9":"nine","b":1}"#);
 }
 
-/// Pagination is still refused; computed data no longer is.
+/// Probed: computed values run on each generated page, after its
+/// `pagination` and `page.url` are set.
 #[test]
-fn computed_data_is_not_refused_but_pagination_still_is() {
+fn computed_data_runs_on_each_paginated_page() {
     let t = tempfile::tempdir().unwrap();
     write(
         t.path(),
         "src/p.liquid",
-        "---\npagination:\n  data: x\neleventyComputed:\n  y: 1\n---\nbody",
-    );
-    write(
-        t.path(),
-        "src/c.liquid",
-        "---\neleventyComputed:\n  y: 1\n---\n{{ y }}",
+        "---\ns: [a, b]\npagination:\n  data: s\n  size: 1\n  alias: l\neleventyComputed:\n  y: \"{{ l }}{{ pagination.pageNumber }}{{ page.url }}\"\n---\n{{ y }}",
     );
     let r = run(t.path());
-    let p = only_error(&r);
-    assert!(p.message.contains("`pagination`"), "{}", p.message);
-    assert!(!p.message.contains("eleventyComputed"), "{}", p.message);
-    assert_eq!(read(t.path(), "c/index.html"), "1");
+    assert!(errors(&r).is_empty(), "{:?}", r.problems);
+    assert_eq!(read(t.path(), "p/index.html"), "a0/p/");
+    assert_eq!(read(t.path(), "p/1/index.html"), "b1/p/1/");
 }
 
 /// A computed value that reads a key from a JavaScript data file Brrrty
