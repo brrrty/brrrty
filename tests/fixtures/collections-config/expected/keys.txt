@@ -1,0 +1,20 @@
+2024 beta featured zeta alpha Alpha posts listing meta postsNewest apiProbe all meta.posts.categories meta.posts.tags 
+posts: /posts/2024/2024-05-01-echo/ /posts/2024/sub/2024-04-01-delta/ /posts/2024/2024-03-01-charlie/ /posts/2023/2023-02-10-bravo/ /posts/2023/2023-02-10-able/ /posts/2023/2023-01-05-alpha/ 
+postsNewest: /posts/2023/2023-01-05-alpha/ /posts/2023/2023-02-10-able/ /posts/2023/2023-02-10-bravo/ /posts/2024/2024-03-01-charlie/ /posts/2024/sub/2024-04-01-delta/ /posts/2024/2024-05-01-echo/ 
+featured: /posts/2023/2023-02-10-able/ /extra/ 
+listing: /blog/0/ 
+all: /blog/0/ /category/0/ /tag/0/ /tags/ /posts/2023/2023-01-05-alpha/ /posts/2023/2023-02-10-able/ /posts/2023/2023-02-10-bravo/ /extra/ /posts/2024/2024-03-01-charlie/ /posts/2024/sub/2024-04-01-delta/ /posts/2024/2024-05-01-echo/ /posts/2024/2024-06-01-foxtrot/ 
+all sorted featured both none globs inputDir upper beta count 
+probe all: ["/posts/2024/2024-06-01-foxtrot/","/posts/2024/2024-05-01-echo/","/posts/2024/sub/2024-04-01-delta/","/extra/","/posts/2023/2023-02-10-able/","/tags/","/posts/2023/2023-01-05-alpha/","/posts/2023/2023-02-10-bravo/","/posts/2024/2024-03-01-charlie/","/blog/0/"]
+probe sorted: ["/blog/0/","/tags/","/posts/2023/2023-01-05-alpha/","/posts/2023/2023-02-10-able/","/posts/2023/2023-02-10-bravo/","/extra/","/posts/2024/2024-03-01-charlie/","/posts/2024/sub/2024-04-01-delta/","/posts/2024/2024-05-01-echo/","/posts/2024/2024-06-01-foxtrot/"]
+probe featured: ["/posts/2023/2023-02-10-able/","/extra/"]
+probe both: ["/posts/2024/sub/2024-04-01-delta/","/posts/2024/2024-05-01-echo/"]
+probe none: ["/blog/0/","/tags/","/posts/2023/2023-01-05-alpha/","/posts/2023/2023-02-10-able/","/posts/2023/2023-02-10-bravo/","/extra/","/posts/2024/2024-03-01-charlie/","/posts/2024/sub/2024-04-01-delta/","/posts/2024/2024-05-01-echo/","/posts/2024/2024-06-01-foxtrot/"]
+probe globs: ["/extra/","/posts/2024/2024-06-01-foxtrot/"]
+probe inputDir: []
+probe upper: ["/posts/2023/2023-01-05-alpha/","/posts/2023/2023-02-10-able/","/posts/2023/2023-02-10-bravo/","/posts/2024/2024-03-01-charlie/","/posts/2024/2024-05-01-echo/"]
+probe count: 10
+beta: Delta=<p>Delta lives in a subfolder.</p> Echo=<p>Echo has a numeric category.</p> 
+meta keys: posts categories tags 
+meta tags: 2024=Alpha, beta=Echo,Delta, Alpha=Echo,Delta, alpha=Bravo, zeta=Able,Alpha, featured=Able, 
+meta categories: 10=Echo, Biking=Delta,Bravo, Art=Charlie, Cooking=Able,Alpha, 

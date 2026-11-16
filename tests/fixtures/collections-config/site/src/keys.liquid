@@ -1,0 +1,24 @@
+---
+permalink: keys.txt
+eleventyExcludeFromCollections: true
+---
+{% for c in collections %}{{ c[0] }} {% endfor %}
+posts: {% for p in collections.posts %}{{ p.url }} {% endfor %}
+postsNewest: {% for p in collections.postsNewest %}{{ p.url }} {% endfor %}
+featured: {% for p in collections.featured %}{{ p.url }} {% endfor %}
+listing: {% for p in collections.listing %}{{ p.url }} {% endfor %}
+all: {% for p in collections.all %}{{ p.url }} {% endfor %}
+{% for c in collections.apiProbe %}{{ c[0] }} {% endfor %}
+probe all: {{ collections.apiProbe.all | json }}
+probe sorted: {{ collections.apiProbe.sorted | json }}
+probe featured: {{ collections.apiProbe.featured | json }}
+probe both: {{ collections.apiProbe.both | json }}
+probe none: {{ collections.apiProbe.none | json }}
+probe globs: {{ collections.apiProbe.globs | json }}
+probe inputDir: {{ collections.apiProbe.inputDir | json }}
+probe upper: {{ collections.apiProbe.upper | json }}
+probe count: {{ collections.apiProbe.count }}
+beta: {% for p in collections.apiProbe.beta %}{{ p.data.title }}={{ p.templateContent | strip }} {% endfor %}
+meta keys: {% for c in collections.meta %}{{ c[0] }} {% endfor %}
+meta tags: {% for c in collections.meta.posts.tags %}{{ c[0] }}={% for p in c[1] %}{{ p.data.title }},{% endfor %} {% endfor %}
+meta categories: {% for c in collections.meta.posts.categories %}{{ c[0] }}={% for p in c[1] %}{{ p.data.title }},{% endfor %} {% endfor %}

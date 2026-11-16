@@ -64,6 +64,8 @@ pub struct State {
     pub ignores: IndexSet<String>,
     pub global_data: IndexMap<String, Pending>,
     pub filters: IndexMap<String, FilterDef>,
+    /// `add_collection` functions by name, with where each was added.
+    pub collections: IndexMap<String, (FnPtr, Position)>,
 }
 
 /// The `config` object.
@@ -201,6 +203,39 @@ pub fn engine(clock: Clock) -> Engine {
                 .insert(name.to_string(), FilterDef::Nondeterministic);
         },
     );
+    e.register_fn(
+        "add_collection",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString,
+         f: FnPtr|
+         -> Result<(), Box<EvalAltResult>> {
+            let pos = ctx.call_position();
+            // 11ty's `addCollection` refuses a name twice; `all`, a
+            // bracketed name and an empty one are 11ty's own (`all`) or
+            // can't be read (`collections[""]` isn't a config collection).
+            if name.is_empty() || name == "all" || (name.starts_with('[') && name.ends_with(']')) {
+                return Err(invalid(
+                    format!(
+                        "add_collection(\"{name}\", ...): 11ty uses this name itself, or never reads it as a collection; pick another name"
+                    ),
+                    pos,
+                ));
+            }
+            let mut state = lock(&c.0);
+            if state.collections.contains_key(name.as_str()) {
+                return Err(invalid(
+                    format!(
+                        "config.addCollection({name}) already exists. Try a different name for your collection (11ty's error)"
+                    ),
+                    pos,
+                ));
+            }
+            state.collections.insert(name.to_string(), (f, pos));
+            Ok(())
+        },
+    );
+    crate::collections::register(&mut e);
     crate::object::register(&mut e);
     crate::jshelpers::register(&mut e);
     register_text(&mut e);

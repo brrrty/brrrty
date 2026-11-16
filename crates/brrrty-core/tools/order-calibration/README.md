@@ -39,6 +39,20 @@ ELEVENTY_DIR=... BRRRTY=target/release/brrrty \
   python3 crates/brrrty-core/tools/order-calibration/calibrate.py 100 31 imports
 ```
 
+- `config` writes an `eleventy.config.js` that adds 1 to 3 collections
+  (`addCollection`, over every collection API method, some reversed, some
+  returning an object `{ x: items, n: count }`) and the same in
+  `brrrty.config.rhai`, and has templates tagged with, paginating,
+  importing, or paginating a path into (`collections.c1.x`) one. 11ty
+  computes these under `[keys]`, which reorders its graph. Needs `BRRRTY`
+  to check anything beyond the map order; `keys.liquid` also prints each
+  config collection.
+
+```sh
+ELEVENTY_DIR=... BRRRTY=target/release/brrrty \
+  python3 crates/brrrty-core/tools/order-calibration/calibrate.py 100 42 config
+```
+
 **Calibrated** means the last line reads `0 mismatches over N sites`: on
 every generated site 11ty builds, the simulation gives the same templates,
 in the same order, each added in the same microtask round. The script exits
@@ -47,7 +61,14 @@ sites (seed 1, 6 skipped because 11ty refused them); with `njk` 0 over 74
 (seed 7) and 0 over 72 (seed 8); with `dates` 0 over 79 (seed 11); with
 `dates njk` 0 over 76 (seed 12). With `BRRRTY` set: `imports` 0 over 78
 (seed 31), `imports dates njk` 0 over 77 (seed 32), `imports reads` 0 over
-46 (seed 33). Many `imports` sites are skipped because 11ty refuses them
+46 (seed 33). With `config` (Plan 8): `config` 0 over 46 (seed 42),
+`config imports` 0 over 41 (seed 43), `config dates njk` 0 over 47 (seed
+44), `config imports reads` 0 over 25 (seed 45), `config imports dates njk` 0 over 32 (seed 46). About half the `config`
+sites are skipped because 11ty refuses them with "Could not find
+pagination data" (for example, a template tagged with a config
+collection's name comes before `[keys]`, so a path into another config
+collection isn't there yet). Brrrty refuses the same: checked on all 16
+such sites among 30 (seed 42). Many `imports` sites are skipped because 11ty refuses them
 ("Could not find pagination data"); Brrrty refuses the same template
 (checked by hand on 13 of them).
 
@@ -72,10 +93,12 @@ same on both.
 When `ELEVENTY_VERSION` in `src/build.rs` changes:
 
 1. Rerun the calibration above against the new 11ty: plain, with `njk`,
-   with `dates njk`, and with `imports` (with `BRRRTY` set). If it reports
+   with `dates njk`, with `imports` and with `config` (both with `BRRRTY`
+   set). If it reports
    mismatches, use `events.mjs -v` on a failing site to find the changed
    step, then update `sim.py` and `src/order.rs` together until it reports
    0 mismatches.
 2. Regenerate the order fixtures: `cargo xtask fixtures-refresh order`,
-   `cargo xtask fixtures-refresh order-data` and `cargo xtask
-   fixtures-refresh order-dates`. Then run `cargo test --workspace`.
+   `cargo xtask fixtures-refresh order-data`, `cargo xtask
+   fixtures-refresh order-dates` and `cargo xtask fixtures-refresh
+   collections-config`. Then run `cargo test --workspace`.

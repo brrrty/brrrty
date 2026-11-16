@@ -1139,9 +1139,23 @@ struct CollectionsState<'a> {
     gap: Option<&'a str>,
     /// The site has an 11ty config file, which may add collections.
     has_config: bool,
+    /// The collections come from Brrrty's own config file: it names every
+    /// collection the config adds, so listing them is fine.
+    rhai_config: bool,
     /// Collections left out because a page Brrrty can't date is in them,
     /// with that page's input path.
     poisoned: Option<&'a BTreeMap<String, String>>,
+    /// The config's collections that failed, with why.
+    broken: Option<&'a BTreeMap<String, Problem>>,
+}
+
+/// The problem for a read of a config collection that failed.
+fn broken_problem(what: String, problem: &Problem) -> Problem {
+    Problem::error(
+        codes::DATA_UNSUPPORTED,
+        format!("{what}, which failed: {}", problem.message),
+    )
+    .with_help("Fix the problem reported for that collection in the config file.")
 }
 
 /// The problem for a read of a collection that holds `by`, a page Brrrty
@@ -1194,6 +1208,8 @@ fn collections_problem(
     }
     let empty = BTreeMap::new();
     let poisoned = state.poisoned.unwrap_or(&empty);
+    let no_broken = BTreeMap::new();
+    let broken = state.broken.unwrap_or(&no_broken);
     for name in undefined.iter().filter_map(|n| n.strip_prefix(OPEN_PREFIX)) {
         if name == "*" {
             if let Some((tag, by)) = poisoned.iter().next() {
@@ -1202,6 +1218,17 @@ fn collections_problem(
                     by,
                 ));
             }
+            if let Some((tag, problem)) = broken.iter().next() {
+                return Some(broken_problem(
+                    format!("this page lists every collection, including `collections.{tag}`"),
+                    problem,
+                ));
+            }
+        } else if let Some(problem) = broken.get(name) {
+            return Some(broken_problem(
+                format!("this page reads `collections.{name}`"),
+                problem,
+            ));
         } else if let Some(by) = poisoned.get(name) {
             return Some(poisoned_problem(
                 format!("this page reads `collections.{name}`"),
@@ -1214,6 +1241,7 @@ fn collections_problem(
     if let Some(name) = undefined
         .iter()
         .filter_map(|n| n.strip_prefix(OPEN_PREFIX))
+        .filter(|n| !(state.rhai_config && *n == "*"))
         .find(|_| state.has_config)
     {
         let what = if name == "*" {
@@ -1221,14 +1249,19 @@ fn collections_problem(
         } else {
             format!("this page reads `collections.{name}`, which is not a tag collection")
         };
+        let help = if state.rhai_config {
+            format!(
+                "If your 11ty config adds `{name}` with `addCollection`, port it to brrrty.config.rhai with `config.add_collection`."
+            )
+        } else {
+            "Brrrty doesn't read your 11ty config; port it to brrrty.config.rhai, where `config.add_collection` adds a collection.".to_string()
+        };
         return Some(
             Problem::error(
                 codes::DATA_UNSUPPORTED,
                 format!("{what}, and this site has an 11ty config file that may add collections"),
             )
-            .with_help(
-                "Brrrty doesn't read your 11ty config yet; collections defined there are coming in a later release.",
-            ),
+            .with_help(help),
         );
     }
     if undefined.contains("collections") {
@@ -1660,6 +1693,12 @@ fn build_in_pool(
             .into_iter()
             .filter_map(|i| by_index[i].take())
             .collect();
+    let config_names: HashSet<String> = opts
+        .config
+        .collections
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
     let mut gap = collections_gap(
         unbuilt,
         &unplaced,
@@ -1667,7 +1706,7 @@ fn build_in_pool(
         templates.iter().any(|t| t.computed_membership),
         js_data,
     )
-    .or_else(|| imports_gap(&templates, &input_rel, has_config));
+    .or_else(|| imports_gap(&templates, &input_rel, has_config, &config_names));
     let input_dot = dot_dir(&input_rel);
     let mut slots: Vec<Slot> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
@@ -1703,12 +1742,14 @@ fn build_in_pool(
     let mut collections_value: Option<Arc<IndexMap<String, Value>>> = None;
     // Collections left out because a page Brrrty can't date is in them.
     let mut poisoned: BTreeMap<String, String> = BTreeMap::new();
+    // The config's collections that failed.
+    let mut broken: BTreeMap<String, Problem> = BTreeMap::new();
     let mut made: Vec<Option<Vec<Prepared>>> = slots.iter().map(|_| None).collect();
     // Each template's place in 11ty's order, which is file order until the
     // collections give the real one.
     let mut template_order: Vec<usize> = (0..slots.len()).collect();
     if gap.is_none() {
-        let built = collections::build(entries, |i, so_far| {
+        let built = collections::build(entries, &opts.config.collections, |i, so_far| {
             let Slot::Deferred(d) = &slots[i] else {
                 return Ok(Vec::new());
             };
@@ -1725,11 +1766,21 @@ fn build_in_pool(
             template_order[i] = place;
         }
         let clean = built.failed.is_empty() && built.skipped.is_empty();
+        // A config collection that failed is reported once, where the
+        // config says.
+        report.problems.extend(built.broken.values().cloned());
         for (i, name) in built.refused {
             if let Slot::Deferred(d) = &slots[i] {
-                let by = built.poisoned.get(&name).map_or("", |s| s.as_str());
+                let what = format!("this page paginates `collections.{name}`");
+                let problem = match built.broken.get(&name) {
+                    Some(p) => broken_problem(what, p),
+                    None => {
+                        let by = built.poisoned.get(&name).map_or("", |s| s.as_str());
+                        poisoned_problem(what, by)
+                    }
+                };
                 report.problems.push(pagination_problem(
-                    poisoned_problem(format!("this page paginates `collections.{name}`"), by),
+                    problem,
                     d.pagination_from.clone(),
                     d.pagination_line,
                     &d.shown,
@@ -1737,6 +1788,7 @@ fn build_in_pool(
             }
         }
         poisoned = built.poisoned;
+        broken = built.broken;
         for (i, problem) in built.failed {
             match blocking_layout(&slots[i]) {
                 Some(layout) => layout_refusals.push(layout),
@@ -1803,7 +1855,7 @@ fn build_in_pool(
     // a tag a trap when the site's config may add collections.
     let _open = collections_value
         .as_ref()
-        .filter(|_| has_config || !poisoned.is_empty())
+        .filter(|_| has_config || !poisoned.is_empty() || !broken.is_empty())
         .map(|c| OpenGuard::new(brrrty_js::traps::object_id(c)));
     for p in &mut prepared {
         match &collections_value {
@@ -1901,7 +1953,9 @@ fn build_in_pool(
     let state = CollectionsState {
         gap: gap.as_deref(),
         has_config,
+        rhai_config: opts.config.file.is_some(),
         poisoned: Some(&poisoned),
+        broken: Some(&broken),
     };
     let check = |i: usize, undefined: &BTreeSet<String>| {
         let src = &prepared[i].source;
@@ -2091,7 +2145,12 @@ enum Slot {
 /// is a date in the local time zone, and an entry that names a collection
 /// the 11ty config may add moves the template to a later stage of 11ty's
 /// graph.
-fn imports_gap(templates: &[Templ], input_rel: &Path, has_config: bool) -> Option<String> {
+fn imports_gap(
+    templates: &[Templ],
+    input_rel: &Path,
+    has_config: bool,
+    config_names: &HashSet<String>,
+) -> Option<String> {
     let shown = |t: &Templ| input_rel.join(&t.rel).display().to_string();
     if let Some(t) = templates.iter().find(|t| t.membership.unknown_import) {
         return Some(format!(
@@ -2106,16 +2165,37 @@ fn imports_gap(templates: &[Templ], input_rel: &Path, has_config: bool) -> Optio
         .iter()
         .flat_map(|t| t.membership.tags.iter().map(String::as_str))
         .collect();
-    templates.iter().find_map(|t| {
+    // Only a string names a config collection (11ty looks it up in a Set).
+    let known = |name: &str, string: bool| {
+        let stage = ["[basic]", "[userconfig]", "[keys]"].contains(&name);
+        name == "all" || tags.contains(name) || (string && (stage || config_names.contains(name)))
+    };
+    let imports = templates.iter().find_map(|t| {
         let (name, _) = t
             .membership
             .imports
             .iter()
-            .find(|(name, _)| name != "all" && !tags.contains(name.as_str()))?;
+            .find(|(name, string)| !known(name, *string))?;
         Some(format!(
             "{} imports `{name}` with `eleventyImport.collections`, which is not a tag collection and may be one your 11ty config adds",
             shown(t)
         ))
+    });
+    // A page that paginates a name no page tags and the config doesn't
+    // add would paginate an empty collection; 11ty's config may add it.
+    // A path into a config collection (`meta.posts.tags`) reads that one.
+    imports.or_else(|| {
+        templates.iter().find_map(|t| {
+            let name = t.membership.pagination.as_deref()?;
+            let first = name.split('.').next().unwrap_or(name);
+            if name == "[keys]" || known(name, true) || config_names.contains(first) {
+                return None;
+            }
+            Some(format!(
+                "{} paginates `collections.{name}`, which is not a tag collection and may be one your 11ty config adds",
+                shown(t)
+            ))
+        })
     })
 }
 

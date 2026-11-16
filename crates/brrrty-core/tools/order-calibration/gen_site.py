@@ -1,5 +1,5 @@
 """Random sites weighted toward data files, layout chains and directory-data
-layouts. usage: python3 gen_site.py OUTDIR SEED [undated] [src] [reads] [njk] [dates] [imports]
+layouts. usage: python3 gen_site.py OUTDIR SEED [undated] [src] [reads] [njk] [dates] [imports] [config]
 (writes OUTDIR/site and meta.json)
 
 meta.json lists each template with: path, ext, data-file count, the spelled
@@ -20,8 +20,23 @@ dates = "dates" in flags
 # `eleventyImport.collections` in front matter and directory data, and
 # templates that paginate a collection: both reorder 11ty's collections graph.
 imports = "imports" in flags
+# Collections the config adds (`addCollection` in eleventy.config.js, and
+# the same in brrrty.config.rhai), and templates that are tagged with,
+# paginate, import, or paginate a path into one. These reorder 11ty's
+# collections graph: a config collection is computed under `[keys]`.
+config = "config" in flags
 TAGS = ["t0", "t1", "t2", "t3", "t4"]
 rng = random.Random(seed)
+CONFIG = []
+# The config collections that return an object, `{ x: items, n: count }`.
+NESTED = set()
+if config:
+    # A name may also be a tag: the config's collection wins.
+    CONFIG = rng.sample(["c0", "c1", "c2", "t2"], rng.randint(1, 3))
+    NESTED = {c for c in CONFIG if c.startswith("c") and rng.random() < 0.5}
+# On a config site, a name that is neither a tag nor a config collection is
+# refused by design (the JavaScript config may add it), so don't import one.
+UNKNOWN = [] if config else ["none"]
 site = os.path.join(out, "site", "src") if "src" in flags else os.path.join(out, "site")
 os.makedirs(site, exist_ok=True)
 
@@ -58,7 +73,7 @@ for d in set(dirs):
             data["layout"] = f"{lname}.{layouts[lname][0]}"
             dir_layout[d] = data["layout"]
         if imports and rng.random() < 0.4:
-            data["eleventyImport"] = {"collections": rng.sample(TAGS + ["all", "none"], rng.randint(1, 2))}
+            data["eleventyImport"] = {"collections": rng.sample(TAGS + CONFIG + ["all"] + UNKNOWN, rng.randint(1, 2))}
         w(f"{d}{leaf}.json", json.dumps(data))
         dir_files[d] = dir_files.get(d, 0) + 1
     if rng.random() < 0.2:
@@ -94,11 +109,18 @@ for i in range(rng.randint(4, 14)):
         spelled = rng.choice([f"{lname}.{layouts[lname][0]}", f"{lname}.{layouts[lname][0]}", lname])
         front["layout"] = spelled
         lay = spelled
-    front["tags"] = rng.choice(TAGS)
+    front["tags"] = rng.choice(TAGS + CONFIG)
     if imports and rng.random() < 0.4:
-        picks = rng.sample(TAGS + ["all", "none", "[keys]"], rng.randint(1, 3))
+        picks = rng.sample(TAGS + CONFIG + ["all", "[keys]"] + UNKNOWN, rng.randint(1, 3))
         front["eleventyImport"] = "{collections: [" + ", ".join(json.dumps(t) for t in picks) + "]}"
-    if imports and ext != "njk" and rng.random() < 0.08:
+    if config and ext != "njk" and rng.random() < 0.25:
+        # A config collection, or a path into one that returns an object.
+        # 11ty refuses a template that paginates a collection it is in.
+        target = rng.choice([c + ".x" if c in NESTED and rng.random() < 0.7 else c
+                             for c in CONFIG if c != front["tags"]] or ["all"])
+        front["pagination"] = "{data: collections." + target + ", size: 1, alias: it}"
+        front["permalink"] = '"' + d + stem + '-{{ pagination.pageNumber }}/"'
+    elif imports and ext != "njk" and rng.random() < 0.08:
         target = rng.choice([t for t in TAGS if t != front["tags"]] + ["all"])
         front["pagination"] = "{data: collections." + target + ", size: 1, alias: it}"
         front["permalink"] = '"' + d + stem + '-{{ pagination.pageNumber }}/"'
@@ -129,6 +151,42 @@ for i in range(rng.randint(4, 14)):
                  "({{ p.templateContent | size }}){% endif %}{% endfor %}")
     w(rel, f"---\n{body}---\n{text}\n")
     meta.append({"path": "./" + rel, "files": files, "layout": lay, "dated": front.get("date", "") not in ("", "Last Modified", "Created") or mode == "name"})
-w("keys.liquid", "---\neleventyExcludeFromCollections: true\npermalink: keys.txt\ndate: 2020-01-01\n---\n{% for c in collections %}{{ c[0] }},{% endfor %}")
+if config:
+    # Every tag is in use, so importing one is never an unknown name.
+    for t in TAGS:
+        w(f"tag-{t}.md", f"---\ndate: 2020-01-01\ntags: {t}\n---\nx\n")
+        meta.append({"path": f"./tag-{t}.md", "files": 0, "layout": None, "dated": True})
+w("keys.liquid", "---\neleventyExcludeFromCollections: true\npermalink: keys.txt\ndate: 2020-01-01\n---\n{% for c in collections %}{{ c[0] }},{% endfor %}"
+  + "".join("\n" + c + ": {% for p in collections." + c + " %}{{ p.url }},{% endfor %}"
+            + "{% for p in collections." + c + ".x %}{{ p.url }},{% endfor %}{{ collections." + c + ".n }}" for c in CONFIG))
+
+
+def collection(name):
+    """One config collection, in JavaScript and in Rhai."""
+    tag, other = rng.sample(TAGS + CONFIG, 2)
+    glob = rng.choice([["**/*.md"], ["posts/**"], ["./docs/*"], ["*.liquid", "a/**"], ["posts/2020/**/*.html"]])
+    api = rng.choice(["all", "sorted", "tag", "tags", "glob"])
+    js = {"all": "api.getAll()", "sorted": "api.getAllSorted()", "tag": f"api.getFilteredByTag({json.dumps(tag)})",
+          "tags": f"api.getFilteredByTags({json.dumps(tag)}, {json.dumps(other)})",
+          "glob": f"api.getFilteredByGlob({json.dumps(glob)})"}[api]
+    rhai = {"all": "api.get_all()", "sorted": "api.get_all_sorted()", "tag": f"api.get_filtered_by_tag({json.dumps(tag)})",
+            "tags": f"api.get_filtered_by_tags({json.dumps(tag)}, {json.dumps(other)})",
+            "glob": f"api.get_filtered_by_glob({json.dumps(glob)})"}[api]
+    if rng.random() < 0.4:
+        js, rhai = js + ".reverse()", rhai + ".reverse()"
+    if name in NESTED:
+        js = f"(() => {{ const x = {js}; return {{ x, n: x.length }}; }})()"
+        rhai = f"{{ let o = object(); o.x = {rhai}; o.n = o.x.len(); o }}"
+    return (f"  c.addCollection({json.dumps(name)}, (api) => {js});\n",
+            f"config.add_collection({json.dumps(name)}, |api| {rhai});\n")
+
+
+if config:
+    made = [collection(n) for n in CONFIG]
+    root = os.path.join(out, "site")
+    with open(os.path.join(root, "eleventy.config.js"), "w") as f:
+        f.write("module.exports = function (c) {\n" + "".join(j for j, _ in made) + "};\n")
+    with open(os.path.join(root, "brrrty.config.rhai"), "w") as f:
+        f.write("".join(r for _, r in made))
 with open(os.path.join(out, "meta.json"), "w") as f:
     json.dump({"templates": meta, "layouts": {k: list(v) for k, v in layouts.items()}}, f)

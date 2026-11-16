@@ -26,6 +26,24 @@
 //! that uses `Math.random`: its output can never match 11ty's, so pages
 //! that use it are refused.
 //!
+//! ## Collections
+//!
+//! `config.add_collection("name", |api| ...)` adds a collection, the way
+//! `addCollection` does, computed where 11ty computes it (after the tag
+//! collections, before `all`, and before any template that paginates or
+//! imports it). `api` has `get_all()`, `get_all_sorted()`,
+//! `get_filtered_by_tag(tag)`, `get_filtered_by_tags(a, b, ...)` and
+//! `get_filtered_by_glob(glob)` (a glob or an array of them, read from the
+//! project root like `./src/posts/**/*.md`). They give the items
+//! themselves: read-only, so returning one, or an array or `object()`
+//! holding them, gives back that same page, its content included. A
+//! collection that fails, reads an item's content (11ty hasn't rendered it
+//! yet) or changes an item refuses only the pages that read it. See the
+//! `collections` and `glob` modules.
+//!
+//! Arrays get JavaScript's `reverse()` (it returns the array) and
+//! `slice(start, end)`.
+//!
 //! Scripts also get `regex_replace(s, pattern, replacement, flags)`,
 //! `regex_split(s, pattern)` and `regex_test(s, pattern)` with JavaScript
 //! pattern semantics, on the `regex` crate: no lookaround and no
@@ -77,8 +95,10 @@
 
 mod api;
 mod builtins;
+mod collections;
 mod convert;
 mod filters;
+mod glob;
 mod jshelpers;
 mod object;
 mod regex;
@@ -132,6 +152,8 @@ pub struct SiteConfig {
     /// `add_filter` filters, in order; a later one replaces an earlier one
     /// of the same name.
     pub filters: Vec<brrrty_core::ConfigFilter>,
+    /// `add_collection` collections, in order.
+    pub collections: Vec<brrrty_core::ConfigCollection>,
 }
 
 impl SiteConfig {
@@ -144,6 +166,7 @@ impl SiteConfig {
             global_data: self.global_data.clone(),
             problems: self.problems.clone(),
             filters: self.filters.clone(),
+            collections: self.collections.clone(),
         }
     }
 }
@@ -265,6 +288,14 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
             name,
         })
         .collect();
+    let collections = state
+        .collections
+        .into_iter()
+        .map(|(name, (f, at))| brrrty_core::ConfigCollection {
+            run: collections::make(runtime.clone(), name.clone(), f, at),
+            name,
+        })
+        .collect();
     Ok(SiteConfig {
         file: PathBuf::from(CONFIG_FILE),
         dir,
@@ -277,6 +308,7 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
         global_data,
         problems,
         filters,
+        collections,
     })
 }
 

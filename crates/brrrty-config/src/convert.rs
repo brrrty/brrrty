@@ -15,7 +15,7 @@ use chrono::{DateTime, FixedOffset};
 use rhai::{Array, Dynamic, Map};
 
 use crate::api::JsDate;
-use crate::object::{JsNull, JsObject};
+use crate::object::{FrozenArray, JsNull, JsObject};
 
 /// How deeply data may nest. Deeper data is refused rather than walked, so
 /// converting it can't overflow the stack.
@@ -64,6 +64,9 @@ pub(crate) fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
     }
     if let Some(o) = v.read_lock::<JsObject>() {
         return o.to_value(depth);
+    }
+    if let Some(a) = v.read_lock::<FrozenArray>() {
+        return Ok(Value::Array(a.0.clone()));
     }
     if v.is::<JsNull>() {
         return Ok(Value::Null);

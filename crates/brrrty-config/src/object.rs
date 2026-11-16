@@ -16,12 +16,20 @@
 //! `object(map)` copies a map in (its keys arrive sorted). Data that comes
 //! into a script from Brrrty (page data, collections) arrives as objects
 //! too, so reading and returning it keeps its order.
+//!
+//! Collection items are different: 11ty shares one item with every page
+//! and every collection, so a script gets the item itself, read-only
+//! ([`JsObject::Frozen`]), and so is everything read through it (objects
+//! are frozen too, and arrays are [`FrozenArray`]s). Returning an item, or
+//! anything holding one, gives back that same item.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use brrrty_js::Value;
+use brrrty_js::traps::TRAP_KEYS;
 use indexmap::IndexMap;
-use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map};
+use rhai::{Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Position};
 
 use crate::api::{MAX_MAP_SIZE, invalid};
 use crate::convert::{to_dynamic, to_value_at};
@@ -45,6 +53,89 @@ pub struct JsNull;
 pub enum JsObject {
     Shared(Arc<IndexMap<String, Value>>),
     Owned(IndexMap<String, Dynamic>),
+    /// A collection item, or an object read through one: the same object,
+    /// which can't be changed.
+    Frozen(Arc<IndexMap<String, Value>>),
+}
+
+/// An array read through a collection item: the same array, read-only.
+/// `to_array()` copies it into an array the script can change.
+#[derive(Debug, Clone)]
+pub struct FrozenArray(pub Arc<Vec<Value>>);
+
+thread_local! {
+    /// A read a collection made that 11ty would have stopped at, such as an
+    /// item's `templateContent`. A script can catch the error it throws, so
+    /// the run checks this too.
+    static PREMATURE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Forget premature reads recorded on this thread.
+pub fn clear_premature() {
+    PREMATURE.with(|p| p.borrow_mut().take());
+}
+
+/// The first premature read since [`clear_premature`].
+pub fn take_premature() -> Option<String> {
+    PREMATURE.with(|p| p.borrow_mut().take())
+}
+
+/// `v` read through a collection item: objects and arrays stay the same
+/// values, read-only.
+pub fn frozen_dynamic(v: &Value) -> Dynamic {
+    match v {
+        Value::Object(o) => Dynamic::from(JsObject::Frozen(o.clone())),
+        Value::Array(a) => Dynamic::from(FrozenArray(a.clone())),
+        other => to_dynamic(other),
+    }
+}
+
+/// True when `new`, written back to a key that holds `old`, is the same
+/// value. Rhai writes a value back after a method call on a property chain
+/// (`post.data.title.len()`), changed or not.
+fn same(old: &Value, new: &Dynamic) -> bool {
+    match (
+        old,
+        new.read_lock::<JsObject>(),
+        new.read_lock::<FrozenArray>(),
+    ) {
+        (Value::Object(a), Some(o), _) => match &*o {
+            JsObject::Frozen(b) | JsObject::Shared(b) if Arc::ptr_eq(a, b) => true,
+            other => other.to_value(0).is_ok_and(|v| v == *old),
+        },
+        (Value::Array(a), _, Some(b)) => Arc::ptr_eq(a, &b.0) || **a == *b.0,
+        _ => to_value_at(new, 0).is_ok_and(|v| v == *old),
+    }
+}
+
+fn read_only(what: String) -> Box<EvalAltResult> {
+    invalid(
+        format!(
+            "{what}: a collection item is read-only. 11ty shares one item with every page, so a change would show everywhere, and Brrrty can't follow that. Build a new `object()` with the values you need"
+        ),
+        Position::NONE,
+    )
+}
+
+/// A read of `key` from an item, which 11ty doesn't have yet when it
+/// builds collections: `templateContent` and `content` throw "Tried to use
+/// templateContent too early", and `template` and `data.collections` are
+/// 11ty's internals.
+fn premature(o: &IndexMap<String, Value>, key: &str) -> Result<(), Box<EvalAltResult>> {
+    if matches!(o.get(key), Some(Value::Undefined)) && TRAP_KEYS.contains(&key) {
+        let why = if brrrty_js::traps::CONTENT_KEYS.contains(&key) {
+            format!(
+                "it reads `{key}` of a collection item, before 11ty renders any content (11ty stops the build here: \"Tried to use templateContent too early\")"
+            )
+        } else {
+            format!("it reads `{key}` of a collection item, which Brrrty doesn't have")
+        };
+        PREMATURE.with(|p| {
+            p.borrow_mut().get_or_insert_with(|| why.clone());
+        });
+        return Err(invalid(why, Position::NONE));
+    }
+    Ok(())
 }
 
 impl Default for JsObject {
@@ -67,7 +158,7 @@ fn array_index(k: &str) -> Option<u32> {
 impl JsObject {
     fn insertion_keys(&self) -> Vec<&String> {
         match self {
-            JsObject::Shared(m) => m.keys().collect(),
+            JsObject::Shared(m) | JsObject::Frozen(m) => m.keys().collect(),
             JsObject::Owned(m) => m.keys().collect(),
         }
     }
@@ -89,7 +180,7 @@ impl JsObject {
 
     pub fn len(&self) -> usize {
         match self {
-            JsObject::Shared(m) => m.len(),
+            JsObject::Shared(m) | JsObject::Frozen(m) => m.len(),
             JsObject::Owned(m) => m.len(),
         }
     }
@@ -100,34 +191,58 @@ impl JsObject {
 
     pub fn contains(&self, k: &str) -> bool {
         match self {
-            JsObject::Shared(m) => m.contains_key(k),
+            JsObject::Shared(m) | JsObject::Frozen(m) => m.contains_key(k),
             JsObject::Owned(m) => m.contains_key(k),
         }
     }
 
-    /// The value at `k` as stored: a `null` is a [`JsNull`].
-    pub fn raw(&self, k: &str) -> Option<Dynamic> {
-        match self {
-            JsObject::Shared(m) => m.get(k).map(to_dynamic),
+    /// The value a script reads at `k`: a `null` is a [`JsNull`]. A read of
+    /// an item's content gives it when the page being rendered has it (a
+    /// filter's argument); a read 11ty would stop at is an error.
+    pub fn read(&self, k: &str) -> Result<Option<Dynamic>, Box<EvalAltResult>> {
+        Ok(match self {
+            JsObject::Shared(m) => brrrty_js::traps::read(m, k, m.get(k).cloned())
+                .as_ref()
+                .map(to_dynamic),
+            JsObject::Frozen(m) => {
+                premature(m, k)?;
+                m.get(k).map(frozen_dynamic)
+            }
             JsObject::Owned(m) => m.get(k).cloned(),
-        }
+        })
     }
 
-    /// The map, copied out of its `Arc` first if it is shared.
-    fn owned(&mut self) -> &mut IndexMap<String, Dynamic> {
+    /// Every value, as [`JsObject::read`] reads it, in key order.
+    fn read_all(&self) -> Result<Vec<(String, Dynamic)>, Box<EvalAltResult>> {
+        if let JsObject::Shared(m) = self {
+            brrrty_js::traps::entries(m);
+        }
+        self.js_keys()
+            .into_iter()
+            .map(|k| Ok((k.clone(), self.read(k)?.unwrap_or(Dynamic::UNIT))))
+            .collect()
+    }
+
+    /// The map, copied out of its `Arc` first if it is shared. An item
+    /// can't be changed.
+    fn owned(&mut self, what: &str) -> Result<&mut IndexMap<String, Dynamic>, Box<EvalAltResult>> {
+        if let JsObject::Frozen(_) = self {
+            return Err(read_only(what.to_string()));
+        }
         if let JsObject::Shared(m) = self {
             *self = JsObject::Owned(m.iter().map(|(k, v)| (k.clone(), to_dynamic(v))).collect());
         }
         match self {
-            JsObject::Owned(m) => m,
-            JsObject::Shared(_) => unreachable!(),
+            JsObject::Owned(m) => Ok(m),
+            _ => unreachable!(),
         }
     }
 
-    /// As data. A shared object that wasn't changed is returned as is.
+    /// As data. A shared object that wasn't changed, and an item, are
+    /// returned as they are.
     pub fn to_value(&self, depth: usize) -> Result<Value, String> {
         match self {
-            JsObject::Shared(m) => Ok(Value::Object(m.clone())),
+            JsObject::Shared(m) | JsObject::Frozen(m) => Ok(Value::Object(m.clone())),
             JsObject::Owned(m) => {
                 let mut out = IndexMap::new();
                 for (k, x) in m {
@@ -154,19 +269,104 @@ impl IntoIterator for JsObject {
     }
 }
 
-fn get(o: &mut JsObject, key: ImmutableString) -> Dynamic {
-    o.raw(key.as_str()).unwrap_or(Dynamic::UNIT)
+impl IntoIterator for FrozenArray {
+    type Item = Dynamic;
+    type IntoIter = std::vec::IntoIter<Dynamic>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0
+            .iter()
+            .map(frozen_dynamic)
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
+
+fn get(o: &mut JsObject, key: ImmutableString) -> Result<Dynamic, Box<EvalAltResult>> {
+    Ok(o.read(key.as_str())?.unwrap_or(Dynamic::UNIT))
 }
 
 fn set(o: &mut JsObject, key: ImmutableString, v: Dynamic) -> Result<(), Box<EvalAltResult>> {
+    if let JsObject::Frozen(m) = o {
+        // A write-back of what was read is not a change.
+        return match m.get(key.as_str()) {
+            Some(old) if same(old, &v) => Ok(()),
+            _ => Err(read_only(format!("it sets `{key}`"))),
+        };
+    }
     if o.len() >= MAX_MAP_SIZE && !o.contains(key.as_str()) {
         return Err(invalid(
             format!("an object may have at most {MAX_MAP_SIZE} keys"),
             rhai::Position::NONE,
         ));
     }
-    o.owned().insert(key.to_string(), v);
+    o.owned("")?.insert(key.to_string(), v);
     Ok(())
+}
+
+/// JavaScript's `ToIntegerOrInfinity` for an array index argument, then
+/// the `relativeStart` clamp of `Array.prototype.slice`.
+fn relative(v: &Dynamic, len: usize, default: usize) -> Result<usize, Box<EvalAltResult>> {
+    if v.is_unit() {
+        return Ok(default);
+    }
+    let n = to_value_at(v, 0)
+        .map_err(|why| invalid(format!("slice: {why}"), Position::NONE))?
+        .to_js_number();
+    let n = if n.is_nan() { 0.0 } else { n.trunc() };
+    let len = len as f64;
+    Ok(if n < 0.0 {
+        (len + n).max(0.0) as usize
+    } else {
+        n.min(len) as usize
+    })
+}
+
+/// `arr.slice(start, end)`.
+fn slice(a: &mut Array, start: Dynamic, end: Dynamic) -> Result<Array, Box<EvalAltResult>> {
+    let from = relative(&start, a.len(), 0)?;
+    let to = relative(&end, a.len(), a.len())?;
+    Ok(if from < to {
+        a[from..to].to_vec()
+    } else {
+        Vec::new()
+    })
+}
+
+/// Arrays as JavaScript has them: `reverse()` reverses in place and
+/// returns the array, and `slice(start, end)`.
+fn register_arrays(e: &mut Engine) {
+    e.register_fn("reverse", |a: &mut Array| -> Array {
+        a.reverse();
+        a.clone()
+    })
+    .register_fn("slice", |a: &mut Array, s: Dynamic| {
+        slice(a, s, Dynamic::UNIT)
+    })
+    .register_fn("slice", slice);
+    e.register_type_with_name::<FrozenArray>("frozen_array")
+        .register_iterator::<FrozenArray>()
+        .register_fn("len", |a: &mut FrozenArray| a.0.len() as rhai::INT)
+        .register_fn("is_empty", |a: &mut FrozenArray| a.0.is_empty())
+        .register_fn("to_array", |a: &mut FrozenArray| -> Array {
+            a.0.iter().map(frozen_dynamic).collect()
+        })
+        .register_fn("contains", |a: &mut FrozenArray, x: Dynamic| {
+            to_value_at(&x, 0).is_ok_and(|x| a.0.contains(&x))
+        })
+        .register_indexer_get(
+            |a: &mut FrozenArray, i: rhai::INT| -> Result<Dynamic, Box<EvalAltResult>> {
+                let len = a.0.len() as rhai::INT;
+                let at = if i < 0 { len + i } else { i };
+                if (0..len).contains(&at) {
+                    Ok(frozen_dynamic(&a.0[at as usize]))
+                } else {
+                    Err(EvalAltResult::ErrorArrayBounds(a.0.len(), i, Position::NONE).into())
+                }
+            },
+        )
+        .register_fn("to_string", |_: &mut FrozenArray| "[array]".to_string())
+        .register_fn("to_debug", |_: &mut FrozenArray| "[array]".to_string());
 }
 
 pub fn register(e: &mut Engine) {
@@ -205,31 +405,34 @@ pub fn register(e: &mut Engine) {
                 .map(|k| Dynamic::from(k.clone()))
                 .collect()
         })
-        .register_fn("values", |o: &mut JsObject| -> Array {
-            o.js_keys()
-                .into_iter()
-                .map(|k| o.raw(k).unwrap_or(Dynamic::UNIT))
-                .collect()
-        })
-        .register_fn("entries", |o: &mut JsObject| -> Array {
-            o.js_keys()
-                .into_iter()
-                .map(|k| {
-                    Dynamic::from_array(vec![
-                        Dynamic::from(k.clone()),
-                        o.raw(k).unwrap_or(Dynamic::UNIT),
-                    ])
-                })
-                .collect()
-        })
+        .register_fn(
+            "values",
+            |o: &mut JsObject| -> Result<Array, Box<EvalAltResult>> {
+                Ok(o.read_all()?.into_iter().map(|(_, v)| v).collect())
+            },
+        )
+        .register_fn(
+            "entries",
+            |o: &mut JsObject| -> Result<Array, Box<EvalAltResult>> {
+                Ok(o.read_all()?
+                    .into_iter()
+                    .map(|(k, v)| Dynamic::from_array(vec![Dynamic::from(k), v]))
+                    .collect())
+            },
+        )
         .register_fn("len", |o: &mut JsObject| o.len() as rhai::INT)
         .register_fn("is_empty", |o: &mut JsObject| o.is_empty())
         .register_fn("contains", |o: &mut JsObject, k: ImmutableString| {
             o.contains(k.as_str())
         })
-        .register_fn("remove", |o: &mut JsObject, k: ImmutableString| {
-            o.owned().shift_remove(k.as_str()).unwrap_or(Dynamic::UNIT)
-        })
+        .register_fn(
+            "remove",
+            |o: &mut JsObject, k: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+                Ok(o.owned(&format!("it removes `{k}`"))?
+                    .shift_remove(k.as_str())
+                    .unwrap_or(Dynamic::UNIT))
+            },
+        )
         // Text made from an object is JavaScript's `String(obj)`, never
         // a dump of Brrrty's own types. `entries()` shows the contents.
         .register_fn("to_debug", |_: &mut JsObject| "[object Object]".to_string())
@@ -242,4 +445,5 @@ pub fn register(e: &mut Engine) {
         .register_fn("+", |_: JsObject, s: ImmutableString| {
             format!("[object Object]{s}")
         });
+    register_arrays(e);
 }

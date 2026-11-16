@@ -153,6 +153,53 @@ o.entries()           // [[k, v], ...]
 `values`, `entries`, `len`, `contains`, `remove`. Data from Brrrty arrives as
 `object()`s, so returning it as it came keeps its order.
 
+## Collections
+
+`eleventyConfig.addCollection(name, fn)` becomes
+`config.add_collection(name, |api| ...)`, and the collection API is in
+snake_case:
+
+| JavaScript | Rhai |
+|---|---|
+| `getAll()` | `get_all()` (the order pages were added) |
+| `getAllSorted()` | `get_all_sorted()` (date, then input path) |
+| `getFilteredByTag("t")` | `get_filtered_by_tag("t")` |
+| `getFilteredByTags("a", "b")` | `get_filtered_by_tags("a", "b")` (up to four) |
+| `getFilteredByGlob("./src/posts/**/*.md")` | `get_filtered_by_glob("./src/posts/**/*.md")`, or an array of globs |
+| `arr.reverse()` | `arr.reverse()` (returns the array, like JS) |
+| `arr.slice(a, b)` | `arr.slice(a, b)` (JS's, negative indexes included) |
+| `arr.map(f)`, `arr.filter(f)` | `arr.map(\|x\| ...)`, `arr.filter(\|x\| ...)` |
+| `arr.sort(f)` | `js_sort_by(arr, \|a, b\| ...)` |
+| `arr.forEach(f)` | `for x in arr { ... }` |
+| `{}` built in a loop | `object()` |
+
+Globs are read from the project root (`./src/posts/**/*.md`, not
+`posts/**/*.md`), as 11ty reads them. Brrrty supports `*`, `?`, `**` as a
+whole folder name, and literal ASCII text; anything else (braces, `[ab]`,
+`!`, extglobs) is an error rather than a guess.
+
+**Items are the pages themselves, and read-only.** 11ty shares one item
+with every page and collection, so changing one in JS changes it
+everywhere. Brrrty can't follow that, so setting a property of an item
+(or of anything read through it, like `post.data`) is an error, and an
+array read through an item (`post.data.tags`) can be looped over, indexed,
+measured with `len()` and searched with `contains`, but not changed:
+`to_array()` copies it. Whatever you return (an array, an `object()`, a map,
+nested any way) keeps the items as they are, so a template still reads
+their `url`, `data` and `templateContent`.
+
+Some things are refused, and only the pages that read the collection are:
+
+- reading an item's `templateContent` or `content` inside the collection
+  (11ty hasn't rendered it yet and stops the build), or its `template`;
+- returning an array holding an object you made with an `inputPath` key
+  (11ty would give it that page's content);
+- a result that would hold a page whose date Brrrty can't read.
+
+A name your JS config adds that the port doesn't is refused where a page
+reads it, so a missing collection shows up as a refusal, never as an empty
+list.
+
 ## Regular expressions
 
 `regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`
@@ -180,7 +227,7 @@ Some text is refused, since the answer would differ:
 
 ## Checklist
 
-1. Port one filter at a time. Keep the JS next to it while you work.
+1. Port one filter or collection at a time. Keep the JS next to it while you work.
 2. Use `object()` for anything built in a loop whose order can show.
 3. Replace each JS operator in the table above with its helper.
 4. Run the JS and the port on the same inputs in Node and compare. Include

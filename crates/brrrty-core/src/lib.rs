@@ -28,7 +28,10 @@ pub use build::{BuildReport, build};
 pub use discover::{Discovery, discover};
 pub use frontmatter::split_front_matter;
 pub use js::js_truthy;
-pub use options::{BuildOptions, ConfigFilter, ConfigOptions, PassthroughEntry};
+pub use options::{
+    BuildOptions, CollectionError, CollectionFn, CollectionInput, CollectionPage, ConfigCollection,
+    ConfigFilter, ConfigOptions, PassthroughEntry, UndatedPage,
+};
 pub use page::{Page, file_path_stem, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;
 pub use permalink::{Permalink, resolve_permalink};

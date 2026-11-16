@@ -17,6 +17,9 @@ use indexmap::IndexMap;
 
 use crate::data::clean_tags;
 use crate::frontmatter::Data;
+use crate::options::{
+    CollectionError, CollectionInput, CollectionPage, ConfigCollection, UndatedPage,
+};
 use crate::problem::Problem;
 
 const PREFIX: &str = "__collection:";
@@ -176,15 +179,19 @@ struct Graph {
     index: HashMap<String, usize>,
     out: Vec<Vec<usize>>,
     incoming: Vec<usize>,
+    /// The config's collections (`addCollection`), in the order 11ty lists
+    /// them (`Object.keys`: integer-like names first).
+    config: Vec<String>,
 }
 
 impl Graph {
-    fn new() -> Graph {
+    fn new(config: &[String]) -> Graph {
         let mut g = Graph {
             names: Vec::new(),
             index: HashMap::new(),
             out: Vec::new(),
             incoming: Vec::new(),
+            config: js_key_order(config),
         };
         // all uses [keys] uses [userconfig] uses [basic]
         let mut previous: Option<String> = None;
@@ -219,6 +226,30 @@ impl Graph {
         }
     }
 
+    fn is_config(&self, name: &str) -> bool {
+        self.config.iter().any(|c| c == name)
+    }
+
+    /// `cleanupCollectionNames`: the names once each, and `[userconfig]`
+    /// when one is a config collection. A list that already has
+    /// `[userconfig]` is kept as it is. Only a string is a config name
+    /// (11ty looks names up in a `Set`).
+    fn cleanup(&self, names: Vec<(String, bool)>) -> Vec<(String, bool)> {
+        let userconfig = ("[userconfig]".to_string(), true);
+        if names.contains(&userconfig) {
+            return names;
+        }
+        let mut seen = HashSet::new();
+        let mut out: Vec<(String, bool)> = names
+            .into_iter()
+            .filter(|n| seen.insert(n.clone()))
+            .collect();
+        if out.iter().any(|(n, s)| *s && self.is_config(n)) {
+            out.push(userconfig);
+        }
+        out
+    }
+
     /// `addTemplate`. `consumes` is the pagination target, then each
     /// `eleventyImport.collections` entry; a non-string entry never equals
     /// `all` or a stage name (11ty compares with `===`).
@@ -233,6 +264,7 @@ impl Graph {
         if consumes.is_empty() {
             self.uses(&basic, file);
         }
+        let consumes = self.cleanup(consumes);
         let named = |name: &str| consumes.iter().any(|(c, s)| *s && c == name);
         let consumes_all = named("all");
         // A template that consumes `[userconfig]` publishes its tags in the
@@ -242,13 +274,19 @@ impl Graph {
         } else {
             basic.clone()
         };
-        let mut publishes = dedupe(m.publishes());
+        let publishes = m.publishes().into_iter().map(|p| (p, true)).collect();
+        let mut publishes: Vec<String> = self
+            .cleanup(publishes)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         if consumes_all {
             publishes.retain(|p| p != "all");
         }
         for tag in &publishes {
             let bracketed = tag.starts_with('[') && tag.ends_with(']');
-            if !consumes_all && tag != "all" && !bracketed {
+            // `addTag` leaves out the config's own collections.
+            if !consumes_all && tag != "all" && !bracketed && !self.is_config(tag) {
                 self.uses(&stage, &format!("{PREFIX}{tag}"));
             }
             self.uses(&format!("{PREFIX}{tag}"), file);
@@ -265,8 +303,14 @@ impl Graph {
         }
     }
 
-    /// `overallOrder`, then 11ty's filter of the stage names.
-    fn order(&self) -> Vec<String> {
+    /// `overallOrder`, then 11ty's filter of the stage names. The config's
+    /// collections are made dependencies of `[keys]` first, last of all
+    /// its edges (`unfilteredOrder`).
+    fn order(&mut self) -> Vec<String> {
+        let keys = format!("{PREFIX}[keys]");
+        for name in self.config.clone() {
+            self.uses(&keys, &format!("{PREFIX}{name}"));
+        }
         let mut result: Vec<usize> = Vec::new();
         let mut visited = vec![false; self.names.len()];
         let mut on_path = vec![false; self.names.len()];
@@ -320,9 +364,17 @@ impl Graph {
     }
 }
 
-fn dedupe(v: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    v.into_iter().filter(|s| seen.insert(s.clone())).collect()
+/// Names in the order JavaScript lists an object's keys: integer-like
+/// keys first, in numeric order, then the rest as given.
+fn js_key_order(names: &[String]) -> Vec<String> {
+    let mut map = IndexMap::new();
+    for n in names {
+        map.insert(n.clone(), Value::Undefined);
+    }
+    Value::js_entries(&map)
+        .into_iter()
+        .map(|(k, _)| k.clone())
+        .collect()
 }
 
 /// One page as a collection holds it.
@@ -444,9 +496,59 @@ pub(crate) struct Built {
     /// them, each with that entry's input path. They are left out of
     /// `collections`; a read of one must be refused.
     pub poisoned: BTreeMap<String, String>,
-    /// Entries that paginate a poisoned collection, with its name: they
-    /// make no pages, and are poisoned in turn.
+    /// Entries that paginate a poisoned or broken collection, with its
+    /// name: they make no pages, and are poisoned in turn.
     pub refused: Vec<(usize, String)>,
+    /// The config's collections that failed, each with its problem. They
+    /// are left out of `collections`; a read of one must be refused.
+    pub broken: BTreeMap<String, Problem>,
+}
+
+/// The collection a pagination target `t` reads its data from, if it is
+/// blocked: `t` itself, or the config collection whose value it is a path
+/// into (`meta.posts.tags` reads `meta`).
+pub(crate) fn blocked_by<'a>(
+    t: &'a str,
+    blocked: impl Fn(&str) -> bool,
+    config: &HashSet<String>,
+) -> Option<&'a str> {
+    if blocked(t) {
+        return Some(t);
+    }
+    let first = t.split('.').next().unwrap_or(t);
+    (first != t && config.contains(first) && blocked(first)).then_some(first)
+}
+
+/// The pages added so far, as a config collection's function sees them.
+fn collection_input(
+    added: &[Page],
+    sorted: &mut Vec<usize>,
+    dirty: &mut bool,
+    undated: &[UndatedPage],
+) -> CollectionInput {
+    sort_added(added, sorted, dirty);
+    CollectionInput {
+        pages: added
+            .iter()
+            .map(|p| CollectionPage {
+                item: p.item.clone(),
+                input_path: p.input_path.clone(),
+                tags: p.tags.iter().filter(|t| *t != "all").cloned().collect(),
+            })
+            .collect(),
+        sorted: sorted.clone(),
+        undated: undated.to_vec(),
+    }
+}
+
+/// `getAllSorted`'s order of `added`, kept in `sorted` until a page is added.
+fn sort_added(added: &[Page], sorted: &mut Vec<usize>, dirty: &mut bool) {
+    if *dirty {
+        let mut order: Vec<usize> = (0..added.len()).collect();
+        order.sort_by(|a, b| by_date_input_path(&added[*a], &added[*b]));
+        *sorted = order;
+        *dirty = false;
+    }
 }
 
 /// Sets collection `tag` to `v`, or leaves it out as poisoned when a
@@ -477,9 +579,12 @@ fn set(
 /// template sees what 11ty shows it.
 pub(crate) fn build(
     mut entries: Vec<Entry>,
+    config: &[ConfigCollection],
     mut generate: impl FnMut(usize, &Arc<IndexMap<String, Value>>) -> Result<Vec<Page>, Problem>,
 ) -> Built {
-    let mut graph = Graph::new();
+    let config_names: Vec<String> = config.iter().map(|c| c.name.clone()).collect();
+    let config_set: HashSet<String> = config_names.iter().cloned().collect();
+    let mut graph = Graph::new(&config_names);
     for e in &entries {
         graph.template(&e.input_path, &e.membership);
     }
@@ -501,14 +606,12 @@ pub(crate) fn build(
     let mut poison_in: HashMap<String, String> = HashMap::new();
     let mut poisoned: BTreeMap<String, String> = BTreeMap::new();
     let mut refused: Vec<(usize, String)> = Vec::new();
+    let mut broken: BTreeMap<String, Problem> = BTreeMap::new();
+    // The pages 11ty has added that Brrrty can't date.
+    let mut undated: Vec<UndatedPage> = Vec::new();
 
     let snapshot = |added: &Vec<Page>, sorted: &mut Vec<usize>, dirty: &mut bool, tag: &str| {
-        if *dirty {
-            let mut order: Vec<usize> = (0..added.len()).collect();
-            order.sort_by(|a, b| by_date_input_path(&added[*a], &added[*b]));
-            *sorted = order;
-            *dirty = false;
-        }
+        sort_added(added, sorted, dirty);
         let all = tag.is_empty() || tag == "all";
         Value::Array(Arc::new(
             sorted
@@ -525,22 +628,53 @@ pub(crate) fn build(
         if node == keys {
             let v = snapshot(&added, &mut sorted, &mut dirty, "all");
             set(&mut data, &mut poisoned, &poison_in, "all", v);
+        } else if let Some(name) = node
+            .strip_prefix(PREFIX)
+            .and_then(|n| config.iter().find(|c| c.name == n))
+        {
+            // `setCollectionByTagName`: the config's function, given the
+            // pages added so far.
+            let input = collection_input(&added, &mut sorted, &mut dirty, &undated);
+            let key = name.name.clone();
+            match (name.run)(&input) {
+                Ok(v) => {
+                    poisoned.remove(&key);
+                    broken.remove(&key);
+                    data.insert(key, v);
+                }
+                Err(CollectionError::Undated(by)) => {
+                    data.shift_remove(&key);
+                    poisoned.insert(key, by);
+                }
+                Err(CollectionError::Failed(problem)) => {
+                    data.shift_remove(&key);
+                    broken.insert(key, problem);
+                }
+            }
         } else if let Some(tag) = node.strip_prefix(PREFIX) {
             let v = snapshot(&added, &mut sorted, &mut dirty, tag);
             set(&mut data, &mut poisoned, &poison_in, tag, v);
         } else if let Some(&i) = by_path.get(&node) {
             order.push(i);
-            let target = entries[i]
-                .membership
-                .pagination
-                .clone()
-                .filter(|t| entries[i].pages.is_none() && poisoned.contains_key(t));
+            let target = entries[i].membership.pagination.clone().and_then(|t| {
+                let blocked = |n: &str| poisoned.contains_key(n) || broken.contains_key(n);
+                blocked_by(&t, blocked, &config_set)
+                    .filter(|_| entries[i].pages.is_none())
+                    .map(str::to_string)
+            });
             if let Some(t) = target {
                 refused.push((i, t));
                 entries[i].poison = true;
             }
             if entries[i].poison {
-                for tag in entries[i].membership.publishes() {
+                let publishes = entries[i].membership.publishes();
+                if !publishes.is_empty() {
+                    undated.push(UndatedPage {
+                        input_path: entries[i].input_path.clone(),
+                        tags: publishes.iter().filter(|t| *t != "all").cloned().collect(),
+                    });
+                }
+                for tag in publishes {
                     poison_in
                         .entry(tag)
                         .or_insert_with(|| entries[i].input_path.clone());
@@ -581,6 +715,7 @@ pub(crate) fn build(
         order,
         poisoned,
         refused,
+        broken,
     }
 }
 
@@ -601,7 +736,12 @@ mod tests {
 
     /// The collections, in the order 11ty fills `collections` (probed).
     fn collection_order(templates: &[(&str, Membership)]) -> Vec<String> {
-        let mut g = Graph::new();
+        collection_order_with(templates, &[])
+    }
+
+    fn collection_order_with(templates: &[(&str, Membership)], config: &[&str]) -> Vec<String> {
+        let config: Vec<String> = config.iter().map(|c| c.to_string()).collect();
+        let mut g = Graph::new(&config);
         for (path, membership) in templates {
             g.template(path, membership);
         }
@@ -698,6 +838,49 @@ mod tests {
             ("./s.md", s),
         ]);
         assert_eq!(order, ["tb", "tq", "tr", "ts", "ta", "(all set)", "all"]);
+    }
+
+    /// Probed: a config collection (`addCollection`) is computed under
+    /// `[keys]`, after the tag collections, in config order; a template
+    /// that paginates or imports one comes after it, with its own tags in
+    /// the `[keys]` stage; a tag with a config collection's name is the
+    /// config's; and a path into a config collection is a tag of its own,
+    /// set where its reader comes.
+    #[test]
+    fn config_collections_come_under_keys() {
+        let mut e = m(&["t5"], None);
+        e.imports = vec![("other".to_string(), true)];
+        let order = collection_order_with(
+            &[
+                ("./a.md", m(&["t1"], None)),
+                ("./b.md", m(&["posts"], None)),
+                ("./c.md", m(&["listing"], Some("posts"))),
+                ("./d.md", m(&[], Some("meta.x"))),
+                ("./e.md", e),
+            ],
+            &["meta", "posts", "other"],
+        );
+        assert_eq!(
+            order,
+            [
+                "t1",
+                "posts",
+                "listing",
+                "other",
+                "t5",
+                "meta",
+                "(all set)",
+                "meta.x",
+                "all"
+            ]
+        );
+    }
+
+    /// Probed: 11ty lists config collections as `Object.keys` does.
+    #[test]
+    fn config_names_in_js_key_order() {
+        let names = ["b", "5", "a"].map(String::from);
+        assert_eq!(js_key_order(&names), ["5", "b", "a"]);
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub struct ConfigOptions {
     /// `add_filter` filters, in the order they were added. A later one
     /// replaces an earlier one of the same name, and any standard filter.
     pub filters: Vec<ConfigFilter>,
+    /// `add_collection` collections, in the order they were added.
+    pub collections: Vec<ConfigCollection>,
 }
 
 /// A filter the config added.
@@ -49,6 +51,67 @@ impl std::fmt::Debug for ConfigFilter {
             .field("name", &self.name)
             .finish_non_exhaustive()
     }
+}
+
+/// A collection the config added (`addCollection`).
+#[derive(Clone)]
+pub struct ConfigCollection {
+    pub name: String,
+    pub run: CollectionFn,
+}
+
+impl std::fmt::Debug for ConfigCollection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigCollection")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Runs a config collection over the pages added so far, as 11ty calls
+/// the function with its `TemplateCollection`.
+pub type CollectionFn = std::sync::Arc<
+    dyn Fn(&CollectionInput) -> Result<brrrty_js::Value, CollectionError> + Send + Sync,
+>;
+
+/// The pages 11ty's `TemplateCollection` holds when it computes a config
+/// collection.
+#[derive(Debug, Clone, Default)]
+pub struct CollectionInput {
+    /// In the order they were added (`getAll`).
+    pub pages: Vec<CollectionPage>,
+    /// Indexes into `pages` sorted by date, then input path (`getAllSorted`).
+    pub sorted: Vec<usize>,
+    /// Pages 11ty has added that Brrrty can't place (no date it can read):
+    /// a result that holds one can't be given.
+    pub undated: Vec<UndatedPage>,
+}
+
+/// One page of a [`CollectionInput`].
+#[derive(Debug, Clone)]
+pub struct CollectionPage {
+    /// The collection item itself: a result must hold this same value.
+    pub item: brrrty_js::Value,
+    /// `./src/page.md`, as 11ty names it.
+    pub input_path: String,
+    /// The tags the page is in (`getIncludedTagNames`).
+    pub tags: Vec<String>,
+}
+
+/// A page in a [`CollectionInput`] that Brrrty can't date.
+#[derive(Debug, Clone)]
+pub struct UndatedPage {
+    pub input_path: String,
+    pub tags: Vec<String>,
+}
+
+/// Why a config collection has no value.
+#[derive(Debug, Clone)]
+pub enum CollectionError {
+    /// It failed: the problem says where in the config.
+    Failed(Problem),
+    /// Its result would hold this page, which Brrrty can't date.
+    Undated(String),
 }
 
 /// One `addPassthroughCopy` entry.
