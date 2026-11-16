@@ -764,11 +764,21 @@ impl JsRegex {
         let mut out = Vec::new();
         let mut p = 0;
         let mut q = 0;
+        // Without groups only the match's bounds are needed, which the
+        // matcher finds without the slower capture search.
+        let groups = self.re.captures_len() > 1;
         while q < s.len() {
-            let Some(caps) = self.re.captures_at(s, q) else {
-                break;
+            let (m, caps) = if groups {
+                let Some(caps) = self.re.captures_at(s, q) else {
+                    break;
+                };
+                (caps.get(0).expect("group 0"), Some(caps))
+            } else {
+                let Some(m) = self.re.find_at(s, q) else {
+                    break;
+                };
+                (m, None)
             };
-            let m = caps.get(0).expect("group 0");
             // A match that ends where the last piece began, or at the end
             // of the text, splits nothing.
             if m.start() >= s.len() {
@@ -779,8 +789,10 @@ impl JsRegex {
                 continue;
             }
             out.push(Some(s[p..m.start()].to_string()));
-            for g in 1..caps.len() {
-                out.push(caps.get(g).map(|g| g.as_str().to_string()));
+            if let Some(caps) = &caps {
+                for g in 1..caps.len() {
+                    out.push(caps.get(g).map(|g| g.as_str().to_string()));
+                }
             }
             p = m.end();
             q = p;
