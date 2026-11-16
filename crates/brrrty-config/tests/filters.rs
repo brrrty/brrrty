@@ -503,7 +503,7 @@ fn json(s: &str) -> String {
 
 const EXCERPT: &str = r#"
 config.add_filter("excerptWords", |s, word_count| {
-    if s == () || s == "" { return ""; }
+    if !truthy(s) { return ""; }
     let n = word_count ?? 40;
     let clean = regex_replace(s, "(<([^>]+)>)", "", "gi");
     let words = regex_split(clean, "\\s+");
@@ -562,11 +562,11 @@ fn markdown_filter_is_a_stub_until_the_helper_exists() {
 
 const COLLECTION_FILTERS: &str = r#"
 config.add_filter("published", |games| {
-    if games == () { return []; }
+    if !truthy(games) { return []; }
     games.filter(|g| g.status == "published")
 });
 config.add_filter("byCategory", |games, slug| {
-    if games == () { return []; }
+    if !truthy(games) { return []; }
     games.filter(|g| g.category == slug)
 });
 config.add_nondeterministic_filter("shuffle");
@@ -608,7 +608,7 @@ config.add_filter("domain", |url| {
     if h == () { url } else { h }
 });
 config.add_filter("initials", |name| {
-    let parts = regex_split(if name == () || name == "" { "" } else { name.to_string() }, "\\s+")
+    let parts = regex_split(if truthy(name) { name.to_string() } else { "" }, "\\s+")
         .filter(|p| p != "");
     if parts.len() == 0 { return "?"; }
     let first = parts[0].sub_string(0, 1);
@@ -616,15 +616,43 @@ config.add_filter("initials", |name| {
     (first + last).to_upper()
 });
 config.add_filter("endsWith", |s, suffix| {
-    let t = if s == () || s == "" { "" } else { s.to_string() };
+    let t = if truthy(s) { s.to_string() } else { "" };
     t.ends_with(suffix)
 });
 config.add_filter("objectLength", |obj| {
-    if obj == () || obj == 0 || obj == "" || obj == false { 0 } else { obj.len() }
+    if truthy(obj) { obj.len() } else { 0 }
 });
 config.add_filter("now", || get_time(now()));
 config.add_filter("date", |ts| to_locale_date_string(date(ts)));
 "#;
+
+#[test]
+fn truthy_is_javascripts() {
+    // `null` and `undefined` are both `()` in Rhai, so `()` is falsy.
+    for (expr, want) in [
+        ("()", false),
+        ("false", false),
+        ("0", false),
+        ("0.0", false),
+        ("-0.0", false),
+        ("0.0 / 0.0", false),
+        ("\"\"", false),
+        ("true", true),
+        ("1", true),
+        ("\"0\"", true),
+        ("\" \"", true),
+        ("[]", true),
+        ("#{}", true),
+        ("object()", true),
+        ("now()", true),
+    ] {
+        assert_eq!(
+            eval(&format!("truthy({expr})")),
+            Value::Bool(want),
+            "{expr}"
+        );
+    }
+}
 
 #[test]
 fn string_filters_match_javascript() {
@@ -662,6 +690,8 @@ fn string_filters_match_javascript() {
         );
     }
     assert_eq!(r("{{ n | initials }}", "{}"), "?");
+    assert_eq!(r("{{ n | initials }}", r#"{"n":0}"#), "?");
+    assert_eq!(r("{{ 0 | endsWith: '0' }}", "{}"), "false");
 
     assert_eq!(r("{{ 'abc.xml' | endsWith: '.xml' }}", "{}"), "true");
     assert_eq!(r("{{ u | endsWith: 'x' }}", "{}"), "false");

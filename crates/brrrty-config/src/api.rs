@@ -324,6 +324,10 @@ fn register_text(e: &mut Engine) {
             Err(_) => Dynamic::UNIT,
         }
     });
+    // JavaScript truthiness: `if (x)` is `if truthy(x)`.
+    e.register_fn("truthy", |v: Dynamic| -> bool {
+        crate::convert::to_value(&v).map_or(true, |v| v.js_truthy())
+    });
     e.register_fn("to_locale_date_string", |d: &mut JsDate| {
         locale_date_string(Tz::Local, d.0)
     });
