@@ -73,11 +73,11 @@ fn spikes_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Liquid cases live with the repo's conformance tests; Nunjucks cases stay in this crate.
+/// Both case sets live with the repo's conformance tests.
 fn cases_dir(lang: Lang) -> PathBuf {
     match lang {
         Lang::Liquid => spikes_dir().join("../tests/conformance/liquid"),
-        Lang::Nunjucks => spikes_dir().join("cases/nunjucks"),
+        Lang::Nunjucks => spikes_dir().join("../tests/conformance/nunjucks"),
     }
 }
 
