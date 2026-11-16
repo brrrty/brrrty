@@ -199,6 +199,7 @@ dependencies = [
  "miette",
  "notify",
  "percent-encoding",
+ "serde_json",
  "tempfile",
  "toml",
 ]

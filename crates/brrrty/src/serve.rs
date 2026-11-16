@@ -11,17 +11,23 @@
 //! this never deletes a file from the output folder. When the session stops, the server is
 //! pointed at the output folder and the staging folder is removed.
 //!
+//! Pages served get a live-reload script ([`Session::live_reload`], see [`live`]).
+//!
 //! ```no_run
 //! # use std::path::Path;
 //! use brrrty::serve::{Session, Settings};
 //! use brrrty_serve::Server;
 //!
-//! let session = Session::start(Path::new("."), Settings::default()).unwrap();
+//! let mut session = Session::start(Path::new("."), Settings::default()).unwrap();
 //! let server = Server::start(session.serving(), "localhost", 8080).unwrap();
+//! session.live_reload(&server);
 //! let stop = session.stop_handle(); // call `stop.stop()` from a Ctrl-C handler
 //! session.run(&server);
 //! ```
 
+pub mod live;
+
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -38,6 +44,8 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::options::{Flags, build_options};
 use crate::report;
+
+pub use live::LiveReload;
 
 /// The folder inside the output folder that holds the builds of a session.
 pub const STAGING_DIR: &str = brrrty_core::SERVE_STAGING_DIR;
@@ -102,6 +110,31 @@ pub struct Rebuild {
     pub css_only: bool,
     /// What the build reported, warnings included.
     pub problems: Vec<Problem>,
+    /// The pages of the changed templates, as now served. Empty when the build failed.
+    pub pages: Vec<ChangedPage>,
+    /// The URLs of the changed stylesheets, as passthrough copied them.
+    pub stylesheets: Vec<String>,
+    /// What went wrong bringing the output folder up to date with this build.
+    pub output_problems: Vec<Problem>,
+}
+
+/// A page of a changed template.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedPage {
+    /// Its `page.url`.
+    pub url: String,
+    /// The HTML written.
+    pub content: String,
+}
+
+/// What one build gave.
+struct Built {
+    ok: bool,
+    problems: Vec<Problem>,
+    /// The build's folder, when it had no errors.
+    dir: Option<PathBuf>,
+    pages: Vec<brrrty_core::WrittenPage>,
+    passthrough: Vec<(PathBuf, PathBuf)>,
 }
 
 /// Called after every rebuild, on the session's thread.
@@ -200,9 +233,13 @@ pub struct Session {
     next_tmp: u64,
     /// The watcher's last error, so a repeated one is printed once.
     last_watch_error: Option<String>,
+    /// The passthrough files as they were just before the last build, which copies them. On
+    /// macOS, copying a file can make FSEvents report it again, flags and all, though nothing
+    /// changed; an event for a file that still looks like this is that echo, not an edit.
+    copied: HashMap<PathBuf, Stamp>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
-    hook: Option<Arc<RebuildHook>>,
+    hooks: Vec<Arc<RebuildHook>>,
 }
 
 impl Session {
@@ -261,14 +298,17 @@ impl Session {
             mirror_problems: Vec::new(),
             next_tmp: 0,
             last_watch_error: None,
+            copied: HashMap::new(),
             tx,
             rx,
-            hook: None,
+            hooks: Vec::new(),
         };
         session.refresh(&opts);
         session.watch_all().map_err(StartError::Watch)?;
 
-        let (ok, problems, dir) = session.build();
+        let Built {
+            ok, problems, dir, ..
+        } = session.build();
         session.first_ok = ok;
         session.first_problems = problems;
         match dir {
@@ -317,9 +357,24 @@ impl Session {
         StopHandle(self.tx.clone())
     }
 
-    /// Call `hook` after every rebuild.
+    /// Call `hook` after every rebuild, after the hooks added before it.
     pub fn on_rebuild(&mut self, hook: Arc<RebuildHook>) {
-        self.hook = Some(hook);
+        self.hooks.push(hook);
+    }
+
+    /// Inject the live-reload script into `server`'s pages and tell them about every rebuild.
+    /// Pages that connect while the first build's errors stand, or while the output folder
+    /// could not be written, are told about those.
+    pub fn live_reload(&mut self, server: &RunningServer) -> LiveReload {
+        let live = LiveReload::attach(server);
+        if !self.first_ok {
+            live.show_problems(&self.first_problems);
+        } else if !self.mirror_problems.is_empty() {
+            live.show_problems(&self.mirror_problems);
+        }
+        let hook = live.clone();
+        self.on_rebuild(Arc::new(move |r: &Rebuild| hook.rebuilt(r)));
+        live
     }
 
     /// Watch and rebuild until stopped, then point the server at the output folder, which
@@ -384,12 +439,27 @@ impl Session {
                 println!("File changed: {}", p.display());
             }
         }
-        let (mut ok, problems, dir) = self.build();
-        if let Some(dir) = dir {
+        let built = self.build();
+        let (mut ok, problems) = (built.ok, built.problems);
+        let mut pages = Vec::new();
+        let mut output_problems = Vec::new();
+        if let Some(dir) = built.dir {
             match server.swap_root(&dir) {
                 Ok(old) => {
                     self.retire(old);
                     self.mirror(&dir);
+                    output_problems = self.mirror_problems.clone();
+                    // The changed templates' pages, for a page showing one to patch itself.
+                    for p in &built.pages {
+                        if changed.contains(&p.source)
+                            && let Ok(content) = fs::read_to_string(dir.join(&p.output))
+                        {
+                            pages.push(ChangedPage {
+                                url: p.url.clone(),
+                                content,
+                            });
+                        }
+                    }
                     self.current = Some(dir);
                 }
                 Err(e) => {
@@ -404,13 +474,29 @@ impl Session {
                 p.extension().is_some_and(|e| e == "css")
                     && !self.root.join(p).starts_with(self.input.join("_includes"))
             });
-        if let Some(hook) = &self.hook {
-            hook(&Rebuild {
-                ok,
-                changed_paths: changed.to_vec(),
-                css_only,
-                problems,
-            });
+        let stylesheets = if ok {
+            built
+                .passthrough
+                .iter()
+                .filter(|(src, _)| {
+                    src.extension().is_some_and(|e| e == "css") && changed.contains(src)
+                })
+                .map(|(_, dest)| url_of(dest))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let rebuild = Rebuild {
+            ok,
+            changed_paths: changed.to_vec(),
+            css_only,
+            problems,
+            pages,
+            stylesheets,
+            output_problems,
+        };
+        for hook in &self.hooks {
+            hook(&rebuild);
         }
     }
 
@@ -421,16 +507,24 @@ impl Session {
 
     /// Build into a fresh folder. Gives whether it had no errors, its problems, and the folder
     /// when it did; a failed build's folder is removed at once.
-    fn build(&mut self) -> (bool, Vec<Problem>, Option<PathBuf>) {
+    fn build(&mut self) -> Built {
         let color = self.settings.color;
+        let failed = |problems| Built {
+            ok: false,
+            problems,
+            dir: None,
+            pages: Vec::new(),
+            passthrough: Vec::new(),
+        };
         let mut opts = match build_options(&self.root, &self.flags) {
             Ok(o) => o,
             Err(problems) => {
                 report::print_problems(&problems, &self.root, color);
-                return (false, problems, None);
+                return failed(problems);
             }
         };
         self.refresh(&opts);
+        self.copied = stamps(&self.passthrough);
         let dir = self.new_build_dir();
         // The user (or a `brrrty build`) may have removed the output folder meanwhile.
         let _ = fs::create_dir_all(&self.staging);
@@ -440,7 +534,7 @@ impl Session {
                 format!("cannot make the build folder {}: {e}", dir.display()),
             );
             report::print_problems(std::slice::from_ref(&p), &self.root, color);
-            return (false, vec![p], None);
+            return failed(vec![p]);
         }
         opts.write_to = Some(dir.clone());
         opts.run_mode = RunMode::Serve;
@@ -450,7 +544,13 @@ impl Session {
         if !ok {
             let _ = fs::remove_dir_all(&dir);
         }
-        (ok, report.problems, ok.then_some(dir))
+        Built {
+            ok,
+            problems: report.problems,
+            dir: ok.then_some(dir),
+            pages: report.pages,
+            passthrough: report.passthrough,
+        }
     }
 
     /// Re-read what decides which changes count: the ignore files and the passthrough paths.
@@ -674,7 +774,11 @@ impl Session {
             if self.rewatch && p.is_dir() && (*p == self.input || *p == self.root) {
                 self.rewatch_all();
             }
-            if self.counts(p) {
+            let echo = self
+                .copied
+                .get(p)
+                .is_some_and(|s| Stamp::of(p).as_ref() == Some(s));
+            if !echo && self.counts(p) {
                 any = true;
                 let rel = p.strip_prefix(&self.root).unwrap_or(p).to_path_buf();
                 if !changed.contains(&rel) {
@@ -794,6 +898,59 @@ impl Session {
             report::print_problems(&self.mirror_problems, &self.root, self.settings.color);
         }
     }
+}
+
+/// What identifies a file's version without reading it: its size and times, and on Unix its
+/// inode and change time, which any write, rename or `touch` moves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    changed: (i64, i64, u64),
+}
+
+impl Stamp {
+    fn of(p: &Path) -> Option<Stamp> {
+        let m = fs::metadata(p).ok().filter(|m| m.is_file())?;
+        #[cfg(unix)]
+        let changed = {
+            use std::os::unix::fs::MetadataExt;
+            (m.ctime(), m.ctime_nsec(), m.ino())
+        };
+        Some(Stamp {
+            len: m.len(),
+            modified: m.modified().ok(),
+            #[cfg(unix)]
+            changed,
+        })
+    }
+}
+
+/// The stamps of every file at or under `paths`.
+fn stamps(paths: &[PathBuf]) -> HashMap<PathBuf, Stamp> {
+    let mut out = HashMap::new();
+    let mut todo: Vec<PathBuf> = paths.to_vec();
+    while let Some(p) = todo.pop() {
+        match fs::read_dir(&p) {
+            Ok(entries) => todo.extend(entries.flatten().map(|e| e.path())),
+            Err(_) => {
+                if let Some(s) = Stamp::of(&p) {
+                    out.insert(p, s);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The URL of a file at `rel` in the output folder.
+fn url_of(rel: &Path) -> String {
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    format!("/{}", parts.join("/"))
 }
 
 fn remove_any(p: &Path) -> io::Result<()> {

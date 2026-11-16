@@ -28,7 +28,7 @@ mod render;
 mod templates;
 mod yaml;
 
-pub use build::{BuildReport, build};
+pub use build::{BuildReport, WrittenPage, build};
 pub use discover::{Discovery, discover};
 pub use filters::register_nunjucks_filters;
 pub use frontmatter::split_front_matter;

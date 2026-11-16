@@ -1007,3 +1007,64 @@ fn a_stale_serve_staging_symlink_is_removed_not_followed() {
     assert!(fs::symlink_metadata(root.join("_site/.brrrty-serve")).is_err());
     assert_eq!(read(root.join("elsewhere/keep.txt")), "keep");
 }
+
+#[test]
+fn the_report_lists_written_pages_and_passthrough_files() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi");
+    write(root, "src/about.md", "---\npermalink: /about/me/\n---\nme");
+    write(root, "src/draft.md", "---\npermalink: false\n---\nno");
+    write(root, "src/css/site.css", "p{}");
+    write(root, "assets/logo.svg", "<svg/>");
+    let r = build(
+        &opts_with_passthrough(root, &["src/css", "assets"]),
+        &MarkdownIt::new(),
+    );
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    let mut pages: Vec<(String, String, String)> = r
+        .pages
+        .iter()
+        .map(|p| {
+            (
+                p.source.display().to_string(),
+                p.url.clone(),
+                p.output.display().to_string(),
+            )
+        })
+        .collect();
+    pages.sort();
+    assert_eq!(
+        pages,
+        [
+            (
+                "src/about.md".into(),
+                "/about/me/".into(),
+                "about/me/index.html".into()
+            ),
+            ("src/index.md".into(), "/".into(), "index.html".into()),
+        ]
+    );
+    let mut files = r.passthrough.clone();
+    files.sort();
+    assert_eq!(
+        files,
+        [
+            (
+                PathBuf::from("assets/logo.svg"),
+                PathBuf::from("assets/logo.svg")
+            ),
+            (
+                PathBuf::from("src/css/site.css"),
+                PathBuf::from("css/site.css")
+            ),
+        ]
+    );
+    // An unchanged file is still listed on the next build.
+    let again = build(
+        &opts_with_passthrough(root, &["src/css", "assets"]),
+        &MarkdownIt::new(),
+    );
+    assert_eq!(again.unchanged, 2);
+    assert_eq!(again.passthrough.len(), 2);
+}

@@ -45,6 +45,22 @@ pub struct BuildReport {
     pub unchanged: usize,
     pub problems: Vec<Problem>,
     pub elapsed: Duration,
+    /// The pages written, in no particular order.
+    pub pages: Vec<WrittenPage>,
+    /// Each passthrough file now in place: its source relative to the project folder, and
+    /// its destination relative to the folder written to.
+    pub passthrough: Vec<(PathBuf, PathBuf)>,
+}
+
+/// A page a build wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenPage {
+    /// The template, relative to the project folder.
+    pub source: PathBuf,
+    /// Its `page.url`.
+    pub url: String,
+    /// Where it was written, relative to the folder written to.
+    pub output: PathBuf,
 }
 
 impl BuildReport {
@@ -1417,6 +1433,8 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                     format!("cannot start the render threads: {e}"),
                 )],
                 elapsed: Duration::ZERO,
+                pages: Vec::new(),
+                passthrough: Vec::new(),
             };
             finish(report, opts.strict, start)
         }
@@ -1459,6 +1477,8 @@ fn build_once(
         unchanged: 0,
         problems: Vec::new(),
         elapsed: Duration::ZERO,
+        pages: Vec::new(),
+        passthrough: Vec::new(),
     };
     let strict = opts.strict;
     let has_error = |r: &BuildReport| r.has_errors();
@@ -2095,11 +2115,11 @@ fn build_once(
             Refused::Page(p, other)
         }
     }
-    type Written = Result<(), Refused>;
+    type Written = Result<usize, Refused>;
     // Every page is rendered before any is written: highlighting may only
     // now have met a language that changes grammars, which the scan didn't
     // see, and then the build is redone instead.
-    type Ready<'p> = Result<(PathBuf, String, &'p Path), Refused>;
+    type Ready<'p> = Result<(usize, PathBuf, String, &'p Path), Refused>;
     let ready: Vec<Ready<'_>> = (0..prepared.len())
         .into_par_iter()
         .filter(|&i| writes(&prepared[i]))
@@ -2142,7 +2162,7 @@ fn build_once(
             {
                 return Err(Refused::Page(problem.with_path(shown), None));
             }
-            Ok((dest, rendered.html, shown.as_path()))
+            Ok((i, dest, rendered.html, shown.as_path()))
         })
         .collect();
     if let Some(plugin) = &highlight {
@@ -2155,7 +2175,7 @@ fn build_once(
     let results: Vec<Written> = ready
         .into_par_iter()
         .map(|r| -> Written {
-            let (dest, html, shown) = r?;
+            let (i, dest, html, shown) = r?;
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
                     (
@@ -2172,7 +2192,7 @@ fn build_once(
                     None,
                 )
             })?;
-            Ok(())
+            Ok(i)
         })
         .collect();
     // The pages of one template often fail the same way: say it once. A page
@@ -2192,7 +2212,22 @@ fn build_once(
     let mut from_layouts = layout_refusals;
     for r in results {
         match r {
-            Ok(()) => report.written += 1,
+            Ok(i) => {
+                report.written += 1;
+                let p = &prepared[i];
+                let url = match p.data.get("page") {
+                    Some(Value::Object(page)) => match page.get("url") {
+                        Some(Value::String(u)) => u.to_string(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                report.pages.push(WrittenPage {
+                    source: p.source.shown.clone(),
+                    url,
+                    output: p.output_rel.clone().unwrap_or_default(),
+                });
+            }
             Err(Refused::Page(p, other)) => {
                 report_problem(&mut report, p);
                 pointed.extend(other);
@@ -2229,6 +2264,10 @@ fn build_once(
     let pt = copy_passthrough_avoiding(opts, &pages);
     // A passthrough file that replaced a page means that page was not really written.
     report.written = report.written.saturating_sub(pt.overridden.len());
+    report
+        .pages
+        .retain(|p| !pt.overridden.contains(&out.join(&p.output)));
+    report.passthrough = pt.files;
     report.copied = pt.copied;
     report.unchanged = pt.unchanged;
     report.problems.extend(pt.problems);

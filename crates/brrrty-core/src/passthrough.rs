@@ -22,6 +22,9 @@ pub(crate) struct PassthroughResult {
     pub unchanged: usize,
     /// Rendered-page output paths that a passthrough file replaced.
     pub overridden: HashSet<PathBuf>,
+    /// Each file now in place: its source relative to the project folder, and its
+    /// destination relative to the folder written to.
+    pub files: Vec<(PathBuf, PathBuf)>,
     pub problems: Vec<Problem>,
 }
 
@@ -38,6 +41,7 @@ struct Copier<'a> {
     copied: usize,
     unchanged: usize,
     overridden: HashSet<PathBuf>,
+    files: Vec<(PathBuf, PathBuf)>,
     problems: Vec<Problem>,
 }
 
@@ -63,6 +67,7 @@ pub(crate) fn copy_passthrough_avoiding(
                 copied: 0,
                 unchanged: 0,
                 overridden: HashSet::new(),
+                files: Vec::new(),
                 problems: vec![p],
             };
         }
@@ -76,6 +81,7 @@ pub(crate) fn copy_passthrough_avoiding(
         copied: 0,
         unchanged: 0,
         overridden: HashSet::new(),
+        files: Vec::new(),
         problems: Vec::new(),
     };
 
@@ -191,6 +197,7 @@ pub(crate) fn copy_passthrough_avoiding(
         copied: c.copied,
         unchanged: c.unchanged,
         overridden: c.overridden,
+        files: c.files,
         problems: c.problems,
     }
 }
@@ -347,8 +354,13 @@ fn copy_file(source: &Path, dest: &Path, c: &mut Copier) {
             );
         }
     }
+    let placed = (
+        root_relative(c.root, source),
+        dest.strip_prefix(c.out).unwrap_or(dest).to_path_buf(),
+    );
     if overrides_page.is_none() && is_up_to_date(&meta, dest) {
         c.unchanged += 1;
+        c.files.push(placed);
         return;
     }
     let result = dest
@@ -356,7 +368,10 @@ fn copy_file(source: &Path, dest: &Path, c: &mut Copier) {
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| fs::copy(source, dest).map(|_| ()));
     match result {
-        Ok(()) => c.copied += 1,
+        Ok(()) => {
+            c.copied += 1;
+            c.files.push(placed);
+        }
         Err(e) => c.problems.push(
             Problem::error(
                 codes::PASSTHROUGH_COPY_FAILED,

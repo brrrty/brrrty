@@ -74,6 +74,13 @@ These projects are released under the MIT License. Their notices:
   its test fixtures (in brrrty-prism's tests/probes/highlight)
   Copyright (c) 2012 Lea Verou
 
+- @11ty/eleventy-dev-server 2.1.2: `brrrty serve`'s live-reload client, the
+  script's place in the page, and the server's behavior
+  Copyright (c) Zach Leatherman @zachleat (MIT, per its package.json)
+
+- morphdom 2.7.8: patches a page in place on live reload (bundled unchanged)
+  Copyright (c) Patrick Steele-Idem <pnidem@gmail.com> (psteeleidem.com)
+
 Each is provided under these terms:
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
