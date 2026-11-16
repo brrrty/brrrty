@@ -295,6 +295,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "brrrty-nunjucks"
+version = "0.0.6"
+dependencies = [
+ "brrrty-js",
+ "serde",
+ "serde_json",
+ "stacker",
+ "toml",
+]
+
+[[package]]
 name = "brrrty-prism"
 version = "0.0.6"
 dependencies = [

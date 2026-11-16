@@ -1,0 +1,110 @@
+[
+ {
+  "name": "err_unclosed_if",
+  "msg": "parseIf: expected elif, else, or endif, got end of file"
+ },
+ {
+  "name": "err_unclosed_for",
+  "msg": "unexpected end of file"
+ },
+ {
+  "name": "err_unclosed_block",
+  "msg": "parseBlock: expected endblock, got end of file"
+ },
+ {
+  "name": "err_unclosed_var",
+  "msg": "expected variable end"
+ },
+ {
+  "name": "err_unclosed_comment",
+  "msg": "Error: expected end of comment, got end of file"
+ },
+ {
+  "name": "err_unknown_tag",
+  "msg": "unknown block tag: frobnicate",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "name": "err_stray_endif",
+  "msg": "unknown block tag: endif",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "name": "err_stray_else",
+  "msg": "unknown block tag: else",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "name": "err_bad_expression",
+  "msg": "unexpected token: }}",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "name": "err_bad_for",
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "name": "err_bad_set",
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "name": "err_mismatched_end",
+  "msg": "unknown block tag: endfor",
+  "line": 1,
+  "col": 14
+ },
+ {
+  "name": "err_error_in_included_unclosed::bad2.njk",
+  "msg": "parseIf: expected elif, else, or endif, got end of file"
+ },
+ {
+  "name": "expr_dot_vs_bracket_number",
+  "msg": "expected name as lookup value, got 0",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "name": "inc_js_with_braces::tricky.js",
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "name": "set_multiple",
+  "msg": "expected block end in set statement",
+  "line": 1,
+  "col": 18
+ },
+ {
+  "name": "raw_ws_control",
+  "msg": "unknown block tag: endraw",
+  "line": 1,
+  "col": 30
+ },
+ {
+  "name": "filter_block_chain",
+  "msg": "expected block end in filter statement",
+  "line": 1,
+  "col": 19
+ },
+ {
+  "name": "auto_autoescape_block_off",
+  "msg": "unknown block tag: autoescape",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "name": "auto_autoescape_block_on",
+  "msg": "unknown block tag: autoescape",
+  "line": 1,
+  "col": 4
+ }
+]

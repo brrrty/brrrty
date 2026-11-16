@@ -1,0 +1,1427 @@
+[
+ {
+  "src": "",
+  "ok": true,
+  "ast": "[]"
+ },
+ {
+  "src": "plain text",
+  "ok": true,
+  "ast": "[Text@0:0(\"plain text\")]"
+ },
+ {
+  "src": "a { b } c",
+  "ok": true,
+  "ast": "[Text@0:0(\"a { b } c\")]"
+ },
+ {
+  "src": "a {\n b",
+  "ok": true,
+  "ast": "[Text@0:0(\"a {\\n b\")]"
+ },
+ {
+  "src": "x}}y",
+  "ok": true,
+  "ast": "[Text@0:0(\"x}}y\")]"
+ },
+ {
+  "src": "x%}y",
+  "ok": true,
+  "ast": "[Text@0:0(\"x%}y\")]"
+ },
+ {
+  "src": "a # b",
+  "ok": true,
+  "ast": "[Text@0:0(\"a # b\")]"
+ },
+ {
+  "src": "a #} b",
+  "ok": false,
+  "msg": "Error: unexpected end of comment"
+ },
+ {
+  "src": "line1\nline2 #}",
+  "ok": false,
+  "msg": "Error: unexpected end of comment"
+ },
+ {
+  "src": "a {",
+  "ok": true,
+  "ast": "[Text@0:0(\"a {\")]"
+ },
+ {
+  "src": "a #",
+  "ok": true,
+  "ast": "[Text@0:0(\"a #\")]"
+ },
+ {
+  "src": "{",
+  "ok": true,
+  "ast": "[Text@0:0(\"{\")]"
+ },
+ {
+  "src": "}",
+  "ok": true,
+  "ast": "[Text@0:0(\"}\")]"
+ },
+ {
+  "src": "#",
+  "ok": true,
+  "ast": "[Text@0:0(\"#\")]"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\n",
+  "ok": true,
+  "ast": "[Text@0:0(\"(function () {\\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\\n  lunr.version = \\\"2.3.9\\\"\\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \\\"%}\\\", u = '{ {', h = '#', p = \\\"a#b\\\"\\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\\n  lunr.utils.warn = (function (global) { return function (message) {\\n    if (global.console && console.warn) { console.warn(message) } } })(this)\\n  // comments with # and { and }\\n  for (var i = 0; i < 10; i++) { obj[\\\"k\\\" + i] = { \\\"v\\\": i } }\\n})();\\n\")]"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = \"{{\";\n",
+  "ok": false,
+  "msg": "expected variable end"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = \"{{ x }}\";\n",
+  "ok": true,
+  "ast": "[Text@0:0(\"(function () {\\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\\n  lunr.version = \\\"2.3.9\\\"\\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \\\"%}\\\", u = '{ {', h = '#', p = \\\"a#b\\\"\\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\\n  lunr.utils.warn = (function (global) { return function (message) {\\n    if (global.console && console.warn) { console.warn(message) } } })(this)\\n  // comments with # and { and }\\n  for (var i = 0; i < 10; i++) { obj[\\\"k\\\" + i] = { \\\"v\\\": i } }\\n})();\\nvar s = \\\"\") Output@11:9(Symbol@11:12(\"x\")) Text@11:16(\"\\\";\\n\")]"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = '{#';\n",
+  "ok": false,
+  "msg": "Error: expected end of comment, got end of file"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = '{# c #}';\n",
+  "ok": true,
+  "ast": "[Text@0:0(\"(function () {\\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\\n  lunr.version = \\\"2.3.9\\\"\\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \\\"%}\\\", u = '{ {', h = '#', p = \\\"a#b\\\"\\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\\n  lunr.utils.warn = (function (global) { return function (message) {\\n    if (global.console && console.warn) { console.warn(message) } } })(this)\\n  // comments with # and { and }\\n  for (var i = 0; i < 10; i++) { obj[\\\"k\\\" + i] = { \\\"v\\\": i } }\\n})();\\nvar s = '\") Text@11:16(\"';\\n\")]"
+ },
+ {
+  "src": "(function () {\n  var lunr = function (config) { var builder = new lunr.Builder; return builder.build() }\n  lunr.version = \"2.3.9\"\n  var o = {a: {b: {c: 1}}}, s = '}}', t = \"%}\", u = '{ {', h = '#', p = \"a#b\"\n  if (x) { y({ z: [1, 2, { w: 3 }] }) } else { /* } { */ }\n  var re = /[{}]+/g, mod = 7 % 3, tpl = `${a}${b}`\n  lunr.utils.warn = (function (global) { return function (message) {\n    if (global.console && console.warn) { console.warn(message) } } })(this)\n  // comments with # and { and }\n  for (var i = 0; i < 10; i++) { obj[\"k\" + i] = { \"v\": i } }\n})();\nvar s = \"{%\";\n",
+  "ok": false,
+  "msg": "tag name expected",
+  "line": 12,
+  "col": 12
+ },
+ {
+  "src": "var o = {{a: 1}};",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "src": "{# c #}",
+  "ok": true,
+  "ast": "[]"
+ },
+ {
+  "src": "a{# c #}b",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\") Text@0:8(\"b\")]"
+ },
+ {
+  "src": "{# c",
+  "ok": false,
+  "msg": "Error: expected end of comment, got end of file"
+ },
+ {
+  "src": "{#",
+  "ok": false,
+  "msg": "Error: expected end of comment, got end of file"
+ },
+ {
+  "src": "{#}",
+  "ok": false,
+  "msg": "Error: expected end of comment, got end of file"
+ },
+ {
+  "src": "{##}",
+  "ok": true,
+  "ast": "[]"
+ },
+ {
+  "src": "{# {{ x }} {% if %} #}",
+  "ok": true,
+  "ast": "[]"
+ },
+ {
+  "src": "{# a\nb #}c",
+  "ok": true,
+  "ast": "[Text@1:4(\"c\")]"
+ },
+ {
+  "src": "a {#- c -#} b",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\") Text@0:11(\"b\")]"
+ },
+ {
+  "src": "a {#- c #} b",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\") Text@0:10(\" b\")]"
+ },
+ {
+  "src": "a {# c -#} b",
+  "ok": true,
+  "ast": "[Text@0:0(\"a \") Text@0:10(\"b\")]"
+ },
+ {
+  "src": "{# a #} #}",
+  "ok": false,
+  "msg": "Error: unexpected end of comment"
+ },
+ {
+  "src": "{# a {# b #} c #}",
+  "ok": false,
+  "msg": "Error: unexpected end of comment"
+ },
+ {
+  "src": "{{ x }}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:3(\"x\"))]"
+ },
+ {
+  "src": "{{x}}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:2(\"x\"))]"
+ },
+ {
+  "src": "{{ x",
+  "ok": false,
+  "msg": "expected variable end"
+ },
+ {
+  "src": "{{",
+  "ok": false,
+  "msg": "expected expression, got end of file"
+ },
+ {
+  "src": "{{ }}",
+  "ok": false,
+  "msg": "unexpected token: }}",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{{ x y }}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ x %}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ x -}}  a",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:3(\"x\")) Text@0:8(\"a\")]"
+ },
+ {
+  "src": "a  {{- x }}",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\") Output@0:3(Symbol@0:7(\"x\"))]"
+ },
+ {
+  "src": "  a  {{- x -}}  b  ",
+  "ok": true,
+  "ast": "[Text@0:0(\"  a\") Output@0:5(Symbol@0:9(\"x\")) Text@0:14(\"b  \")]"
+ },
+ {
+  "src": "{{- x -}}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:4(\"x\"))]"
+ },
+ {
+  "src": "\n\t {{- x }}",
+  "ok": true,
+  "ast": "[Text@0:0(\"\") Output@1:2(Symbol@1:6(\"x\"))]"
+ },
+ {
+  "src": "{{ \"a\\nb\\tc\\rd\\\"e\\\\f\\qg\" }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(\"a\\nb\\tc\\rd\\\"e\\\\fqg\"))]"
+ },
+ {
+  "src": "{{ 'it''s' }}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ 'a\"b' }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(\"a\\\"b\"))]"
+ },
+ {
+  "src": "{{ \"unterminated }}",
+  "ok": false,
+  "msg": "expected variable end"
+ },
+ {
+  "src": "{{ \"abc\\",
+  "ok": false,
+  "msg": "expected variable end"
+ },
+ {
+  "src": "{{ 1 }}{{ 1.5 }}{{ 10. }}{{ 007 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(1)) Output@0:7(Literal@0:10(1.5)) Output@0:16(Literal@0:19(10)) Output@0:25(Literal@0:28(7))]"
+ },
+ {
+  "src": "{{ 1e5 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:3(\"1e5\"))]"
+ },
+ {
+  "src": "{{ 1.e5 }}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ 12345678901234567890 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(12345678901234567000))]"
+ },
+ {
+  "src": "{{ 0.1 }}{{ 1.0 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(0.1)) Output@0:9(Literal@0:12(1))]"
+ },
+ {
+  "src": "{{ true }}{{ false }}{{ none }}{{ null }}{{ True }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(true)) Output@0:10(Literal@0:13(false)) Output@0:21(Literal@0:24(null)) Output@0:31(Literal@0:34(null)) Output@0:41(Symbol@0:44(\"True\"))]"
+ },
+ {
+  "src": "{{ r/a.b/gi }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(Regex(\"gi\")))]"
+ },
+ {
+  "src": "{{ r/a\\/b/ }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(Regex(\"\")))]"
+ },
+ {
+  "src": "{{ r// }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(Regex(\"\")))]"
+ },
+ {
+  "src": "{{ r/x/gg }}",
+  "ok": false,
+  "msg": "SyntaxError: Invalid flags supplied to RegExp constructor 'gg'"
+ },
+ {
+  "src": "{{ r/x/mgy }}",
+  "ok": true,
+  "ast": "[Output@0:0(Literal@0:3(Regex(\"gmy\")))]"
+ },
+ {
+  "src": "{{ r/x }}",
+  "ok": false,
+  "msg": "expected variable end"
+ },
+ {
+  "src": "{{ r }}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:3(\"r\"))]"
+ },
+ {
+  "src": "{{ [1, 2, 3] }}",
+  "ok": true,
+  "ast": "[Output@0:0(Array@0:3(Literal@0:4(1) Literal@0:7(2) Literal@0:10(3)))]"
+ },
+ {
+  "src": "{{ [] }}",
+  "ok": true,
+  "ast": "[Output@0:0(Array@0:3())]"
+ },
+ {
+  "src": "{{ [1, 2, ] }}",
+  "ok": false,
+  "msg": "unexpected token: ]",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "src": "{{ [1 2] }}",
+  "ok": false,
+  "msg": "parseAggregate: expected comma after expression",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{{ (1, 2) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Group@0:3(Literal@0:4(1) Literal@0:7(2)))]"
+ },
+ {
+  "src": "{{ () }}",
+  "ok": true,
+  "ast": "[Output@0:0(Group@0:3())]"
+ },
+ {
+  "src": "{{ [1, 2) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Array@0:3(Literal@0:4(1) Literal@0:7(2)))]"
+ },
+ {
+  "src": "{{ {a: 1, \"b\": 2} }}",
+  "ok": true,
+  "ast": "[Output@0:0(Dict@0:3(Pair@0:4(Symbol@0:4(\"a\"), Literal@0:7(1)) Pair@0:10(Literal@0:10(\"b\"), Literal@0:15(2))))]"
+ },
+ {
+  "src": "{{ { a: 1 } }}",
+  "ok": true,
+  "ast": "[Output@0:0(Dict@0:3(Pair@0:5(Symbol@0:5(\"a\"), Literal@0:8(1))))]"
+ },
+ {
+  "src": "{{ {a: {b: 1}} }}",
+  "ok": false,
+  "msg": "parseAggregate: expected comma after expression",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ {a 1} }}",
+  "ok": false,
+  "msg": "parseAggregate: expected colon after dict key",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{{ {1: 2, x.y: 3} }}",
+  "ok": true,
+  "ast": "[Output@0:0(Dict@0:3(Pair@0:4(Literal@0:4(1), Literal@0:7(2)) Pair@0:11(LookupVal@0:11(Symbol@0:10(\"x\"), Literal@0:12(\"y\")), Literal@0:15(3))))]"
+ },
+ {
+  "src": "{{ {} }}",
+  "ok": true,
+  "ast": "[Output@0:0(Dict@0:3())]"
+ },
+ {
+  "src": "{{ a.b.c }}",
+  "ok": true,
+  "ast": "[Output@0:0(LookupVal@0:6(LookupVal@0:4(Symbol@0:3(\"a\"), Literal@0:5(\"b\")), Literal@0:7(\"c\")))]"
+ },
+ {
+  "src": "{{ a[\"b\"][0] }}",
+  "ok": true,
+  "ast": "[Output@0:0(LookupVal@0:9(LookupVal@0:4(Symbol@0:3(\"a\"), Literal@0:5(\"b\")), Literal@0:10(0)))]"
+ },
+ {
+  "src": "{{ a.0 }}",
+  "ok": false,
+  "msg": "expected name as lookup value, got 0",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ a.1.5 }}",
+  "ok": false,
+  "msg": "expected name as lookup value, got 1.5",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ a.1.",
+  "ok": false,
+  "msg": "expected name as lookup value, got 1.null",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ a. }}",
+  "ok": false,
+  "msg": "expected name as lookup value, got }}",
+  "line": 1,
+  "col": 7
+ },
+ {
+  "src": "{{ a.r/x/ }}",
+  "ok": false,
+  "msg": "expected name as lookup value, got [object Object]",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ a. b }}",
+  "ok": true,
+  "ast": "[Output@0:0(LookupVal@0:4(Symbol@0:3(\"a\"), Literal@0:6(\"b\")))]"
+ },
+ {
+  "src": "{{ a[] }}",
+  "ok": true,
+  "ast": "[Output@0:0(LookupVal@0:4(Symbol@0:3(\"a\"), ~))]"
+ },
+ {
+  "src": "{{ a[1, 2] }}",
+  "ok": false,
+  "msg": "invalid index",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "src": "{{ f() }}",
+  "ok": true,
+  "ast": "[Output@0:0(FunCall@0:4(Symbol@0:3(\"f\"), Args()))]"
+ },
+ {
+  "src": "{{ f(1, 2, x=3, 4) }}",
+  "ok": true,
+  "ast": "[Output@0:0(FunCall@0:4(Symbol@0:3(\"f\"), Args(Literal@0:5(1) Literal@0:8(2) Literal@0:16(4) KW(Pair@0:11(Symbol@0:11(\"x\"), Literal@0:13(3))))))]"
+ },
+ {
+  "src": "{{ f(1)(2) }}",
+  "ok": true,
+  "ast": "[Output@0:0(FunCall@0:7(FunCall@0:4(Symbol@0:3(\"f\"), Args(Literal@0:5(1))), Args(Literal@0:8(2))))]"
+ },
+ {
+  "src": "{{ f(1,) }}",
+  "ok": false,
+  "msg": "unexpected token: )",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ f(1 2) }}",
+  "ok": false,
+  "msg": "parseSignature: expected comma after expression",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ f( }}",
+  "ok": false,
+  "msg": "unexpected token: }}",
+  "line": 1,
+  "col": 7
+ },
+ {
+  "src": "{{ f(",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of null (reading 'type')"
+ },
+ {
+  "src": "{{ ,(1) }}",
+  "ok": true,
+  "ast": "[Output@0:0(FunCall@0:4(~, Args(Literal@0:5(1))))]"
+ },
+ {
+  "src": "{{ ,[1] }}",
+  "ok": true,
+  "ast": "[Output@0:0(LookupVal@0:4(~, Literal@0:5(1)))]"
+ },
+ {
+  "src": "{{ , }}",
+  "ok": false,
+  "msg": "unexpected token: ,",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{{ a.b(c).d[e] }}",
+  "ok": true,
+  "ast": "[Output@0:0(LookupVal@0:11(LookupVal@0:9(FunCall@0:6(LookupVal@0:4(Symbol@0:3(\"a\"), Literal@0:5(\"b\")), Args(Symbol@0:7(\"c\"))), Literal@0:10(\"d\")), Symbol@0:12(\"e\")))]"
+ },
+ {
+  "src": "{{ 1 + 2 * 3 - 4 / 5 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Add@0:3(Literal@0:3(1), Sub@0:7(Mul@0:7(Literal@0:7(2), Literal@0:11(3)), Div@0:15(Literal@0:15(4), Literal@0:19(5)))))]"
+ },
+ {
+  "src": "{{ a // b % c ** d }}",
+  "ok": true,
+  "ast": "[Output@0:0(FloorDiv@0:3(Symbol@0:3(\"a\"), Mod@0:8(Symbol@0:8(\"b\"), Pow@0:12(Symbol@0:12(\"c\"), Symbol@0:17(\"d\")))))]"
+ },
+ {
+  "src": "{{ a ~ b ~ c }}",
+  "ok": true,
+  "ast": "[Output@0:0(Concat@0:3(Concat@0:3(Symbol@0:3(\"a\"), Symbol@0:7(\"b\")), Symbol@0:11(\"c\")))]"
+ },
+ {
+  "src": "{{ -a + +b }}",
+  "ok": true,
+  "ast": "[Output@0:0(Add@0:3(Neg@0:3(Symbol@0:4(\"a\")), Pos@0:8(Symbol@0:9(\"b\"))))]"
+ },
+ {
+  "src": "{{ - - a }}",
+  "ok": true,
+  "ast": "[Output@0:0(Neg@0:3(Neg@0:5(Symbol@0:7(\"a\"))))]"
+ },
+ {
+  "src": "{{ -a | abs }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:8(Symbol@0:8(\"abs\"), Args(Neg@0:3(Symbol@0:4(\"a\")))))]"
+ },
+ {
+  "src": "{{ a == b }}{{ a === b }}{{ a != b }}{{ a !== b }}",
+  "ok": true,
+  "ast": "[Output@0:0(Compare@0:5(Symbol@0:3(\"a\"), [CompareOperand@0:5(Symbol@0:8(\"b\"), \"==\")])) Output@0:12(Compare@0:17(Symbol@0:15(\"a\"), [CompareOperand@0:17(Symbol@0:21(\"b\"), \"===\")])) Output@0:25(Compare@0:30(Symbol@0:28(\"a\"), [CompareOperand@0:30(Symbol@0:33(\"b\"), \"!=\")])) Output@0:37(Compare@0:42(Symbol@0:40(\"a\"), [CompareOperand@0:42(Symbol@0:46(\"b\"), \"!==\")]))]"
+ },
+ {
+  "src": "{{ a < b <= c > d >= e }}",
+  "ok": true,
+  "ast": "[Output@0:0(Compare@0:5(Symbol@0:3(\"a\"), [CompareOperand@0:5(Symbol@0:7(\"b\"), \"<\") CompareOperand@0:9(Symbol@0:12(\"c\"), \"<=\") CompareOperand@0:14(Symbol@0:16(\"d\"), \">\") CompareOperand@0:18(Symbol@0:21(\"e\"), \">=\")]))]"
+ },
+ {
+  "src": "{{ a \"==\" b }}",
+  "ok": true,
+  "ast": "[Output@0:0(Compare@0:5(Symbol@0:3(\"a\"), [CompareOperand@0:5(Symbol@0:10(\"b\"), \"==\")]))]"
+ },
+ {
+  "src": "{{ a = b }}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ a ! b }}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "{{ a and b or c and not d }}",
+  "ok": true,
+  "ast": "[Output@0:0(Or@0:3(And@0:3(Symbol@0:3(\"a\"), Symbol@0:9(\"b\")), And@0:14(Symbol@0:14(\"c\"), Not@0:20(Symbol@0:24(\"d\")))))]"
+ },
+ {
+  "src": "{{ not not a }}",
+  "ok": true,
+  "ast": "[Output@0:0(Not@0:3(Not@0:7(Symbol@0:11(\"a\"))))]"
+ },
+ {
+  "src": "{{ a in b }}{{ a not in b }}",
+  "ok": true,
+  "ast": "[Output@0:0(In@0:3(Symbol@0:3(\"a\"), Symbol@0:8(\"b\"))) Output@0:12(Not@0:15(In@0:15(Symbol@0:15(\"a\"), Symbol@0:24(\"b\"))))]"
+ },
+ {
+  "src": "{{ a not b }}",
+  "ok": false,
+  "msg": "Error: pushToken: can only push one token on between reads"
+ },
+ {
+  "src": "{{ a not }}",
+  "ok": false,
+  "msg": "Error: pushToken: can only push one token on between reads"
+ },
+ {
+  "src": "{% if a not %}{% endif %}",
+  "ok": false,
+  "msg": "Error: pushToken: can only push one token on between reads"
+ },
+ {
+  "src": "{{ a is defined }}{{ a is not divisibleby(3) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Is@0:3(Symbol@0:3(\"a\"), Symbol@0:8(\"defined\"))) Output@0:18(Not@0:21(Is@0:21(Symbol@0:21(\"a\"), FunCall@0:41(Symbol@0:30(\"divisibleby\"), Args(Literal@0:42(3))))))]"
+ },
+ {
+  "src": "{{ a if b else c }}",
+  "ok": true,
+  "ast": "[Output@0:0(InlineIf@0:3(Symbol@0:8(\"b\"), Symbol@0:3(\"a\"), Symbol@0:15(\"c\")))]"
+ },
+ {
+  "src": "{{ a if b }}",
+  "ok": true,
+  "ast": "[Output@0:0(InlineIf@0:3(Symbol@0:8(\"b\"), Symbol@0:3(\"a\"), ~))]"
+ },
+ {
+  "src": "{{ a if b if c else d }}",
+  "ok": false,
+  "msg": "expected variable end",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "src": "{{ (a + b) * c }}",
+  "ok": true,
+  "ast": "[Output@0:0(Mul@0:3(Group@0:3(Add@0:4(Symbol@0:4(\"a\"), Symbol@0:8(\"b\"))), Symbol@0:13(\"c\")))]"
+ },
+ {
+  "src": "{{ a | upper }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:7(Symbol@0:7(\"upper\"), Args(Symbol@0:3(\"a\"))))]"
+ },
+ {
+  "src": "{{ a | replace(\"x\", \"y\") | join(\",\") }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:27(Symbol@0:27(\"join\"), Args(Filter@0:7(Symbol@0:7(\"replace\"), Args(Symbol@0:3(\"a\") Literal@0:15(\"x\") Literal@0:20(\"y\"))) Literal@0:32(\",\"))))]"
+ },
+ {
+  "src": "{{ a | f(x=1) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:7(Symbol@0:7(\"f\"), Args(Symbol@0:3(\"a\") KW(Pair@0:9(Symbol@0:9(\"x\"), Literal@0:11(1))))))]"
+ },
+ {
+  "src": "{{ a | b.c }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:7(Symbol@0:7(\"b.c\"), Args(Symbol@0:3(\"a\"))))]"
+ },
+ {
+  "src": "{{ a | b.c(1) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:7(Symbol@0:7(\"b.c\"), Args(Symbol@0:3(\"a\") Literal@0:11(1))))]"
+ },
+ {
+  "src": "{{ a | f(1)(2) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Filter@0:7(Symbol@0:7(\"f\"), Args(Symbol@0:3(\"a\") Literal@0:12(2))))]"
+ },
+ {
+  "src": "{{ a | f(1).x }}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{{ a | f(1)[0] }}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{{ a | 1 }}",
+  "ok": false,
+  "msg": "expected symbol, got int",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ a | }}",
+  "ok": false,
+  "msg": "expected symbol, got variable-end",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{{ a | f | g(1) + 2 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Add@0:11(Filter@0:11(Symbol@0:11(\"g\"), Args(Filter@0:7(Symbol@0:7(\"f\"), Args(Symbol@0:3(\"a\"))) Literal@0:13(1))), Literal@0:18(2)))]"
+ },
+ {
+  "src": "{{ \"a\" if x else \"b\" | upper }}",
+  "ok": true,
+  "ast": "[Output@0:0(InlineIf@0:3(Symbol@0:10(\"x\"), Literal@0:3(\"a\"), Filter@0:23(Symbol@0:23(\"upper\"), Args(Literal@0:17(\"b\")))))]"
+ },
+ {
+  "src": "{% %}",
+  "ok": false,
+  "msg": "tag name expected",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{%",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of null (reading 'type')"
+ },
+ {
+  "src": "{% if",
+  "ok": false,
+  "msg": "expected expression, got end of file"
+ },
+ {
+  "src": "{% 1 %}",
+  "ok": false,
+  "msg": "tag name expected",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% if x %}a{% endif %}",
+  "ok": true,
+  "ast": "[If@0:3(Symbol@0:6(\"x\"), [Text@0:10(\"a\")], ~)]"
+ },
+ {
+  "src": "{%if x%}a{%endif%}",
+  "ok": true,
+  "ast": "[If@0:2(Symbol@0:5(\"x\"), [Text@0:8(\"a\")], ~)]"
+ },
+ {
+  "src": "{% if x %}a{% elif y %}b{% elseif z %}c{% else %}d{% endif %}",
+  "ok": true,
+  "ast": "[If@0:3(Symbol@0:6(\"x\"), [Text@0:10(\"a\")], If@0:14(Symbol@0:19(\"y\"), [Text@0:23(\"b\")], If@0:27(Symbol@0:34(\"z\"), [Text@0:38(\"c\")], [Text@0:49(\"d\")])))]"
+ },
+ {
+  "src": "{% if x %}a{% else %}b{% elif y %}c{% endif %}",
+  "ok": false,
+  "msg": "unknown block tag: elif",
+  "line": 1,
+  "col": 26
+ },
+ {
+  "src": "{% if x %}never closed",
+  "ok": false,
+  "msg": "parseIf: expected elif, else, or endif, got end of file"
+ },
+ {
+  "src": "{% if x %}a{% else %}b",
+  "ok": false,
+  "msg": "unexpected end of file"
+ },
+ {
+  "src": "{% if x %}{% endif y %}",
+  "ok": false,
+  "msg": "expected block end in endif statement",
+  "line": 1,
+  "col": 22
+ },
+ {
+  "src": "{% if %}{% endif %}",
+  "ok": false,
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 7
+ },
+ {
+  "src": "{% ifAsync x %}a{% elif y %}b{% endif %}",
+  "ok": true,
+  "ast": "[IfAsync@0:3(Symbol@0:11(\"x\"), [Text@0:15(\"a\")], If@0:19(Symbol@0:24(\"y\"), [Text@0:28(\"b\")], ~))]"
+ },
+ {
+  "src": "{% endif %}",
+  "ok": false,
+  "msg": "unknown block tag: endif",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% else %}",
+  "ok": false,
+  "msg": "unknown block tag: else",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% if x %}{% endfor %}",
+  "ok": false,
+  "msg": "unknown block tag: endfor",
+  "line": 1,
+  "col": 14
+ },
+ {
+  "src": "{% for x in xs %}{{ x }}{% else %}none{% endfor %}",
+  "ok": true,
+  "ast": "[For@0:3(Symbol@0:12(\"xs\"), Symbol@0:7(\"x\"), [Output@0:17(Symbol@0:20(\"x\"))], [Text@0:34(\"none\")])]"
+ },
+ {
+  "src": "{% for k, v in obj %}{% endfor %}",
+  "ok": true,
+  "ast": "[For@0:3(Symbol@0:15(\"obj\"), Array@0:7(Symbol@0:7(\"k\") Symbol@0:10(\"v\")), [], ~)]"
+ },
+ {
+  "src": "{% for a, b, c in xs %}{% endfor %}",
+  "ok": true,
+  "ast": "[For@0:3(Symbol@0:18(\"xs\"), Array@0:7(Symbol@0:7(\"a\") Symbol@0:10(\"b\") Symbol@0:13(\"c\")), [], ~)]"
+ },
+ {
+  "src": "{% for a, in xs %}{% endfor %}",
+  "ok": false,
+  "msg": "parseFor: expected \"in\" keyword for loop",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% for a, 1 in xs %}{% endfor %}",
+  "ok": true,
+  "ast": "[For@0:3(Symbol@0:15(\"xs\"), Array@0:7(Symbol@0:7(\"a\") Literal@0:10(1)), [], ~)]"
+ },
+ {
+  "src": "{% for 1 in xs %}{% endfor %}",
+  "ok": false,
+  "msg": "parseFor: variable name expected for loop",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% for x xs %}{% endfor %}",
+  "ok": false,
+  "msg": "parseFor: expected \"in\" keyword for loop",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% for x in %}{% endfor %}",
+  "ok": false,
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 13
+ },
+ {
+  "src": "{% for x in xs %}",
+  "ok": false,
+  "msg": "unexpected end of file"
+ },
+ {
+  "src": "{% for x in xs %}{% endfor x %}",
+  "ok": false,
+  "msg": "expected block end in endfor statement",
+  "line": 1,
+  "col": 30
+ },
+ {
+  "src": "{% asyncEach x in xs %}{% endeach %}",
+  "ok": true,
+  "ast": "[AsyncEach@0:3(Symbol@0:18(\"xs\"), Symbol@0:13(\"x\"), [], ~)]"
+ },
+ {
+  "src": "{% asyncAll x in xs %}{% endall %}",
+  "ok": true,
+  "ast": "[AsyncAll@0:3(Symbol@0:17(\"xs\"), Symbol@0:12(\"x\"), [], ~)]"
+ },
+ {
+  "src": "{% set x = 1 %}",
+  "ok": true,
+  "ast": "[Set@0:3([Symbol@0:7(\"x\")], Literal@0:11(1), ~)]"
+ },
+ {
+  "src": "{% set x, y = 1 %}",
+  "ok": true,
+  "ast": "[Set@0:3([Symbol@0:7(\"x\") Symbol@0:10(\"y\")], Literal@0:14(1), ~)]"
+ },
+ {
+  "src": "{% set a, b = 1, 2 %}",
+  "ok": false,
+  "msg": "expected block end in set statement",
+  "line": 1,
+  "col": 18
+ },
+ {
+  "src": "{% set x %}a{{ b }}{% endset %}",
+  "ok": true,
+  "ast": "[Set@0:3([Symbol@0:7(\"x\")], ~, Capture@0:3([Text@0:11(\"a\") Output@0:12(Symbol@0:15(\"b\"))]))]"
+ },
+ {
+  "src": "{% set x -%}  a  {%- endset %}",
+  "ok": true,
+  "ast": "[Set@0:3([Symbol@0:7(\"x\")], ~, Capture@0:3([Text@0:12(\"  a\")]))]"
+ },
+ {
+  "src": "{% set x %}open",
+  "ok": false,
+  "msg": "unexpected end of file"
+ },
+ {
+  "src": "{% set %}",
+  "ok": false,
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 8
+ },
+ {
+  "src": "{% set x y %}",
+  "ok": false,
+  "msg": "parseSet: expected = or block end in set tag",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% set x.y = 1 %}",
+  "ok": true,
+  "ast": "[Set@0:3([LookupVal@0:8(Symbol@0:7(\"x\"), Literal@0:9(\"y\"))], Literal@0:13(1), ~)]"
+ },
+ {
+  "src": "{% block b %}x{% endblock %}",
+  "ok": true,
+  "ast": "[Block@0:3(Symbol@0:9(\"b\"), [Text@0:13(\"x\")])]"
+ },
+ {
+  "src": "{% block b %}x{% endblock b %}",
+  "ok": true,
+  "ast": "[Block@0:3(Symbol@0:9(\"b\"), [Text@0:13(\"x\")])]"
+ },
+ {
+  "src": "{% block b %}x{% endblock c %}",
+  "ok": false,
+  "msg": "expected block end in c statement",
+  "line": 1,
+  "col": 29
+ },
+ {
+  "src": "{% block b %}x",
+  "ok": false,
+  "msg": "parseBlock: expected endblock, got end of file"
+ },
+ {
+  "src": "{% block %}{% endblock %}",
+  "ok": false,
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% block \"b\" %}{% endblock %}",
+  "ok": false,
+  "msg": "parseBlock: variable name expected",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% block a.b %}{% endblock %}",
+  "ok": false,
+  "msg": "parseBlock: variable name expected",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% block b %}{% block c %}{% endblock %}{% endblock %}",
+  "ok": true,
+  "ast": "[Block@0:3(Symbol@0:9(\"b\"), [Block@0:16(Symbol@0:22(\"c\"), [])])]"
+ },
+ {
+  "src": "{% extends \"base.njk\" %}",
+  "ok": true,
+  "ast": "[Extends@0:3(Literal@0:11(\"base.njk\"))]"
+ },
+ {
+  "src": "{% extends base %}{% block a %}{% endblock %}",
+  "ok": true,
+  "ast": "[Extends@0:3(Symbol@0:11(\"base\")) Block@0:21(Symbol@0:27(\"a\"), [])]"
+ },
+ {
+  "src": "{% extends %}",
+  "ok": false,
+  "msg": "unexpected token: %}",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "src": "{% include \"a.njk\" %}",
+  "ok": true,
+  "ast": "[Include@0:3(Literal@0:11(\"a.njk\"), false)]"
+ },
+ {
+  "src": "{% include \"a.njk\" ignore missing %}",
+  "ok": true,
+  "ast": "[Include@0:3(Literal@0:11(\"a.njk\"), true)]"
+ },
+ {
+  "src": "{% include \"a.njk\" ignore %}",
+  "ok": true,
+  "ast": "[Include@0:3(Literal@0:11(\"a.njk\"), false)]"
+ },
+ {
+  "src": "{% include x + \".njk\" %}",
+  "ok": true,
+  "ast": "[Include@0:3(Add@0:11(Symbol@0:11(\"x\"), Literal@0:15(\".njk\")), false)]"
+ },
+ {
+  "src": "{% macro m(a, b=2) %}{{ a }}{% endmacro %}",
+  "ok": true,
+  "ast": "[Macro@0:3(Symbol@0:9(\"m\"), Args(Symbol@0:11(\"a\") KW(Pair@0:14(Symbol@0:14(\"b\"), Literal@0:16(2)))), [Output@0:21(Symbol@0:24(\"a\"))])]"
+ },
+ {
+  "src": "{% macro m %}{% endmacro %}",
+  "ok": false,
+  "msg": "expected arguments",
+  "line": 1,
+  "col": 12
+ },
+ {
+  "src": "{% macro m() %}",
+  "ok": false,
+  "msg": "unexpected end of file"
+ },
+ {
+  "src": "{% macro \"m\"() %}{% endmacro %}",
+  "ok": true,
+  "ast": "[Macro@0:3(Literal@0:9(\"m\"), Args(), [])]"
+ },
+ {
+  "src": "{% call m(1) %}body{% endcall %}",
+  "ok": true,
+  "ast": "[Output@0:3(FunCall@0:9(Symbol@0:8(\"m\"), Args(Literal@0:10(1) KW(Pair@0:3(Symbol@0:3(\"caller\"), Caller@0:3(Symbol@0:3(\"caller\"), Args(), [Text@0:15(\"body\")]))))))]"
+ },
+ {
+  "src": "{% call(x, y) m(1, k=2) %}{{ x }}{% endcall %}",
+  "ok": true,
+  "ast": "[Output@0:3(FunCall@0:15(Symbol@0:14(\"m\"), Args(Literal@0:16(1) KW(Pair@0:19(Symbol@0:19(\"k\"), Literal@0:21(2)) Pair@0:3(Symbol@0:3(\"caller\"), Caller@0:3(Symbol@0:3(\"caller\"), Args(Symbol@0:8(\"x\") Symbol@0:11(\"y\")), [Output@0:26(Symbol@0:29(\"x\"))]))))))]"
+ },
+ {
+  "src": "{% call m %}{% endcall %}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{% call m.x %}{% endcall %}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{% call m %}",
+  "ok": false,
+  "msg": "unexpected end of file"
+ },
+ {
+  "src": "{% import \"m.njk\" as m %}",
+  "ok": true,
+  "ast": "[Import@0:3(Literal@0:10(\"m.njk\"), Symbol@0:21(\"m\"), ~)]"
+ },
+ {
+  "src": "{% import \"m.njk\" as m with context %}",
+  "ok": true,
+  "ast": "[Import@0:3(Literal@0:10(\"m.njk\"), Symbol@0:21(\"m\"), true)]"
+ },
+ {
+  "src": "{% import \"m.njk\" as m without context %}",
+  "ok": true,
+  "ast": "[Import@0:3(Literal@0:10(\"m.njk\"), Symbol@0:21(\"m\"), false)]"
+ },
+ {
+  "src": "{% import \"m.njk\" as m with %}",
+  "ok": false,
+  "msg": "parseFrom: expected context after with/without",
+  "line": 1,
+  "col": 24
+ },
+ {
+  "src": "{% import \"m.njk\" %}",
+  "ok": false,
+  "msg": "parseImport: expected \"as\" keyword",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% from \"m.njk\" import a, b as c %}",
+  "ok": true,
+  "ast": "[FromImport@0:3(Literal@0:8(\"m.njk\"), [Symbol@0:23(\"a\") Pair@0:26(Symbol@0:26(\"b\"), Symbol@0:31(\"c\"))], ~)]"
+ },
+ {
+  "src": "{% from \"m.njk\" import a with context, b %}",
+  "ok": true,
+  "ast": "[FromImport@0:3(Literal@0:8(\"m.njk\"), [Symbol@0:23(\"a\") Symbol@0:39(\"b\")], ~)]"
+ },
+ {
+  "src": "{% from \"m.njk\" import a, b without context %}",
+  "ok": true,
+  "ast": "[FromImport@0:3(Literal@0:8(\"m.njk\"), [Symbol@0:23(\"a\") Symbol@0:26(\"b\")], false)]"
+ },
+ {
+  "src": "{% from \"m.njk\" import %}",
+  "ok": false,
+  "msg": "parseFrom: Expected at least one import name",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% from \"m.njk\" import a b %}",
+  "ok": false,
+  "msg": "parseFrom: expected comma",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% from \"m.njk\" import _a %}",
+  "ok": false,
+  "msg": "parseFrom: names starting with an underscore cannot be imported",
+  "line": 1,
+  "col": 24
+ },
+ {
+  "src": "{% from \"m.njk\" import \"_a\" %}",
+  "ok": false,
+  "msg": "parseFrom: names starting with an underscore cannot be imported",
+  "line": 1,
+  "col": 24
+ },
+ {
+  "src": "{% from \"m.njk\" import \"b\" %}",
+  "ok": true,
+  "ast": "[FromImport@0:3(Literal@0:8(\"m.njk\"), [Literal@0:23(\"b\")], ~)]"
+ },
+ {
+  "src": "{% from \"m.njk\" import 1 %}",
+  "ok": false,
+  "msg": "TypeError: name.value.charAt is not a function"
+ },
+ {
+  "src": "{% from \"m.njk\" import none %}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of null (reading 'charAt')"
+ },
+ {
+  "src": "{% from \"m.njk\" import [a] %}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'charAt')"
+ },
+ {
+  "src": "{% from \"m.njk\" a %}",
+  "ok": false,
+  "msg": "parseFrom: expected import",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% from \"m.njk\" import a",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of null (reading 'type')"
+ },
+ {
+  "src": "{% filter upper %}x{% endfilter %}",
+  "ok": true,
+  "ast": "[Output@0:10(Filter@0:10(Symbol@0:10(\"upper\"), Args(Capture@0:10([Text@0:18(\"x\")]))))]"
+ },
+ {
+  "src": "{% filter replace(\"a\", \"b\") %}x{% endfilter %}",
+  "ok": true,
+  "ast": "[Output@0:10(Filter@0:10(Symbol@0:10(\"replace\"), Args(Capture@0:10([Text@0:30(\"x\")]) Literal@0:18(\"a\") Literal@0:23(\"b\"))))]"
+ },
+ {
+  "src": "{% filter upper | lower %}x{% endfilter %}",
+  "ok": false,
+  "msg": "expected block end in filter statement",
+  "line": 1,
+  "col": 19
+ },
+ {
+  "src": "{% filter f(1).x %}x{% endfilter %}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'children')"
+ },
+ {
+  "src": "{% filter %}x{% endfilter %}",
+  "ok": false,
+  "msg": "expected symbol, got block-end",
+  "line": 1,
+  "col": 11
+ },
+ {
+  "src": "{% switch x %}{% case 1 %}a{% case 2 %}b{% default %}c{% endswitch %}",
+  "ok": true,
+  "ast": "[Switch@0:3(Symbol@0:10(\"x\"), [Case(Literal@0:22(1), [Text@0:26(\"a\")]) Case(Literal@0:35(2), [Text@0:39(\"b\")])], [Text@0:53(\"c\")])]"
+ },
+ {
+  "src": "{% switch x %}ignored{% case 1 %}a{% endswitch %}",
+  "ok": true,
+  "ast": "[Switch@0:3(Symbol@0:10(\"x\"), [Case(Literal@0:29(1), [Text@0:33(\"a\")])], ~)]"
+ },
+ {
+  "src": "{% switch x %}{% endswitch %}",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of null (reading 'value')"
+ },
+ {
+  "src": "{% switch x %}{% default %}d{% endswitch %}",
+  "ok": true,
+  "ast": "[Switch@0:3(Symbol@0:10(\"x\"), [Case(Symbol@0:17(\"default\"), [Text@0:27(\"d\")])], ~)]"
+ },
+ {
+  "src": "{% switch x %}{% case 1 %}a",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of null (reading 'value')"
+ },
+ {
+  "src": "{% raw %}{{ x }}{% if %}{% endraw %}",
+  "ok": true,
+  "ast": "[Text@0:7(\"{{ x }}{% if %}\")]"
+ },
+ {
+  "src": "{% raw %}a{% raw %}b{% endraw %}c{% endraw %}d",
+  "ok": true,
+  "ast": "[Text@0:7(\"a{% raw %}b{% endraw %}c\") Text@0:45(\"d\")]"
+ },
+ {
+  "src": "{% raw %}a{% raw %}b{% endraw %}c",
+  "ok": true,
+  "ast": "[Text@0:7(\"a{% raw %}b{% endraw %}\") Text@0:32(\"c\")]"
+ },
+ {
+  "src": "{% raw %}no end",
+  "ok": true,
+  "ast": "[Text@0:7(\"\") Text@0:9(\"no end\")]"
+ },
+ {
+  "src": "{% raw %}a{%endraw%}b",
+  "ok": true,
+  "ast": "[Text@0:7(\"a\") Text@0:20(\"b\")]"
+ },
+ {
+  "src": "{% raw %}a{%\tendraw %}b",
+  "ok": true,
+  "ast": "[Text@0:7(\"a\") Text@0:22(\"b\")]"
+ },
+ {
+  "src": "{% raw %}a{%\nendraw %}b",
+  "ok": false,
+  "msg": "TypeError: Cannot read properties of undefined (reading 'lastIndexOf')"
+ },
+ {
+  "src": "{% raw %}a\n{% endraw %}b",
+  "ok": true,
+  "ast": "[Text@0:7(\"a\\n\") Text@1:12(\"b\")]"
+ },
+ {
+  "src": "{% raw %}a{%- endraw %}b",
+  "ok": false,
+  "msg": "unknown block tag: endraw",
+  "line": 1,
+  "col": 15
+ },
+ {
+  "src": "a  {%- raw -%}  {{ x }}  {%- endraw -%}  b",
+  "ok": false,
+  "msg": "unknown block tag: endraw",
+  "line": 1,
+  "col": 30
+ },
+ {
+  "src": "a  {%- raw -%}  {{ x }}  {% endraw -%}  b",
+  "ok": false,
+  "msg": "unknown block tag: endraw",
+  "line": 1,
+  "col": 29
+ },
+ {
+  "src": "a {% raw -%}  b {% endraw %}",
+  "ok": true,
+  "ast": "[Text@0:0(\"a \") Text@0:9(\"  b \")]"
+ },
+ {
+  "src": "{% verbatim %}{% raw %}{% endverbatim %}",
+  "ok": true,
+  "ast": "[Text@0:12(\"{% raw %}\")]"
+ },
+ {
+  "src": "{% raw x %}{% endraw %}",
+  "ok": false,
+  "msg": "expected block end in raw statement",
+  "line": 1,
+  "col": 10
+ },
+ {
+  "src": "{% autoescape true %}{{ v }}{% endautoescape %}",
+  "ok": false,
+  "msg": "unknown block tag: autoescape",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% frobnicate %}",
+  "ok": false,
+  "msg": "unknown block tag: frobnicate",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "{% setAsync \"x\" %}a{% endsetAsync %}",
+  "ok": false,
+  "msg": "unknown block tag: setAsync",
+  "line": 1,
+  "col": 4
+ },
+ {
+  "src": "a  {%- if x -%}  b  {%- endif -%}  c",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\") If@0:7(Symbol@0:10(\"x\"), [Text@0:15(\"b\")], ~) Text@0:33(\"c\")]"
+ },
+ {
+  "src": "a\n  {% if x %}\n  b\n  {% endif %}\n",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\\n  \") If@1:5(Symbol@1:8(\"x\"), [Text@1:12(\"\\n  b\\n  \")], ~) Text@3:13(\"\\n\")]"
+ },
+ {
+  "src": "a {%- if x %} b {% endif -%} c",
+  "ok": true,
+  "ast": "[Text@0:0(\"a\") If@0:6(Symbol@0:9(\"x\"), [Text@0:13(\" b \")], ~) Text@0:28(\"c\")]"
+ },
+ {
+  "src": "x\r\n{%- if y -%}\r\nz{% endif %}",
+  "ok": true,
+  "ast": "[Text@0:0(\"x\") If@1:4(Symbol@1:7(\"y\"), [Text@1:12(\"z\")], ~)]"
+ },
+ {
+  "src": "{% if x -%}\n{{ y }}{%- endif %}",
+  "ok": true,
+  "ast": "[If@0:3(Symbol@0:6(\"x\"), [Text@0:11(\"\") Output@1:0(Symbol@1:3(\"y\"))], ~)]"
+ },
+ {
+  "src": "{{ x -}} {# c #} {{- y }}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:3(\"x\")) Text@0:8(\"\") Text@0:16(\"\") Output@0:17(Symbol@0:21(\"y\"))]"
+ },
+ {
+  "src": "{% if x -%} {# c #} {%- endif %}",
+  "ok": true,
+  "ast": "[If@0:3(Symbol@0:6(\"x\"), [Text@0:11(\"\") Text@0:19(\"\")], ~)]"
+ },
+ {
+  "src": "{% if x -%}{{ y }}  {%- endif %}",
+  "ok": true,
+  "ast": "[If@0:3(Symbol@0:6(\"x\"), [Output@0:11(Symbol@0:14(\"y\")) Text@0:18(\"\")], ~)]"
+ },
+ {
+  "src": "one\ntwo\n{% frobnicate %}",
+  "ok": false,
+  "msg": "unknown block tag: frobnicate",
+  "line": 3,
+  "col": 4
+ },
+ {
+  "src": "x\r\ny {% frobnicate %}",
+  "ok": false,
+  "msg": "unknown block tag: frobnicate",
+  "line": 2,
+  "col": 6
+ },
+ {
+  "src": "é {% frobnicate %}",
+  "ok": false,
+  "msg": "unknown block tag: frobnicate",
+  "line": 1,
+  "col": 6
+ },
+ {
+  "src": "😀 {% frobnicate %}",
+  "ok": false,
+  "msg": "unknown block tag: frobnicate",
+  "line": 1,
+  "col": 7
+ },
+ {
+  "src": "😀\n\t😀{{ a. 1 }}",
+  "ok": false,
+  "msg": "expected name as lookup value, got 1",
+  "line": 2,
+  "col": 10
+ },
+ {
+  "src": "{{ \"😀\" ~ x. 1 }}",
+  "ok": false,
+  "msg": "expected name as lookup value, got 1",
+  "line": 1,
+  "col": 14
+ },
+ {
+  "src": "   {{ x }}",
+  "ok": true,
+  "ast": "[Text@0:0(\"   \") Output@0:3(Symbol@0:6(\"x\"))]"
+ },
+ {
+  "src": "{{ x　}}",
+  "ok": true,
+  "ast": "[Output@0:0(Symbol@0:3(\"x　\"))]"
+ },
+ {
+  "src": "{{ ((((((((((((((((((((((((((((((((((((((((x)))))))))))))))))))))))))))))))))))))))) }}",
+  "ok": true,
+  "ast": "[Output@0:0(Group@0:3(Group@0:4(Group@0:5(Group@0:6(Group@0:7(Group@0:8(Group@0:9(Group@0:10(Group@0:11(Group@0:12(Group@0:13(Group@0:14(Group@0:15(Group@0:16(Group@0:17(Group@0:18(Group@0:19(Group@0:20(Group@0:21(Group@0:22(Group@0:23(Group@0:24(Group@0:25(Group@0:26(Group@0:27(Group@0:28(Group@0:29(Group@0:30(Group@0:31(Group@0:32(Group@0:33(Group@0:34(Group@0:35(Group@0:36(Group@0:37(Group@0:38(Group@0:39(Group@0:40(Group@0:41(Group@0:42(Symbol@0:43(\"x\"))))))))))))))))))))))))))))))))))))))))))]"
+ },
+ {
+  "src": "{{ a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 + a16 + a17 + a18 + a19 + a20 + a21 + a22 + a23 + a24 + a25 + a26 + a27 + a28 + a29 + a30 + a31 + a32 + a33 + a34 + a35 + a36 + a37 + a38 + a39 + a40 + a41 + a42 + a43 + a44 + a45 + a46 + a47 + a48 + a49 + a50 + a51 + a52 + a53 + a54 + a55 + a56 + a57 + a58 + a59 }}",
+  "ok": true,
+  "ast": "[Output@0:0(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Add@0:3(Symbol@0:3(\"a0\"), Symbol@0:8(\"a1\")), Symbol@0:13(\"a2\")), Symbol@0:18(\"a3\")), Symbol@0:23(\"a4\")), Symbol@0:28(\"a5\")), Symbol@0:33(\"a6\")), Symbol@0:38(\"a7\")), Symbol@0:43(\"a8\")), Symbol@0:48(\"a9\")), Symbol@0:53(\"a10\")), Symbol@0:59(\"a11\")), Symbol@0:65(\"a12\")), Symbol@0:71(\"a13\")), Symbol@0:77(\"a14\")), Symbol@0:83(\"a15\")), Symbol@0:89(\"a16\")), Symbol@0:95(\"a17\")), Symbol@0:101(\"a18\")), Symbol@0:107(\"a19\")), Symbol@0:113(\"a20\")), Symbol@0:119(\"a21\")), Symbol@0:125(\"a22\")), Symbol@0:131(\"a23\")), Symbol@0:137(\"a24\")), Symbol@0:143(\"a25\")), Symbol@0:149(\"a26\")), Symbol@0:155(\"a27\")), Symbol@0:161(\"a28\")), Symbol@0:167(\"a29\")), Symbol@0:173(\"a30\")), Symbol@0:179(\"a31\")), Symbol@0:185(\"a32\")), Symbol@0:191(\"a33\")), Symbol@0:197(\"a34\")), Symbol@0:203(\"a35\")), Symbol@0:209(\"a36\")), Symbol@0:215(\"a37\")), Symbol@0:221(\"a38\")), Symbol@0:227(\"a39\")), Symbol@0:233(\"a40\")), Symbol@0:239(\"a41\")), Symbol@0:245(\"a42\")), Symbol@0:251(\"a43\")), Symbol@0:257(\"a44\")), Symbol@0:263(\"a45\")), Symbol@0:269(\"a46\")), Symbol@0:275(\"a47\")), Symbol@0:281(\"a48\")), Symbol@0:287(\"a49\")), Symbol@0:293(\"a50\")), Symbol@0:299(\"a51\")), Symbol@0:305(\"a52\")), Symbol@0:311(\"a53\")), Symbol@0:317(\"a54\")), Symbol@0:323(\"a55\")), Symbol@0:329(\"a56\")), Symbol@0:335(\"a57\")), Symbol@0:341(\"a58\")), Symbol@0:347(\"a59\")))]"
+ },
+ {
+  "src": "{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}{% if a %}x{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}",
+  "ok": true,
+  "ast": "[If@0:3(Symbol@0:6(\"a\"), [If@0:13(Symbol@0:16(\"a\"), [If@0:23(Symbol@0:26(\"a\"), [If@0:33(Symbol@0:36(\"a\"), [If@0:43(Symbol@0:46(\"a\"), [If@0:53(Symbol@0:56(\"a\"), [If@0:63(Symbol@0:66(\"a\"), [If@0:73(Symbol@0:76(\"a\"), [If@0:83(Symbol@0:86(\"a\"), [If@0:93(Symbol@0:96(\"a\"), [If@0:103(Symbol@0:106(\"a\"), [If@0:113(Symbol@0:116(\"a\"), [If@0:123(Symbol@0:126(\"a\"), [If@0:133(Symbol@0:136(\"a\"), [If@0:143(Symbol@0:146(\"a\"), [If@0:153(Symbol@0:156(\"a\"), [If@0:163(Symbol@0:166(\"a\"), [If@0:173(Symbol@0:176(\"a\"), [If@0:183(Symbol@0:186(\"a\"), [If@0:193(Symbol@0:196(\"a\"), [If@0:203(Symbol@0:206(\"a\"), [If@0:213(Symbol@0:216(\"a\"), [If@0:223(Symbol@0:226(\"a\"), [If@0:233(Symbol@0:236(\"a\"), [If@0:243(Symbol@0:246(\"a\"), [If@0:253(Symbol@0:256(\"a\"), [If@0:263(Symbol@0:266(\"a\"), [If@0:273(Symbol@0:276(\"a\"), [If@0:283(Symbol@0:286(\"a\"), [If@0:293(Symbol@0:296(\"a\"), [Text@0:300(\"x\")], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)], ~)]"
+ }
+]

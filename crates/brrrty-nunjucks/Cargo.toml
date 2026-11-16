@@ -1,0 +1,22 @@
+[package]
+name = "brrrty-nunjucks"
+version = "0.0.6"
+description = "A Nunjucks template engine that matches Nunjucks 3.2.4 as Eleventy configures it, for an Eleventy-compatible static site generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["static-site", "ssg", "eleventy", "11ty", "nunjucks"]
+categories = ["template-engine", "web-programming"]
+readme = false
+exclude = ["tests/conformance.rs", "tests/probes/conformance_parse_errors.json", "tools"]
+
+[dependencies]
+brrrty-js = { version = "0.0.6", path = "../brrrty-js" }
+stacker = "0.1.25"
+
+[dev-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = "1.2.1"
