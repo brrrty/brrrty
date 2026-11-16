@@ -1573,6 +1573,31 @@ fn build_in_pool(
     for f in &opts.config.filters {
         engine.register_args_filter(&f.name, f.run.clone());
     }
+    // `{% highlight %}`, from the syntax highlighting plugin.
+    if let Some(plugin) = &opts.config.syntax_highlight
+        && plugin.options.has_format("liquid")
+    {
+        let plugin = Arc::new(plugin.clone());
+        engine.register_raw_block(
+            "highlight",
+            Arc::new(move |args: &str, body: &str| {
+                use crate::plugins::syntaxhighlight::Error;
+                use brrrty_liquid::{ErrorKind, TagError};
+                plugin.liquid_tag(args, body).map_err(|e| match e {
+                    Error::Unsupported(why) => TagError {
+                        kind: ErrorKind::Unsupported,
+                        message: format!("this `{{% highlight %}}` can't be highlighted the way 11ty highlights it: {why}"),
+                        help: Some(crate::render::HIGHLIGHT_HELP.to_string()),
+                    },
+                    Error::Thrown(why) => TagError {
+                        kind: ErrorKind::Render,
+                        message: why,
+                        help: Some(crate::render::HIGHLIGHT_THROWN_HELP.to_string()),
+                    },
+                })
+            }),
+        );
+    }
     // 11ty runs a config's plugins after the config, so a plugin's filters
     // win over the config's own of the same name.
     if !opts.config.feeds.is_empty() {
@@ -2000,7 +2025,11 @@ fn build_in_pool(
         engine: &engine,
         loader: &loader,
         markdown,
-        syntax_highlight: opts.config.syntax_highlight,
+        highlight: opts
+            .config
+            .syntax_highlight
+            .as_ref()
+            .filter(|p| p.options.has_format("md")),
     };
     let jobs: Vec<ContentPage<'_>> = prepared
         .iter()

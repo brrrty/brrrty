@@ -126,6 +126,8 @@ pub(crate) fn liquid_problem(
         ErrorKind::UnknownFilter => codes::LIQUID_UNKNOWN_FILTER,
         ErrorKind::Render => codes::LIQUID_RENDER,
         ErrorKind::Limit => codes::LIQUID_LIMIT,
+        // Only the syntax highlighting plugin's `{% highlight %}` refuses.
+        ErrorKind::Unsupported => codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
         ErrorKind::Syntax | ErrorKind::UnknownTag | ErrorKind::Unclosed | ErrorKind::TooDeep => {
             codes::LIQUID_SYNTAX
         }
@@ -168,51 +170,42 @@ pub(crate) struct Pipeline<'a> {
     pub engine: &'a Engine,
     pub loader: &'a FsLoader,
     pub markdown: &'a dyn MarkdownRenderer,
-    /// The config added 11ty's syntax highlighting plugin: what it would
-    /// highlight is refused.
-    pub syntax_highlight: bool,
+    /// 11ty's syntax highlighting plugin, when the config added it and it
+    /// highlights Markdown.
+    pub highlight: Option<&'a crate::plugins::syntaxhighlight::SyntaxHighlight>,
 }
 
-/// The help on every page syntax highlighting would change.
-const HIGHLIGHT_HELP: &str = "syntax highlighting is coming soon. Until then this page can't be built the way 11ty builds it; the rest of the site still builds";
+/// The help on a page whose code Brrrty can't highlight exactly.
+pub(crate) const HIGHLIGHT_HELP: &str = "Brrrty refuses this page rather than write it differently from 11ty; the rest of the site still builds";
 
-/// A fenced code block that names a language, in a site that uses 11ty's
-/// syntax highlighting plugin: 11ty highlights it with Prism, which Brrrty
-/// can't do yet.
+/// The help on a page where the syntax highlighting plugin throws.
+pub(crate) const HIGHLIGHT_THROWN_HELP: &str =
+    "11ty stops the whole build here. Fix the code's language, or the plugin's options";
+
+/// A fenced code block the syntax highlighting plugin can't highlight here.
 fn highlight_problem(
-    fence: &brrrty_markdown::HighlightedFence,
+    e: crate::plugins::syntaxhighlight::Error,
+    language: &str,
     file: &Path,
     line: Option<usize>,
 ) -> Problem {
-    let lang = fence.info.split_whitespace().next().unwrap_or("");
-    let p = Problem::error(
-        codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
-        format!("this page has a fenced code block in `{lang}`, which 11ty's syntax highlighting plugin highlights"),
-    )
-    .with_path(file)
-    .with_help(HIGHLIGHT_HELP);
+    use crate::plugins::syntaxhighlight::Error;
+    let p = match e {
+        Error::Unsupported(why) => Problem::error(
+            codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
+            format!("the fenced code block in `{language}` can't be highlighted the way 11ty highlights it: {why}"),
+        )
+        .with_help(HIGHLIGHT_HELP),
+        Error::Thrown(why) => Problem::error(
+            codes::SYNTAX_HIGHLIGHT_FAILED,
+            format!("the syntax highlighting plugin fails on the fenced code block in `{language}`: {why}"),
+        )
+        .with_help(HIGHLIGHT_THROWN_HELP),
+    }
+    .with_path(file);
     match line {
         Some(l) => p.at(l, 1),
         None => p,
-    }
-}
-
-/// A `{% highlight %}` tag in a site that uses 11ty's syntax highlighting
-/// plugin, which adds that tag: said as such, not as an unknown tag.
-pub(crate) fn highlight_tag_problem(p: Problem, syntax_highlight: bool) -> Problem {
-    if syntax_highlight
-        && p.code == codes::LIQUID_SYNTAX
-        && p.message.starts_with("tag \"highlight\" not found")
-    {
-        Problem {
-            code: codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
-            message: "this page uses `{% highlight %}`, the syntax highlighting plugin's tag"
-                .to_string(),
-            help: Some(HIGHLIGHT_HELP.to_string()),
-            ..p
-        }
-    } else {
-        p
     }
 }
 
@@ -298,16 +291,33 @@ impl Pipeline<'_> {
         line: Option<usize>,
     ) -> Result<String, Problem> {
         let render = || {
-            if self.syntax_highlight
-                && let Some(fence) = self.markdown.highlighted_fence(source)
-            {
-                return Err(highlight_problem(
-                    &fence,
-                    file,
-                    line.map(|l| l + fence.line),
-                ));
+            let Some(plugin) = self.highlight else {
+                return Ok(self.markdown.render(source));
+            };
+            let mut page = plugin.page();
+            let mut failed = None;
+            let html = self.markdown.render_highlighted(source, &mut |fence| {
+                if failed.is_some() {
+                    return None;
+                }
+                match page.markdown(fence.content, fence.language) {
+                    Ok(html) => Some(html),
+                    Err(e) => {
+                        let language = fence.language.split('/').next().unwrap_or("");
+                        failed = Some(highlight_problem(
+                            e,
+                            language,
+                            file,
+                            line.map(|l| l + fence.line),
+                        ));
+                        None
+                    }
+                }
+            });
+            match failed {
+                Some(p) => Err(p),
+                None => Ok(html),
             }
-            Ok(self.markdown.render(source))
         };
         crate::contain::catch(render)
             .map_err(|why| {
@@ -355,10 +365,7 @@ impl Pipeline<'_> {
         } else {
             (template.to_path_buf(), 0)
         };
-        highlight_tag_problem(
-            liquid_problem(e, path, offset, Some(job.shown)),
-            self.syntax_highlight,
-        )
+        liquid_problem(e, path, offset, Some(job.shown))
     }
 }
 

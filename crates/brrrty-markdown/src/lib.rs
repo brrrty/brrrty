@@ -4,49 +4,39 @@
 pub trait MarkdownRenderer: Send + Sync {
     fn render(&self, source: &str) -> String;
 
-    /// The first fenced code block that names a language, which a markdown-it `highlight`
-    /// function (11ty's syntax highlighting plugin) would be given: the language as written and
-    /// the 1-based line the fence opens on in `source`. `None` when there is none, or when the
-    /// renderer can't tell.
-    fn highlighted_fence(&self, _source: &str) -> Option<HighlightedFence> {
-        None
+    /// Renders `source` as [`MarkdownRenderer::render`] does, but with markdown-it's `highlight`
+    /// option set (11ty's syntax highlighting plugin sets it on 11ty's own instance). Each fenced
+    /// code block whose info string names a language is handed to `highlight`, in document order,
+    /// and what it returns replaces the whole block (the plugin's output starts with `<pre`, which
+    /// markdown-it writes as it is, plus a newline); `None` keeps the block as markdown-it writes
+    /// it when `highlight` returns nothing. A renderer that has no such option
+    /// renders as [`MarkdownRenderer::render`] and never calls `highlight`.
+    fn render_highlighted(&self, source: &str, highlight: &mut Highlight<'_>) -> String {
+        let _ = highlight;
+        self.render(source)
     }
 }
 
-/// A fenced code block that names a language: what a markdown-it `highlight` function is given.
+/// A markdown-it `highlight` function: given a fenced code block, the HTML to write for it.
+pub type Highlight<'a> = dyn FnMut(&Fence<'_>) -> Option<String> + 'a;
+
+/// A fenced code block, as markdown-it's `highlight` option is given it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HighlightedFence {
-    /// The info string after the fence marker, as written.
-    pub info: String,
-    /// The line the fence opens on, from 1.
+pub struct Fence<'a> {
+    /// The code: `token.content`.
+    pub content: &'a str,
+    /// The first word of the unescaped, trimmed info string: `langName`. Never empty.
+    pub language: &'a str,
+    /// The line the fence opens on in the source, from 1.
     pub line: usize,
 }
 
-/// The first fence in `ast` whose info string isn't blank. markdown-it calls `highlight` with
-/// the first word of the unescaped, trimmed info string, and the plugin defers to plain output
-/// only when that is empty; an info string of only escaped spaces (`&#32;`) is counted too, which
-/// is safe: it only refuses more.
-fn first_fence(ast: &markdown_it::Node, source: &str) -> Option<HighlightedFence> {
-    use markdown_it::plugins::cmark::block::fence::CodeFence;
-    let mut found = None;
-    ast.walk(|n, _| {
-        if found.is_some() {
-            return;
-        }
-        let Some(fence) = n.cast::<CodeFence>() else {
-            return;
-        };
-        if fence.info.trim_matches(js_space).is_empty() {
-            return;
-        }
-        let start = n.srcmap.map_or(0, |m| m.get_byte_offsets().0);
-        let line = source[..start.min(source.len())].matches('\n').count() + 1;
-        found = Some(HighlightedFence {
-            info: fence.info.clone(),
-            line,
-        });
-    });
-    found
+/// markdown-it's `langName`: the info string unescaped, trimmed as JavaScript trims, up to its
+/// first whitespace (`info.split(/(\s+)/g)[0]`).
+fn lang_name(info: &str) -> String {
+    let info = markdown_it::common::utils::unescape_all(info);
+    let info = info.trim_matches(js_space);
+    info.split(js_space).next().unwrap_or("").to_string()
 }
 
 /// JavaScript's whitespace, as `String.prototype.trim` and regex `\s` see it. Unlike Rust's
@@ -63,6 +53,44 @@ fn js_space(c: char) -> bool {
                 | '\u{3000}'
                 | '\u{feff}'
     )
+}
+
+/// A fenced code block markdown-it's `highlight` wrote: `highlighted + '\n'`.
+#[derive(Debug)]
+struct Highlighted(String);
+
+impl markdown_it::NodeValue for Highlighted {
+    fn render(&self, _: &markdown_it::Node, fmt: &mut dyn markdown_it::Renderer) {
+        fmt.cr();
+        fmt.text_raw(&self.0);
+        fmt.cr();
+    }
+}
+
+/// Hands each fence in `ast` that names a language to `highlight`, in document order, and puts
+/// what it returns in the fence's place.
+fn highlight_fences(ast: &mut markdown_it::Node, source: &str, highlight: &mut Highlight<'_>) {
+    use markdown_it::plugins::cmark::block::fence::CodeFence;
+    ast.walk_mut(|n, _| {
+        let Some(fence) = n.cast::<CodeFence>() else {
+            return;
+        };
+        let language = lang_name(&fence.info);
+        if language.is_empty() {
+            return;
+        }
+        let start = n.srcmap.map_or(0, |m| m.get_byte_offsets().0);
+        let line = source[..start.min(source.len())].matches('\n').count() + 1;
+        let html = highlight(&Fence {
+            content: &fence.content,
+            language: &language,
+            line,
+        });
+        if let Some(html) = html {
+            debug_assert!(html.starts_with("<pre"), "markdown-it wraps anything else");
+            n.replace(Highlighted(html));
+        }
+    });
 }
 
 /// markdown-it's table rule needs a `|` in the header row too, so `a\n|--` is a paragraph. The
@@ -185,8 +213,11 @@ impl MarkdownRenderer for MarkdownIt {
         ast.render()
     }
 
-    fn highlighted_fence(&self, source: &str) -> Option<HighlightedFence> {
-        first_fence(&self.md.parse(source), source)
+    fn render_highlighted(&self, source: &str, highlight: &mut Highlight<'_>) -> String {
+        let mut ast = self.md.parse(source);
+        fix_tree(&mut ast, false);
+        highlight_fences(&mut ast, source, highlight);
+        ast.render()
     }
 }
 
@@ -407,25 +438,47 @@ mod tests {
         });
     }
 
+    /// Every fence that names a language, in document order: what the `highlight` option of
+    /// markdown-it is called with.
+    fn fences(source: &str) -> Vec<(String, String, usize)> {
+        let mut seen = Vec::new();
+        md().render_highlighted(source, &mut |f: &Fence<'_>| {
+            seen.push((f.language.to_string(), f.content.to_string(), f.line));
+            None
+        });
+        seen
+    }
+
     #[test]
-    fn finds_fences_that_name_a_language() {
-        let f = |s: &str| md().highlighted_fence(s);
-        assert_eq!(f("```\nplain\n```\n"), None);
-        assert_eq!(f("~~~   \nplain\n~~~\n"), None);
-        assert_eq!(f("para\n\n    indented\n"), None);
-        assert_eq!(f("`inline` code\n"), None);
+    fn hands_fences_that_name_a_language_to_highlight() {
+        assert!(fences("```\nplain\n```\n").is_empty());
+        assert!(fences("~~~   \nplain\n~~~\n").is_empty());
+        assert!(fences("para\n\n    indented\n").is_empty());
+        assert!(fences("`inline` code\n").is_empty());
         assert_eq!(
-            f("# T\n\n```\nx\n```\n\n~~~js {1}\nlet a;\n~~~\n"),
-            Some(HighlightedFence {
-                info: "js {1}".into(),
-                line: 7
-            })
+            fences(
+                "# T\n\n```\nx\n```\n\n~~~js {1}\nlet a;\n~~~\n\n> ```text\n> x\n> ```\n\n- a\n\n  ```php/1\n  y\n  ```\n"
+            ),
+            [
+                ("js".into(), "let a;\n".into(), 7),
+                ("text".into(), "x\n".into(), 11),
+                ("php/1".into(), "y\n".into(), 17),
+            ]
         );
-        assert_eq!(f("> ```text\n> x\n> ```\n").map(|h| h.line), Some(1));
         assert_eq!(
-            f("- a\n\n  ```php\n  x\n  ```\n").map(|h| h.info),
-            Some("php".into())
+            fences("```a&amp;b c\n```\n"),
+            [("a&b".into(), String::new(), 1)]
         );
+    }
+
+    #[test]
+    fn highlighted_html_replaces_the_block() {
+        let out = md().render_highlighted("a\n\n```js\nx\n```\nb\n", &mut |f: &Fence<'_>| {
+            Some(format!("<pre>{}</pre>", f.content.trim()))
+        });
+        assert_eq!(out, "<p>a</p>\n<pre>x</pre>\n<p>b</p>\n");
+        let kept = md().render_highlighted("```js\n<x>\n```\n", &mut |_: &Fence<'_>| None);
+        assert_eq!(kept, md().render("```js\n<x>\n```\n"));
     }
 
     /// markdown-it calls `highlight` with `unescapeAll(info).trim()`, and JavaScript's `trim`
@@ -434,12 +487,14 @@ mod tests {
     /// "\u{2028}", and `180e` and `200b` for those (whitespace in neither language).
     #[test]
     fn info_strings_are_trimmed_as_javascript_trims() {
-        let f = |info: &str| md().highlighted_fence(&format!("```{info}\ncode\n```\n"));
+        let f = |info: &str| fences(&format!("```{info}\ncode\n```\n"));
         for named in ["\u{85}", " \u{85} ", "\u{85}x", "\u{180e}", "\u{200b}"] {
-            assert!(f(named).is_some(), "{named:?}");
+            assert_eq!(f(named).len(), 1, "{named:?}");
         }
+        assert_eq!(f(" \u{85} ")[0].0, "\u{85}");
+        assert_eq!(f("js\u{3000}x")[0].0, "js");
         for blank in ["\u{feff}", " \u{a0}\u{3000}", "\u{2028}"] {
-            assert_eq!(f(blank), None, "{blank:?}");
+            assert!(f(blank).is_empty(), "{blank:?}");
         }
     }
 

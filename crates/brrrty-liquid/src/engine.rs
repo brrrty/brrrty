@@ -66,6 +66,18 @@ pub type FilterFn = Arc<
 pub type ArgsFilterFn =
     Arc<dyn Fn(&Value, &[Value], &FilterCtx) -> Result<Value, String> + Send + Sync>;
 
+/// A raw block tag's renderer: `(arguments, body) -> output`, each as
+/// written in the template. An `Err` becomes a render error at the tag.
+pub type RawBlockFn = Arc<dyn Fn(&str, &str) -> Result<String, TagError> + Send + Sync>;
+
+/// Why a raw block tag can't render.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagError {
+    pub kind: ErrorKind,
+    pub message: String,
+    pub help: Option<String>,
+}
+
 /// Why a [`Loader`] could not supply a partial.
 ///
 /// `io` is `None` when no root has the file: the partial is missing, and
@@ -121,6 +133,9 @@ pub struct Engine {
     pub(crate) filters: HashMap<String, Filter>,
     /// Bytes a render may write in all, captures included.
     pub(crate) output_limit: usize,
+    /// Raw block tags, by name, and their names in the order added.
+    pub(crate) raw_blocks: HashMap<String, RawBlockFn>,
+    raw_block_names: Vec<String>,
 }
 
 /// The most a render may write: 512 MiB.
@@ -134,6 +149,8 @@ impl Engine {
             options: opts,
             filters,
             output_limit: OUTPUT_LIMIT,
+            raw_blocks: HashMap::new(),
+            raw_block_names: Vec::new(),
         }
     }
 
@@ -164,6 +181,16 @@ impl Engine {
         );
     }
 
+    /// Adds the block tag `name`: `{% name args %}body{% endname %}`. Its
+    /// body is not parsed as Liquid; `f` gets the arguments and the body as
+    /// written (every token up to the first `endname`, so a `{% raw %}`
+    /// inside keeps its tags). Templates parsed before this don't have it.
+    pub fn register_raw_block(&mut self, name: &str, f: RawBlockFn) {
+        if self.raw_blocks.insert(name.to_string(), f).is_none() {
+            self.raw_block_names.push(name.to_string());
+        }
+    }
+
     /// Adds Eleventy's own filters: `slug`, `slugify`, `url` and `log`.
     /// `slugify` replaces the standard Liquid filter of that name, as it
     /// does in Eleventy.
@@ -178,7 +205,7 @@ impl Engine {
     /// come in source order with LiquidJS's message and position.
     pub fn parse(&self, template_name: &str, source: &str) -> Result<Template, LiquidError> {
         if !self.options.strict_filters {
-            return crate::parse(template_name, source);
+            return crate::parse_checked(template_name, source, None, &self.raw_block_names);
         }
         let check = |value: &FilteredValue| -> Result<(), ParseErr> {
             for f in &value.filters {
@@ -193,7 +220,7 @@ impl Engine {
             }
             Ok(())
         };
-        crate::parse_checked(template_name, source, Some(&check))
+        crate::parse_checked(template_name, source, Some(&check), &self.raw_block_names)
     }
 
     /// Renders `t` with `data` as its variables.

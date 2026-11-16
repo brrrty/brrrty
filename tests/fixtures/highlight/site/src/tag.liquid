@@ -1,0 +1,39 @@
+---
+title: Tag
+---
+{% highlight js %}
+let a = 1;
+let b = "<b>&</b>";
+{% endhighlight %}
+{% highlight js 1,3 %}
+let one = 1;
+let two = 2;
+let three = 3;
+{% endhighlight %}
+{% highlight js 0 2 %}
+let added = 1;
+let same = 2;
+let removed = 3;
+{% endhighlight %}
+{% highlight js 0-1 %}
+// {{ not.rendered | upcase }}
+{% if true %}kept{% endif %}
+{% raw %}{{ raw }}{% endraw %}
+{% endhighlight %}
+{%- highlight php -%}
+<?php echo "x"; ?>
+{%- endhighlight -%}
+{% highlight text %}<b>raw</b>{% endhighlight %}
+{% highlight foo %}<i>x</i> & y{% endhighlight %}
+{% highlight %}no language{% endhighlight %}
+{% highlight diff-ts %}
+- let a: number = 1;
++ let a: string = "1";
+{% endhighlight %}
+{% highlight js  1 %}
+let doubleSpace = 1;
+let second = 2;
+{% endhighlight %}
+{% highlight liquid %}
+{{ page.url }}
+{% endhighlight %}

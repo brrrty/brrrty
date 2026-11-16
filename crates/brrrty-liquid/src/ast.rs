@@ -143,6 +143,13 @@ pub enum TagKind {
     Liquid {
         body: Vec<Node>,
     },
+    /// A block tag the embedder added with
+    /// [`crate::Engine::register_raw_block`]: its arguments and its body,
+    /// each exactly as written.
+    RawBlock {
+        args: String,
+        body: String,
+    },
 }
 
 /// One `if`, `elsif` or `unless` branch.

@@ -274,27 +274,59 @@ weren't there, and they differ from 11ty's. The scoreboard shows them as
 
 ### `syntaxhighlight`
 
-`@11ty/eleventy-plugin-syntaxhighlight` (Prism):
+`@11ty/eleventy-plugin-syntaxhighlight` 5.0.2, with Prism 1.30.0:
 
-```rhai
-config.add_plugin("syntaxhighlight");
+```js
+const syntaxHighlight = require("@11ty/eleventy-plugin-syntaxhighlight");
+eleventyConfig.addPlugin(syntaxHighlight, { preAttributes: { tabindex: 0 } });
 ```
 
-Brrrty doesn't highlight code yet, so the marker refuses every page the
-plugin would change, and only those:
+becomes
 
-- a Markdown page (or Markdown layout) with a fenced code block that names
-  a language. A fence with no language (a bare `` ``` ``) is plain in 11ty
-  too, so it builds; so do indented lines (11ty turns markdown-it's
-  indented `code` rule off);
-- a Liquid template that uses the plugin's `{% highlight %}` tag;
-- any page that reads such a page's `templateContent` or `content` (a blog
-  index that shows excerpts, a feed).
+```rhai
+let pre = object();
+pre.tabindex = 0;
+config.add_plugin("syntaxhighlight", #{ pre_attributes: pre });
+```
 
-Each is refused with "syntax highlighting is coming soon". The plugin's
-options are accepted and don't change this. Without the marker, the same
-pages are written with plain `<pre><code>` blocks, which is wrong for a
-site whose 11ty config uses the plugin: add it.
+Markdown fences that name a language (`` ```js ``, `~~~php`, `` ```js/1-2 ``
+to mark lines) and the Liquid tag (`{% highlight js 1,3 %}...{% endhighlight %}`)
+are written as 11ty writes them, byte for byte: Prism's tokens, the
+language aliases (`sh`, `ts`, `html`, ...), `diff-` languages, line marks,
+and code in a language Prism doesn't have (written as it is, with its
+`language-` class). The plugin highlights 11ty's own Markdown, not the
+output of a `markdown` filter a config adds.
+
+The options are 11ty's, in snake_case: `line_separator`,
+`error_on_invalid_language`, `always_wrap_line_highlights`, `trim`,
+`languages`, `template_formats`, `pre_attributes` and `code_attributes`.
+The attributes are an `object()`, so they keep the order written (a
+`#{...}` map sorts its keys, so one with more than one key is refused);
+each value is a string or a number. Brrrty can't call a function, so a
+function for an attribute, and `init`, are refused.
+
+A page is refused, with the reason, when Brrrty can't highlight its code
+the way 11ty does:
+
+- a language Prism has that Brrrty doesn't have yet;
+- Prism looking a language up that 11ty may or may not have loaded by then,
+  depending on the order it renders pages in. In 11ty, Prism keeps every
+  language any page loaded, for the rest of the build. This happens in
+  Markdown code (`` ```md ``) that has a fenced code block in a language,
+  or front matter (unless YAML is surely loaded), and in `diff-x` code
+  where `x` isn't surely loaded;
+- code where Prism's patterns would take too long, or where a Prism hook
+  would run out of stack in Node;
+- a line range of a million lines or more.
+
+A page that reads a refused page's `templateContent` or `content` is
+refused too. Where the plugin throws (an attribute that isn't a string or
+a number, or `error_on_invalid_language` and a language Prism doesn't
+have), 11ty stops the build; Brrrty fails that page.
+
+Nunjucks is not supported yet, so neither is the plugin's Nunjucks
+shortcode. Without `add_plugin("syntaxhighlight")` code is written plain,
+which is wrong for a site whose 11ty config adds the plugin: add it.
 
 ### `rss`
 

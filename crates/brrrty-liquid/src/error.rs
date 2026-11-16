@@ -19,6 +19,9 @@ pub enum ErrorKind {
     Render,
     /// A loop, range or output larger than Brrrty allows.
     Limit,
+    /// A raw block tag the embedder added (see
+    /// [`crate::Engine::register_raw_block`]) can't render this exactly.
+    Unsupported,
 }
 
 /// An error with its position in the template source.

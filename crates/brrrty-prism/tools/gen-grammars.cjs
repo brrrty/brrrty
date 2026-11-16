@@ -31,6 +31,11 @@
 // is YAML only once yaml is loaded) is recorded for the tokenizer to refuse
 // where it matters; any other difference fails the generator.
 //
+// "baseKeys" are the grammars Prism.languages has before any language is
+// loaded (Prism's core, then the plugin's diff), and "keysByLanguage" the
+// ones it has once a fence language is loaded on its own: what a hook that
+// looks a language up surely finds, whatever order 11ty renders pages in.
+//
 // "hooks" has the source of every hook Prism has once loaded, and
 // "hooksByLanguage" how many of each a fence language adds alone; the
 // tokenizer has to port them. "components" is Prism's components.json
@@ -129,6 +134,7 @@ function child(nm, names) {
   const { Prism, PrismLoader, normalize, components, versions } = load(nm);
   const hooksBefore = {};
   for (const [k, v] of Object.entries(Prism.hooks.all)) hooksBefore[k] = v.length;
+  const baseKeys = Object.keys(Prism.languages).filter((k) => isGrammar(Prism.languages[k]));
   const fences = names.map((name) => {
     const id = normalize(name);
     PrismLoader(name);
@@ -147,6 +153,7 @@ function child(nm, names) {
     grammars: snap.grammars,
     hooks,
     hooksBefore,
+    baseKeys,
     components: Object.entries(components.languages)
       .filter(([id]) => id !== 'meta')
       .map(([id, c]) => [id, c.alias === undefined ? [] : [].concat(c.alias)]),
@@ -257,6 +264,14 @@ function main(nm) {
     }
     if (id !== null && !(id in hooksByLanguage)) hooksByLanguage[id] = added;
   }
+  // What Prism.languages surely has once a fence language is loaded,
+  // whatever was loaded before: its keys when loaded alone.
+  const keysByLanguage = {};
+  for (const [name, id] of state.fences) {
+    if (id !== null && !(id in keysByLanguage)) {
+      keysByLanguage[id] = alone.get(name).languages.map(([k]) => k);
+    }
+  }
   const out = {
     generator: 'tools/gen-grammars.cjs',
     node: process.version,
@@ -266,6 +281,8 @@ function main(nm) {
     languages: Object.fromEntries(state.languages),
     orderDependent,
     hooksByLanguage,
+    baseKeys: state.baseKeys,
+    keysByLanguage,
     hooks: state.hooks,
     components: state.components,
     grammars: state.grammars,

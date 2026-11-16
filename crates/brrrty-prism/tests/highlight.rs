@@ -68,16 +68,26 @@ fn first_difference(a: &str, b: &str) -> (String, String) {
 /// Node runs out of stack at about 4,400, so Brrrty refuses past 1,000.
 #[test]
 fn a_long_run_of_template_parts_is_refused() {
-    let liquid = grammars().language("liquid").unwrap();
-    let run = |n: usize| {
-        highlight(
-            &"{{ a }}".repeat(n),
-            liquid,
-            "liquid",
-            &mut AllLoaded::default(),
-        )
-    };
-    assert!(run(900).is_ok());
-    let e = run(1100).unwrap_err();
-    assert!(e.0.contains("markup-templating"), "{}", e.0);
+    // On a thread with the stack Brrrty's render threads have (16 MiB): the
+    // recursion this limits needs more than the 2 MiB of a test thread in a
+    // debug build.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let liquid = grammars().language("liquid").unwrap();
+            let run = |n: usize| {
+                highlight(
+                    &"{{ a }}".repeat(n),
+                    liquid,
+                    "liquid",
+                    &mut AllLoaded::default(),
+                )
+            };
+            assert!(run(1000).is_ok());
+            let e = run(1100).unwrap_err();
+            assert!(e.0.contains("markup-templating"), "{}", e.0);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

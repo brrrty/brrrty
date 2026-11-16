@@ -241,6 +241,7 @@ dependencies = [
  "brrrty-js",
  "brrrty-liquid",
  "brrrty-markdown",
+ "brrrty-prism",
  "chrono",
  "chrono-tz",
  "globset",

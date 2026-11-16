@@ -39,10 +39,9 @@ pub struct ConfigOptions {
     /// Runs `.rhai` data files. A site needs no config file to have them,
     /// so the command line sets this whether or not there is a config.
     pub data: Option<DataRunner>,
-    /// The config added 11ty's syntax highlighting plugin
-    /// (`@11ty/eleventy-plugin-syntaxhighlight`). Brrrty doesn't highlight
-    /// yet, so every page it would change is refused.
-    pub syntax_highlight: bool,
+    /// 11ty's syntax highlighting plugin
+    /// (`@11ty/eleventy-plugin-syntaxhighlight`), when the config added it.
+    pub syntax_highlight: Option<crate::plugins::syntaxhighlight::SyntaxHighlight>,
     /// The feeds `feedPlugin` (`@11ty/eleventy-plugin-rss`) adds, in the
     /// order they were added: each is a virtual template.
     pub feeds: Vec<crate::plugins::rss::FeedOptions>,

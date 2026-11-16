@@ -45,6 +45,22 @@ pub(crate) fn render(r: &mut Renderer<'_>, tag: &Tag, out: &mut String) -> R<()>
         TagKind::Echo { value } => variable::echo(r, value.as_ref(), out),
         TagKind::Raw { text } => r.write(out, text),
         TagKind::Comment | TagKind::InlineComment => Ok(()),
+        TagKind::RawBlock { args, body } => {
+            let f = r
+                .engine
+                .raw_blocks
+                .get(&tag.name)
+                .expect("a raw block is parsed only when the engine has it")
+                .clone();
+            let html = f(args, body).map_err(|e| {
+                let err = crate::render::RenderErr::new(e.kind, e.message);
+                match e.help {
+                    Some(h) => err.with_help(h),
+                    None => err,
+                }
+            })?;
+            r.write(out, &html)
+        }
         TagKind::Liquid { body } => r.render_nodes(body, out),
         TagKind::Layout(l) => layout::layout(r, l, out),
         TagKind::Block { body, .. } => layout::block(r, body, out),

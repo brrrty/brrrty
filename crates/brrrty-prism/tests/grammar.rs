@@ -245,3 +245,32 @@ fn hook_patterns_are_prisms_and_translate() {
         }
     }
 }
+
+#[test]
+fn what_loading_a_language_surely_brings() {
+    let g = grammars();
+    for k in [
+        "markup",
+        "html",
+        "css",
+        "clike",
+        "javascript",
+        "js",
+        "diff",
+        "text",
+    ] {
+        assert!(g.base_keys.iter().any(|b| b == k), "{k}");
+    }
+    assert!(!g.base_keys.iter().any(|b| b == "yaml"));
+    let ts = g.keys_after_loading("typescript").unwrap();
+    assert!(ts.iter().any(|k| k == "ts") && ts.iter().any(|k| k == "javascript"));
+    let php = g.keys_after_loading("php").unwrap();
+    assert!(php.iter().any(|k| k == "markup-templating"));
+    // Every name is a grammar Brrrty has.
+    for (_, keys) in &g.keys_by_language {
+        for k in keys {
+            assert!(g.language(k).is_some(), "{k}");
+        }
+    }
+    assert!(g.keys_after_loading("haskell").is_none());
+}

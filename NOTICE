@@ -23,6 +23,11 @@ These projects are released under the MIT License. Their notices:
 - @11ty/eleventy-plugin-rss 3.1.0: the feed plugin and its virtual templates
   Copyright (c) 2018 Zach Leatherman @zachleat
 
+- @11ty/eleventy-plugin-syntaxhighlight 5.0.2: fenced code and the
+  `{% highlight %}` tag, its language aliases, line highlights and
+  attributes
+  Copyright (c) 2018 Zach Leatherman @zachleat
+
 - LiquidJS 10.30.1: the Liquid tokenizer, parser, tags and standard filters
   Copyright (c) 2016 Jun Yang
 

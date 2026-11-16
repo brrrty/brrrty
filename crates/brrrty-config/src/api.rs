@@ -68,8 +68,8 @@ pub struct State {
     pub filters: IndexMap<String, FilterDef>,
     /// `add_collection` functions by name, with where each was added.
     pub collections: IndexMap<String, (FnPtr, Position)>,
-    /// `add_plugin("syntaxhighlight")` was called.
-    pub syntax_highlight: bool,
+    /// `add_plugin("syntaxhighlight", ...)`.
+    pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
 }
@@ -446,13 +446,17 @@ fn add_plugin(
     pos: Position,
 ) -> Result<(), Box<EvalAltResult>> {
     match name {
-        // `@11ty/eleventy-plugin-syntaxhighlight`: Brrrty doesn't highlight
-        // yet, so this only marks what 11ty would highlight, to refuse it.
-        // Its options change how code is highlighted, which can't matter
-        // until it is.
+        // `@11ty/eleventy-plugin-syntaxhighlight`.
         "syntaxhighlight" => {
-            let _ = options;
-            state.syntax_highlight = true;
+            if state.syntax_highlight.is_some() {
+                return Err(invalid(
+                    "add_plugin(\"syntaxhighlight\", ...) is called twice; Brrrty takes it once, with all its options".to_string(),
+                    pos,
+                ));
+            }
+            let plugin = crate::highlight::syntax_highlight(options.as_ref())
+                .map_err(|why| invalid(why, pos))?;
+            state.syntax_highlight = Some(plugin);
             Ok(())
         }
         // `@11ty/eleventy-plugin-rss`'s `feedPlugin`: one feed per call.

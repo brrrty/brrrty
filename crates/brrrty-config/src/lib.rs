@@ -57,10 +57,10 @@
 //! `config.add_plugin("name", #{ ... })` adds a plugin Brrrty has its own
 //! version of. `rss` is `@11ty/eleventy-plugin-rss`'s `feedPlugin`, with
 //! its options in snake_case (`output_path`, `collection`, `metadata`):
-//! each call adds a feed. `syntaxhighlight`
-//! (`@11ty/eleventy-plugin-syntaxhighlight`) is a marker until Brrrty
-//! highlights code: every page the plugin would change is refused. Any
-//! other name is an error. Brrrty can't see a plugin
+//! each call adds a feed. `syntaxhighlight` is
+//! `@11ty/eleventy-plugin-syntaxhighlight`, with its options in snake_case
+//! (`pre_attributes`, `line_separator`): it highlights Markdown fences and
+//! the `{% highlight %}` tag with Prism. Any other name is an error. Brrrty can't see a plugin
 //! the 11ty config adds and the port leaves out (see `PORTING.md`).
 //!
 //! ## Values
@@ -114,6 +114,7 @@ mod convert;
 mod data;
 mod filters;
 mod glob;
+mod highlight;
 mod jshelpers;
 mod object;
 mod plugins;
@@ -174,8 +175,8 @@ pub struct SiteConfig {
     pub filters: Vec<brrrty_core::ConfigFilter>,
     /// `add_collection` collections, in order.
     pub collections: Vec<brrrty_core::ConfigCollection>,
-    /// `add_plugin("syntaxhighlight")` was called.
-    pub syntax_highlight: bool,
+    /// `add_plugin("syntaxhighlight", ...)`.
+    pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
 }
@@ -192,7 +193,7 @@ impl SiteConfig {
             filters: self.filters.clone(),
             collections: self.collections.clone(),
             data: None,
-            syntax_highlight: self.syntax_highlight,
+            syntax_highlight: self.syntax_highlight.clone(),
             feeds: self.feeds.clone(),
         }
     }

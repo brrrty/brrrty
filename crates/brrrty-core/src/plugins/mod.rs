@@ -2,3 +2,4 @@
 //! `config.add_plugin`.
 
 pub mod rss;
+pub mod syntaxhighlight;

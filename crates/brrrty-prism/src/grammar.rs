@@ -84,6 +84,12 @@ pub struct Grammars {
     order_dependent: Vec<(String, Vec<String>)>,
     /// The hooks each fence language adds when loaded (hook name, count).
     pub hooks_by_language: Vec<(String, Vec<(String, u64)>)>,
+    /// The grammars `Prism.languages` has before any language is loaded:
+    /// Prism's core, and the diff grammar the plugin loads.
+    pub base_keys: Vec<String>,
+    /// The grammars `Prism.languages` surely has once a fence language
+    /// (by its normalized name) is loaded, whatever was loaded before.
+    pub keys_by_language: Vec<(String, Vec<String>)>,
     pub grammars: Vec<Grammar>,
     pub regexes: Vec<RegexEntry>,
     /// Each grammar's tokens once `rest` is merged in, made on first use.
@@ -167,6 +173,11 @@ impl Grammars {
                 (k.clone(), hooks)
             })
             .collect();
+        let base_keys = strings(&v["baseKeys"]);
+        let keys_by_language = obj("keysByLanguage")?
+            .iter()
+            .map(|(k, x)| (k.clone(), strings(x)))
+            .collect();
         let mut regexes: Vec<RegexEntry> = Vec::new();
         let mut regex_ids: HashMap<(String, String), RegexId> = HashMap::new();
         let raw = v["grammars"].as_array().ok_or("`grammars` is missing")?;
@@ -210,6 +221,8 @@ impl Grammars {
             components,
             order_dependent,
             hooks_by_language,
+            base_keys,
+            keys_by_language,
             grammars,
             regexes,
             merged,
@@ -274,6 +287,16 @@ impl Grammars {
             .get_or_init(|| translate(&e.source, &e.flags).map(Arc::new))
             .as_ref()
             .map(|r| r.as_ref())
+    }
+
+    /// The grammars `Prism.languages` surely has once `lang` (a normalized
+    /// fence language) is loaded, or `None` if the generator didn't load it
+    /// on its own.
+    pub fn keys_after_loading(&self, lang: &str) -> Option<&[String]> {
+        self.keys_by_language
+            .iter()
+            .find(|(k, _)| k == lang)
+            .map(|(_, v)| v.as_slice())
     }
 
     /// The patterns of `lang` whose grammar differs with the order

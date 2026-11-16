@@ -55,6 +55,8 @@ impl Stream {
 pub(crate) struct Parser<'f> {
     depth: usize,
     check: Check<'f>,
+    /// The names of the raw block tags the engine has.
+    raw_blocks: &'f [String],
 }
 
 type Res<T> = Result<T, ParseErr>;
@@ -72,8 +74,12 @@ fn checked(check: Check<'_>, value: FilteredValue) -> Res<FilteredValue> {
 }
 
 impl<'f> Parser<'f> {
-    pub fn new(check: Check<'f>) -> Parser<'f> {
-        Parser { depth: 0, check }
+    pub fn new(check: Check<'f>, raw_blocks: &'f [String]) -> Parser<'f> {
+        Parser {
+            depth: 0,
+            check,
+            raw_blocks,
+        }
     }
 
     /// LiquidJS's `Parser.parse`: tokenize everything first, then parse.
@@ -188,6 +194,7 @@ impl<'f> Parser<'f> {
             "echo" => echo(c, self.check),
             "liquid" => self.liquid(src, c),
             "#" => inline_comment(src, t),
+            name if self.raw_blocks.iter().any(|b| b == name) => raw_block(src, t, stream),
             _ => Err(unknown_tag(&t.name)),
         }
     }
@@ -765,6 +772,26 @@ fn raw(src: &Source<'_>, t: &TagToken, stream: &mut Stream) -> Res<TagKind> {
             return Ok(TagKind::Raw { text });
         }
         text.push_str(slice(src.input, token.begin(), token.end()));
+    }
+    Err(not_closed(src, t))
+}
+
+/// A raw block tag: every token up to the first `end<name>` tag, as
+/// written, the way a LiquidJS tag that reads `parseStream` tokens and joins
+/// their text sees it.
+fn raw_block(src: &Source<'_>, t: &TagToken, stream: &mut Stream) -> Res<TagKind> {
+    let end = format!("end{}", t.name);
+    let mut body = String::new();
+    while let Some(token) = stream.next() {
+        if let Token::Tag(tag) = &token
+            && tag.name == end
+        {
+            return Ok(TagKind::RawBlock {
+                args: t.args(src.input).to_string(),
+                body,
+            });
+        }
+        body.push_str(slice(src.input, token.begin(), token.end()));
     }
     Err(not_closed(src, t))
 }

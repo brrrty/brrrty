@@ -1,10 +1,9 @@
 //! `config.add_plugin(...)`: the plugins Brrrty has its own version of.
 //!
-//! `syntaxhighlight` stands for `@11ty/eleventy-plugin-syntaxhighlight`.
-//! Brrrty doesn't highlight yet, so the marker refuses every page 11ty would
-//! highlight: a fenced code block that names a language (the plugin hands a
-//! fence with no language back to markdown-it, so that one is plain), and
-//! the plugin's `{% highlight %}` tag. Pages without them build.
+//! `syntaxhighlight` is `@11ty/eleventy-plugin-syntaxhighlight`: fenced
+//! code that names a language, and the `{% highlight %}` tag, highlighted
+//! with Prism (tests/fixtures/highlight* compare whole sites with 11ty).
+//! What Brrrty can't highlight the way 11ty does is refused, page by page.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -88,37 +87,16 @@ fn pages() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// `let a = 1;` as the plugin writes it in `js`.
+const JS: &str = "<pre class=\"language-js\"><code class=\"language-js\"><span class=\"token keyword\">let</span> a <span class=\"token operator\">=</span> <span class=\"token number\">1</span><span class=\"token punctuation\">;</span></code></pre>\n";
+
 #[test]
-fn the_marker_refuses_highlighted_code_and_nothing_else() {
+fn highlighted_code_builds_and_so_do_its_readers() {
     let (t, r) = site(MARKER, &pages());
-    let errs = errors(&r);
-    let code = errs
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/posts/code.md")))
-        .expect("the page with code is refused");
-    assert_eq!(code.code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
-    assert_eq!(
-        code.message,
-        "this page has a fenced code block in `js`, which 11ty's syntax highlighting plugin highlights"
-    );
-    assert!(
-        code.help
-            .as_deref()
-            .unwrap()
-            .starts_with("syntax highlighting is coming soon"),
-        "{code:?}"
-    );
-    // Line 8 of the file: three lines of front matter, then the body.
-    assert_eq!((code.line, code.column), (Some(8), Some(1)));
-    // The page that reads its content can't be built either.
-    let list = errs
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/list.liquid")))
-        .expect("the reader is refused");
-    assert_eq!(list.code, codes::CONTENT_UNAVAILABLE);
-    assert_eq!(errs.len(), 2, "{errs:#?}");
-    assert_eq!(out(&t, "posts/code/index.html"), None);
-    assert_eq!(out(&t, "list/index.html"), None);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    let code = format!("<h1>Code</h1>\n<p>Text.</p>\n{JS}");
+    assert_eq!(out(&t, "posts/code/index.html").unwrap(), code);
+    assert_eq!(out(&t, "list/index.html").unwrap(), code);
     // A fence with no language is plain in 11ty too; indented lines are
     // a paragraph (11ty turns markdown-it's `code` rule off).
     assert_eq!(
@@ -132,10 +110,51 @@ fn the_marker_refuses_highlighted_code_and_nothing_else() {
     assert_eq!(out(&t, "about/index.html").unwrap(), "<h1>About</h1>\n");
 }
 
-/// Without the marker Brrrty can't know the 11ty config highlights code,
-/// so fenced code is written plain. PORTING.md says to add the marker.
+/// Markdown with a fenced code block in a language: whether 11ty gives it
+/// its language's class once or twice depends on whether YAML was loaded
+/// before Markdown, which depends on the order pages render in.
+const NESTED: &str = "````md\n```js\nx\n```\n````\n";
+
 #[test]
-fn without_the_marker_code_is_plain() {
+fn code_that_cant_be_highlighted_exactly_is_refused_with_its_reader() {
+    let mut pages = pages();
+    pages.push((
+        "posts/nested.md",
+        "---\ntags: posts\n---\nText\n\n````md\n```js\nx\n```\n````\n",
+    ));
+    pages.push((
+        "lists.liquid",
+        "{% for p in collections.posts %}{{ p.content }}{% endfor %}",
+    ));
+    let (t, r) = site(MARKER, &pages);
+    let errs = errors(&r);
+    let nested = errs
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("src/posts/nested.md")))
+        .expect("the page is refused");
+    assert_eq!(nested.code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
+    assert!(
+        nested.message.starts_with(
+            "the fenced code block in `md` can't be highlighted the way 11ty highlights it: it has Markdown with a fenced code block in a language"
+        ),
+        "{nested:?}"
+    );
+    // Line 6 of the file: three lines of front matter, then the body.
+    assert_eq!((nested.line, nested.column), (Some(6), Some(1)));
+    let lists = errs
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("src/lists.liquid")))
+        .expect("the reader is refused");
+    assert_eq!(lists.code, codes::CONTENT_UNAVAILABLE);
+    assert_eq!(errs.len(), 2, "{errs:#?}");
+    assert_eq!(out(&t, "posts/nested/index.html"), None);
+    assert!(out(&t, "posts/code/index.html").is_some());
+}
+
+/// Without the plugin Brrrty can't know the 11ty config highlights code,
+/// so fenced code is written plain. PORTING.md says to add it.
+#[test]
+fn without_the_plugin_code_is_plain() {
     let (t, r) = site("", &pages());
     assert!(errors(&r).is_empty(), "{:#?}", r.problems);
     assert_eq!(
@@ -148,44 +167,132 @@ fn without_the_marker_code_is_plain() {
 fn a_line_is_given_only_when_liquid_changed_nothing() {
     let (_t, r) = site(
         MARKER,
-        &[("a.md", "---\nx: 1\n---\n{{ x }}\n\n~~~ruby\nputs 1\n~~~\n")],
+        &[("a.md", &format!("---\nx: 1\n---\n{{{{ x }}}}\n\n{NESTED}"))],
     );
     let errs = errors(&r);
     assert_eq!(errs.len(), 1, "{errs:#?}");
     assert_eq!(errs[0].code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
-    assert!(errs[0].message.contains("`ruby`"), "{:?}", errs[0]);
     assert_eq!(errs[0].line, None);
 }
 
 #[test]
-fn the_highlight_tag_is_refused_neutrally() {
-    let (t, r) = site(
-        MARKER,
-        &[
-            ("a.liquid", "{% highlight js %}let a;{% endhighlight %}"),
-            ("b.liquid", "fine"),
-        ],
-    );
+fn languages_brrrty_lacks_are_refused() {
+    let (_t, r) = site(MARKER, &[("a.md", "```haskell\nmain = pure ()\n```\n")]);
     let errs = errors(&r);
     assert_eq!(errs.len(), 1, "{errs:#?}");
     assert_eq!(errs[0].code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
-    assert_eq!(
-        errs[0].message,
-        "this page uses `{% highlight %}`, the syntax highlighting plugin's tag"
+    assert!(
+        errs[0]
+            .message
+            .ends_with("Brrrty doesn't have Prism's `haskell` grammar yet"),
+        "{:?}",
+        errs[0]
     );
-    assert_eq!(out(&t, "b/index.html").unwrap(), "fine");
-    // Without the plugin 11ty doesn't know the tag either.
+}
+
+#[test]
+fn the_highlight_tag_highlights() {
+    let (t, r) = site(
+        MARKER,
+        &[
+            (
+                "a.liquid",
+                "{% highlight js %}\nlet a = 1;\n{% endhighlight %}",
+            ),
+            (
+                "b.liquid",
+                &format!("x\n {{% highlight md %}}{NESTED}{{% endhighlight %}}"),
+            ),
+        ],
+    );
+    assert_eq!(out(&t, "a/index.html").unwrap(), JS.trim_end());
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert_eq!(errs[0].code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
+    assert!(
+        errs[0]
+            .message
+            .starts_with("this `{% highlight %}` can't be highlighted the way 11ty highlights it"),
+        "{:?}",
+        errs[0]
+    );
+    assert_eq!((errs[0].line, errs[0].column), (Some(2), Some(2)));
+    // Without the plugin 11ty doesn't know the tag.
     let (_t, r) = site("", &[("a.liquid", "{% highlight js %}x{% endhighlight %}")]);
+    assert_eq!(errors(&r)[0].code, codes::LIQUID_SYNTAX);
+    // Nor when the plugin leaves Liquid out.
+    let (_t, r) = site(
+        r#"config.add_plugin("syntaxhighlight", #{ template_formats: "md" });"#,
+        &[("a.liquid", "{% highlight js %}x{% endhighlight %}")],
+    );
     assert_eq!(errors(&r)[0].code, codes::LIQUID_SYNTAX);
 }
 
 #[test]
-fn the_marker_takes_the_plugins_options() {
+fn where_the_plugin_throws_the_page_fails() {
     let (_t, r) = site(
-        r#"config.add_plugin("syntaxhighlight", #{ preAttributes: #{ tabindex: 0 } });"#,
+        r#"config.add_plugin("syntaxhighlight", #{ error_on_invalid_language: true });"#,
+        &[("a.md", "```nope\nx\n```\n"), ("b.md", "```js\nx\n```\n")],
+    );
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert_eq!(errs[0].code, codes::SYNTAX_HIGHLIGHT_FAILED);
+    assert!(
+        errs[0].message.ends_with(
+            "\"nope\" is not a valid Prism.js language for eleventy-plugin-syntaxhighlight"
+        ),
+        "{:?}",
+        errs[0]
+    );
+    let (_t, r) = site(
+        r#"let a = object(); a.x = (); config.add_plugin("syntaxhighlight", #{ code_attributes: a });"#,
         &[("a.md", "```js\nx\n```\n")],
     );
-    assert_eq!(errors(&r)[0].code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
+    assert_eq!(errors(&r)[0].code, codes::SYNTAX_HIGHLIGHT_FAILED);
+    assert!(
+        errors(&r)[0].message.ends_with(
+            "Attribute \"x\" must have, or evaluate to, a value of type string or number, not \"undefined\"."
+        ),
+        "{:?}",
+        errors(&r)[0]
+    );
+}
+
+#[test]
+fn options_brrrty_cant_reproduce_are_refused() {
+    let cases = [
+        (
+            r#"#{ preAttributes: #{ tabindex: 0 } }"#,
+            "Brrrty doesn't support the option `preAttributes` (`preAttributes` is `pre_attributes` here)",
+        ),
+        (
+            r#"#{ pre_attributes: #{ a: 1, b: 2 } }"#,
+            "which sorts its keys",
+        ),
+        (r#"#{ pre_attributes: #{ a: || "x" } }"#, "has a function"),
+        (r#"#{ code_attributes: "x" }"#, "must be an object"),
+        (r#"#{ init: || 1 }"#, "`init` gets Prism itself"),
+        (r#"#{ trim: 1 }"#, "`trim` must be true or false"),
+        (
+            r#"#{ languages: ["haskell"] }"#,
+            "`languages` has `haskell`: Brrrty doesn't have Prism's `haskell` grammar yet",
+        ),
+        (
+            r#"#{ languages: "js" }"#,
+            "`languages` must be a list of strings",
+        ),
+    ];
+    for (options, want) in cases {
+        let p = load_err(&format!(
+            "config.add_plugin(\"syntaxhighlight\", {options});\n#{{}}"
+        ));
+        assert_eq!(p.code, codes::CONFIG_INVALID, "{options}");
+        assert!(p.message.contains(want), "{options}: {}", p.message);
+    }
+    let p = load_err(
+        "config.add_plugin(\"syntaxhighlight\");\nconfig.add_plugin(\"syntaxhighlight\");\n#{}",
+    );
+    assert!(p.message.contains("called twice"), "{}", p.message);
 }
 
 #[test]
@@ -327,7 +434,7 @@ fn a_feed_of_a_refused_post_is_refused() {
         &script,
         &posts(&[(
             "posts/2024-01-03-c.md",
-            "---\ntags: posts\n---\n```js\nx\n```\n",
+            "---\ntags: posts\n---\n````md\n```js\nx\n```\n````\n",
         )]),
     );
     let errs = errors(&r);
