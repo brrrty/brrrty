@@ -347,6 +347,11 @@ fn json_value(
     }
     match v {
         Val::V(Value::Undefined) | Val::Func(_) => Ok(false),
+        // No own enumerable properties: `lastIndex` isn't enumerable.
+        Val::Re(_) => {
+            out.push_str("{}");
+            Ok(true)
+        }
         Val::V(Value::Null) => {
             out.push_str("null");
             Ok(true)

@@ -243,6 +243,12 @@ fn to_value(v: &Val, filter: &str, what: &str, depth: usize, top: bool) -> R<Val
                 format!("filter `{filter}` would get a function as {what}"),
             ));
         }
+        Val::Re(_) => {
+            return Err(RenderErr::new(
+                ErrorKind::Unsupported,
+                format!("filter `{filter}` would get a regular expression as {what}"),
+            ));
+        }
     })
 }
 

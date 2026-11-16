@@ -14,6 +14,7 @@ exclude = ["tests/conformance.rs", "tests/render.rs", "tests/filters.rs", "tests
 
 [dependencies]
 brrrty-js = { version = "0.0.6", path = "../brrrty-js" }
+brrrty-jsregex = { version = "0.0.6", path = "../brrrty-jsregex" }
 indexmap = "2"
 stacker = "0.1.25"
 

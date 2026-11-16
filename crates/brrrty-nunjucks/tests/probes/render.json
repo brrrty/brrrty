@@ -2040,5 +2040,135 @@
   "data": {},
   "includes": {},
   "out": "/x/"
+ },
+ {
+  "template": "{{ r/x/gi }}|{{ r/x/ig }}|{{ r/x/my }}|{{ r// }}|{{ r/a\\/b/ }}|{{ r/a b/ ~ \"\" }}",
+  "data": {},
+  "includes": {},
+  "out": "/x/gi|/x/gi|/x/my|/(?:)/|/a&#92;/b/|/a b/"
+ },
+ {
+  "template": "{{ s.replace(r/o/g, \"0\") }}|{{ s.replace(r/o/, \"0\") }}|{{ s.replace(r/(o+)/g, \"[$1]\") }}|{{ s.replace(r/O/gi, \"$&$&\") }}",
+  "data": {
+   "s": "foo boo"
+  },
+  "includes": {},
+  "out": "f00 b00|f0o boo|f[oo] b[oo]|foooo boooo"
+ },
+ {
+  "template": "{{ s.replace(r/b/, \"$`|$'|$$|$2\") }}|{{ s.replaceAll(r/o/g, \"_\") }}",
+  "data": {
+   "s": "abc"
+  },
+  "includes": {},
+  "out": "aa|c|$|$2c|abc"
+ },
+ {
+  "template": "{{ s.replaceAll(r/o/, \"_\") }}",
+  "data": {
+   "s": "foo"
+  },
+  "includes": {},
+  "err": "TypeError: String.prototype.replaceAll called with a non-global RegExp argument"
+ },
+ {
+  "template": "{{ s.split(r/,\\s*/) }}|{{ s.split(r/(,)/) | length }}|{{ s.split(r/,/, 2) }}|{{ \"\".split(r/x/) | length }}|{{ \"\".split(r/(?:)/) | length }}",
+  "data": {
+   "s": "a, b,c"
+  },
+  "includes": {},
+  "out": "a,b,c|5|a, b|1|0"
+ },
+ {
+  "template": "{{ r/b/.test(\"abc\") }}|{{ r/^b/.test(\"abc\") }}|{{ r/B/i.test(s) }}|{{ r/x/.test() }}|{{ r/undefined/.test() }}",
+  "data": {
+   "s": "abc"
+  },
+  "includes": {},
+  "out": "true|false|true|false|true"
+ },
+ {
+  "template": "{% set re = r/b/g %}{{ re.test(\"abc\") }}|{{ re.lastIndex }}",
+  "data": {},
+  "includes": {},
+  "out": "true|2"
+ },
+ {
+  "template": "{% set re = r/b/g %}{{ re.lastIndex }}|{{ re.source }}|{{ re.flags }}|{{ re.global }}|{{ re.ignoreCase }}|{{ re.multiline }}|{{ re.sticky }}",
+  "data": {},
+  "includes": {},
+  "out": "0|b|g|true|false|false|false"
+ },
+ {
+  "template": "{{ s | replace(r/o/g, \"0\") }}|{{ s | replace(r/O/i, \"<\") }}|{{ (s | safe) | replace(r/o/, \"<\") }}",
+  "data": {
+   "s": "f<oo"
+  },
+  "includes": {},
+  "out": "f&lt;00|f&lt;&lt;o|f&lt;&lt;o"
+ },
+ {
+  "template": "{{ n | replace(r/1/, \"x\") }}",
+  "data": {
+   "n": 1
+  },
+  "includes": {},
+  "err": "TypeError: str.replace is not a function"
+ },
+ {
+  "template": "{% if r/x/ %}T{% endif %}|{{ r/x/ == r/x/ }}|{{ r/x/ ~ \"!\" }}|{{ r/a/ + 1 }}|{{ r/x/ | dump }}|{{ {a: r/x/} | dump }}",
+  "data": {},
+  "includes": {},
+  "out": "T|false|/x/!|/a/1|{}|{&quot;a&quot;:{}}"
+ },
+ {
+  "template": "{{ \"a/x/b\".indexOf(r/x/) }}|{{ \"ab\".includes(r/a/) }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: First argument to String.prototype.includes must not be a regular expression"
+ },
+ {
+  "template": "{{ \"ab\".startsWith(r/a/) }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: First argument to String.prototype.startsWith must not be a regular expression"
+ },
+ {
+  "template": "{{ r/(/ }}",
+  "data": {},
+  "includes": {},
+  "err": "SyntaxError: Invalid regular expression: /(/: Unterminated group"
+ },
+ {
+  "template": "{{ r/x/gg }}",
+  "data": {},
+  "includes": {},
+  "err": "SyntaxError: Invalid flags supplied to RegExp constructor 'gg'"
+ },
+ {
+  "template": "{{ \"a\" in r/x/ }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Cannot use \"in\" operator to search for \"a\" in unexpected types."
+ },
+ {
+  "template": "{% for k in r/x/ %}{{ k }}{% else %}E{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "E"
+ },
+ {
+  "template": "{{ \"abc\".match(r/b/) }}",
+  "data": {},
+  "includes": {},
+  "out": "b"
+ },
+ {
+  "template": "{{ s.replace(r/(?=o)/g, \"-\") }}",
+  "data": {
+   "s": "foo"
+  },
+  "includes": {},
+  "out": "f-o-o"
  }
 ]

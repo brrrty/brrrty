@@ -115,6 +115,9 @@ impl Renderer<'_> {
                 s.0.chars().map(|c| Val::str(c.to_string())).collect(),
             )),
             Val::Func(_) => Err(jsops::unsupported("Brrrty doesn't loop over a function")),
+            Val::Re(_) => Err(jsops::unsupported(
+                "Brrrty doesn't loop over a regular expression",
+            )),
             _ => Ok(v),
         }
     }

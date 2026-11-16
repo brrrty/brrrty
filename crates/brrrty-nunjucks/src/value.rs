@@ -32,6 +32,76 @@ pub(crate) enum Val {
     /// An object the template made.
     Obj(Rc<Obj>),
     Func(Rc<Func>),
+    /// A `RegExp` from an `r/.../` literal: each evaluation makes a new one.
+    Re(Rc<Re>),
+}
+
+/// A `RegExp` object.
+pub(crate) struct Re {
+    pub lit: Arc<RegexLit>,
+    /// `lastIndex` may no longer be 0: a global `test()` matched.
+    pub moved: std::cell::Cell<bool>,
+}
+
+/// An `r/.../` literal, compiled once with the template.
+pub(crate) struct RegexLit {
+    /// `RegExp.prototype.source`.
+    pub source: String,
+    /// `RegExp.prototype.flags`: the flags in the order `gimy`.
+    pub flags: String,
+    /// The pattern on the `regex` crate, or why Brrrty can't match it
+    /// exactly: refused when the template matches with it.
+    re: Result<Arc<brrrty_jsregex::matcher::JsRegex>, String>,
+}
+
+impl std::fmt::Debug for RegexLit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_js_string())
+    }
+}
+
+impl RegexLit {
+    /// `new RegExp(body, flags)` from the literal's text. `Err` when
+    /// JavaScript rejects the pattern, which Nunjucks does as it parses,
+    /// or when it is a form Brrrty doesn't read.
+    pub fn new(body: &str, flags: &str) -> Result<RegexLit, String> {
+        brrrty_jsregex::ast::parse(body, false)?;
+        let re = brrrty_jsregex::matcher::compile(body, flags);
+        let flags: String = "gimy".chars().filter(|c| flags.contains(*c)).collect();
+        // `EscapeRegExpPattern`: line terminators are escaped; a `/` can't
+        // be in the body unescaped.
+        let mut source = String::new();
+        for c in body.chars() {
+            match c {
+                '\n' => source.push_str("\\n"),
+                '\r' => source.push_str("\\r"),
+                '\u{2028}' => source.push_str("\\u2028"),
+                '\u{2029}' => source.push_str("\\u2029"),
+                c => source.push(c),
+            }
+        }
+        if source.is_empty() {
+            source.push_str("(?:)");
+        }
+        Ok(RegexLit { source, flags, re })
+    }
+
+    /// The pattern to match with, or why Brrrty can't match it exactly.
+    pub fn matcher(&self) -> Result<&brrrty_jsregex::matcher::JsRegex, String> {
+        match &self.re {
+            Ok(re) => Ok(re),
+            Err(why) => Err(format!(
+                "Brrrty can't match with `{}` exactly: {why}",
+                self.to_js_string()
+            )),
+        }
+    }
+
+    /// `RegExp.prototype.toString`.
+    #[must_use]
+    pub fn to_js_string(&self) -> String {
+        format!("/{}/{}", self.source, self.flags)
+    }
 }
 
 pub(crate) struct Safe(pub Arc<str>);
@@ -212,6 +282,7 @@ impl Val {
             (Val::Arr(a), Val::Arr(b)) => Rc::ptr_eq(a, b),
             (Val::Obj(a), Val::Obj(b)) => Rc::ptr_eq(a, b),
             (Val::Func(a), Val::Func(b)) => Rc::ptr_eq(a, b),
+            (Val::Re(a), Val::Re(b)) => Rc::ptr_eq(a, b),
             (Val::V(Value::Array(a)), Val::V(Value::Array(b))) => Arc::ptr_eq(a, b),
             (Val::V(Value::Object(a)), Val::V(Value::Object(b))) => Arc::ptr_eq(a, b),
             _ => false,

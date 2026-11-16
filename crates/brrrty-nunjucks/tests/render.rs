@@ -69,7 +69,19 @@ const REFUSED: &[(&str, &str)] = &[
         "Nunjucks prints the function's JavaScript source",
     ),
     ("{{ d == d }}", "a date's identity is not known"),
-    ("{{ r/x/ }}", "regular expressions wait for Task 4"),
+    (
+        "{% set re = r/b/g %}{{ re.test(\"abc\") }}|{{ re.lastIndex }}",
+        "lastIndex isn't tracked after a global test() matched",
+    ),
+    (
+        "{% for k in r/x/ %}{{ k }}{% else %}E{% endfor %}",
+        "looping over a regular expression",
+    ),
+    ("{{ \"abc\".match(r/b/) }}", "match is not emulated"),
+    (
+        "{{ s.replace(r/(?=o)/g, \"-\") }}",
+        "the regex crate has no lookaround",
+    ),
 ];
 
 struct MapLoader<'a>(&'a BTreeMap<String, String>);

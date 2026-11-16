@@ -544,6 +544,10 @@ impl<'a> Renderer<'a> {
                 Lit::Bool(b) => Val::bool(*b),
                 Lit::Num(n) => Val::num(*n),
                 Lit::Str(s) => Val::str(s.clone()),
+                Lit::Re(re) => Val::Re(Rc::new(crate::value::Re {
+                    lit: re.clone(),
+                    moved: std::cell::Cell::new(false),
+                })),
             },
             E::Var(r) => scope.get(r.up, r.slot),
             E::Lookup(name) => self.lookup(name, scope)?,

@@ -177,6 +177,7 @@ pub(crate) enum Lit {
     Bool(bool),
     Num(f64),
     Str(Arc<str>),
+    Re(Arc<crate::value::RegexLit>),
 }
 
 /// An expression as the compiled JavaScript evaluates it.
@@ -1203,12 +1204,17 @@ impl Compiler {
                     Literal::Number(n) => Lit::Num(*n),
                     Literal::Bool(b) => Lit::Bool(*b),
                     Literal::Null => Lit::Null,
-                    Literal::Regex { .. } => {
-                        return Err(refuse(
-                            "Brrrty doesn't run Nunjucks regular expressions (`r/.../`) yet",
-                            *span,
-                        )
-                        .with_help("a later Brrrty release runs them; until then, use a string method or a filter"));
+                    Literal::Regex { pattern, flags } => {
+                        match crate::value::RegexLit::new(pattern, flags) {
+                            Ok(re) => Lit::Re(Arc::new(re)),
+                            Err(why) => {
+                                return Err(refuse(
+                                    format!("Brrrty can't read the regular expression `r/{pattern}/{flags}`: {why}"),
+                                    *span,
+                                )
+                                .with_help("Brrrty refuses the template rather than match differently from JavaScript"));
+                            }
+                        }
                     }
                 };
                 self.atom(E::Lit(lit), out)

@@ -307,6 +307,16 @@ fn truncate(input: Val, length: &Val, killwords: &Val, end: &Val, ops: Ops) -> R
 }
 
 fn replace(input: Val, old: &Val, new_: &Val, max: &Val, ops: Ops) -> R<Val> {
+    // `if (old instanceof RegExp) return str.replace(old, new_)`: a plain
+    // string, even from a SafeString.
+    if let Val::Re(_) = old {
+        return match &input {
+            Val::V(Value::String(_)) | Val::Safe(_) => {
+                jsops::call_method(&input, "replace", &[old.clone(), new_.clone()], ops)
+            }
+            _ => Err(jsops::type_error("str.replace is not a function")),
+        };
+    }
     let original = input.clone();
     let max = if max.is_undefined() {
         Val::num(-1.0)

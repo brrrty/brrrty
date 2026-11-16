@@ -96,6 +96,8 @@ fn to_primitive_in(v: &Val, hint: Hint, ops: Ops, seen: &mut Vec<usize>) -> R<Va
             }
             Value::String("[object Object]".into())
         }
+        // `valueOf` gives the object itself, so both hints use `toString`.
+        Val::Re(r) => Value::String(r.lit.to_js_string().into()),
         Val::Func(_) => {
             return Err(unsupported(
                 "a function can't be printed or turned into a string or number",
@@ -646,6 +648,7 @@ fn proto_function(v: &Val, name: &str) -> bool {
         Val::V(Value::Bool(_)) => BOOLEAN_PROTO,
         Val::V(Value::Array(_)) | Val::Arr(_) => ARRAY_PROTO,
         Val::V(Value::Date(_)) => DATE_PROTO,
+        Val::Re(_) => REGEXP_PROTO,
         _ => &[],
     };
     own.contains(&name) || OBJECT_PROTO.contains(&name)
@@ -692,6 +695,7 @@ pub(crate) fn get_property(obj: &Val, key: &str) -> R<Prop> {
                 "Brrrty can't read `.{key}` of a function"
             )));
         }
+        Val::Re(r) => regex_property(r, key)?,
     };
     if let Some(v) = own {
         return Ok(match v {
@@ -779,8 +783,62 @@ pub(crate) fn has_own(obj: &Val, key: &str) -> R<bool> {
                 || brrrty_js::array_index(key).is_some_and(|i| (i as usize) < a.borrow().len())
         }
         Val::Obj(o) => o.has(key),
+        Val::Re(_) => key == "lastIndex",
         _ => false,
     })
+}
+
+/// The methods on `RegExp.prototype`.
+const REGEXP_PROTO: &[&str] = &["exec", "test", "toString", "compile"];
+
+/// A regular expression's `lastIndex`, and the accessors on its prototype.
+fn regex_property(r: &crate::value::Re, key: &str) -> R<Option<Val>> {
+    let flag = |f: char| Some(Val::bool(r.lit.flags.contains(f)));
+    Ok(match key {
+        "lastIndex" if r.moved.get() => {
+            return Err(unsupported(
+                "Brrrty doesn't track `lastIndex` after a global regular expression's `test()` matched",
+            ));
+        }
+        "lastIndex" => Some(Val::num(0.0)),
+        "source" => Some(Val::str(r.lit.source.as_str())),
+        "flags" => Some(Val::str(r.lit.flags.as_str())),
+        "global" => flag('g'),
+        "ignoreCase" => flag('i'),
+        "multiline" => flag('m'),
+        "sticky" => flag('y'),
+        "unicode" | "dotAll" | "hasIndices" | "unicodeSets" => Some(Val::bool(false)),
+        _ => None,
+    })
+}
+
+/// `test`, `toString` and `exec` on a regular expression.
+fn regex_method(r: &crate::value::Re, name: &str, args: &[Val], ops: Ops) -> R<Val> {
+    match name {
+        "toString" => Ok(Val::str(r.lit.to_js_string())),
+        "test" => {
+            let global = r.lit.flags.contains('g');
+            if global && r.moved.get() {
+                return Err(unsupported(
+                    "Brrrty doesn't run `test()` again on a global regular expression after it matched: JavaScript starts it at `lastIndex`",
+                ));
+            }
+            let s = to_string(&arg(args, 0), ops)?;
+            let hit = r
+                .lit
+                .matcher()
+                .map_err(unsupported)?
+                .is_match(&s)
+                .map_err(unsupported)?;
+            if global && hit {
+                r.moved.set(true);
+            }
+            Ok(Val::bool(hit))
+        }
+        _ => Err(unsupported(format!(
+            "Brrrty doesn't run the JavaScript method `{name}()` on a regular expression"
+        ))),
+    }
 }
 
 /// `lib.inOperator(key, val)`.
@@ -859,6 +917,10 @@ pub(crate) fn call_method(this: &Val, name: &str, args: &[Val], ops: Ops) -> R<V
         },
         Val::V(Value::Array(_)) | Val::Arr(_) => array_method(this, name, args, ops),
         Val::V(Value::Date(d)) => date_method(this, d.timestamp_millis() as f64, name, ops),
+        Val::Re(r) => match name {
+            "toString" | "test" | "exec" | "compile" => regex_method(r, name, args, ops),
+            _ => object_method(this, name, args, ops),
+        },
         _ => object_method(this, name, args, ops),
     }
 }
@@ -955,6 +1017,14 @@ fn string_method(this: &Val, s: &str, name: &str, args: &[Val], ops: Ops) -> R<V
             Ok(Val::str(out))
         }
         "includes" | "indexOf" | "startsWith" | "endsWith" | "lastIndexOf" => {
+            if matches!(args.first(), Some(Val::Re(_)))
+                && name != "indexOf"
+                && name != "lastIndexOf"
+            {
+                return Err(type_error(format!(
+                    "First argument to String.prototype.{name} must not be a regular expression"
+                )));
+            }
             let u = units();
             let needle = utf16(&to_string(&arg(args, 0), ops)?);
             let pos = arg(args, 1);
@@ -1096,6 +1166,29 @@ fn string_method(this: &Val, s: &str, name: &str, args: &[Val], ops: Ops) -> R<V
                     "Brrrty doesn't run `{name}()` with a function as the replacement"
                 )));
             }
+            if let Val::Re(r) = &pattern {
+                let global = r.lit.flags.contains('g');
+                if name == "replaceAll" && !global {
+                    return Err(type_error(
+                        "String.prototype.replaceAll called with a non-global RegExp argument",
+                    ));
+                }
+                let repl = to_string(&replacement, ops)?;
+                let out = r
+                    .lit
+                    .matcher()
+                    .map_err(unsupported)?
+                    .replace(s, &repl)
+                    .map_err(unsupported)?;
+                if out.len() > ops.limit {
+                    return Err(too_big(ops));
+                }
+                // A global replace starts and leaves `lastIndex` at 0.
+                if global {
+                    r.moved.set(false);
+                }
+                return Ok(Val::str(out));
+            }
             let u = units();
             let needle = utf16(&to_string(&pattern, ops)?);
             let repl = utf16(&to_string(&replacement, ops)?);
@@ -1131,6 +1224,24 @@ fn string_method(this: &Val, s: &str, name: &str, args: &[Val], ops: Ops) -> R<V
             } else {
                 to_uint32(to_number(&limit, ops)?)
             };
+            if let Val::Re(r) = &sep {
+                if lim == 0 {
+                    return Ok(Val::arr(vec![]));
+                }
+                let pieces = r
+                    .lit
+                    .matcher()
+                    .map_err(unsupported)?
+                    .split(s)
+                    .map_err(unsupported)?;
+                return Ok(Val::arr(
+                    pieces
+                        .into_iter()
+                        .take(lim as usize)
+                        .map(|p| p.map_or_else(Val::undef, Val::str))
+                        .collect(),
+                ));
+            }
             if sep.is_undefined() {
                 return Ok(Val::arr(if lim == 0 { vec![] } else { vec![Val::str(s)] }));
             }

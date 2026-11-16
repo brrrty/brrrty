@@ -171,19 +171,10 @@ fn every_conformance_template_parses_like_nunjucks() {
     );
 }
 
-/// Cases that need something a later task adds, with the reason. The test
-/// checks each reason: a case excluded for a regular expression has `r/` in
-/// it. Every Nunjucks filter is built, so none is excluded for one.
-const EXCLUDED: &[(&str, &str)] = &[
-    (
-        "expr_js_replace_regex",
-        "regex literal (Task 4, controller ruling)",
-    ),
-    (
-        "expr_regex_literal",
-        "regex literal (Task 4, controller ruling)",
-    ),
-];
+/// Cases that need something Brrrty doesn't do yet, with the reason. The
+/// test checks each reason: a case excluded for a regular expression has
+/// `r/` in it. None is excluded: every case renders.
+const EXCLUDED: &[(&str, &str)] = &[];
 
 /// Serves a case's `includes`.
 struct MapLoader<'a>(&'a BTreeMap<String, String>);
@@ -306,6 +297,7 @@ fn cases_render_like_nunjucks() {
         skipped += x;
     }
     println!("| all | {pass} | {total} | {skipped} |");
+    assert_eq!(skipped, EXCLUDED.len());
     if !excluded_passing.is_empty() {
         println!("excluded cases that already pass: {excluded_passing:?}");
     }
