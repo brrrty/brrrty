@@ -53,6 +53,8 @@ impl Default for JsObject {
     }
 }
 
+const FN_TEXT: &str = "function () { [native code] }";
+
 /// A canonical array index, `"0"` to `"4294967294"`.
 fn array_index(k: &str) -> Option<u32> {
     let canonical = k == "0" || (!k.starts_with('0') && k.bytes().all(|b| b.is_ascii_digit()));
@@ -180,10 +182,15 @@ pub fn register(e: &mut Engine) {
         .register_fn("to_debug", |_: &mut JsNull| "null".to_string())
         .register_fn("+", |s: ImmutableString, _: JsNull| format!("{s}null"))
         .register_fn("+", |_: JsNull, s: ImmutableString| format!("null{s}"));
-    let mut globals = rhai::Module::new();
-    globals.set_var("NULL", JsNull);
-    e.register_global_module(globals.into());
-
+    // A function's text has no hash-bearing name in it.
+    e.register_fn("to_string", |_: &mut rhai::FnPtr| FN_TEXT.to_string())
+        .register_fn("to_debug", |_: &mut rhai::FnPtr| FN_TEXT.to_string())
+        .register_fn("+", |s: ImmutableString, _: rhai::FnPtr| {
+            format!("{s}{FN_TEXT}")
+        })
+        .register_fn("+", |_: rhai::FnPtr, s: ImmutableString| {
+            format!("{FN_TEXT}{s}")
+        });
     e.register_type_with_name::<JsObject>("object")
         .register_fn("object", JsObject::default)
         .register_fn("object", |m: Map| {

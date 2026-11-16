@@ -18,7 +18,7 @@ brrrty-js = { path = "../brrrty-js", version = "0.0.4" }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
 indexmap = "2"
 regex = "1.13.1"
-rhai = { version = "=1.27.0", features = ["sync"] }
+rhai = { version = "=1.27.0", features = ["sync", "no_closure"] }
 stacker = "0.1.25"
 url = "2.5.8"
 

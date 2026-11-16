@@ -30,9 +30,6 @@ pub(crate) fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
     if depth > MAX_DEPTH {
         return Err(format!("data nests deeper than {MAX_DEPTH} levels"));
     }
-    if v.is_shared() {
-        return to_value_at(&v.flatten_clone(), depth);
-    }
     if v.is_unit() {
         return Ok(Value::Undefined);
     }

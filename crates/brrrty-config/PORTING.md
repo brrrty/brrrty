@@ -14,7 +14,7 @@ would give a JS filter, and what a filter returns goes back out as data:
 
 - Numbers are floats (JS numbers). Strings, booleans and arrays keep their
   shape. Dates are dates (`get_time(d)`, `year(d)`).
-- `undefined` is `()`. `null` is `null_value()` (also written `NULL`); it
+- `undefined` is `()`. `null` is `null_value()`; it
   equals `()`, is falsy, and comes back out as `null`. This holds for
   scalars, array items and object keys, so copying a value keeps its null.
   `x ?? default` only replaces `()`, so test `x == ()` to catch both.
@@ -25,12 +25,38 @@ would give a JS filter, and what a filter returns goes back out as data:
 - Arguments arrive in the order the template wrote them. A keyword
   argument arrives in place as a two-item array `[name, value]`.
 
-**Anything that would make output nondeterministic is refused**, and only
-the pages that hit it:
+**Nothing carries state from one filter call to the next.** 11ty runs
+filters in page order, so a JS filter can keep a counter or a cache in a
+variable it closes over. Brrrty renders pages in parallel, so that could
+never give the same output. Instead of checking for it, Brrrty makes it
+impossible:
 
-- A filter that changes a variable it captured from the script (a counter,
-  a cache, an `object()` in a closure). 11ty carries the change from page
-  to page in order, and Brrrty renders in parallel. Keep filters pure.
+- A function or closure can't see variables outside itself. `let n = 0;
+  config.add_filter("f", |v| { n += 1; n })` is a syntax error at the line
+  that uses `n`, with a pointer to this guide. (Rhai is built with
+  `no_closure`, and a variable that isn't in scope is an error at load.)
+- Every argument is a copy for the call. A filter that changes the object
+  it was given changes only its copy; other pages (and the page's own data)
+  never see it.
+- Values the script gives a filter by currying are copied for each call too.
+- There is no module-level state, and no `this`.
+
+To read a value set up at the top of the script, curry it into a named
+function. The curried value comes first, then the value being filtered,
+then the template's arguments:
+
+```rhai
+let rates = #{ a: 2, b: 3 };
+fn rate(rates, value, key) { rates[key] * value }
+config.add_filter("rate", Fn("rate").curry(rates));   // {{ 5 | rate: "b" }}
+```
+
+(`global::NAME` constants can't be used: they exist only while the
+script's top level runs.)
+
+**Other things that would make output nondeterministic are refused**, and
+only the pages that hit them:
+
 - A filter that uses randomness: declare it with
   `config.add_nondeterministic_filter("name")`.
 - A regular expression or text where Rust and JavaScript would differ
@@ -62,7 +88,7 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `str[0]` | a `char` | `str.sub_string(0, 1)` (Rhai counts characters, JS counts UTF-16 units) |
 | `a.length` | `len()` | `a.len()` (characters for strings) |
 
-Rhai's closures are `|a, b| ...`, the last expression is the value, and a
+Rhai's closures are `|a, b| ...` and can't capture variables (see above; use a loop instead of `arr.filter(|g| g.x == key)` when the test needs `key`). The last expression is the value, and a
 missing argument is `()`, so `|s, n| { let n = n ?? 40; ... }` is
 `(s, n = 40) =>`. A thrown error (`throw "msg"`) refuses the page.
 

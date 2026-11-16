@@ -567,7 +567,9 @@ config.add_filter("published", |games| {
 });
 config.add_filter("byCategory", |games, slug| {
     if !truthy(games) { return []; }
-    games.filter(|g| g.category == slug)
+    let out = [];
+    for g in games { if g.category == slug { out.push(g); } }
+    out
 });
 config.add_nondeterministic_filter("shuffle");
 "#;
@@ -747,7 +749,7 @@ fn null_is_unit_to_a_script_and_can_be_made_on_purpose() {
            config.add_filter("copy", |o| { let c = object(); for k in o { c[k] = o[k]; } c });
            config.add_filter("copyq", |o| { let c = object(); c.q = o.n; c });
            config.add_filter("copyq", |o| { let c = object(); c.q = o.n; c });
-           config.add_filter("cnst", |v| NULL);"#,
+           config.add_filter("cnst", |v| null_value());"#,
     );
     let r = |tpl: &str, json: &str| render(&cfg, tpl, json).unwrap();
     assert_eq!(r("{{ n | isnull }}", r#"{"n":null}"#), "true");
@@ -770,7 +772,7 @@ fn null_is_unit_to_a_script_and_can_be_made_on_purpose() {
 }
 
 #[test]
-fn changing_a_shared_object_does_not_change_the_pages_data() {
+fn changing_a_common_object_does_not_change_the_pages_data() {
     let cfg = load(r#"config.add_filter("add", |o| { o.x = 1; o.keys() });"#);
     let e = engine(&cfg);
     let t = e
@@ -805,33 +807,6 @@ fn numbers_are_javascripts() {
     // Whole numbers print without `.0`.
     assert_eq!(r("{{ 5 | show }}"), "5|5|5");
     assert_eq!(r("{{ 1.5 | show }}"), "1.5|1.5|1.5");
-}
-
-#[test]
-fn a_filter_that_changes_a_captured_variable_is_refused() {
-    let (t, r) = site(
-        "let counter = 0;\nconfig.add_filter(\"count\", |v| { counter += 1; counter });\nlet pure = 5;\nconfig.add_filter(\"p\", |v| v + pure);\nfn helper(x) { x }\nconfig.add_filter(\"h\", |v| helper(v));\nlet memo = ();\nconfig.add_filter(\"memo\", |v| { if memo == () { memo = 7; } memo });",
-        &[
-            ("a.liquid", "{{ 1 | count }}"),
-            ("b.liquid", "{{ 1 | p }}-{{ 2 | h }}"),
-        ],
-    );
-    assert_eq!(
-        fs::read_to_string(t.path().join("_site/b/index.html")).unwrap(),
-        "6-2"
-    );
-    assert!(!t.path().join("_site/a/index.html").exists());
-    let p = r
-        .problems
-        .iter()
-        .find(|p| p.code == codes::LIQUID_RENDER)
-        .unwrap();
-    assert!(
-        p.message.contains("changed a variable it captured"),
-        "{}",
-        p.message
-    );
-    assert_eq!(p.path.as_deref(), Some(Path::new("src/a.liquid")));
 }
 
 #[test]
@@ -1051,46 +1026,6 @@ fn text_made_from_brrrty_types_is_javascripts_never_a_dump() {
 }
 
 #[test]
-fn a_filter_that_changes_a_captured_object_is_refused() {
-    for (setup, body) in [
-        ("let c = object(); c.n = 0;", "{ c.n = c.n + 1; c.n }"),
-        ("let c = [object()];", "{ c[0].n = 1; 1 }"),
-        ("let c = #{ o: object() };", "{ c.o.n = 1; 1 }"),
-        ("let c = [1, 2];", "{ c.push(3); 1 }"),
-        ("let c = #{ a: [object()] };", "{ c.a[0].z = 1; 1 }"),
-    ] {
-        let (t, r) = site(
-            &format!("{setup}\nconfig.add_filter(\"f\", |v| {body});\n"),
-            &[("a.liquid", "{{ 1 | f }}"), ("b.liquid", "ok")],
-        );
-        assert!(t.path().join("_site/b/index.html").exists());
-        assert!(
-            !t.path().join("_site/a/index.html").exists(),
-            "{setup} {body}"
-        );
-        let p = r
-            .problems
-            .iter()
-            .find(|p| p.code == codes::LIQUID_RENDER)
-            .unwrap();
-        assert!(
-            p.message.contains("changed a variable it captured"),
-            "{}",
-            p.message
-        );
-    }
-    // Reading a captured object is fine.
-    let (t, _) = site(
-        "let c = object(); c.n = 5;\nconfig.add_filter(\"f\", |v| c.n + v);\n",
-        &[("a.liquid", "{{ 1 | f }}")],
-    );
-    assert_eq!(
-        fs::read_to_string(t.path().join("_site/a/index.html")).unwrap(),
-        "6"
-    );
-}
-
-#[test]
 fn the_i_flag_only_matters_when_the_pattern_has_letters() {
     // No letters to fold, so non-ASCII text is fine (tag stripping with `gi`).
     assert_eq!(
@@ -1101,4 +1036,118 @@ fn the_i_flag_only_matters_when_the_pattern_has_letters() {
         let p = load_err(&format!("regex_test(\"\\u00e9\", {}, \"i\");", json(pat)));
         assert!(p.message.contains("`i` flag"), "{pat}: {}", p.message);
     }
+}
+
+// ---- no captures: nothing carries state from one call to the next ----
+
+#[test]
+fn a_closure_that_captures_a_variable_is_refused_at_load_with_its_line() {
+    for script in [
+        "let n = 0;\nconfig.add_filter(\"f\", |v| { n += 1; n });",
+        "let c = object();\nconfig.add_filter(\"f\", |v| { c.n = 1; c.n });",
+        "let bump = || 1;\nconfig.add_filter(\"f\", |v| bump.call());",
+        "let t = #{ a: 1 };\nconfig.add_filter(\"f\", |v| t[v]);",
+        "let d = now();\nconfig.add_filter(\"f\", |v| { d = now(); 1 });",
+        "let n = 0;\nfn f(v) { n }\nconfig.add_filter(\"f\", Fn(\"f\"));",
+    ] {
+        let p = load_err(script);
+        assert_eq!(p.code, codes::CONFIG_SYNTAX, "{script}: {p:?}");
+        assert!(p.line.is_some_and(|l| l >= 2), "{script}: {p:?}");
+        assert!(
+            p.help.as_deref().unwrap_or_default().contains("PORTING.md"),
+            "{script}: {p:?}"
+        );
+    }
+}
+
+#[test]
+fn a_curried_value_can_be_read() {
+    let cfg = load(
+        r#"
+        let table = object();
+        table.x = 10;
+        let rates = #{ a: 2, b: 3 };
+        fn pick(t, v) { t[v] }
+        fn rate(r, v, k) { r[k] * v }
+        config.add_filter("pick", Fn("pick").curry(table));
+        config.add_filter("rate", Fn("rate").curry(rates));
+        "#,
+    );
+    let r = |tpl: &str| render(&cfg, tpl, "{}").unwrap();
+    assert_eq!(r("{{ 'x' | pick }}"), "10");
+    // The curried value comes first, then what the template passes.
+    assert_eq!(r("{{ 5 | rate: 'b' }}"), "15");
+}
+
+/// A site of `n` pages, each `{{ 1 | f }}-{{ data | json }}`, and what each
+/// page rendered.
+fn many_pages(script: &str, n: usize, tpl: &str) -> Vec<String> {
+    let pages: Vec<(String, String)> = (0..n)
+        .map(|i| (format!("p{i:02}.liquid"), tpl.to_string()))
+        .collect();
+    let refs: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (t, r) = site(script, &refs);
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    (0..n)
+        .map(|i| fs::read_to_string(t.path().join(format!("_site/p{i:02}/index.html"))).unwrap())
+        .collect()
+}
+
+#[test]
+fn a_filter_that_changes_its_argument_does_not_change_other_pages() {
+    // Global data is common by every page. The filter changes what it is
+    // given; every page must still see the original.
+    let out = many_pages(
+        r#"
+        let common = object();
+        common.hits = 0;
+        common.list = [object()];
+        config.add_global_data("common", common);
+        config.add_filter("bump", |o| {
+            o.hits = o.hits + 1;
+            o.list.push(1);
+            o.list[0].x = 1;
+            o.hits
+        });
+        "#,
+        50,
+        "{{ common | bump }}-{{ common | json }}",
+    );
+    assert_eq!(out.len(), 50);
+    for (i, page) in out.iter().enumerate() {
+        assert_eq!(page, r#"1-{"hits":0,"list":[{}]}"#, "page {i}");
+    }
+}
+
+#[test]
+fn a_curried_value_is_fresh_for_every_call() {
+    let out = many_pages(
+        r#"
+        let c = object();
+        c.n = 0;
+        let list = [1];
+        fn bump(c, v) { c.n += 1; c.n }
+        fn grow(list, v) { list.push(1); list.len() }
+        config.add_filter("bump", Fn("bump").curry(c));
+        config.add_filter("grow", Fn("grow").curry(list));
+        "#,
+        50,
+        "{{ 1 | bump }}{{ 1 | grow }}",
+    );
+    assert!(out.iter().all(|p| p == "12"), "{out:?}");
+}
+
+#[test]
+fn a_function_has_no_hash_in_its_text() {
+    let cfg = load(
+        r#"config.add_filter("f", |v| { let g = |x| x; `${g}|` + g + "|" + g.to_string() });"#,
+    );
+    let want = "function () { [native code] }";
+    assert_eq!(
+        render(&cfg, "{{ 1 | f }}", "{}").unwrap(),
+        format!("{want}|{want}|{want}")
+    );
 }

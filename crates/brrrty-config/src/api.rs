@@ -144,6 +144,7 @@ pub fn engine(clock: Clock) -> Engine {
         .set_max_map_size(MAX_MAP_SIZE)
         // Config scripts are one file: no imports, and no `eval`.
         .set_module_resolver(rhai::module_resolvers::DummyModuleResolver::new())
+        .set_strict_variables(true)
         .disable_symbol("eval");
     e.on_progress(move |ops| {
         (ops % 1024 == 0 && RUN_START.with(|s| s.get().elapsed().as_secs() >= MAX_SECONDS)).then(

@@ -37,13 +37,15 @@
 //! Every JavaScript number arrives as a float, so `n / 2` is `3.5` for
 //! `7` and prints as JavaScript prints it (`5`, not `5.0`); a literal like
 //! `7` written in the script is still a Rhai integer, so write `7.0` to
-//! divide as JavaScript does. `undefined` is `()`. `null` is `null_value()`
-//! (also `NULL`): it equals `()` and is falsy, and it comes back out as
-//! `null`. A key of an object that holds `null` reads as `()`. `truthy(v)`
-//! is JavaScript's `if (v)`. A filter that changes a variable it captured
-//! from the script is refused, since 11ty would carry the change from page
-//! to page in order and Brrrty renders pages in parallel; keep filters
-//! pure.
+//! divide as JavaScript does. `undefined` is `()`. `null` is
+//! `null_value()`: it equals `()` and is falsy, and it comes back out as
+//! `null`, an object key included. `truthy(v)` is JavaScript's `if (v)`.
+//! Functions and closures can't capture variables (Rhai is built with
+//! `no_closure`), every argument is copied for the call, and a curried
+//! value is too, so nothing carries state from one filter call to the next;
+//! pages render in parallel and 11ty's page-order state couldn't be
+//! reproduced. A script that tries to capture a variable is a syntax error
+//! at that line.
 //!
 //! Rhai's operators aren't changed. Where they differ from JavaScript's,
 //! `js_string`, `js_concat`, `js_sort`, `js_sort_by`, `js_div` and
@@ -233,10 +235,15 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
 fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
     api::start_clock();
     let engine = api::engine(clock);
-    let ast = engine.compile(src).map_err(|e| vec![syntax_problem(&e)])?;
     let (config, state) = api::Config::new();
     let mut scope = rhai::Scope::new();
     scope.push("config", config);
+    // With strict variables, a variable that isn't in scope is a syntax
+    // error at its line. That is what a closure that tries to capture one
+    // is (see PORTING.md).
+    let ast = engine
+        .compile_with_scope(&scope, src)
+        .map_err(|e| vec![syntax_problem(&e)])?;
     let returned: Dynamic = engine
         .eval_ast_with_scope(&mut scope, &ast)
         .map_err(|e| vec![runtime_problem(*e)])?;
@@ -281,10 +288,13 @@ fn at(p: Problem, pos: Position) -> Problem {
 }
 
 fn syntax_problem(e: &ParseError) -> Problem {
+    let help = if matches!(*e.0, rhai::ParseErrorType::VariableUndefined(_)) {
+        "a function can't see variables outside it, and a closure `|x| ...` can't capture them. Pass the value in as an argument, or curry it into a named function (`Fn(\"name\").curry(value)`); see PORTING.md"
+    } else {
+        "fix the script; Rhai's syntax is close to JavaScript's, see https://rhai.rs/book/"
+    };
     at(
-        Problem::error(codes::CONFIG_SYNTAX, e.0.to_string()).with_help(
-            "fix the script; Rhai's syntax is close to JavaScript's, see https://rhai.rs/book/",
-        ),
+        Problem::error(codes::CONFIG_SYNTAX, e.0.to_string()).with_help(help),
         e.1,
     )
 }

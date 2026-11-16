@@ -43,7 +43,7 @@ const STACK_RED_ZONE: usize = 12 * 1024 * 1024;
 const CALL_STACK: usize = 128 * 1024 * 1024;
 
 /// How many arguments (the value included) the script function takes, not
-/// counting the ones a closure captured.
+/// counting the ones curried in.
 fn arity(rt: &Runtime, f: &FnPtr) -> Option<usize> {
     rt.ast
         .iter_functions()
@@ -79,23 +79,12 @@ fn call(
     if let Some(n) = arity {
         argv.resize(n, Dynamic::UNIT);
     }
-    // Variables a closure captured are shared by every call, and 11ty
-    // would carry changes to them from page to page, in order. Pages render
-    // in parallel here, so a filter that changes one is refused.
-    let before = (!f.curry().is_empty()).then(|| captured(f));
     let run = || {
         stacker::maybe_grow(STACK_RED_ZONE, CALL_STACK, || {
             f.call::<Dynamic>(&rt.engine, &rt.ast, argv)
         })
     };
     let result = std::panic::catch_unwind(AssertUnwindSafe(run));
-    if let Some(before) = before
-        && captured(f) != before
-    {
-        return Err(format!(
-            "filter `{name}` changed a variable it captured from the script. 11ty keeps that change from one page to the next, in page order, and Brrrty renders pages in parallel, so it can't give the same output; keep state out of filters (compute it before the filter, or pass it in as an argument)"
-        ));
-    }
     match result {
         Err(panic) => {
             let why = panic
@@ -108,58 +97,6 @@ fn call(
         Ok(Err(e)) => Err(describe(name, *e)),
         Ok(Ok(result)) => to_value(&result)
             .map_err(|why| format!("filter `{name}` returned a value that can't be data: {why}")),
-    }
-}
-
-/// What a closure's captured variables hold now, as text: a deep
-/// snapshot, so a change inside an object, array or map shows.
-fn captured(f: &FnPtr) -> Vec<String> {
-    f.curry()
-        .iter()
-        .map(|d| {
-            let mut out = String::new();
-            snapshot(d, &mut out, 0);
-            out
-        })
-        .collect()
-}
-
-fn snapshot(d: &Dynamic, out: &mut String, depth: usize) {
-    use crate::object::{JsNull, JsObject};
-    use std::fmt::Write;
-    if depth > 64 {
-        out.push_str("<deep>");
-        return;
-    }
-    let d = d.flatten_clone();
-    if let Some(o) = d.read_lock::<JsObject>() {
-        out.push_str("object{");
-        for k in o.js_keys() {
-            let _ = write!(out, "{k:?}:");
-            snapshot(&o.raw(k).unwrap_or(Dynamic::UNIT), out, depth + 1);
-            out.push(',');
-        }
-        out.push('}');
-    } else if let Some(a) = d.read_lock::<rhai::Array>() {
-        out.push('[');
-        for x in a.iter() {
-            snapshot(x, out, depth + 1);
-            out.push(',');
-        }
-        out.push(']');
-    } else if let Some(m) = d.read_lock::<rhai::Map>() {
-        out.push_str("#{");
-        for (k, x) in m.iter() {
-            let _ = write!(out, "{k:?}:");
-            snapshot(x, out, depth + 1);
-            out.push(',');
-        }
-        out.push('}');
-    } else if d.is::<JsNull>() {
-        out.push_str("null");
-    } else {
-        // Scalars, dates and function pointers print their value.
-        let _ = write!(out, "{}:{d:?}", d.type_name());
     }
 }
 
