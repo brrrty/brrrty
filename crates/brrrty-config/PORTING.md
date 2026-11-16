@@ -495,10 +495,23 @@ The pages it writes are the same as `brrrty build` writes, and
 
 - It listens on `localhost` only. Pass `--host 0.0.0.0` to reach it from
   another device, where 11ty listens on every address.
+- On a loopback address it answers only requests whose `Host` names this
+  machine (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`), and others get a
+  403. The live-reload WebSocket also needs an `Origin` on the same host.
+  11ty checks neither.
 - It refuses `..` (encoded or not) and symlinks that point outside the output
-  folder.
+  folder. A malformed URL, or one that decodes to invalid UTF-8, gets a 400.
+- `--quiet` prints only the `Server at` line, errors and warnings. 11ty's
+  `--quiet` still prints the `Wrote` line, `Watching…` and `File changed`.
+- An added file is reported as `File changed:`, where 11ty prints
+  `File added:`.
+- When the port is taken and a higher one is used, the `Server at` line ends
+  with `(port N was in use)`.
+- `setServerOptions` and `serverPassthroughCopyBehavior` have no equivalent:
+  the server takes only `--port` and `--host`, and passthrough files are always
+  copied into the output folder, as `brrrty build` copies them.
 - A build with an error in a page still serves and writes the pages that
-  built, as `brrrty build` does; 11ty's writes none of that build. A page
+  built, as `brrrty build` does; 11ty's `--serve` writes none of that build. A page
   whose template has the error keeps serving its last version, and the
   output folder keeps its last file for it, so both stay as they were, as
   in 11ty. A page that never built is a 404. A first build with errors
@@ -512,8 +525,11 @@ The pages it writes are the same as `brrrty build` writes, and
   to port.
 - Pages load `/.brrrty/reload-client.js` instead of `/.11ty/reload-client.js`,
   and stylesheets swapped on an edit get `?_brrrty=` instead of `?_11ty=`.
-- While it runs, builds are made in `<output>/.brrrty-serve/`. Leave that name
-  out of anything that deploys the output folder by hand while a session runs.
+- While it runs, builds are made in `<output>/.brrrty-serve/`, which is never
+  served. Leave that name out of anything that deploys the output folder by
+  hand while a session runs. `brrrty build` into the same folder leaves it
+  alone while a session holds it, and a second `brrrty serve` there refuses to
+  start.
 
 ## Checklist
 

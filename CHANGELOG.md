@@ -1,12 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.0.8 - 2026-11-17
 
 `brrrty serve`:
 
 - `brrrty serve` builds the site, serves it, and rebuilds on every change, as `eleventy --serve` does. It takes `--port` (8080, moving up to 10 ports on when it is taken), `--host` (`localhost`), `--input`, `--output`, `--passthrough`, `--quiet` and `--strict`. It prints `Server at <url>`, `File changed: <path>` and `Watching…` as 11ty does.
 - Live reload: pages get a script that patches in an edit to the page's own template, swaps an edited stylesheet, and reloads for anything else, and logs build errors in the browser console, as 11ty's dev server does.
-- The output folder is kept up to date after every build, from the build's own list of what it wrote, so an unchanged file is never read again. Builds are made in `<output>/.brrrty-serve/`, which is removed on exit; `brrrty build` removes one a killed session left behind.
+- The output folder is kept up to date after every build, from the build's own list of what it wrote, so an unchanged file is never read again. Passthrough sources reached through a symlink are copied again on every edit. Builds are made in `<output>/.brrrty-serve/`, which is never served and is removed on exit; `brrrty build` removes one a killed session left behind.
+- A running session holds a lock on `<output>/.brrrty-serve/` (an OS file lock, with its process id in the file). `brrrty build` into the same output folder leaves it alone and prints a `serve-staging-in-use` note, and a second `brrrty serve` there refuses to start. The OS releases the lock when the process ends, so a killed session's folder is still cleaned up.
+- When no build ever fills the output folder (the first build failed, as under `--strict`), a folder the session created is removed on exit, as 11ty leaves none.
 - Ctrl-C stops cleanly and exits 0, with the last good build in the output folder and the port released. A second Ctrl-C quits at once. SIGTERM stops the same way and then ends by the signal.
 - `eleventy.env.runMode` is `"serve"` while serving.
 
@@ -18,6 +20,11 @@ Where `brrrty serve` differs from `eleventy --serve`:
 - Any change under the input folder, a deleted file included, starts a rebuild.
 - The live-reload socket refuses pages from other sites.
 - Paths under `/.brrrty/` (`reload-client.js`, `morphdom.js`, `live`) are reserved while serving, as `/.11ty/` is in 11ty.
+- `--quiet` prints only the `Server at` line, errors and warnings; 11ty's also prints the `Wrote` line, `Watching…` and changed files.
+- An added file is reported as `File changed:` (11ty: `File added:`), and a changed file outside the project folder by its full path. When the port is taken, the `Server at` line adds `(port N was in use)`.
+- `setServerOptions` and `serverPassthroughCopyBehavior` have no equivalent.
+
+Building Brrrty now needs Rust 1.89 or later.
 
 ## 0.0.7 - 2026-11-17
 

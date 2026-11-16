@@ -4,6 +4,10 @@
 
 Brrrty is a fast, independent static site generator written in Rust that aims to build your existing 11ty site unchanged.
 
+Three Rs, like "go brrr".
+
+Brrrty exists because Eleventy is great. See NOTICE.
+
 Status: early development. Not ready for real sites yet.
 
 ## `brrrty serve`
@@ -16,13 +20,13 @@ Builds the site, serves it at `http://localhost:8080/`, and rebuilds whenever a 
 
 - `--port`: when it is taken, the next free port up to 10 above it is used, and the startup line says so.
 - `--host`: the address to listen on. The default only answers this machine; `--host 0.0.0.0` lets other devices on your network in.
-- `--output` is kept up to date after every build, so it holds the site while you work and after you stop. It gets exactly what `brrrty build` would write: the pages that built, never the older copies kept for pages with errors. As with `brrrty build`, nothing is ever deleted from it.
-- `--quiet` prints only errors and warnings.
+- `--output` is kept up to date after every build, so it holds the site while you work and after you stop. It gets exactly what `brrrty build` would write: the pages that built, never the older copies kept for pages with errors. As with `brrrty build`, files it didn't write are left alone. The one removal: when a build writes a file where the folder holds a folder by that name, or a folder where it holds a file, the old one is replaced (`brrrty build` stops with an error there instead).
+- `--quiet` prints only the `Server at` line, errors and warnings.
 - `--strict` stops each build at its first error, and exits with status 1 if the first build has errors, as `eleventy --serve` does. With it, a build with an error is never served; the last one stays up.
 
 Ctrl-C stops cleanly: a build already running finishes, the output folder holds the last good build, the port is released, and the exit status is 0. A second Ctrl-C quits at once. SIGTERM stops the same way and then ends by the signal.
 
-While it runs, each build goes into `<output>/.brrrty-serve/`, which is removed when it stops. A leftover one from a session that was killed is removed by the next `brrrty serve` or `brrrty build`. Run one `brrrty serve` per output folder, and don't run `brrrty build` into the same folder while it runs.
+While it runs, each build goes into `<output>/.brrrty-serve/`, which is removed when it stops. A leftover one from a session that was killed is removed by the next `brrrty serve` or `brrrty build`. A running session holds a lock on it: `brrrty build` into the same output folder leaves it alone and says so, and a second `brrrty serve` there refuses to start. It is never served. If the first build fails and no build ever fills the output folder, a folder the session created is removed when it stops.
 
 Pages get a small script, `/.brrrty/reload-client.js`, so a site's own files at `/.brrrty/reload-client.js`, `/.brrrty/morphdom.js` and `/.brrrty/live` are hidden while serving.
 
@@ -32,7 +36,3 @@ Where it differs from `eleventy --serve`:
 - It never serves a file outside the output folder: `..` and its encoded forms get a 404, and so does a symlink that points outside. A malformed URL gets a 400.
 - A build with errors in some pages still serves the rest, and its pages that built are written to the output folder, as `brrrty build` writes them. `eleventy --serve` writes nothing from a build with an error, and exits when the first build has one (see `--strict`).
 - Any file under the input folder starts a rebuild, not only template, data and include files, and so does deleting one, so a deleted page disappears from what is served.
-
-Three Rs, like "go brrr".
-
-Brrrty exists because Eleventy is great. See NOTICE.
