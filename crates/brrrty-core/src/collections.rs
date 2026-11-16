@@ -15,7 +15,7 @@ use std::sync::Arc;
 use brrrty_js::Value;
 use indexmap::IndexMap;
 
-use crate::data::{clean_tags, js_object};
+use crate::data::clean_tags;
 use crate::frontmatter::Data;
 use crate::problem::Problem;
 
@@ -355,6 +355,15 @@ impl Page {
     }
 }
 
+/// The keys in JavaScript order, one level only: the values are shared, not
+/// rebuilt (the items nest each other's data, so a deep copy explodes).
+fn js_top(data: &IndexMap<String, Value>) -> IndexMap<String, Value> {
+    Value::js_entries(data)
+        .into_iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 /// JavaScript's `<` on strings compares UTF-16 code units.
 fn compare_js(a: &str, b: &str) -> Ordering {
     a.encode_utf16().cmp(b.encode_utf16())
@@ -446,7 +455,7 @@ pub(crate) fn build(
                     continue;
                 }
                 None => {
-                    let so_far = Arc::new(js_object(&data));
+                    let so_far = Arc::new(js_top(&data));
                     match generate(i, &so_far) {
                         Ok(p) => p,
                         Err(problem) => {
@@ -467,7 +476,7 @@ pub(crate) fn build(
         }
     }
     Built {
-        collections: Arc::new(js_object(&data)),
+        collections: Arc::new(js_top(&data)),
         skipped,
         failed,
     }

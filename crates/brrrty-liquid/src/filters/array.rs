@@ -54,7 +54,13 @@ fn eval_on(r: &mut Renderer<'_>, path: Option<&Expr>, item: &Value) -> R<Val> {
         partials: Default::default(),
         stack: Vec::new(),
     };
-    sub.eval(path)
+    let result = sub.eval(path);
+    // The sub-evaluation reads the item as its variables, which records
+    // undefined markers in its own context: pass them on as traps.
+    for name in sub.ctx.undefined.take() {
+        brrrty_js::traps::read_item(item, &name);
+    }
+    result
 }
 
 /// `new Value(stringify(exp), liquid)`: an expression with filters,

@@ -393,3 +393,113 @@ fn layouts_read_collections() {
     assert!(errors(&r).is_empty(), "{:#?}", r.problems);
     assert_eq!(read(t.path(), "withl/index.html"), "3:<p>w</p>\n");
 }
+
+/// Every filter that reads a property of the items sees the marker, with or
+/// without a config file (probed filters: where, reject, find, find_index,
+/// has, group_by, map, sort, sum and their `_exp` forms).
+#[test]
+fn filters_reading_item_content_are_refused() {
+    let t = "templateContent";
+    let filters = [
+        format!("where: \"{t}\""),
+        format!("where: \"{t}\", \"x\""),
+        format!("reject: \"{t}\""),
+        format!("find: \"{t}\", \"x\""),
+        format!("find_index: \"{t}\", \"x\""),
+        format!("has: \"{t}\", \"x\""),
+        format!("group_by: \"{t}\""),
+        format!("map: \"{t}\""),
+        format!("sort: \"{t}\""),
+        format!("sort_natural: \"{t}\""),
+        format!("sum: \"{t}\""),
+        format!("where_exp: \"i\", \"i.{t} == 1\""),
+        format!("reject_exp: \"i\", \"i.{t} == 1\""),
+        format!("find_exp: \"i\", \"i.{t} == 1\""),
+        format!("find_index_exp: \"i\", \"i.{t} == 1\""),
+        format!("has_exp: \"i\", \"i.{t} == 1\""),
+        format!("group_by_exp: \"i\", \"i.{t}\""),
+        "where: \"content\"".to_string(),
+        "where: \"data.collections\"".to_string(),
+        "map: \"template\"".to_string(),
+    ];
+    for config in [false, true] {
+        for f in &filters {
+            let t = site(&format!("{{{{ collections.all | {f} | size }}}}"));
+            if config {
+                write(
+                    t.path(),
+                    "eleventy.config.js",
+                    "module.exports = () => ({});",
+                );
+            }
+            let r = run(t.path());
+            let errs = errors(&r);
+            assert_eq!(errs.len(), 1, "{f} (config {config}): {:#?}", r.problems);
+            assert!(
+                errs[0].message.contains("collection item"),
+                "{f}: {}",
+                errs[0].message
+            );
+            assert!(!t.path().join("_site/report.txt").exists(), "{f}");
+        }
+    }
+}
+
+/// `first` and `last` hand back an item, which prints as JSON.
+#[test]
+fn printing_a_whole_item_is_refused_without_a_config_file() {
+    for body in [
+        "{{ collections.all | first | json }}",
+        "{{ collections.all.first | json }}",
+        "{{ collections.x | last | json }}",
+    ] {
+        let t = site(body);
+        let r = run(t.path());
+        assert_eq!(errors(&r).len(), 1, "{body}: {:#?}", r.problems);
+    }
+}
+
+/// A template that paginates `collections.post` with
+/// `addAllPagesToCollections` puts every page in the collections it reads
+/// from: the pages hold each other's data, which must be shared, not copied
+/// (it once took 12 GB for 2,000 posts). Release builds run 10,000 posts.
+#[test]
+fn add_all_pages_to_collections_stays_linear() {
+    let posts = if cfg!(debug_assertions) {
+        1_000
+    } else {
+        10_000
+    };
+    let t = tempfile::tempdir().unwrap();
+    for i in 0..posts {
+        write(
+            t.path(),
+            &format!("src/posts/p{i}.md"),
+            &format!(
+                "---\ntitle: P{i}\ndate: 2020-01-01\ntags: [post, t{}]\n---\nb\n",
+                i % 50
+            ),
+        );
+    }
+    write(
+        t.path(),
+        "src/list.liquid",
+        "---\npagination:\n  data: collections.post\n  size: 1\n  addAllPagesToCollections: true\npermalink: \"list/{{ pagination.pageNumber }}/\"\ndate: 2040-01-01\n---\n{{ pagination.items[0].url }}\n",
+    );
+    write(
+        t.path(),
+        "src/count.liquid",
+        "---\ndate: 2040-01-02\neleventyExcludeFromCollections: true\n---\n{{ collections.all | size }}\n",
+    );
+    let start = std::time::Instant::now();
+    let r = run(t.path());
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        read(t.path(), "count/index.html"),
+        format!("{}\n", posts * 2)
+    );
+    assert_eq!(read(t.path(), "list/0/index.html"), "/posts/p0/\n");
+    if !cfg!(debug_assertions) {
+        assert!(start.elapsed().as_secs_f64() < 5.0, "{:?}", start.elapsed());
+    }
+}

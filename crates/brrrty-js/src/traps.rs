@@ -14,7 +14,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use indexmap::IndexMap;
 
@@ -28,22 +27,15 @@ pub const ITEM_PREFIX: &str = "item.";
 /// Prefix of a trap recorded for a missing property of an open object.
 pub const OPEN_PREFIX: &str = "collections.";
 
-static ACTIVE: AtomicBool = AtomicBool::new(false);
 static OPEN: RwLock<Vec<usize>> = RwLock::new(Vec::new());
 
 thread_local! {
     static HITS: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
 }
 
-/// Tell the runtime markers exist, so reads start checking for them.
-pub fn activate() {
-    ACTIVE.store(true, Ordering::Relaxed);
-}
-
 /// Register an object: reading a property it doesn't have is a trap.
 /// `id` is [`object_id`] of the object. Call [`close`] when the build ends.
 pub fn open(id: usize) {
-    activate();
     if let Ok(mut v) = OPEN.write() {
         v.push(id);
     }
@@ -83,9 +75,6 @@ pub fn take() -> Vec<String> {
 
 /// A read of `key` from `o`, which has `found` there.
 pub fn read(o: &IndexMap<String, Value>, key: &str, found: Option<&Value>) {
-    if !ACTIVE.load(Ordering::Relaxed) {
-        return;
-    }
     match found {
         Some(Value::Undefined) if TRAP_KEYS.contains(&key) => hit(format!("{ITEM_PREFIX}{key}")),
         None if is_open(o) => hit(format!("{OPEN_PREFIX}{key}")),
@@ -93,11 +82,15 @@ pub fn read(o: &IndexMap<String, Value>, key: &str, found: Option<&Value>) {
     }
 }
 
+/// A top-level lookup of `key` in `item`, the data of a sub-evaluation.
+pub fn read_item(item: &Value, key: &str) {
+    if let Value::Object(o) = item {
+        read(o, key, o.get(key));
+    }
+}
+
 /// A listing of all of `o`'s properties.
 pub fn entries(o: &IndexMap<String, Value>) {
-    if !ACTIVE.load(Ordering::Relaxed) {
-        return;
-    }
     for key in TRAP_KEYS {
         if matches!(o.get(key), Some(Value::Undefined)) {
             hit(format!("{ITEM_PREFIX}{key}"));
