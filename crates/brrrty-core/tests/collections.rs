@@ -878,3 +878,90 @@ fn json_of_collection_items_stops_at_the_first_item() {
     assert!(!root.join("_site/out.txt").exists());
     assert_eq!(read(root, "l/4999/index.html"), "/i/4999/");
 }
+
+/// Probed: 11ty builds a page whose path date is not a real date (its
+/// `page.date` is an Invalid Date, which sorts unpredictably), and aborts on
+/// a truthy `date` it can't parse. Brrrty refuses that page, and the reads
+/// of the collections it is in, and nothing else: collections without it,
+/// and names that aren't collections, still work.
+#[test]
+fn an_undatable_page_refuses_only_its_collections() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/2020-02-30-x.md", "---\ntags: p\n---\nx\n");
+    write(
+        root,
+        "src/bad.md",
+        "---\ntitle: B\ndate: 1700000000000\ntags: r\n---\nb\n",
+    );
+    write(root, "src/a.md", "---\ndate: 2020-01-01\ntags: p\n---\na\n");
+    write(root, "src/q.md", "---\ndate: 2020-01-03\ntags: q\n---\nq\n");
+    let page = |name: &str, body: &str| {
+        write(
+            root,
+            &format!("src/{name}.liquid"),
+            &format!(
+                "---\npermalink: {name}.txt\neleventyExcludeFromCollections: true\n---\n{body}"
+            ),
+        );
+    };
+    page("p", "{% for p in collections.p %}{{ p.url }}{% endfor %}");
+    page("r", "{{ collections.r | size }}");
+    page("all", "{{ collections.all | size }}");
+    page("keys", "{% for c in collections %}{{ c[0] }}{% endfor %}");
+    page(
+        "q",
+        "{% for p in collections.q %}{{ p.url }}{% endfor %}|{{ collections.nope | size }}",
+    );
+    write(
+        root,
+        "src/pp.liquid",
+        "---\npagination:\n  data: collections.p\n  size: 1\npermalink: \"pp/{{ pagination.pageNumber }}/\"\n---\nx",
+    );
+    let r = run(t.path());
+    let errs = errors(&r);
+    let at = |path: &str| {
+        errs.iter()
+            .find(|p| p.path.as_deref() == Some(Path::new(path)))
+            .unwrap_or_else(|| panic!("no problem for {path}: {:#?}", r.problems))
+    };
+    let x = at("src/2020-02-30-x.md");
+    assert_eq!(x.code, codes::DATE_INVALID);
+    assert_eq!(
+        x.message,
+        "date `2020-02-30` in the file path is not a real date"
+    );
+    let bad = at("src/bad.md");
+    assert_eq!(bad.code, codes::DATE_INVALID);
+    assert_eq!((bad.line, bad.column), (Some(3), Some(1)));
+    for (path, what) in [
+        (
+            "src/p.liquid",
+            "this page reads `collections.p`, which holds src/2020-02-30-x.md",
+        ),
+        (
+            "src/r.liquid",
+            "this page reads `collections.r`, which holds src/bad.md",
+        ),
+        (
+            "src/all.liquid",
+            "this page reads `collections.all`, which holds src/2020-02-30-x.md",
+        ),
+        (
+            "src/keys.liquid",
+            "this page lists every collection, including `collections.all`, which holds src/2020-02-30-x.md",
+        ),
+        (
+            "src/pp.liquid",
+            "this page paginates `collections.p`, which holds src/2020-02-30-x.md",
+        ),
+    ] {
+        let p = at(path);
+        assert_eq!(p.code, codes::DATA_UNSUPPORTED);
+        assert!(p.message.starts_with(what), "{path}: {}", p.message);
+    }
+    assert_eq!(errs.len(), 7, "{:#?}", r.problems);
+    assert_eq!(read(root, "q.txt"), "/q/|0");
+    assert_eq!(read(root, "a/index.html"), "<p>a</p>\n");
+    assert!(!root.join("_site/2020-02-30-x").exists());
+}

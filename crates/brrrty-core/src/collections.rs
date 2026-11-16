@@ -9,7 +9,7 @@
 //! and what a paginated template sees), so this follows the graph.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use brrrty_js::Value;
@@ -423,6 +423,10 @@ pub(crate) struct Entry {
     /// The pages, or `None` when they come from [`Collections::build`]'s
     /// callback because the template paginates a collection.
     pub pages: Option<Vec<Page>>,
+    /// Brrrty can't place the template's pages (it has no date Brrrty can
+    /// sort by): every collection it publishes to is poisoned from where
+    /// 11ty adds it.
+    pub poison: bool,
 }
 
 /// What building the collections gave.
@@ -436,6 +440,35 @@ pub(crate) struct Built {
     /// The entries in the order 11ty visits them: the order it renders
     /// their content in.
     pub order: Vec<usize>,
+    /// The collections Brrrty can't give because a poisoned entry is in
+    /// them, each with that entry's input path. They are left out of
+    /// `collections`; a read of one must be refused.
+    pub poisoned: BTreeMap<String, String>,
+    /// Entries that paginate a poisoned collection, with its name: they
+    /// make no pages, and are poisoned in turn.
+    pub refused: Vec<(usize, String)>,
+}
+
+/// Sets collection `tag` to `v`, or leaves it out as poisoned when a
+/// poisoned entry is in it.
+fn set(
+    data: &mut IndexMap<String, Value>,
+    poisoned: &mut BTreeMap<String, String>,
+    poison_in: &HashMap<String, String>,
+    tag: &str,
+    v: Value,
+) {
+    let key = if tag.is_empty() { "all" } else { tag };
+    match poison_in.get(key) {
+        Some(by) => {
+            data.shift_remove(tag);
+            poisoned.insert(tag.to_string(), by.clone());
+        }
+        None => {
+            poisoned.remove(tag);
+            data.insert(tag.to_string(), v);
+        }
+    }
 }
 
 /// Build the collections. `entries` are in 11ty's template order. `generate`
@@ -463,6 +496,11 @@ pub(crate) fn build(
     let mut failed: Vec<(usize, Problem)> = Vec::new();
     let mut skipped: Vec<usize> = Vec::new();
     let mut order: Vec<usize> = Vec::new();
+    // Tags (and `all`) that a poisoned entry added so far is in, with the
+    // first such entry; and the collections set while poisoned.
+    let mut poison_in: HashMap<String, String> = HashMap::new();
+    let mut poisoned: BTreeMap<String, String> = BTreeMap::new();
+    let mut refused: Vec<(usize, String)> = Vec::new();
 
     let snapshot = |added: &Vec<Page>, sorted: &mut Vec<usize>, dirty: &mut bool, tag: &str| {
         if *dirty {
@@ -486,12 +524,29 @@ pub(crate) fn build(
     for node in graph.order() {
         if node == keys {
             let v = snapshot(&added, &mut sorted, &mut dirty, "all");
-            data.insert("all".to_string(), v);
+            set(&mut data, &mut poisoned, &poison_in, "all", v);
         } else if let Some(tag) = node.strip_prefix(PREFIX) {
             let v = snapshot(&added, &mut sorted, &mut dirty, tag);
-            data.insert(tag.to_string(), v);
+            set(&mut data, &mut poisoned, &poison_in, tag, v);
         } else if let Some(&i) = by_path.get(&node) {
             order.push(i);
+            let target = entries[i]
+                .membership
+                .pagination
+                .clone()
+                .filter(|t| entries[i].pages.is_none() && poisoned.contains_key(t));
+            if let Some(t) = target {
+                refused.push((i, t));
+                entries[i].poison = true;
+            }
+            if entries[i].poison {
+                for tag in entries[i].membership.publishes() {
+                    poison_in
+                        .entry(tag)
+                        .or_insert_with(|| entries[i].input_path.clone());
+                }
+                continue;
+            }
             let pages = match entries[i].pages.take() {
                 Some(p) => p,
                 None if !failed.is_empty() => {
@@ -524,6 +579,8 @@ pub(crate) fn build(
         skipped,
         failed,
         order,
+        poisoned,
+        refused,
     }
 }
 

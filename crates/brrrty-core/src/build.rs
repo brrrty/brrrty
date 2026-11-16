@@ -137,6 +137,9 @@ struct Templ {
     /// A JavaScript data file applies to it.
     js_data: bool,
     pages: Pages,
+    /// Why Brrrty can't date its pages. It has none, and the collections it
+    /// is in are refused.
+    date_problem: Option<Problem>,
 }
 
 /// The pages of a template: made, or waiting for the collections they
@@ -586,7 +589,29 @@ fn load_page_inner(
         .as_ref()
         .and_then(|m| m.created().ok())
         .unwrap_or(modified);
-    let date = resolve_date(&data, &shown, created, modified).map_err(|p| p.with_path(&shown))?;
+    // A page Brrrty can't date is refused on its own: it keeps its place in
+    // the order, and only the collections it is in are refused.
+    let (date, date_problem) = match resolve_date(&data, &shown, created, modified) {
+        Ok(d) => (d, None),
+        Err(p) => {
+            let p = p.with_path(&shown);
+            let p = if front.get("date").is_some_and(Value::js_truthy) {
+                at(p, key_line(&text, "date"))
+            } else if let Some(from) = data
+                .get("date")
+                .filter(|v| v.js_truthy())
+                .and_then(|_| source("date"))
+            {
+                Problem {
+                    message: format!("{} (`date` from {from})", p.message),
+                    ..p
+                }
+            } else {
+                p
+            };
+            (chrono::DateTime::<chrono::Utc>::UNIX_EPOCH, Some(p))
+        }
+    };
     let ext = rel
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -726,8 +751,12 @@ fn load_page_inner(
             order_layouts: order_layouts.clone(),
             js_data,
             pages,
+            date_problem: date_problem.clone(),
         })))
     };
+    if date_problem.is_some() {
+        return templ(Pages::Ready(Vec::new()));
+    }
     let Some(spec) = spec else {
         let place = Place {
             shared,
@@ -908,7 +937,7 @@ impl Place<'_, '_> {
             undefined,
             &self.source.withheld,
             &self.shared.data_dir,
-            None,
+            CollectionsState::default(),
         ) {
             Some(problem) => Err(problem.with_path(&self.source.shown)),
             None => Ok(()),
@@ -1103,9 +1132,35 @@ fn computed_plan(
     ComputedPlan::new(data, raw).map_err(|p| at(p.with_path(shown), line))
 }
 
+/// What a page's reads of `collections` are checked against.
+#[derive(Clone, Copy, Default)]
+struct CollectionsState<'a> {
+    /// Why the collections can't be built, when they can't.
+    gap: Option<&'a str>,
+    /// The site has an 11ty config file, which may add collections.
+    has_config: bool,
+    /// Collections left out because a page Brrrty can't date is in them,
+    /// with that page's input path.
+    poisoned: Option<&'a BTreeMap<String, String>>,
+}
+
+/// The problem for a read of a collection that holds `by`, a page Brrrty
+/// can't date.
+fn poisoned_problem(what: String, by: &str) -> Problem {
+    let by = by.strip_prefix("./").unwrap_or(by);
+    Problem::error(
+        codes::DATA_UNSUPPORTED,
+        format!("{what}, which holds {by}, a page whose date Brrrty can't read, so it can't tell the order"),
+    )
+    .with_help("Fix the date problem reported for that page.")
+}
+
 /// The problem for a page that read collection data Brrrty can't give.
-/// `gap` is why the collections can't be built, when they can't.
-fn collections_problem(undefined: &BTreeSet<String>, gap: Option<&str>) -> Option<Problem> {
+fn collections_problem(
+    undefined: &BTreeSet<String>,
+    state: CollectionsState<'_>,
+) -> Option<Problem> {
+    let gap = state.gap;
     use brrrty_js::traps::{ITEM_PREFIX, OPEN_PREFIX};
     let item = |k: &str| undefined.contains(&format!("{ITEM_PREFIX}{k}"));
     if item("templateContent") || item("content") {
@@ -1137,7 +1192,30 @@ fn collections_problem(undefined: &BTreeSet<String>, gap: Option<&str>) -> Optio
             .with_help("Read `collections` directly instead."),
         );
     }
-    if let Some(name) = undefined.iter().find_map(|n| n.strip_prefix(OPEN_PREFIX)) {
+    let empty = BTreeMap::new();
+    let poisoned = state.poisoned.unwrap_or(&empty);
+    for name in undefined.iter().filter_map(|n| n.strip_prefix(OPEN_PREFIX)) {
+        if name == "*" {
+            if let Some((tag, by)) = poisoned.iter().next() {
+                return Some(poisoned_problem(
+                    format!("this page lists every collection, including `collections.{tag}`"),
+                    by,
+                ));
+            }
+        } else if let Some(by) = poisoned.get(name) {
+            return Some(poisoned_problem(
+                format!("this page reads `collections.{name}`"),
+                by,
+            ));
+        }
+    }
+    // Without a config file, a name that isn't a collection is undefined,
+    // as it is in 11ty.
+    if let Some(name) = undefined
+        .iter()
+        .filter_map(|n| n.strip_prefix(OPEN_PREFIX))
+        .find(|_| state.has_config)
+    {
         let what = if name == "*" {
             "this page lists every collection".to_string()
         } else {
@@ -1175,9 +1253,9 @@ fn missing_data_problem(
     undefined: &BTreeSet<String>,
     withheld: &[(String, Withheld)],
     data_dir: &Path,
-    gap: Option<&str>,
+    state: CollectionsState<'_>,
 ) -> Option<Problem> {
-    if let Some(p) = collections_problem(undefined, gap) {
+    if let Some(p) = collections_problem(undefined, state) {
         return Some(p);
     }
     let used: Vec<&(String, Withheld)> = withheld
@@ -1578,14 +1656,19 @@ fn build_in_pool(
                 (None, Slot::Deferred(d))
             }
         };
+        let poison = t.date_problem.is_some();
+        report.problems.extend(t.date_problem);
         entries.push(Entry {
             input_path,
             membership: t.membership,
             pages,
+            poison,
         });
         slots.push(slot);
     }
     let mut collections_value: Option<Arc<IndexMap<String, Value>>> = None;
+    // Collections left out because a page Brrrty can't date is in them.
+    let mut poisoned: BTreeMap<String, String> = BTreeMap::new();
     let mut made: Vec<Option<Vec<Prepared>>> = slots.iter().map(|_| None).collect();
     // Each template's place in 11ty's order, which is file order until the
     // collections give the real one.
@@ -1608,6 +1691,18 @@ fn build_in_pool(
             template_order[i] = place;
         }
         let clean = built.failed.is_empty() && built.skipped.is_empty();
+        for (i, name) in built.refused {
+            if let Slot::Deferred(d) = &slots[i] {
+                let by = built.poisoned.get(&name).map_or("", |s| s.as_str());
+                report.problems.push(pagination_problem(
+                    poisoned_problem(format!("this page paginates `collections.{name}`"), by),
+                    d.pagination_from.clone(),
+                    d.pagination_line,
+                    &d.shown,
+                ));
+            }
+        }
+        poisoned = built.poisoned;
         for (i, problem) in built.failed {
             match blocking_layout(&slots[i]) {
                 Some(layout) => layout_refusals.push(layout),
@@ -1674,7 +1769,7 @@ fn build_in_pool(
     // a tag a trap when the site's config may add collections.
     let _open = collections_value
         .as_ref()
-        .filter(|_| has_config)
+        .filter(|_| has_config || !poisoned.is_empty())
         .map(|c| OpenGuard::new(brrrty_js::traps::object_id(c)));
     for p in &mut prepared {
         match &collections_value {
@@ -1769,9 +1864,14 @@ fn build_in_pool(
             unsupported: p.source.unsupported.as_ref(),
         })
         .collect();
+    let state = CollectionsState {
+        gap: gap.as_deref(),
+        has_config,
+        poisoned: Some(&poisoned),
+    };
     let check = |i: usize, undefined: &BTreeSet<String>| {
         let src = &prepared[i].source;
-        missing_data_problem(undefined, &src.withheld, &data_dir, gap.as_deref())
+        missing_data_problem(undefined, &src.withheld, &data_dir, state)
             .map(|p| p.with_path(&src.shown))
     };
     let contents = content::render_all(&pipeline, &jobs, &check);
@@ -1826,12 +1926,9 @@ fn build_in_pool(
                 return Err(Refused::Page(contents.needs_problem(i, j), Some(j)));
             }
             let rendered = rendered.map_err(|p| (p, None))?;
-            if let Some(problem) = missing_data_problem(
-                &rendered.undefined,
-                &src.withheld,
-                &data_dir,
-                gap.as_deref(),
-            ) {
+            if let Some(problem) =
+                missing_data_problem(&rendered.undefined, &src.withheld, &data_dir, state)
+            {
                 return Err(Refused::Page(problem.with_path(shown), None));
             }
             if let Some(parent) = dest.parent() {

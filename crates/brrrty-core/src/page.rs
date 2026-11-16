@@ -99,17 +99,19 @@ fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
         .map(|d| d.and_utc())
 }
 
-/// Resolves a page's date: front matter `date` (a date, a timestamp, or one of 11ty's
-/// `Last Modified` / `Created` keywords), then the first `YYYY-MM-DD` anywhere in the
-/// project-root-relative `input_path`, then `created`. A path date that is not a real
-/// date is a `date-invalid` problem for this page (11ty aborts the whole build).
+/// Resolves a page's date as 11ty's `getMappedDate` does: a truthy `date` in
+/// the data (a date, a timestamp, or one of the `Last Modified` / `Created`
+/// keywords, in any case), then the first `YYYY-MM-DD` anywhere in the
+/// project-root-relative `input_path`, then `created`. A falsy `date` (`null`,
+/// `""`, `0`, `false`, `NaN`) counts as none. A date that is not a real date
+/// is a `date-invalid` problem for this page (11ty aborts the whole build).
 pub fn resolve_date(
-    front_matter: &Data,
+    data: &Data,
     input_path: &Path,
     created: SystemTime,
     modified: SystemTime,
 ) -> Result<DateTime<Utc>, Problem> {
-    if let Some(value) = front_matter.get("date") {
+    if let Some(value) = data.get("date").filter(|v| v.js_truthy()) {
         let invalid = || {
             Problem::error(
                 codes::DATE_INVALID,
@@ -120,13 +122,17 @@ pub fn resolve_date(
         let text = match value {
             // An unquoted YAML timestamp is already an instant.
             Value::Date(d) => return Ok(d.with_timezone(&Utc)),
-            Value::String(s) => s.trim(),
+            // Luxon's ISO parse allows no space around the date, and the
+            // keywords are exact: 11ty refuses ` 2020-01-01` and `Created `.
+            Value::String(s) if s.trim() != s.as_ref() => return Err(invalid()),
+            Value::String(s) => s.as_ref(),
             _ => return Err(invalid()),
         };
-        // 11ty keywords. Git history lookups come later, so the `git` forms use file times.
-        match text {
-            "Last Modified" | "git Last Modified" => return Ok(modified.into()),
-            "Created" | "git Created" => return Ok(created.into()),
+        // 11ty keywords, in any case. Git history lookups come later, so the
+        // `git` forms use file times.
+        match text.to_lowercase().as_str() {
+            "last modified" | "git last modified" => return Ok(modified.into()),
+            "created" | "git created" => return Ok(created.into()),
             _ => {}
         }
         if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
@@ -229,6 +235,51 @@ mod tests {
                 .code,
             codes::DATE_INVALID
         );
+    }
+
+    /// Probed: 11ty skips a falsy `date` (`getMappedDate` tests
+    /// `if (dateValue)`): the path date, else the file's creation time.
+    #[test]
+    fn falsy_dates_count_as_none() {
+        let created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(86_400);
+        let modified = SystemTime::UNIX_EPOCH;
+        for v in [
+            Value::Null,
+            Value::String("".into()),
+            Value::Number(0.0),
+            Value::Number(f64::NAN),
+            Value::Bool(false),
+        ] {
+            let mut d = Data::new();
+            d.insert("date".into(), v.clone());
+            let got = |p: &str| {
+                resolve_date(&d, Path::new(p), created, modified)
+                    .unwrap()
+                    .to_rfc3339()
+            };
+            assert_eq!(got("2021-03-04/x.md"), "2021-03-04T00:00:00+00:00", "{v:?}");
+            assert_eq!(got("x.md"), "1970-01-02T00:00:00+00:00", "{v:?}");
+        }
+        // A truthy non-date is still refused, as 11ty does.
+        let mut d = Data::new();
+        d.insert("date".into(), Value::Number(1_700_000_000_000.0));
+        let err = resolve_date(&d, Path::new("2021-03-04/x.md"), created, modified).unwrap_err();
+        assert_eq!(err.code, codes::DATE_INVALID);
+    }
+
+    /// Probed: the keywords match in any case, and nothing is trimmed (11ty
+    /// refuses ` 2020-01-01` and `Last Modified `).
+    #[test]
+    fn keywords_match_in_any_case_and_untrimmed() {
+        let created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(86_400);
+        let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(172_800);
+        let got = |s: &str| resolve_date(&fm_date(s), Path::new("x.md"), created, modified);
+        assert_eq!(got("last modified").unwrap().timestamp(), 172_800);
+        assert_eq!(got("CREATED").unwrap().timestamp(), 86_400);
+        assert_eq!(got("Git Created").unwrap().timestamp(), 86_400);
+        for bad in [" 2020-01-01", "2020-01-01 ", "Last Modified "] {
+            assert_eq!(got(bad).unwrap_err().code, codes::DATE_INVALID, "{bad:?}");
+        }
     }
 
     #[test]

@@ -1,0 +1,4 @@
+---
+permalink: list.txt
+---
+{% for p in collections.p %}{{ p.inputPath }} {{ p.date | json }} {{ p.data.date | json }};{% endfor %}
