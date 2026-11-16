@@ -159,6 +159,25 @@ pub fn render_problem(p: &Problem, root: &Path, color: bool) -> String {
     out
 }
 
+/// Print what `brrrty build` prints after a build: the summary line on stdout unless `quiet`,
+/// then the problems on stderr. `root` is where problem paths are relative to.
+pub fn print_build(report: &brrrty_core::BuildReport, root: &Path, quiet: bool, color: bool) {
+    if !quiet {
+        // A closed stdout (`| head -1`) is not a failure of the build.
+        let _ = writeln!(
+            std::io::stdout(),
+            "Wrote {} files, copied {} files in {:.2} seconds (brrrty {})",
+            report.written,
+            report.copied,
+            report.elapsed.as_secs_f64(),
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+    if !report.problems.is_empty() {
+        print_problems(&report.problems, root, color);
+    }
+}
+
 /// Print every problem, issue links for unsupported templates, and the counts line.
 ///
 /// It is written to stderr in one go, and a write that fails (a closed

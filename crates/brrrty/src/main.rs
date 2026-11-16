@@ -2,8 +2,9 @@ use std::io::{IsTerminal, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use brrrty::options::{Flags, build_options};
 use brrrty::{bug, report};
-use brrrty_core::{BuildOptions, build};
+use brrrty_core::build;
 use brrrty_markdown::MarkdownIt;
 use clap::{Args, Parser, Subcommand};
 
@@ -66,51 +67,22 @@ fn run_build(args: BuildArgs) -> ExitCode {
         }
     };
     let color = std::io::stderr().is_terminal();
-    // The config sets the folders; flags on the command line win, as 11ty's do.
-    let site = match brrrty_config::load(&root) {
-        Ok(site) => site,
+    let flags = Flags {
+        input: args.input,
+        output: args.output,
+        passthrough: args.passthrough,
+        strict: args.strict,
+    };
+    let opts = match build_options(&root, &flags) {
+        Ok(opts) => opts,
         Err(problems) => {
             report::print_problems(&problems, &root, color);
             return ExitCode::from(1);
         }
     };
-    let dir = site.as_ref().map(|s| s.dir.clone()).unwrap_or_default();
-    let mut config = site.map(|s| s.build_options()).unwrap_or_default();
-    // `.rhai` data files work with or without a config file.
-    config.data = Some(brrrty_config::data_runner(
-        brrrty_config::Clock::from_env().unwrap_or(brrrty_config::Clock::System),
-        root.clone(),
-    ));
-    let opts = BuildOptions {
-        input: args
-            .input
-            .or_else(|| dir.input.map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from(".")),
-        output: args
-            .output
-            .or_else(|| dir.output.map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("_site")),
-        root,
-        passthrough: args.passthrough,
-        strict: args.strict,
-        config,
-    };
     let report = build(&opts, &MarkdownIt::new());
-    if !args.quiet {
-        // A closed stdout (`| head -1`) is not a failure of the build.
-        let _ = writeln!(
-            std::io::stdout(),
-            "Wrote {} files, copied {} files in {:.2} seconds (brrrty {})",
-            report.written,
-            report.copied,
-            report.elapsed.as_secs_f64(),
-            env!("CARGO_PKG_VERSION")
-        );
-    }
-    if !report.problems.is_empty() {
-        let root = opts.root_dir().unwrap_or_else(|_| opts.root.clone());
-        report::print_problems(&report.problems, &root, color);
-    }
+    let root = opts.root_dir().unwrap_or_else(|_| opts.root.clone());
+    report::print_build(&report, &root, args.quiet, color);
     if report.has_errors() {
         ExitCode::from(1)
     } else {
