@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.3 - 2026-11-15
 
 Liquid templates and layouts:
 
@@ -9,6 +9,7 @@ Liquid templates and layouts:
 - The front matter `layout` key works: layouts are looked up in `_includes` with 11ty's extension order, can have their own `layout`, and their front matter merges under the page's. `.md` layouts run Markdown too.
 - Pages get 11ty's `page`, `eleventy` and `pkg` data, and `templateEngineOverride` is honored.
 - Markdown is rendered by a port of markdown-it, configured like 11ty's.
+- Dates print in the machine's local time zone, as in 11ty, and `TZ` is honored. Set `TZ` to get the same output on every machine.
 
 New errors:
 
