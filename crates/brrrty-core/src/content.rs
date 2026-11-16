@@ -507,17 +507,22 @@ impl Contents {
             return (self.at(i, p), None);
         }
         if let Some(path) = self.cycle_from(i) {
-            let names: Vec<&str> = path.iter().map(|&j| self.labels[j].as_str()).collect();
+            // Every page of one circle names it the same way, from its first
+            // page, so the problem reads the same for each.
+            let start = path
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, j)| **j)
+                .map_or(0, |(k, _)| k);
+            let mut ring: Vec<&str> = path[start..]
+                .iter()
+                .chain(&path[..start])
+                .map(|&j| self.labels[j].as_str())
+                .collect();
+            ring.push(ring[0]);
             let p = Problem::error(
                 codes::CONTENT_CYCLE,
-                self.on_page(
-                    i,
-                    format!(
-                        "`templateContent` reads go in a circle: {} -> {}",
-                        names.join(" -> "),
-                        self.labels[i]
-                    ),
-                ),
+                format!("`templateContent` reads go in a circle: {}", shorten(&ring)),
             )
             .with_help(help);
             return (self.at(i, p), None);
@@ -557,6 +562,20 @@ impl Contents {
     }
 }
 
+/// A long circle of names as its first five, how many are left out, and
+/// the last.
+fn shorten(names: &[&str]) -> String {
+    if names.len() <= 7 {
+        return names.join(" -> ");
+    }
+    let left_out = names.len() - 6;
+    format!(
+        "{} -> ... {left_out} more -> {}",
+        names[..5].join(" -> "),
+        names[names.len() - 1]
+    )
+}
+
 /// 11ty renders a page unless its `permalink` (or computed `permalink`) is
 /// a map without a `build` key (`TemplateBehavior.setRenderViaDataCascade`).
 pub(crate) fn renderable(data: &indexmap::IndexMap<String, Value>) -> bool {
@@ -570,4 +589,21 @@ pub(crate) fn renderable(data: &indexmap::IndexMap<String, Value>) -> bool {
         keys.extend(p.keys().map(String::as_str));
     }
     keys.is_empty() || keys.contains("build")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_circles_are_shortened() {
+        let names: Vec<String> = (0..10).map(|i| format!("p{i}")).collect();
+        let mut ring: Vec<&str> = names.iter().map(String::as_str).collect();
+        ring.push("p0");
+        assert_eq!(
+            shorten(&ring),
+            "p0 -> p1 -> p2 -> p3 -> p4 -> ... 5 more -> p0"
+        );
+        assert_eq!(shorten(&["a", "b", "a"]), "a -> b -> a");
+    }
 }

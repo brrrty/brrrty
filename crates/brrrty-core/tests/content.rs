@@ -133,7 +133,7 @@ fn reading_its_own_content_alias_is_a_cycle() {
 }
 
 /// Probed: two pages that read each other's content stop 11ty. Both are
-/// refused, and the problem names the circle.
+/// refused, and each problem names the circle the same way.
 #[test]
 fn two_pages_reading_each_other_is_a_cycle() {
     let body = "{% for p in collections.t %}{% if p.url != page.url %}({{ p.templateContent }}){% endif %}{% endfor %}";
@@ -153,7 +153,7 @@ fn two_pages_reading_each_other_is_a_cycle() {
     let b = error_for(&r, "src/b.liquid");
     assert_eq!(
         b.message,
-        "`templateContent` reads go in a circle: src/b.liquid -> src/a.liquid -> src/b.liquid"
+        "`templateContent` reads go in a circle: src/a.liquid -> src/b.liquid -> src/a.liquid"
     );
     assert!(!exists(t.path(), "a/index.html"));
     assert!(!exists(t.path(), "b/index.html"));
@@ -453,4 +453,53 @@ fn content_is_rendered_once_and_shared() {
     if !cfg!(debug_assertions) {
         assert!(elapsed.as_secs_f64() < 5.0, "{elapsed:?}");
     }
+}
+
+/// A circle of many pages: each page names it the same way, without the
+/// pagination page twice, and a long circle is shortened.
+#[test]
+fn a_long_circle_is_named_once_and_shortened() {
+    let t = site(&[
+        ("_data/n.json", "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]"),
+        (
+            "ring.liquid",
+            "---\npagination:\n  data: n\n  size: 1\n  addAllPagesToCollections: true\ntags: r\npermalink: \"r/{{ pagination.pageNumber }}/\"\n---\n{% assign next = pagination.pageNumber | plus: 1 | modulo: 10 %}{% for p in collections.r %}{% if p.pageNumber == next %}{{ p.templateContent }}{% endif %}{% endfor %}",
+        ),
+    ]);
+    let r = run(t.path());
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{:#?}", r.problems);
+    assert_eq!(errs[0].code, codes::CONTENT_CYCLE);
+    assert_eq!(
+        errs[0].message,
+        "`templateContent` reads go in a circle: src/ring.liquid (pagination page 0) -> src/ring.liquid (pagination page 1) -> src/ring.liquid (pagination page 2) -> src/ring.liquid (pagination page 3) -> src/ring.liquid (pagination page 4) -> ... 5 more -> src/ring.liquid (pagination page 0)"
+    );
+    assert!(!exists(t.path(), "r/0/index.html"));
+}
+
+/// Probed: 11ty loads `.liquid` templates before `.html` before `.md`, so
+/// here the reader (`.liquid`) comes first and the page it reads (`.html`)
+/// waits for a `.md` page: 11ty stops on the reader ("./chain/c_r.liquid
+/// contains a circular reference"). In path order the chain would build;
+/// the fixture `tests/fixtures/order` has the same chain the other way
+/// round, which 11ty builds.
+#[test]
+fn the_order_11ty_renders_in_groups_by_extension() {
+    let t = site(&[
+        (
+            "chain/c_r.liquid",
+            "---\ntags: cr\n---\nR{% for p in collections.cp %}({{ p.templateContent }}){% endfor %}",
+        ),
+        (
+            "chain/b_p.html",
+            "---\ntags: cp\n---\nP{% for p in collections.cq %}({{ p.templateContent }}){% endfor %}",
+        ),
+        ("chain/a_q.md", "---\ntags: cq\n---\nQ"),
+    ]);
+    let r = run(t.path());
+    assert_eq!(errors(&r).len(), 1, "{:#?}", r.problems);
+    let p = error_for(&r, "src/chain/c_r.liquid");
+    assert_eq!(p.code, codes::CONTENT_UNAVAILABLE);
+    assert_eq!(read(t.path(), "chain/b_p/index.html"), "P(<p>Q</p>\n)");
+    assert_eq!(read(t.path(), "chain/a_q/index.html"), "<p>Q</p>\n");
 }

@@ -121,6 +121,9 @@ struct Templ {
     /// Computed data sets `tags` or `eleventyExcludeFromCollections`, which
     /// Brrrty can't follow into the collections yet.
     computed_membership: bool,
+    /// The real path of the layout the data names, which 11ty waits for
+    /// while it loads the template (see [`collections::entry_order`]).
+    data_layout: Option<PathBuf>,
     pages: Pages,
 }
 
@@ -550,6 +553,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
             rel: rel.to_path_buf(),
             membership: membership.clone(),
             computed_membership,
+            data_layout: data_layouts.first().map(|l| l.real.clone()),
             pages,
         })))
     };
@@ -1345,15 +1349,17 @@ fn build_in_pool(
         return finish(report, strict, start);
     }
 
-    // Collections: every page of every template, in the order 11ty reads
-    // the files (folder by folder, shallowest first).
-    templates.sort_by(|a, b| {
-        a.rel
-            .components()
-            .count()
-            .cmp(&b.rel.components().count())
-            .then_with(|| a.rel.cmp(&b.rel))
-    });
+    // Collections: every page of every template, in the order 11ty adds
+    // templates to its map.
+    let keys: Vec<(PathBuf, Option<PathBuf>)> = templates
+        .iter()
+        .map(|t| (t.rel.clone(), t.data_layout.clone()))
+        .collect();
+    let mut slots_by_index: Vec<Option<Templ>> = templates.into_iter().map(Some).collect();
+    let templates: Vec<Templ> = collections::entry_order(&keys)
+        .into_iter()
+        .filter_map(|i| slots_by_index[i].take())
+        .collect();
     let mut gap = collections_gap(
         unbuilt,
         discovery.unsupported.len(),
