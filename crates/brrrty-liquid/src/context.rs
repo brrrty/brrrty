@@ -210,7 +210,8 @@ pub(crate) fn json(v: &Value) -> Option<String> {
             format!("[{}]", items.join(","))
         }
         Value::Object(o) => {
-            let items: Vec<String> = Value::js_entries(o)
+            // A trap (a collection item) refuses the page: stop there.
+            let items: Vec<String> = Value::js_entries_or_trap(o)?
                 .into_iter()
                 .filter_map(|(k, v)| Some(format!("{}:{}", json_str(k), json(v)?)))
                 .collect();

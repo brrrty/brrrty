@@ -86,14 +86,25 @@ fn loop_object(d: &LoopDrop) -> Value {
     Value::Object(std::sync::Arc::new(o))
 }
 
-pub(super) fn json(_: &mut Renderer<'_>, v: &Val, a: &[Val]) -> Out {
+pub(super) fn json(r: &mut Renderer<'_>, v: &Val, a: &[Val]) -> Out {
     let indent = json::indent_of(&Args(a).or(0, Value::Number(0.0)));
     let value = json_value(v);
-    Ok(json::stringify(&value, &indent).map_or(Value::Undefined, string))
+    match json::stringify(&value, &indent, r.engine.output_limit) {
+        Ok(text) => Ok(text.map_or(Value::Undefined, string)),
+        // 11ty fails here ("Converting circular structure to JSON"); the
+        // trap is recorded and the page refused.
+        Err(json::Stop::Trap) => Ok(Value::Undefined),
+        Err(json::Stop::Limit) => {
+            // Always over the limit: the error says so.
+            r.check_bytes(usize::MAX)?;
+            Ok(Value::Undefined)
+        }
+    }
 }
 
 /// `inspect` is `JSON.stringify` that writes `[Circular]` for a cycle. Data
-/// here has none.
+/// here has none: a collection item, whose template object is circular, is
+/// a trap.
 pub(super) fn inspect(r: &mut Renderer<'_>, v: &Val, a: &[Val]) -> Out {
     json(r, v, a)
 }

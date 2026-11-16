@@ -274,6 +274,48 @@ mod tests {
         assert_eq!(map.len(), 88);
     }
 
+    /// `json` of data that shares its parts (10^9 values through 9 levels
+    /// of the same array) stops once its text passes the limit, instead of
+    /// building the whole string first.
+    #[test]
+    fn json_stops_at_the_limit_while_it_writes() {
+        let mut v = Value::Array(Arc::new(vec![Value::String("x".into()); 10]));
+        for _ in 0..8 {
+            v = Value::Array(Arc::new(vec![v; 10]));
+        }
+        let mut data = indexmap::IndexMap::new();
+        data.insert("d".to_string(), v);
+        let data = Value::Object(Arc::new(data));
+        let e = small(1 << 16);
+        let start = std::time::Instant::now();
+        for src in ["{{ d | json }}", "{{ d | inspect: 2 }}"] {
+            let t = e.parse("t", src).unwrap();
+            let err = e.render(&t, &data, &NoPartials).unwrap_err();
+            assert_eq!(err.kind, ErrorKind::Limit, "{src}");
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        let t = e
+            .parse("t", "{{ d[0][0][0][0][0][0][0][0] | json }}")
+            .unwrap();
+        assert_eq!(
+            e.render(&t, &data, &NoPartials).unwrap(),
+            r#"["x","x","x","x","x","x","x","x","x","x"]"#
+        );
+    }
+
+    /// `json` stops at the first collection item (a trap): the page is
+    /// refused, and the items behind it are never walked.
+    #[test]
+    fn json_stops_at_a_trap() {
+        let mut item = indexmap::IndexMap::new();
+        item.insert("template".to_string(), Value::Undefined);
+        item.insert("url".to_string(), Value::String("/a/".into()));
+        let items = Value::Array(Arc::new(vec![Value::Object(Arc::new(item)); 3]));
+        let json = super::json::stringify(&items, "", usize::MAX);
+        assert_eq!(json, Err(super::json::Stop::Trap));
+        brrrty_js::traps::clear();
+    }
+
     /// Filters count toward the limit even when nothing is printed.
     #[test]
     fn a_doubling_loop_stops_at_the_limit() {

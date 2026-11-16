@@ -107,6 +107,20 @@ impl Value {
     /// is the order `Object.keys` and `for...in` give.
     pub fn js_entries(o: &IndexMap<String, Value>) -> Vec<(&String, &Value)> {
         crate::traps::entries(o);
+        Self::js_order(o)
+    }
+
+    /// [`Value::js_entries`], or `None` when listing `o` is a trap (see
+    /// [`crate::traps::entries`]): a walk that meets one can stop, since the
+    /// render will be refused.
+    pub fn js_entries_or_trap(o: &IndexMap<String, Value>) -> Option<Vec<(&String, &Value)>> {
+        if crate::traps::entries(o) {
+            return None;
+        }
+        Some(Self::js_order(o))
+    }
+
+    fn js_order(o: &IndexMap<String, Value>) -> Vec<(&String, &Value)> {
         let mut index: Vec<(u32, (&String, &Value))> = Vec::new();
         let mut rest = Vec::new();
         for (k, v) in o {

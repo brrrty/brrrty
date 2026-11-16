@@ -200,8 +200,10 @@ pub fn read_item(item: &Value, key: &str) {
     }
 }
 
-/// A listing of all of `o`'s properties.
-pub fn entries(o: &IndexMap<String, Value>) {
+/// A listing of all of `o`'s properties. True when it recorded a trap: the
+/// caller's result will be refused, so a walk of the data can stop there.
+pub fn entries(o: &IndexMap<String, Value>) -> bool {
+    let mut trapped = false;
     let mut item_known = None;
     for key in TRAP_KEYS {
         if matches!(o.get(key), Some(Value::Undefined)) {
@@ -220,11 +222,14 @@ pub fn entries(o: &IndexMap<String, Value>) {
                 }
             }
             hit(format!("{ITEM_PREFIX}{key}"));
+            trapped = true;
         }
     }
     if is_open(o) {
         hit(format!("{OPEN_PREFIX}*"));
+        trapped = true;
     }
+    trapped
 }
 
 #[cfg(test)]

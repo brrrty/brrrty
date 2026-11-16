@@ -832,3 +832,49 @@ fn imports_brrrty_cannot_place_refuse_collections() {
     );
     assert!(t.path().join("_site/d/index.html").is_file());
 }
+
+/// Probed (e5b): 11ty fails at once on `json` of collection items
+/// ("Converting circular structure to JSON"). The items share each other's
+/// data through `pagination`, so writing them out walks a graph that grows
+/// exponentially with each level of collection pagination; Brrrty stops at
+/// the first item and refuses the page at once. 5,000 items, two levels.
+#[test]
+fn json_of_collection_items_stops_at_the_first_item() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let list: Vec<String> = (0..5000).map(|i| i.to_string()).collect();
+    write(
+        root,
+        "src/_data/list.json",
+        &format!("[{}]", list.join(",")),
+    );
+    write(
+        root,
+        "src/items.liquid",
+        "---\npagination:\n  data: list\n  size: 1\n  addAllPagesToCollections: true\ntags: l0\npermalink: \"i/{{ pagination.pageNumber }}/\"\n---\n{{ pagination.items[0] }}",
+    );
+    write(
+        root,
+        "src/lev1.liquid",
+        "---\npagination:\n  data: collections.l0\n  size: 1\n  addAllPagesToCollections: true\ntags: l1\npermalink: \"l/{{ pagination.pageNumber }}/\"\n---\n{{ pagination.items[0].url }}",
+    );
+    write(
+        root,
+        "src/out.liquid",
+        "---\npermalink: out.txt\n---\n{{ collections.l1 | json }}{{ collections.l1 | inspect }}",
+    );
+    let root_buf = root.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(run(&root_buf));
+    });
+    let r = rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the build took longer than 60 s");
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{:#?}", r.problems);
+    assert_eq!(errs[0].path.as_deref(), Some(Path::new("src/out.liquid")));
+    assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED);
+    assert!(!root.join("_site/out.txt").exists());
+    assert_eq!(read(root, "l/4999/index.html"), "/i/4999/");
+}
