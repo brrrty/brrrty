@@ -70,16 +70,12 @@ impl Spec {
                 )));
             }
         };
-        let size = match config.get("size") {
+        // lodash's `chunk` turns any value into a number the way `Number()`
+        // does (`'3'`, `true`, `[2]`, a date's milliseconds); only the
+        // number 1 unwraps the items (`size === 1`).
+        let (size, single) = match config.get("size") {
             None => return Err(invalid("`pagination.size` is missing".to_string())),
-            Some(Value::Number(n)) => *n,
-            Some(Value::Null) => 0.0,
-            Some(other) => {
-                return Err(unsupported(
-                    format!("`pagination.size` must be a number, found {}", shown(other)),
-                    "Write the page size as a number, like `size: 10`.",
-                ));
-            }
+            Some(v) => (v.to_js_number(), matches!(v, Value::Number(n) if *n == 1.0)),
         };
         let key: Arc<str> = match config.get("data") {
             None | Some(Value::Undefined) => {
@@ -96,7 +92,8 @@ impl Spec {
                 ));
             }
         };
-        // lodash's `toInteger`, then `Math.max(size, 0)`; 0 makes no chunks.
+        // lodash's `toInteger` (NaN is 0, infinity the largest number), then
+        // `Math.max(size, 0)`; 0 makes no chunks.
         let chunk = if size.is_nan() || size < 1.0 {
             None
         } else if size.is_infinite() || size >= usize::MAX as f64 {
@@ -110,7 +107,7 @@ impl Spec {
             key,
             path,
             chunk,
-            single: size == 1.0,
+            single,
         }))
     }
 

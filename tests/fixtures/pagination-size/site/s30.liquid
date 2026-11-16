@@ -1,0 +1,8 @@
+---
+items: [a, b, c, d, e]
+pagination:
+  data: items
+  size: 0o7
+permalink: "s30/{{ pagination.pageNumber }}/"
+---
+0o7 | {{ pagination.items | json }} | {{ pagination.size | json }} | {{ pagination.pages.size }} | {{ pagination.pages | json }}

@@ -230,17 +230,34 @@ fn misconfigured_pagination_is_one_page_error() {
     }
 }
 
-/// Sizes 11ty reads through lodash's `toInteger`, which Brrrty doesn't
-/// copy, are refused.
+/// Probed: 11ty reads any `size` through lodash's `toInteger`, so `"2"`,
+/// `[2]` and `true` page like numbers, and only the number 1 unwraps the
+/// items. The fixture `pagination-size` pins 33 spellings.
 #[test]
-fn a_size_that_is_not_a_number_is_refused() {
-    for v in ["\"2\"", "true", "[1]"] {
-        assert_refused(
-            &format!("s: [1, 2]\npagination:\n  data: s\n  size: {v}\n"),
-            codes::PAGINATION_UNSUPPORTED,
-            "`pagination.size`",
+fn a_size_that_is_not_a_number_pages_like_11ty() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    for (name, size) in [("s", "\"2\""), ("b", "true"), ("a", "[2]"), ("o", "{a: 1}")] {
+        write(
+            root,
+            &format!("src/{name}.liquid"),
+            &format!(
+                "---\nl: [x, y, z]\npagination:\n  data: l\n  size: {size}\n---\n{{{{ pagination.items | json }}}}"
+            ),
         );
     }
+    let r = run(root);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(read(root, "s/index.html"), r#"["x","y"]"#);
+    assert_eq!(read(root, "s/1/index.html"), r#"["z"]"#);
+    assert_eq!(read(root, "b/2/index.html"), r#"["z"]"#);
+    assert_eq!(read(root, "a/1/index.html"), r#"["z"]"#);
+    assert!(!exists(root, "o/index.html"));
+    assert_eq!(r.written, 7);
+}
+
+#[test]
+fn a_pagination_data_that_is_not_a_string_is_refused() {
     assert_refused(
         "s: [1, 2]\npagination:\n  data: [s]\n  size: 1\n",
         codes::PAGINATION_UNSUPPORTED,

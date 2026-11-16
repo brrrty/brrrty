@@ -1,0 +1,8 @@
+---
+items: [a, b, c, d, e]
+pagination:
+  data: items
+  size: 1e400
+permalink: "s04/{{ pagination.pageNumber }}/"
+---
+1e400 | {{ pagination.items | json }} | {{ pagination.size | json }} | {{ pagination.pages.size }} | {{ pagination.pages | json }}

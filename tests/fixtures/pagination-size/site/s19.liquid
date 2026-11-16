@@ -1,0 +1,8 @@
+---
+items: [a, b, c, d, e]
+pagination:
+  data: items
+  size: 2020-01-01
+permalink: "s19/{{ pagination.pageNumber }}/"
+---
+2020-01-01 | {{ pagination.items | json }} | {{ pagination.size | json }} | {{ pagination.pages.size }} | {{ pagination.pages | json }}

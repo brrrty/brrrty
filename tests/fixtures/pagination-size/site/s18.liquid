@@ -1,0 +1,8 @@
+---
+items: [a, b, c, d, e]
+pagination:
+  data: items
+  size: 'abc'
+permalink: "s18/{{ pagination.pageNumber }}/"
+---
+'abc' | {{ pagination.items | json }} | {{ pagination.size | json }} | {{ pagination.pages.size }} | {{ pagination.pages | json }}
