@@ -283,7 +283,7 @@ fn log_filter(input: &Value, args: &[Value]) -> Result<Value, String> {
 /// What `console.log(...values)` prints: strings as they are, other values
 /// as `util.inspect` shows them, joined by spaces. Format specifiers such
 /// as `%s` are not interpreted, and nested values print in the single-line
-/// form Node uses when they fit in 72 columns.
+/// form Node uses when they fit in 80 columns.
 pub fn console_format(values: &[Value]) -> String {
     values
         .iter()
