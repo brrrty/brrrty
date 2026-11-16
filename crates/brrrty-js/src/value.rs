@@ -6,6 +6,7 @@ use chrono::{DateTime, FixedOffset};
 use indexmap::IndexMap;
 
 use crate::number::{js_number_to_string, js_string_to_number};
+use crate::tz::Tz;
 
 /// A JavaScript-like value. Objects keep their insertion order.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,8 +56,16 @@ impl Value {
         }
     }
 
-    /// JavaScript's `String(v)`.
+    /// JavaScript's `String(v)`, printing a `Date` in UTC. Use
+    /// [`Value::to_js_string_in`] to print it in another zone.
     pub fn to_js_string(&self) -> String {
+        self.to_js_string_in(Tz::Utc)
+    }
+
+    /// JavaScript's `String(v)`, printing a `Date` as
+    /// `Date.prototype.toString` does in `tz`, with the zone's long name:
+    /// `Tue Mar 03 2026 19:00:00 GMT-0500 (Eastern Standard Time)`.
+    pub fn to_js_string_in(&self, tz: Tz) -> String {
         match self {
             Value::Undefined => "undefined".into(),
             Value::Null => "null".into(),
@@ -68,13 +77,12 @@ impl Value {
                 .iter()
                 .map(|v| match v {
                     Value::Null | Value::Undefined => String::new(),
-                    v => v.to_js_string(),
+                    v => v.to_js_string_in(tz),
                 })
                 .collect::<Vec<_>>()
                 .join(","),
             Value::Object(_) => "[object Object]".into(),
-            // JS prints the zone's long name in parentheses; that is not knowable here, so omit it.
-            Value::Date(d) => d.format("%a %b %d %Y %H:%M:%S GMT%z").to_string(),
+            Value::Date(d) => crate::tz::date_to_string(tz, d.timestamp_millis() as f64),
         }
     }
 

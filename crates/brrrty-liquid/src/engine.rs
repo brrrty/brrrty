@@ -13,14 +13,7 @@ use crate::parser::distance;
 use crate::render::{R, Renderer};
 use crate::{LiquidError, Template};
 
-/// The time zone dates are printed and formatted in. LiquidJS uses the
-/// process's local zone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tz {
-    /// The machine's local zone, which honors `TZ`.
-    Local,
-    Utc,
-}
+pub use brrrty_js::Tz;
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
@@ -135,11 +128,13 @@ impl Engine {
     }
 
     /// Adds an engine-neutral filter, such as one of Eleventy's. Keyword
-    /// arguments are not passed to it.
+    /// arguments are not passed to it. It sees the engine's time zone.
     pub fn register_filter_impl(&mut self, name: &str, f: brrrty_js::FilterImpl) {
         self.register_filter(
             name,
-            Arc::new(move |input, args, _kwargs, _ctx| f(input, args)),
+            Arc::new(move |input, args, _kwargs, ctx| {
+                f(input, args, &brrrty_js::FilterEnv::new(ctx.timezone))
+            }),
         );
     }
 

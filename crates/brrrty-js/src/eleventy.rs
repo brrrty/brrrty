@@ -1,8 +1,9 @@
 //! Eleventy 3.1.8's own filters: `slug`, `slugify`, `url` and `log`.
 //!
 //! They are engine-neutral: each is a [`FilterImpl`], a plain function from
-//! the input and the positional arguments to a result. An engine adapts
-//! them into its own filter type. `url` uses a path prefix of `/`.
+//! the input, the positional arguments and a [`FilterEnv`] to a result. An
+//! engine adapts them into its own filter type. `url` uses a path prefix of
+//! `/`.
 //!
 //! Ported from `Filters/Slug.js`, `Filters/Slugify.js` and `Filters/Url.js`
 //! in `@11ty/eleventy`, and from the packages they call: `slugify` 1.6.9,
@@ -15,10 +16,25 @@ use std::sync::Arc;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::eleventy_tables::{DIACRITICS, SLUG_CHARMAP, TRANSLITERATE};
-use crate::{Value, is_js_whitespace, js_number_to_string};
+use crate::{Tz, Value, is_js_whitespace, js_number_to_string};
 
 /// A filter that does not depend on a template engine.
-pub type FilterImpl = fn(&Value, &[Value]) -> Result<Value, String>;
+pub type FilterImpl = fn(&Value, &[Value], &FilterEnv) -> Result<Value, String>;
+
+/// What an engine-neutral filter can see of the build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FilterEnv {
+    /// The zone a `Date` input is printed in, as JavaScript's `String(date)`
+    /// prints it.
+    pub timezone: Tz,
+}
+
+impl FilterEnv {
+    pub fn new(timezone: Tz) -> Self {
+        FilterEnv { timezone }
+    }
+}
 
 /// Eleventy's filters, by name.
 pub fn eleventy_filters() -> Vec<(&'static str, FilterImpl)> {
@@ -36,8 +52,8 @@ fn string(s: String) -> Value {
 
 // ---- slug: slugify 1.6.9 with `{ replacement: "-", lower: true }` ----
 
-fn slug_filter(input: &Value, _args: &[Value]) -> Result<Value, String> {
-    Ok(string(slug(&input.to_js_string())))
+fn slug_filter(input: &Value, _args: &[Value], env: &FilterEnv) -> Result<Value, String> {
+    Ok(string(slug(&input.to_js_string_in(env.timezone))))
 }
 
 /// Characters slugify keeps: `[\w\s$*_+~.()'"!\-:@]`.
@@ -85,8 +101,8 @@ fn slug(text: &str) -> String {
 
 // ---- slugify: @sindresorhus/slugify 2.2.1 with `{ decamelize: false }` ----
 
-fn slugify_filter(input: &Value, _args: &[Value]) -> Result<Value, String> {
-    Ok(string(slugify(&input.to_js_string())))
+fn slugify_filter(input: &Value, _args: &[Value], env: &FilterEnv) -> Result<Value, String> {
+    Ok(string(slugify(&input.to_js_string_in(env.timezone))))
 }
 
 fn is_diacritic(c: char) -> bool {
@@ -167,7 +183,7 @@ fn drop_contraction_apostrophes(s: &str) -> String {
 
 // ---- url ----
 
-fn url_filter(input: &Value, args: &[Value]) -> Result<Value, String> {
+fn url_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result<Value, String> {
     // The registered filter takes a truthy string argument as the path
     // prefix, and uses the configured one, `/`, otherwise.
     let prefix = match args.first() {
@@ -180,7 +196,8 @@ fn url_filter(input: &Value, args: &[Value]) -> Result<Value, String> {
     let Value::String(s) = input else {
         // Only a string has `startsWith`. `new URL(value)` still runs first
         // on the value's string form, so an array holding a URL passes.
-        return if is_valid_url(&input.to_js_string()) {
+        // A `Date` never parses as a URL, so it throws, as in Eleventy.
+        return if is_valid_url(&input.to_js_string_in(env.timezone)) {
             Ok(input.clone())
         } else {
             Err("url.startsWith is not a function".to_string())
@@ -272,7 +289,7 @@ fn posix_normalize(path: &str) -> String {
 
 /// Eleventy's `log` is `console.log(input, ...messages)`, then returns the
 /// input. This prints to stderr, so a build's own output stays clean.
-fn log_filter(input: &Value, args: &[Value]) -> Result<Value, String> {
+fn log_filter(input: &Value, args: &[Value], _env: &FilterEnv) -> Result<Value, String> {
     let mut all = Vec::with_capacity(args.len() + 1);
     all.push(input.clone());
     all.extend_from_slice(args);

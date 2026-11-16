@@ -3,24 +3,34 @@
 //!
 //! `Tz::Utc` is exact. `Tz::Local` takes the offsets and wall-clock time
 //! from the operating system (through `chrono::Local`, which honors `TZ`).
-//! The two things the system cannot give are the zone's id (`%Z` prints
+//! The two things the system cannot give are the zone's id (LiquidJS's `%Z` prints
 //! it) and its English long name (`Date.prototype.toString` prints it in
 //! parentheses). Node gets those from ICU, so they come from a table
-//! generated from Node: [`crate::zones`]. See [`long_name`] for what is
+//! generated from Node (`src/zones.rs`, made by `tools/gen-zones.mjs`). See [`long_name`] for what is
 //! printed when the zone or the offset is not in it.
 
 use chrono::{Local, Offset, TimeZone};
 
-use crate::engine::Tz;
 use crate::zones::{PROFILES, ZONE_IDS};
 
-pub(crate) const MS_PER_DAY: f64 = 86_400_000.0;
+/// The time zone dates are printed and formatted in. JavaScript uses the
+/// process's local zone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tz {
+    /// The machine's local zone, which honors `TZ`. The zone's id and
+    /// name are looked up once per process, so set `TZ` before the first
+    /// date is printed.
+    Local,
+    Utc,
+}
+
+pub const MS_PER_DAY: f64 = 86_400_000.0;
 /// The most JavaScript will hold: 8.64e15 ms either side of the epoch.
-pub(crate) const MAX_TIME: f64 = 8.64e15;
+pub const MAX_TIME: f64 = 8.64e15;
 
 /// Broken-down time in one zone.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Fields {
+pub struct Fields {
     pub year: i64,
     pub month0: u32,
     pub day: u32,
@@ -35,7 +45,7 @@ pub(crate) struct Fields {
 }
 
 /// Days from 1970-01-01 to the civil date. `month` is 1 to 12.
-pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y.rem_euclid(400);
@@ -69,7 +79,7 @@ fn offset_seconds(tz: Tz, ms: f64) -> i64 {
 }
 
 /// Broken-down time of the instant `ms` in `tz`.
-pub(crate) fn fields(tz: Tz, ms: f64) -> Option<Fields> {
+pub fn fields(tz: Tz, ms: f64) -> Option<Fields> {
     if !ms.is_finite() || ms.abs() > MAX_TIME {
         return None;
     }
@@ -96,7 +106,7 @@ pub(crate) fn fields(tz: Tz, ms: f64) -> Option<Fields> {
 /// were UTC). For a time the clocks skip, the offset from before the
 /// change is used, and for a time they repeat, the first one, as
 /// JavaScript does.
-pub(crate) fn local_to_utc(tz: Tz, local_ms: f64) -> f64 {
+pub fn local_to_utc(tz: Tz, local_ms: f64) -> f64 {
     if tz == Tz::Utc || !local_ms.is_finite() {
         return local_ms;
     }
@@ -117,6 +127,7 @@ pub(crate) fn local_to_utc(tz: Tz, local_ms: f64) -> f64 {
 }
 
 /// The zone the process runs in, as `TZ` or `/etc/localtime` names it.
+/// Read once per process.
 fn local_zone_key() -> Option<&'static str> {
     use std::sync::OnceLock;
     static KEY: OnceLock<Option<String>> = OnceLock::new();
@@ -132,9 +143,16 @@ fn local_zone_key() -> Option<&'static str> {
     .as_deref()
 }
 
+/// Whether `name` is a zone in the tz database, ignoring case.
+pub fn is_known_zone(name: &str) -> bool {
+    ZONE_IDS
+        .iter()
+        .any(|(zone, _)| zone.eq_ignore_ascii_case(name))
+}
+
 /// The id Node reports for the local zone (`resolvedOptions().timeZone`),
 /// which is what `%Z` prints. `None` when the zone is not one it knows.
-pub(crate) fn zone_id(tz: Tz) -> Option<&'static str> {
+pub fn zone_id(tz: Tz) -> Option<&'static str> {
     match tz {
         Tz::Utc => Some("UTC"),
         Tz::Local => {
@@ -157,7 +175,7 @@ pub(crate) fn zone_id(tz: Tz) -> Option<&'static str> {
 /// (Moscow's +4 was "Moscow Summer Time" before 2011 and "Moscow Standard
 /// Time" after it). A zone or offset that is not in the table, such as a
 /// custom `TZ` like `CET-1CEST`, gets ICU's fallback form: `GMT+05:30`.
-pub(crate) fn long_name(tz: Tz, offset_east: i64) -> String {
+pub fn long_name(tz: Tz, offset_east: i64) -> String {
     let offset_min = (offset_east / 60) as i16;
     let known = match tz {
         Tz::Utc => Some("Coordinated Universal Time"),
@@ -192,7 +210,7 @@ const MONTHS: [&str; 12] = [
 
 /// `Date.prototype.toString()` of the instant `ms`:
 /// `Fri Nov 15 2026 00:00:00 GMT+0000 (Coordinated Universal Time)`.
-pub(crate) fn date_to_string(tz: Tz, ms: f64) -> String {
+pub fn date_to_string(tz: Tz, ms: f64) -> String {
     let Some(f) = fields(tz, ms) else {
         return "Invalid Date".into();
     };
@@ -287,5 +305,12 @@ mod tests {
         assert_eq!(gmt_offset(19_800), "GMT+05:30");
         assert_eq!(gmt_offset(-3_600), "GMT-01:00");
         assert_eq!(gmt_offset(0), "GMT+00:00");
+    }
+
+    #[test]
+    fn known_zones_ignore_case() {
+        assert!(is_known_zone("america/new_york"));
+        assert!(is_known_zone("Europe/Paris"));
+        assert!(!is_known_zone("Mars/Olympus"));
     }
 }

@@ -6,7 +6,7 @@
 //! zone is local time, except an ISO date with no time, which is UTC.
 
 use crate::engine::Tz;
-use crate::tz::{self, MAX_TIME};
+use brrrty_js::tz::{self, MAX_TIME};
 
 const NONE: i32 = i32::MAX;
 

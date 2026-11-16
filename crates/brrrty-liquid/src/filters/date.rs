@@ -10,7 +10,7 @@ use crate::context::Val;
 use crate::engine::Tz;
 use crate::error::ErrorKind;
 use crate::render::{R, RenderErr, Renderer};
-use crate::tz::{self, Fields, MAX_TIME};
+use brrrty_js::tz::{self, Fields, MAX_TIME};
 
 const DEFAULT_FORMAT: &str = "%A, %B %-e, %Y at %-l:%M %P %z";
 
@@ -153,10 +153,7 @@ fn zone_by_name(name: &str) -> R<Fixed> {
     ) {
         return Ok(Fixed::Name(0.0, name.to_string()));
     }
-    let known = crate::zones::ZONE_IDS
-        .iter()
-        .any(|(zone, _)| zone.eq_ignore_ascii_case(name));
-    if !known {
+    if !tz::is_known_zone(name) {
         return Err(RenderErr::new(
             ErrorKind::Render,
             format!("Invalid time zone specified: {name}"),

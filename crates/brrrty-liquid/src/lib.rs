@@ -17,8 +17,6 @@ mod ops;
 mod parser;
 mod render;
 mod tags;
-mod tz;
-mod zones;
 
 pub use ast::Template;
 pub use engine::{Engine, EngineOptions, FilterCtx, FilterFn, LoadError, Loader, Rendered, Tz};

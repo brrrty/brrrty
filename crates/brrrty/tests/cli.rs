@@ -247,3 +247,49 @@ fn input_outside_the_root_builds_without_crashing() {
     assert!(root.join("_site/index.html").exists());
     assert!(!root.join("_site/drafts").exists());
 }
+
+/// Eleventy's `slug` and `slugify` stringify a `Date` as JavaScript does,
+/// in the local zone and with the zone's name, and `url` throws on one.
+/// node with `@11ty/eleventy/src/Filters/{Slug,Slugify,Url}.js` on
+/// `new Date(Date.UTC(2026, 2, 4))`, the `page.date` of `date: 2026-03-04`.
+#[test]
+fn slug_of_a_date_prints_it_in_the_local_zone() {
+    let cases = [
+        (
+            "UTC",
+            "wed-mar-04-2026-00:00:00-gmt+0000-(coordinated-universal-time)",
+            "wed-mar-04-2026-00-00-00-gmt-0000-coordinated-universal-time",
+        ),
+        (
+            "America/New_York",
+            "tue-mar-03-2026-19:00:00-gmt-0500-(eastern-standard-time)",
+            "tue-mar-03-2026-19-00-00-gmt-0500-eastern-standard-time",
+        ),
+    ];
+    for (tz, slug, slugify) in cases {
+        let dir = site(&[
+            (
+                "src/index.liquid",
+                "---\ndate: 2026-03-04\n---\n{{ page.date | slug }}|{{ page.date | slugify }}",
+            ),
+            (
+                "src/url.liquid",
+                "---\ndate: 2026-03-04\n---\n{{ page.date | url }}",
+            ),
+        ]);
+        let out = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+            .args(["--input", "src"])
+            .env("TZ", tz)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{tz}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("url.startsWith is not a function"),
+            "{tz}: {}",
+            stderr(&out)
+        );
+        let html = std::fs::read_to_string(dir.path().join("_site/index.html")).unwrap();
+        assert_eq!(html, format!("{slug}|{slugify}"), "{tz}");
+    }
+}

@@ -179,18 +179,7 @@ pub(crate) fn contains(l: &Val, r: &Val, tz: Tz) -> bool {
 
 /// `String(v)`, printing dates in `tz`.
 pub(crate) fn to_js_string(v: &Value, tz: Tz) -> String {
-    match v {
-        Value::Date(d) => date_string(d, tz),
-        Value::Array(a) => a
-            .iter()
-            .map(|x| match x {
-                Value::Null | Value::Undefined => String::new(),
-                x => to_js_string(x, tz),
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        other => other.to_js_string(),
-    }
+    v.to_js_string_in(tz)
 }
 
 /// `String(val)` with a template literal, as `cycle` names its group: a
@@ -200,11 +189,6 @@ pub(crate) fn template_string(v: &Val, tz: Tz) -> String {
         Val::V(v) => to_js_string(v, tz),
         _ => "[object Object]".into(),
     }
-}
-
-/// `Date.prototype.toString` in `tz`.
-fn date_string(d: &chrono::DateTime<chrono::FixedOffset>, tz: Tz) -> String {
-    crate::tz::date_to_string(tz, d.timestamp_millis() as f64)
 }
 
 /// LiquidJS's `stringify`, which outputs use: strings as they are, null

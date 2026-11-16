@@ -13,7 +13,7 @@ readme = false
 exclude = ["tools"]
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
 indexmap = "2"
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 unicode-normalization = "0.1.26"
