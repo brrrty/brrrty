@@ -10,7 +10,7 @@ homepage.workspace = true
 keywords = ["static-site", "ssg", "eleventy", "11ty", "rhai"]
 categories = ["command-line-utilities", "web-programming"]
 readme = false
-exclude = ["tools/", "tests/regex_probes.rs", "tests/probes/"]
+exclude = ["tools/", "tests/regex_probes.rs", "tests/sort_probes.rs", "tests/probes/"]
 
 [dependencies]
 brrrty-core = { path = "../brrrty-core", version = "0.0.5" }

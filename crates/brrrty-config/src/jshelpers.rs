@@ -57,84 +57,11 @@ fn js_concat(a: &Dynamic, b: &Dynamic) -> Res<Dynamic> {
     }
 }
 
-/// V8's sort for short arrays (under 64 items, which is a single run of
-/// TimSort): find the leading run, then binary insertion. It makes the
-/// same comparator calls V8 does, so even a comparator that isn't a proper
-/// ordering (`(a, b) => a > b`) gives V8's result. Longer arrays use a
-/// stable merge sort, which agrees with V8 for any consistent comparator.
-fn js_sorted<T: Clone>(mut a: Vec<T>, cmp: &mut dyn FnMut(&T, &T) -> Res<Ordering>) -> Res<Vec<T>> {
-    let n = a.len();
-    if n < 2 {
-        return Ok(a);
-    }
-    if n >= 64 {
-        return merge_sort(a, cmp);
-    }
-    let mut run = 2;
-    let descending = cmp(&a[1], &a[0])? == Ordering::Less;
-    for i in 2..n {
-        let order = cmp(&a[i], &a[i - 1])?;
-        if descending {
-            if order != Ordering::Less {
-                break;
-            }
-        } else if order == Ordering::Less {
-            break;
-        }
-        run += 1;
-    }
-    if descending {
-        a[..run].reverse();
-    }
-    for start in run..n {
-        let pivot = a[start].clone();
-        let (mut left, mut right) = (0, start);
-        while left < right {
-            let mid = left + ((right - left) >> 1);
-            if cmp(&pivot, &a[mid])? == Ordering::Less {
-                right = mid;
-            } else {
-                left = mid + 1;
-            }
-        }
-        a[left..=start].rotate_right(1);
-        a[left] = pivot;
-    }
-    Ok(a)
-}
-
-/// Merge sort that keeps equal items in order and never panics, however
-/// inconsistent the comparison is.
-fn merge_sort<T: Clone>(
-    items: Vec<T>,
-    cmp: &mut dyn FnMut(&T, &T) -> Res<Ordering>,
-) -> Res<Vec<T>> {
-    if items.len() <= 1 {
-        return Ok(items);
-    }
-    let right = items[items.len() / 2..].to_vec();
-    let left = items[..items.len() / 2].to_vec();
-    let (left, right) = (merge_sort(left, cmp)?, merge_sort(right, cmp)?);
-    let mut out = Vec::with_capacity(left.len() + right.len());
-    let (mut i, mut j) = (0, 0);
-    while i < left.len() && j < right.len() {
-        if cmp(&left[i], &right[j])? == Ordering::Greater {
-            out.push(right[j].clone());
-            j += 1;
-        } else {
-            out.push(left[i].clone());
-            i += 1;
-        }
-    }
-    out.extend_from_slice(&left[i..]);
-    out.extend_from_slice(&right[j..]);
-    Ok(out)
-}
-
 /// `undefined` items go last and are never compared, as in JavaScript.
 fn sort_with(arr: Array, cmp: &mut dyn FnMut(&Dynamic, &Dynamic) -> Res<Ordering>) -> Res<Array> {
     let (undefined, defined): (Vec<_>, Vec<_>) = arr.into_iter().partition(Dynamic::is_unit);
-    let mut sorted = js_sorted(defined, cmp)?;
+    let mut sorted = defined;
+    crate::timsort::sort(&mut sorted, cmp)?;
     sorted.extend(undefined);
     Ok(sorted)
 }

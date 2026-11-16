@@ -118,6 +118,9 @@ mod jshelpers;
 mod object;
 mod plugins;
 mod regex;
+// Public for `tests/sort_probes.rs`, which checks it against V8 call by call.
+#[doc(hidden)]
+pub mod timsort;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
