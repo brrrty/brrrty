@@ -310,4 +310,75 @@ mod tests {
         assert_eq!(m["a"], n(1.0));
         assert_eq!(body, "");
     }
+
+    /// Nesting is capped so a hostile file is a Problem, not a stack overflow.
+    #[test]
+    fn deep_nesting_is_a_problem_not_an_abort() {
+        let run = || {
+            let mut block = String::from("---\n");
+            for i in 0..10_000 {
+                block.push_str(&"  ".repeat(i));
+                block.push_str("k:\n");
+            }
+            let mut seq = String::from("---\nk:\n");
+            for i in 0..10_000 {
+                seq.push_str(&" ".repeat(i + 1));
+                seq.push_str("-\n");
+            }
+            let flow = format!("---\nk: {}{}\n", "[".repeat(10_000), "]".repeat(10_000));
+            for text in [block, seq, flow] {
+                let p = split_front_matter(&format!("{text}---\n")).unwrap_err();
+                assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
+                assert!(p.line.is_some());
+            }
+        };
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(run)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn depth_cap_allows_128_levels() {
+        let nested = |n: usize| {
+            let mut t = String::from("---\n");
+            for i in 0..n {
+                t.push_str(&"  ".repeat(i));
+                t.push_str("k:\n");
+            }
+            t.push_str(&"  ".repeat(n));
+            t.push_str("v: 1\n---\n");
+            split_front_matter(&t).map(|_| ())
+        };
+        assert!(nested(127).is_ok());
+        assert!(nested(128).is_err());
+        let flow = |n: usize| {
+            split_front_matter(&format!(
+                "---\nk: {}{}\n---\n",
+                "[".repeat(n),
+                "]".repeat(n)
+            ))
+            .map(|_| ())
+        };
+        assert!(flow(127).is_ok());
+        assert!(flow(128).is_err());
+    }
+
+    /// js-yaml hangs on `? *alias` (11ty never finishes); Brrrty refuses it.
+    #[test]
+    fn alias_as_mapping_key_is_refused_without_hanging() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = split_front_matter("---\na: &a x\n? *a\n: y\n---\n");
+            let _ = tx.send(r.map(|_| ()));
+        });
+        let r = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("timed out");
+        let p = r.unwrap_err();
+        assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
+        assert!(p.message.contains("alias"), "{}", p.message);
+    }
 }

@@ -52,7 +52,7 @@ pub(crate) fn load(text: &str) -> Result<Value, YamlError> {
             {
                 continue;
             }
-            result = builder.node(&mut events)?;
+            result = builder.node(&mut events, 0)?;
         }
     }
     Ok(result)
@@ -88,7 +88,7 @@ impl Builder {
         }
     }
 
-    fn node(&mut self, events: &mut Events<'_>) -> Result<Value, YamlError> {
+    fn node(&mut self, events: &mut Events<'_>, depth: usize) -> Result<Value, YamlError> {
         let (event, span) = self.next(events)?;
         let (value, anchor) = match event {
             Event::Alias(id) => {
@@ -103,16 +103,18 @@ impl Builder {
             }
             Event::SequenceStart(anchor, tag) => {
                 check_collection_tag(tag.as_deref(), "seq", span)?;
+                check_depth(depth + 1, span)?;
                 let mut items = Vec::new();
                 while !matches!(events.peek(), Some(Ok((Event::SequenceEnd, _)))) {
-                    items.push(self.node(events)?);
+                    items.push(self.node(events, depth + 1)?);
                 }
                 self.next(events)?;
                 (Value::Array(Arc::new(items)), anchor)
             }
             Event::MappingStart(anchor, tag) => {
                 check_collection_tag(tag.as_deref(), "map", span)?;
-                (self.mapping(events)?, anchor)
+                check_depth(depth + 1, span)?;
+                (self.mapping(events, depth + 1)?, anchor)
             }
             _ => return Err(error(span, "unexpected YAML structure")),
         };
@@ -122,7 +124,7 @@ impl Builder {
         Ok(value)
     }
 
-    fn mapping(&mut self, events: &mut Events<'_>) -> Result<Value, YamlError> {
+    fn mapping(&mut self, events: &mut Events<'_>, depth: usize) -> Result<Value, YamlError> {
         let mut map: IndexMap<String, Value> = IndexMap::new();
         // Keys that came from a `<<` merge; an explicit key may replace those.
         let mut overridable: HashSet<String> = HashSet::new();
@@ -135,8 +137,12 @@ impl Builder {
                 Some(Ok((_, span))) => *span,
                 _ => Span::empty(saphyr_parser::Marker::new(0, 1, 0)),
             };
-            let key = self.node(events)?;
-            let value = self.node(events)?;
+            if matches!(events.peek(), Some(Ok((Event::Alias(_), _)))) {
+                // js-yaml hangs on these, so 11ty never finishes.
+                return Err(error(key_span, "an alias can't be used as a mapping key"));
+            }
+            let key = self.node(events, depth)?;
+            let value = self.node(events, depth)?;
             if is_merge {
                 let sources: Vec<Value> = match &value {
                     Value::Array(items) => items.iter().cloned().collect(),
@@ -168,6 +174,19 @@ impl Builder {
         self.next(events)?;
         Ok(Value::Object(Arc::new(map)))
     }
+}
+
+/// The deepest nesting of mappings and sequences accepted.
+const MAX_DEPTH: usize = 128;
+
+fn check_depth(depth: usize, span: Span) -> Result<(), YamlError> {
+    if depth > MAX_DEPTH {
+        return Err(error(
+            span,
+            format!("nesting is deeper than {MAX_DEPTH} levels"),
+        ));
+    }
+    Ok(())
 }
 
 /// A mapping key as JavaScript turns it into a property name.
