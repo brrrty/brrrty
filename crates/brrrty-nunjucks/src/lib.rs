@@ -3,15 +3,30 @@
 //! `trimBlocks`, `lstripBlocks` and custom delimiters are off.
 //!
 //! [`parse`] turns a template into a [`Template`]. Parse errors carry the
-//! Nunjucks message and the line and column Nunjucks reports.
+//! Nunjucks message and the line and column Nunjucks reports. An
+//! [`Engine`] compiles templates ([`Engine::compile`]) and renders them
+//! ([`Engine::render`]), with JavaScript's semantics for what a template
+//! computes and Nunjucks's autoescaping.
 
 pub mod ast;
+mod compile;
+mod context;
+mod engine;
 mod error;
+mod filters;
+mod jsops;
 mod lexer;
 mod parser;
+mod render;
+mod tags;
+mod tests;
+mod value;
 
 pub use ast::Template;
+pub use brrrty_js::{LoadError, Loader, Tz};
+pub use engine::{Compiled, Engine, EngineOptions, FilterCtx, FilterFn};
 pub use error::{ErrorKind, NunjucksError};
+pub use render::Rendered;
 
 /// Parses `source`. `template_name` names the template in errors.
 ///

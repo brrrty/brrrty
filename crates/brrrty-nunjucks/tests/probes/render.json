@@ -1,0 +1,2044 @@
+[
+ {
+  "template": "{% if a %}T{% else %}F{% endif %}",
+  "data": {
+   "a": []
+  },
+  "includes": {},
+  "out": "T"
+ },
+ {
+  "template": "{% if a %}T{% else %}F{% endif %}",
+  "data": {
+   "a": {}
+  },
+  "includes": {},
+  "out": "T"
+ },
+ {
+  "template": "{% if a %}T{% else %}F{% endif %}",
+  "data": {
+   "a": "false"
+  },
+  "includes": {},
+  "out": "T"
+ },
+ {
+  "template": "{% if a %}T{% else %}F{% endif %}",
+  "data": {
+   "a": 0
+  },
+  "includes": {},
+  "out": "F"
+ },
+ {
+  "template": "{% if a %}T{% else %}F{% endif %}",
+  "data": {
+   "a": " "
+  },
+  "includes": {},
+  "out": "T"
+ },
+ {
+  "template": "{% if (\"\" | safe) %}T{% else %}F{% endif %}",
+  "data": {},
+  "includes": {},
+  "out": "T"
+ },
+ {
+  "template": "{{ a and b }}|{{ a or b }}|{{ b and a }}|{{ c or d }}",
+  "data": {
+   "a": 0,
+   "b": "B",
+   "c": null,
+   "d": ""
+  },
+  "includes": {},
+  "out": "0|B|0|"
+ },
+ {
+  "template": "{{ not a }}|{{ not not a }}",
+  "data": {
+   "a": []
+  },
+  "includes": {},
+  "out": "false|true"
+ },
+ {
+  "template": "{{ x or y or \"z\" }}",
+  "data": {
+   "x": false,
+   "y": 0
+  },
+  "includes": {},
+  "out": "z"
+ },
+ {
+  "template": "{{ x and y and z }}",
+  "data": {
+   "x": 1,
+   "y": "a",
+   "z": 0
+  },
+  "includes": {},
+  "out": "0"
+ },
+ {
+  "template": "{{ \"5\" * \"2\" }}|{{ \"5\" - 2 }}|{{ \"5\" + 2 }}|{{ 5 + \"2\" }}|{{ true + 1 }}|{{ null + 1 }}",
+  "data": {},
+  "includes": {},
+  "out": "10|3|52|52|2|1"
+ },
+ {
+  "template": "{{ undef + 1 }}|{{ undef ~ 1 }}|{{ null ~ \"x\" }}|{{ \"a\" ~ undef }}",
+  "data": {},
+  "includes": {},
+  "out": "NaN|undefined1|nullx|aundefined"
+ },
+ {
+  "template": "{{ [1, 2] + [3] }}|{{ [] + {} }}|{{ [1] * 2 }}|{{ [[1, 2], 3] ~ \"\" }}",
+  "data": {},
+  "includes": {},
+  "out": "1,23|[object Object]|2|1,2,3"
+ },
+ {
+  "template": "{{ 1 / 0 }}|{{ -1 / 0 }}|{{ 0 / 0 }}|{{ 7 // 0 }}|{{ 5 % 0 }}",
+  "data": {},
+  "includes": {},
+  "out": "Infinity|-Infinity|NaN|Infinity|NaN"
+ },
+ {
+  "template": "{{ -7 // 2 }}|{{ 7.5 // 2 }}|{{ -7 % -3 }}|{{ 2 ** 0.5 }}|{{ (-8) ** (1/3) }}",
+  "data": {},
+  "includes": {},
+  "out": "-4|3|-1|1.4142135623730951|NaN"
+ },
+ {
+  "template": "{{ 1 ** undef }}|{{ 0.1 + 0.2 }}|{{ 1e21 + 1 }}|{{ 123456789 * 1000000000000 }}",
+  "data": {},
+  "includes": {},
+  "out": "NaN|0.30000000000000004|NaN|123456789000000000000"
+ },
+ {
+  "template": "{{ not 0 + 1 }}|{{ \"a\" + 2 - 1 }}|{{ 0.1 * 3 / 3 }}|{{ 1 == 1 < 2 }}|{{ 5 * 3 % 4 }}",
+  "data": {},
+  "includes": {},
+  "out": "2|NaN|0.10000000000000002|true|3"
+ },
+ {
+  "template": "{{ not a == b }}|{{ not (a == b) }}",
+  "data": {
+   "a": 1,
+   "b": 2
+  },
+  "includes": {},
+  "out": "false|true"
+ },
+ {
+  "template": "{{ 1 < 2 < 3 }}|{{ 3 > 2 > 1 }}|{{ 1 == 1 == 1 }}|{{ 2 == 2 == 2 }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|true|false"
+ },
+ {
+  "template": "{{ \"10\" < \"9\" }}|{{ \"10\" < 9 }}|{{ \"a\" < \"B\" }}|{{ \"é\" > \"z\" }}|{{ undef < 1 }}|{{ undef >= undef }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|false|true|false|false"
+ },
+ {
+  "template": "{{ null == 0 }}|{{ null >= 0 }}|{{ null == undef }}|{{ null === undef }}|{{ \"\" == 0 }}|{{ \"0\" == false }}",
+  "data": {},
+  "includes": {},
+  "out": "false|true|true|false|true|true"
+ },
+ {
+  "template": "{{ [1] == 1 }}|{{ [1, 2] == \"1,2\" }}|{{ a == a }}|{{ a === b }}|{{ a == b }}",
+  "data": {
+   "a": [
+    1
+   ],
+   "b": [
+    1
+   ]
+  },
+  "includes": {},
+  "out": "true|true|true|false|false"
+ },
+ {
+  "template": "{{ o == \"[object Object]\" }}|{{ o === o }}",
+  "data": {
+   "o": {
+    "k": 1
+   }
+  },
+  "includes": {},
+  "out": "true|true"
+ },
+ {
+  "template": "{{ \"abc\" == (\"abc\" | safe) }}|{{ \"abc\" === (\"abc\" | safe) }}|{{ (\"a\" | safe) == (\"a\" | safe) }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|false"
+ },
+ {
+  "template": "{{ 1 != \"1\" }}|{{ 1 !== \"1\" }}|{{ NaN == NaN }}",
+  "data": {},
+  "includes": {},
+  "out": "false|true|true"
+ },
+ {
+  "template": "{{ \"x\" if 0 else \"y\" }}|{{ \"x\" if [] }}|[{{ \"x\" if \"\" }}]",
+  "data": {},
+  "includes": {},
+  "out": "y|x|[]"
+ },
+ {
+  "template": "{{ (1, 2, 3) }}|{{ (a, b) }}",
+  "data": {
+   "a": "A",
+   "b": "B"
+  },
+  "includes": {},
+  "out": "3|B"
+ },
+ {
+  "template": "{{ -\"3\" }}|{{ +\"3\" + 1 }}|{{ -undef }}|{{ +[] }}|{{ -[5] }}|{{ +true }}",
+  "data": {},
+  "includes": {},
+  "out": "-3|4|NaN|0|-5|1"
+ },
+ {
+  "template": "{{ - 2 ** 2 }}|{{ (-2) ** 2 }}|{{ 2 ** 3 ** 2 }}",
+  "data": {},
+  "includes": {},
+  "out": "4|4|64"
+ },
+ {
+  "template": "{{ 10 - 2 - 3 }}|{{ 2 * 3 + 4 * 5 }}|{{ 20 / 4 / 5 }}|{{ 1 + 2 ~ 3 + 4 }}",
+  "data": {},
+  "includes": {},
+  "out": "5|26|1|334"
+ },
+ {
+  "template": "[{{ u }}][{{ n }}][{{ f }}][{{ t }}][{{ z }}][{{ e }}]",
+  "data": {
+   "n": null,
+   "f": false,
+   "t": true,
+   "z": 0,
+   "e": ""
+  },
+  "includes": {},
+  "out": "[][][false][true][0][]"
+ },
+ {
+  "template": "{{ a }}|{{ b }}|{{ c }}",
+  "data": {
+   "a": [
+    1,
+    [
+     2,
+     [
+      3,
+      null
+     ]
+    ],
+    null
+   ],
+   "b": [
+    {}
+   ],
+   "c": []
+  },
+  "includes": {},
+  "out": "1,2,3,,|[object Object]|"
+ },
+ {
+  "template": "{{ 0.000001 }}|{{ 1e-7 }}|{{ 1e21 }}|{{ 123456789012345678 }}|{{ -0 }}|{{ 2.50 }}",
+  "data": {},
+  "includes": {},
+  "out": "0.000001|NaN||123456789012345680|0|2.5"
+ },
+ {
+  "template": "{{ s }}",
+  "data": {
+   "s": "<a href=\"x\">&'\\</a>"
+  },
+  "includes": {},
+  "out": "&lt;a href=&quot;x&quot;&gt;&amp;&#39;&#92;&lt;/a&gt;"
+ },
+ {
+  "template": "{{ a }}",
+  "data": {
+   "a": [
+    "<b>",
+    "&"
+   ]
+  },
+  "includes": {},
+  "out": "&lt;b&gt;,&amp;"
+ },
+ {
+  "template": "{{ o }}",
+  "data": {
+   "o": {
+    "toJSON": 1
+   }
+  },
+  "includes": {},
+  "out": "[object Object]"
+ },
+ {
+  "template": "{{ a[1] }}|{{ a[\"1\"] }}|[{{ a[1.5] }}]|[{{ a[-1] }}]|{{ a.length }}|[{{ a[9] }}]",
+  "data": {
+   "a": [
+    10,
+    20,
+    30
+   ]
+  },
+  "includes": {},
+  "out": "20|20|[]|[]|3|[]"
+ },
+ {
+  "template": "{{ s[0] }}|{{ s.length }}|[{{ s[10] }}]|{{ s[\"length\"] }}",
+  "data": {
+   "s": "héllo"
+  },
+  "includes": {},
+  "out": "h|5|[]|5"
+ },
+ {
+  "template": "[{{ x.y.z }}]|[{{ n.y }}]|[{{ u.v }}]",
+  "data": {
+   "x": {},
+   "n": null
+  },
+  "includes": {},
+  "out": "[]|[]|[]"
+ },
+ {
+  "template": "{{ o[k] }}|{{ o[1] }}|{{ o[true] }}|{{ o[null] }}",
+  "data": {
+   "o": {
+    "1": "one",
+    "a": "A",
+    "true": "T",
+    "null": "N"
+   },
+   "k": "a"
+  },
+  "includes": {},
+  "out": "A|one|T|N"
+ },
+ {
+  "template": "{{ o[\"a b\"] }}|{{ o.length }}",
+  "data": {
+   "o": {
+    "a b": 1,
+    "length": 7
+   }
+  },
+  "includes": {},
+  "out": "1|7"
+ },
+ {
+  "template": "{{ (\"abc\" | safe).length }}|{{ (\"abc\" | safe).val }}",
+  "data": {},
+  "includes": {},
+  "out": "3|abc"
+ },
+ {
+  "template": "{% set d = {a: 1, b: {c: [1, 2]}} %}{{ d.b.c[1] }}|{{ d[\"a\"] }}|{{ d.b.c.length }}",
+  "data": {},
+  "includes": {},
+  "err": "parseAggregate: expected comma after expression"
+ },
+ {
+  "template": "{% set d = {\"1\": \"x\", b: 2, \"0\": \"y\", a: 3} %}{% for k, v in d %}{{ k }}={{ v }};{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "0=y;1=x;b=2;a=3;"
+ },
+ {
+  "template": "{% set d = {a: 1, b: 2, a: 3} %}{% for k, v in d %}{{ k }}={{ v }};{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "a=3;b=2;"
+ },
+ {
+  "template": "{{ s.toUpperCase() }}|{{ s.toLowerCase() }}|{{ \"ß\".toUpperCase() }}|{{ \"ΑΣ\".toLowerCase() }}",
+  "data": {
+   "s": "Héllo"
+  },
+  "includes": {},
+  "out": "HÉLLO|héllo|SS|ας"
+ },
+ {
+  "template": "[{{ s.trim() }}][{{ s.trimStart() }}][{{ s.trimEnd() }}]",
+  "data": {
+   "s": " \t\n x y　 "
+  },
+  "includes": {},
+  "out": "[x y][x y　 ][ \t\n x y]"
+ },
+ {
+  "template": "{{ s.split(\",\") }}|{{ s.split(\",\").length }}|{{ s.split(\"\") }}|{{ s.split() }}|{{ s.split(\",\", 2) }}|{{ \"\".split(\",\").length }}|{{ \"\".split(\"\").length }}",
+  "data": {
+   "s": "a,b,,c"
+  },
+  "includes": {},
+  "out": "a,b,,c|4|a,,,b,,,,,c|a,b,,c|a,b|1|0"
+ },
+ {
+  "template": "{{ s.indexOf(\"l\") }}|{{ s.indexOf(\"l\", 3) }}|{{ s.indexOf(\"z\") }}|{{ s.lastIndexOf(\"l\") }}|{{ s.indexOf(\"\") }}|{{ s.indexOf(\"\", 99) }}",
+  "data": {
+   "s": "hello"
+  },
+  "includes": {},
+  "out": "2|3|-1|3|0|5"
+ },
+ {
+  "template": "{{ s.includes(\"ell\") }}|{{ s.includes(\"ell\", 2) }}|{{ s.startsWith(\"he\") }}|{{ s.startsWith(\"l\", 2) }}|{{ s.endsWith(\"lo\") }}|{{ s.endsWith(\"l\", 4) }}",
+  "data": {
+   "s": "hello"
+  },
+  "includes": {},
+  "out": "true|false|true|true|true|true"
+ },
+ {
+  "template": "{{ s.slice(1, 3) }}|{{ s.slice(-2) }}|{{ s.slice(3, 1) }}|{{ s.slice() }}|{{ s.substring(3, 1) }}|{{ s.substring(-5, 2) }}|{{ s.substr(-3, 2) }}|{{ s.substr(1) }}",
+  "data": {
+   "s": "hello"
+  },
+  "includes": {},
+  "out": "el|lo||hello|el|he|ll|ello"
+ },
+ {
+  "template": "{{ s.replace(\"l\", \"L\") }}|{{ s.replaceAll(\"l\", \"L\") }}|{{ s.replace(\"\", \"-\") }}|{{ s.replaceAll(\"\", \"-\") }}|{{ s.replace(\"x\", \"y\") }}",
+  "data": {
+   "s": "hello"
+  },
+  "includes": {},
+  "out": "heLlo|heLLo|-hello|-h-e-l-l-o-|hello"
+ },
+ {
+  "template": "{{ s.replace(\"l\", \"[$&]\") }}|{{ s.replace(\"l\", \"$$\") }}|{{ s.replace(\"l\", \"$`\") }}|{{ s.replace(\"l\", \"$'\") }}|{{ s.replace(\"l\", \"$1\") }}",
+  "data": {
+   "s": "hello"
+  },
+  "includes": {},
+  "out": "he[l]lo|he$lo|hehelo|helolo|he$1lo"
+ },
+ {
+  "template": "{{ s.charAt(1) }}|[{{ s.charAt(9) }}]|{{ s.charCodeAt(0) }}|{{ s.charCodeAt(9) }}|{{ s.codePointAt(0) }}|{{ s.at(-1) }}",
+  "data": {
+   "s": "hello"
+  },
+  "includes": {},
+  "out": "e|[]|104|NaN|104|o"
+ },
+ {
+  "template": "{{ s.padStart(8, \"ab\") }}|{{ s.padEnd(7) }}|{{ s.padStart(2) }}|{{ s.repeat(3) }}|[{{ s.repeat(0) }}]|{{ s.concat(1, null, [2]) }}",
+  "data": {
+   "s": "abc"
+  },
+  "includes": {},
+  "out": "ababaabc|abc    |abc|abcabcabc|[]|abc1null2"
+ },
+ {
+  "template": "{{ s.toString() }}|{{ s.valueOf() }}|{{ s.hasOwnProperty(0) }}|{{ s.hasOwnProperty(\"length\") }}|{{ s.hasOwnProperty(\"x\") }}",
+  "data": {
+   "s": "ab"
+  },
+  "includes": {},
+  "out": "ab|ab|true|true|false"
+ },
+ {
+  "template": "{{ (\"<i>\" | safe).toUpperCase() }}|{{ (\"<i>\" | safe).toString() }}|{{ (\"<i>\" | safe).slice(1) }}",
+  "data": {},
+  "includes": {},
+  "out": "&lt;I&gt;|&lt;i&gt;|i&gt;"
+ },
+ {
+  "template": "{{ \"a-b-c\".split(\"-\").join(\"+\") }}|{{ \"abc\".split(\"\").reverse().join(\"\") }}",
+  "data": {},
+  "includes": {},
+  "out": "a+b+c|cba"
+ },
+ {
+  "template": "{{ s.repeat(-1) }}",
+  "data": {
+   "s": "x"
+  },
+  "includes": {},
+  "err": "RangeError: Invalid count value: -1"
+ },
+ {
+  "template": "{{ n.toFixed(2) }}|{{ n.toFixed() }}|{{ (1.005).toFixed(2) }}|{{ (2.5).toFixed(0) }}|{{ (-1.5).toFixed(0) }}|{{ (1e21).toFixed(2) }}",
+  "data": {
+   "n": 3.14159
+  },
+  "includes": {},
+  "err": "Error: Unable to call `--expression--[\"toFixed\"]`, which is undefined or falsey"
+ },
+ {
+  "template": "{{ n.toString() }}|{{ n.toString(2) }}|{{ n.toString(16) }}|{{ (255).toString(36) }}|{{ (-10).toString(3) }}",
+  "data": {
+   "n": 42
+  },
+  "includes": {},
+  "out": "42|101010|2a|73|-101"
+ },
+ {
+  "template": "{{ t.toString() }}|{{ t.valueOf() }}",
+  "data": {
+   "t": true
+  },
+  "includes": {},
+  "out": "true|true"
+ },
+ {
+  "template": "{{ o.hasOwnProperty(\"a\") }}|{{ o.hasOwnProperty(\"b\") }}|{{ o.toString() }}|{{ o.propertyIsEnumerable(\"a\") }}",
+  "data": {
+   "o": {}
+  },
+  "includes": {},
+  "out": "false|false|[object Object]|false"
+ },
+ {
+  "template": "{{ n.toFixed(101) }}",
+  "data": {
+   "n": 1
+  },
+  "includes": {},
+  "err": "RangeError: toFixed() digits argument must be between 0 and 100"
+ },
+ {
+  "template": "{{ a.join() }}|{{ a.join(\"\") }}|{{ a.join(null) }}|{{ a.indexOf(2) }}|{{ a.indexOf(\"2\") }}|{{ a.lastIndexOf(1) }}|{{ a.includes(3) }}",
+  "data": {
+   "a": [
+    1,
+    2,
+    3,
+    1
+   ]
+  },
+  "includes": {},
+  "out": "1,2,3,1|1231|1null2null3null1|1|-1|3|true"
+ },
+ {
+  "template": "{{ a.slice(1) }}|{{ a.slice(-2, -1) }}|{{ a.concat([4, [5]], 6) }}|{{ a.at(-1) }}|{{ a.toReversed() }}|{{ a }}",
+  "data": {
+   "a": [
+    1,
+    2,
+    3
+   ]
+  },
+  "includes": {},
+  "out": "2,3|2|1,2,3,4,5,6|3|3,2,1|1,2,3"
+ },
+ {
+  "template": "{{ [NaN].includes(NaN) }}|{{ [NaN].indexOf(NaN) }}|{{ [null, undef].join(\"-\") }}",
+  "data": {},
+  "includes": {},
+  "out": "true|0|-"
+ },
+ {
+  "template": "{% set a = [1] %}{{ a.push(2, 3) }}{{ a }}|{{ a.pop() }}{{ a }}|{{ a.shift() }}{{ a }}|{{ a.unshift(0) }}{{ a }}|{{ a.reverse() }}",
+  "data": {},
+  "includes": {},
+  "out": "31,2,3|31,2|12|20,2|2,0"
+ },
+ {
+  "template": "{% set a = [3, 1] %}{% set b = a %}{{ b.push(9) }}{{ a }}",
+  "data": {},
+  "includes": {},
+  "out": "33,1,9"
+ },
+ {
+  "template": "{{ a.push(1) }}",
+  "data": {
+   "a": [
+    1
+   ]
+  },
+  "includes": {},
+  "out": "2"
+ },
+ {
+  "template": "{{ a.map }}",
+  "data": {
+   "a": [
+    1
+   ]
+  },
+  "includes": {},
+  "out": "function () {\n      for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 &lt; _len2; _key2++) {\n        args[_key2] = arguments[_key2];\n      }\n      return obj[val].apply(obj, args);\n    }"
+ },
+ {
+  "template": "{{ a.sort() }}",
+  "data": {
+   "a": [
+    2,
+    1
+   ]
+  },
+  "includes": {},
+  "out": "1,2"
+ },
+ {
+  "template": "{{ d.getFullYear() }}|{{ d.getUTCMonth() }}|{{ d.getUTCDate() }}|{{ d.getUTCDay() }}|{{ d.getUTCHours() }}|{{ d.getTime() }}|{{ d.toISOString() }}",
+  "data": {
+   "d": "__DATE__2024-03-05T14:07:09.123Z"
+  },
+  "includes": {},
+  "out": "2024|2|5|2|14|1709647629123|2024-03-05T14:07:09.123Z"
+ },
+ {
+  "template": "{{ d }}",
+  "data": {
+   "d": "__DATE__2024-03-05T14:07:09.123Z"
+  },
+  "includes": {},
+  "out": "Tue Mar 05 2024 14:07:09 GMT+0000 (Coordinated Universal Time)"
+ },
+ {
+  "template": "{{ nothing() }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Unable to call `nothing`, which is undefined or falsey"
+ },
+ {
+  "template": "{{ x() }}",
+  "data": {
+   "x": "str"
+  },
+  "includes": {},
+  "err": "Error: Unable to call `x`, which is not a function"
+ },
+ {
+  "template": "{{ o.nope() }}",
+  "data": {
+   "o": {}
+  },
+  "includes": {},
+  "err": "Error: Unable to call `o[\"nope\"]`, which is undefined or falsey"
+ },
+ {
+  "template": "{{ a.b.c() }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Unable to call `a[\"b\"][\"c\"]`, which is undefined or falsey"
+ },
+ {
+  "template": "{{ f()() }}",
+  "data": {
+   "f": 0
+  },
+  "includes": {},
+  "err": "Error: Unable to call `f`, which is undefined or falsey"
+ },
+ {
+  "template": "{{ (1)() }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Unable to call `--expression--`, which is not a function"
+ },
+ {
+  "template": "{{ a[0]() }}",
+  "data": {
+   "a": [
+    0
+   ]
+  },
+  "includes": {},
+  "err": "Error: Unable to call `a[\"0\"]`, which is undefined or falsey"
+ },
+ {
+  "template": "{{ range(5) }}|{{ range(2, 5) }}|{{ range(0, 10, 3) }}|{{ range(5, 0, -2) }}|{{ range(0) }}|{{ range(3, 1) }}|{{ range(0, 1, 0) }}",
+  "data": {},
+  "includes": {},
+  "out": "0,1,2,3,4|2,3,4|0,3,6,9|5,3,1|||0"
+ },
+ {
+  "template": "{{ range(\"1\", 3) }}|{{ range(0, 2, 0.5) }}",
+  "data": {},
+  "includes": {},
+  "out": "1|0,0.5,1,1.5"
+ },
+ {
+  "template": "{% set c = cycler(\"a\", \"b\") %}{{ c.current }}|{{ c.next() }}{{ c.next() }}{{ c.next() }}|{{ c.current }}|{{ c.reset() }}{{ c.current }}|{{ c.next() }}",
+  "data": {},
+  "includes": {},
+  "out": "|aba|a||a"
+ },
+ {
+  "template": "{% set c = cycler() %}[{{ c.next() }}]",
+  "data": {},
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% set j = joiner(\"|\") %}{% for x in [1, 2, 3] %}{{ j() }}{{ x }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "1|2|3"
+ },
+ {
+  "template": "{% set j = joiner(0) %}{{ j() }}{{ j() }}",
+  "data": {},
+  "includes": {},
+  "out": ","
+ },
+ {
+  "template": "{{ range }}",
+  "data": {},
+  "includes": {},
+  "out": "function range(start, stop, step) {\n      if (typeof stop === &#39;undefined&#39;) {\n        stop = start;\n        start = 0;\n        step = 1;\n      } else if (!step) {\n        step = 1;\n      }\n      var arr = [];\n      if (step &gt; 0) {\n        for (var i = start; i &lt; stop; i += step) {\n          arr.push(i);\n        }\n      } else {\n        for (var _i = start; _i &gt; stop; _i += step) {\n          // eslint-disable-line for-direction\n          arr.push(_i);\n        }\n      }\n      return arr;\n    }"
+ },
+ {
+  "template": "{% set range = 5 %}{{ range }}",
+  "data": {},
+  "includes": {},
+  "out": "5"
+ },
+ {
+  "template": "{{ range(3) }}",
+  "data": {
+   "range": "data"
+  },
+  "includes": {},
+  "err": "Error: Unable to call `range`, which is not a function"
+ },
+ {
+  "template": "{{ cycler }}",
+  "data": {
+   "cycler": "data"
+  },
+  "includes": {},
+  "out": "data"
+ },
+ {
+  "template": "{{ x is defined }}|{{ y is undefined }}|{{ n is null }}|{{ n is none }}|{{ x is number }}|{{ s is string }}",
+  "data": {
+   "x": 1,
+   "n": null,
+   "s": "s"
+  },
+  "includes": {},
+  "out": "true|true|true|true|true|true"
+ },
+ {
+  "template": "{{ 4 is even }}|{{ 3 is odd }}|{{ -3 is odd }}|{{ \"4\" is even }}|{{ 2.5 is odd }}|{{ 9 is divisibleby(3) }}|{{ 9 is divisibleby(\"3\") }}",
+  "data": {},
+  "includes": {},
+  "out": "true|true|false|true|false|true|true"
+ },
+ {
+  "template": "{{ s is lower }}|{{ s is upper }}|{{ \"ABC\" is upper }}|{{ (\"abc\" | safe) is lower }}",
+  "data": {
+   "s": "abc"
+  },
+  "includes": {},
+  "out": "true|false|true|false"
+ },
+ {
+  "template": "{{ 1 is lower }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: value.toLowerCase is not a function"
+ },
+ {
+  "template": "{{ u is iterable }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: undefined is not iterable (cannot read property Symbol(Symbol.iterator))"
+ },
+ {
+  "template": "{{ a is iterable }}|{{ s is iterable }}|{{ o is iterable }}|{{ 1 is iterable }}|{{ (\"x\" | safe) is iterable }}",
+  "data": {
+   "a": [],
+   "s": "",
+   "o": {}
+  },
+  "includes": {},
+  "out": "true|true|false|false|true"
+ },
+ {
+  "template": "{{ o is mapping }}|{{ a is mapping }}|{{ n is mapping }}|{{ (\"x\" | safe) is mapping }}|{{ range is mapping }}",
+  "data": {
+   "o": {},
+   "a": [],
+   "n": null
+  },
+  "includes": {},
+  "out": "true|false|false|true|false"
+ },
+ {
+  "template": "{{ range is callable }}|{{ 1 is callable }}|{{ (\"x\" | safe) is escaped }}|{{ \"x\" is escaped }}|{{ (\"x\" | escape) is escaped }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|true|false|true"
+ },
+ {
+  "template": "{{ 1 is eq(1) }}|{{ 1 is equalto(\"1\") }}|{{ 1 is sameas(1) }}|{{ 1 is ne(2) }}|{{ 2 is gt(1) }}|{{ 2 is ge(2) }}|{{ 1 is lt(2) }}|{{ 1 is le(0) }}|{{ 1 is greaterthan(0) }}|{{ 1 is lessthan(0) }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|true|true|true|true|true|false|true|false"
+ },
+ {
+  "template": "{{ 0 is truthy }}|{{ 0 is falsy }}|{{ [] is truthy }}",
+  "data": {},
+  "includes": {},
+  "out": "false|true|true"
+ },
+ {
+  "template": "{{ x is not defined }}|{{ x is not odd }}|{{ not x is odd }}",
+  "data": {
+   "x": 3
+  },
+  "includes": {},
+  "out": "false|false|false"
+ },
+ {
+  "template": "{{ x is odd == true }}|{{ y is odd == true }}",
+  "data": {
+   "x": 3
+  },
+  "includes": {},
+  "out": "false|true"
+ },
+ {
+  "template": "{{ x is \"odd\" }}|{{ n is null }}|{{ x is null }}",
+  "data": {
+   "x": 3,
+   "n": null
+  },
+  "includes": {},
+  "out": "true|true|false"
+ },
+ {
+  "template": "{{ x is nope }}",
+  "data": {
+   "x": 1
+  },
+  "includes": {},
+  "err": "Error: test not found: nope"
+ },
+ {
+  "template": "{% if false %}{{ x is nope }}{{ x | nope }}{% endif %}ok",
+  "data": {},
+  "includes": {},
+  "out": "ok"
+ },
+ {
+  "template": "{{ 1 in [1, 2] }}|{{ \"1\" in [1, 2] }}|{{ \"b\" in \"abc\" }}|{{ 1 in \"a1\" }}|{{ \"k\" in o }}|{{ \"toString\" in o }}|{{ \"z\" not in o }}",
+  "data": {
+   "o": {
+    "k": 0
+   }
+  },
+  "includes": {},
+  "out": "true|false|true|true|true|true|true"
+ },
+ {
+  "template": "{{ \"val\" in (\"x\" | safe) }}|{{ \"length\" in (\"x\" | safe) }}|{{ \"slice\" in (\"x\" | safe) }}|{{ \"0\" in (\"x\" | safe) }}|{{ \"x\" in (\"x\" | safe) }}",
+  "data": {},
+  "includes": {},
+  "out": "true|true|true|false|false"
+ },
+ {
+  "template": "{{ n is iterable }}",
+  "data": {
+   "n": null
+  },
+  "includes": {},
+  "err": "TypeError: object null is not iterable (cannot read property Symbol(Symbol.iterator))"
+ },
+ {
+  "template": "{{ 1 in 5 }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Cannot use \"in\" operator to search for \"1\" in unexpected types."
+ },
+ {
+  "template": "{{ \"a\" in undef }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Cannot use \"in\" operator to search for \"a\" in unexpected types."
+ },
+ {
+  "template": "{{ \"<b>\" }}|{{ \"<b>\" | safe }}|{{ \"<b>\" | escape }}|{{ \"<b>\" | e }}|{{ \"<b>\" | safe | forceescape }}",
+  "data": {},
+  "includes": {},
+  "out": "&lt;b&gt;|<b>|&lt;b&gt;|&lt;b&gt;|&lt;b&gt;"
+ },
+ {
+  "template": "{{ (\"<a>\" | safe) ~ \"<b>\" }}|{{ (\"<a>\" | safe) + \"<b>\" }}|{{ (\"<a>\" | safe) + (\"<b>\" | safe) }}",
+  "data": {},
+  "includes": {},
+  "out": "&lt;a&gt;&lt;b&gt;|&lt;a&gt;&lt;b&gt;|&lt;a&gt;&lt;b&gt;"
+ },
+ {
+  "template": "{{ s | safe | escape }}|{{ s | escape | escape }}|{{ s | escape | safe }}|{{ s | forceescape | forceescape }}",
+  "data": {
+   "s": "<&>"
+  },
+  "includes": {},
+  "out": "<&>|&lt;&amp;&gt;|&lt;&amp;&gt;|&amp;lt;&amp;amp;&amp;gt;"
+ },
+ {
+  "template": "{{ undef | safe }}|{{ null | escape }}|{{ 5 | escape }}|{{ [1, \"<\"] | escape }}|{{ {} | safe }}",
+  "data": {},
+  "includes": {},
+  "out": "||5|1,&lt;|[object Object]"
+ },
+ {
+  "template": "{% set x = \"<b>\" | safe %}{{ x }}|{% set y %}<b>{{ \"<i>\" }}</b>{% endset %}{{ y }}|{{ y | safe }}",
+  "data": {},
+  "includes": {},
+  "out": "<b>|&lt;b&gt;&amp;lt;i&amp;gt;&lt;/b&gt;|<b>&lt;i&gt;</b>"
+ },
+ {
+  "template": "{% macro m(x) %}<p>{{ x }}</p>{% endmacro %}{{ m(\"<i>\") }}|{{ m(\"<i>\" | safe) }}|{{ m(\"<i>\") ~ \"<z>\" }}|{{ m(\"x\") | escape }}|{{ m(\"x\") is escaped }}",
+  "data": {},
+  "includes": {},
+  "out": "<p>&lt;i&gt;</p>|<p><i></p>|&lt;p&gt;&amp;lt;i&amp;gt;&lt;/p&gt;&lt;z&gt;|<p>x</p>|true"
+ },
+ {
+  "template": "{% macro m() %}<p>{{ caller() }}</p>{% endmacro %}{% call m() %}<b>{{ \"<i>\" }}</b>{% endcall %}",
+  "data": {},
+  "includes": {},
+  "out": "<p><b>&lt;i&gt;</b></p>"
+ },
+ {
+  "template": "{% macro m() %}{{ caller() is escaped }}{% endmacro %}{% call m() %}x{% endcall %}",
+  "data": {},
+  "includes": {},
+  "out": "true"
+ },
+ {
+  "template": "{% filter escape %}<b>{{ \"<i>\" }}</b>{% endfilter %}|{% filter safe %}<b>{{ \"<i>\" }}</b>{% endfilter %}",
+  "data": {},
+  "includes": {},
+  "out": "&lt;b&gt;&amp;lt;i&amp;gt;&lt;/b&gt;|<b>&lt;i&gt;</b>"
+ },
+ {
+  "template": "{% set a = [\"<i>\" | safe, \"<b>\"] %}{{ a }}|{{ a[0] }}|{{ a.join(\"\") }}",
+  "data": {},
+  "includes": {},
+  "out": "&lt;i&gt;,&lt;b&gt;|<i>|&lt;i&gt;&lt;b&gt;"
+ },
+ {
+  "template": "{{ (\"x\" | safe) === (\"x\" | safe) }}|{% set s = \"x\" | safe %}{{ s === s }}",
+  "data": {},
+  "includes": {},
+  "out": "false|true"
+ },
+ {
+  "template": "{% for x in a %}{{ loop.index }}{{ loop.index0 }}{{ loop.revindex }}{{ loop.revindex0 }}{{ loop.first }}{{ loop.last }}{{ loop.length }};{% endfor %}",
+  "data": {
+   "a": [
+    "x",
+    "y"
+   ]
+  },
+  "includes": {},
+  "out": "1021truefalse2;2110falsetrue2;"
+ },
+ {
+  "template": "{% for k, v in o %}{{ k }}:{{ v }}:{{ loop.index }}:{{ loop.length }};{% endfor %}",
+  "data": {
+   "o": {
+    "1": "one",
+    "2": "two",
+    "b": 1,
+    "a": 3
+   }
+  },
+  "includes": {},
+  "out": "1:one:1:4;2:two:2:4;b:1:3:4;a:3:4:4;"
+ },
+ {
+  "template": "{% for x in o %}{{ x }}{% else %}E{% endfor %}",
+  "data": {
+   "o": {
+    "0": "a",
+    "1": "b",
+    "length": 2
+   }
+  },
+  "includes": {},
+  "out": "ab"
+ },
+ {
+  "template": "{% for x in s %}[{{ x }}]{% endfor %}",
+  "data": {
+   "s": "héllo"
+  },
+  "includes": {},
+  "out": "[h][é][l][l][o]"
+ },
+ {
+  "template": "{% for x in s %}[{{ x }}]{% endfor %}",
+  "data": {
+   "s": "a😀"
+  },
+  "includes": {},
+  "lone_surrogate": true,
+  "out": "[a][�][�]"
+ },
+ {
+  "template": "{% for x in s | safe %}[{{ x }}]{% endfor %}",
+  "data": {
+   "s": "a😀b"
+  },
+  "includes": {},
+  "out": "[a][😀][b]"
+ },
+ {
+  "template": "{% for x in 5 %}x{% else %}E{% endfor %}|{% for x in true %}x{% else %}E{% endfor %}|{% for x in null %}x{% else %}E{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "E|E|E"
+ },
+ {
+  "template": "{% for k, v in \"ab\" %}{{ k }}{{ v }}{% endfor %}|{% for k, v in 5 %}x{% else %}E{% endfor %}|{% for k, v in [] %}x{% else %}E{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "0a1b|E|E"
+ },
+ {
+  "template": "{% for a, b in [[1, 2], \"xy\", {0: \"p\", 1: \"q\"}] %}{{ a }}{{ b }};{% endfor %}",
+  "data": {},
+  "includes": {},
+  "err": "compilePair: Dict keys must be strings or names"
+ },
+ {
+  "template": "{% for a, b, c in [[1, 2, 3]] %}{{ a }}{{ b }}{{ c }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "123"
+ },
+ {
+  "template": "{% for a, b, c in {x: 1} %}[{{ a }}{{ b }}{{ c }}]{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "[x1]"
+ },
+ {
+  "template": "{% for a, b in [null] %}x{% endfor %}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: Cannot read properties of null (reading '0')"
+ },
+ {
+  "template": "{% for o in [[1], null] %}{% for i in o %}{% else %}E{% endfor %};{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": ";;"
+ },
+ {
+  "template": "{% for x in [] %}{% else %}[{{ x }}]{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% set a = [1, 2] %}{% for x in a %}{{ x }}{% if a.length < 5 %}{{ a.push(x) }}{% endif %},{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "13,24,15,2,1,"
+ },
+ {
+  "template": "{% for x in [1, 2] %}{% set y = x %}{% endfor %}[{{ y }}][{{ x }}]",
+  "data": {},
+  "includes": {},
+  "out": "[][]"
+ },
+ {
+  "template": "{% set y = 0 %}{% for x in [1, 2] %}{% set y = y + x %}{% endfor %}{{ y }}",
+  "data": {},
+  "includes": {},
+  "out": "3"
+ },
+ {
+  "template": "{% for x in [1, 2] %}{% for x in [3] %}{{ x }}{% endfor %}{{ x }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "3132"
+ },
+ {
+  "template": "{% for x in [1] %}{{ loop.length }}{% set loop = 5 %}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "1"
+ },
+ {
+  "template": "{% for loop in [1] %}{{ loop }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: Cannot create property 'index' on number '1'"
+ },
+ {
+  "template": "{% for loop in [\"s\"] %}{{ loop }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: Cannot create property 'index' on string 's'"
+ },
+ {
+  "template": "{% for loop in [{}] %}{{ loop.index }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "1"
+ },
+ {
+  "template": "{% for x in [1, 2] %}{% set l = loop %}{% endfor %}{{ l }}",
+  "data": {},
+  "includes": {},
+  "out": ""
+ },
+ {
+  "template": "{% for x in [1, 2] %}{% set l = loop %}{{ l.index }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "12"
+ },
+ {
+  "template": "{% for i in [1, 2] %}{% include \"i.njk\" %}{% endfor %}",
+  "data": {},
+  "includes": {
+   "i.njk": "<{{ i }}{{ loop.index }}>"
+  },
+  "out": "<11><22>"
+ },
+ {
+  "template": "{% for a, b in [[1, 2]] %}{% include \"i.njk\" %}{% endfor %}",
+  "data": {},
+  "includes": {
+   "i.njk": "<{{ a }}{{ b }}>"
+  },
+  "out": "<>"
+ },
+ {
+  "template": "{% for a, b in {k: \"v\"} %}{% include \"i.njk\" %}{% endfor %}",
+  "data": {},
+  "includes": {
+   "i.njk": "<{{ a }}{{ b }}>"
+  },
+  "out": "<kv>"
+ },
+ {
+  "template": "{% set a, b = 1 %}{{ a }}{{ b }}",
+  "data": {},
+  "includes": {},
+  "out": "11"
+ },
+ {
+  "template": "{% set \"s\" = 1 %}{{ s }}",
+  "data": {},
+  "includes": {},
+  "out": "1"
+ },
+ {
+  "template": "{% set x = 1 %}{% if true %}{% set x = 2 %}{% endif %}{{ x }}",
+  "data": {},
+  "includes": {},
+  "out": "2"
+ },
+ {
+  "template": "{% set x %}a{% set y = 2 %}b{% endset %}{{ x }}{{ y }}",
+  "data": {},
+  "includes": {},
+  "out": "ab2"
+ },
+ {
+  "template": "{% set _p = 1 %}{{ _p }}",
+  "data": {},
+  "includes": {},
+  "out": "1"
+ },
+ {
+  "template": "{% set x = undef %}[{{ x }}]",
+  "data": {
+   "x": "from data"
+  },
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% set x = 1 %}{% set x = undef %}[{{ x }}]",
+  "data": {},
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% macro m(a, b=2, c=a) %}{{ a }}{{ b }}{{ c }}{% endmacro %}{{ m(1) }}|{{ m(1, 5) }}|{{ m(1, 5, 6, 7) }}|{{ m(c=9, a=1) }}|{{ m() }}",
+  "data": {},
+  "includes": {},
+  "out": "121|151|156|129|2"
+ },
+ {
+  "template": "{% macro m(a, b) %}[{{ a }}][{{ b }}]{% endmacro %}{{ m(b=1) }}|{{ m(1, 2, 3) }}|{{ m(1, x=2) }}",
+  "data": {},
+  "includes": {},
+  "out": "[][1]|[1][2]|[1][]"
+ },
+ {
+  "template": "{% macro m(a=1, b=a) %}{{ a }}{{ b }}{% endmacro %}{{ m() }}|{{ m(5) }}|{{ m(b=3) }}",
+  "data": {},
+  "includes": {},
+  "out": "11|55|13"
+ },
+ {
+  "template": "{% macro m() %}{{ x }}{% endmacro %}{% set x = 1 %}{{ m() }}{% for x in [2] %}{{ m() }}{% endfor %}",
+  "data": {
+   "x": "data"
+  },
+  "includes": {},
+  "out": "11"
+ },
+ {
+  "template": "{% for x in [1] %}{% macro m() %}[{{ x }}]{% endmacro %}{{ m() }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% if true %}{% macro m() %}M{% endmacro %}{% endif %}{{ m() }}",
+  "data": {},
+  "includes": {},
+  "out": "M"
+ },
+ {
+  "template": "{% if false %}{% macro m() %}M{% endmacro %}{% endif %}{{ m() }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Unable to call `m`, which is undefined or falsey"
+ },
+ {
+  "template": "{% for x in [1] %}{% macro m(n) %}{% if n %}{{ n }}{{ m(n - 1) }}{% endif %}{% endmacro %}{{ m(2) }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Unable to call `m`, which is undefined or falsey"
+ },
+ {
+  "template": "{% macro m(x) %}{{ caller() }}{% endmacro %}{% call m(5) %}{{ x }}{% endcall %}",
+  "data": {
+   "x": "ctx"
+  },
+  "includes": {},
+  "out": "5"
+ },
+ {
+  "template": "{% macro m() %}{{ caller() }}{% endmacro %}{% for i in [1, 2] %}{% call m() %}{{ i }}{% set i = 9 %}{% endcall %}{{ i }}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "1929"
+ },
+ {
+  "template": "{% macro m() %}{% set q = 1 %}{{ caller() }}{% endmacro %}{% call m() %}[{{ q }}]{% endcall %}",
+  "data": {},
+  "includes": {},
+  "out": "[1]"
+ },
+ {
+  "template": "{% macro m(items) %}{% for i in items %}{{ caller(i, loop.index) }}{% endfor %}{% endmacro %}{% call(x, n) m([7, 8]) %}{{ n }}:{{ x }};{% endcall %}",
+  "data": {},
+  "includes": {},
+  "out": "1:7;2:8;"
+ },
+ {
+  "template": "{% macro m() %}{{ caller }}{% endmacro %}{{ m() }}|{{ m(caller=5) }}",
+  "data": {},
+  "includes": {},
+  "out": "|5"
+ },
+ {
+  "template": "{% macro m() %}{% set x = 1 %}{% endmacro %}{{ m() }}[{{ x }}]",
+  "data": {},
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% macro m() %}M{% endmacro %}{{ m }}",
+  "data": {},
+  "includes": {},
+  "out": "function macro() {\n    for (var _len = arguments.length, macroArgs = new Array(_len), _key = 0; _key &lt; _len; _key++) {\n      macroArgs[_key] = arguments[_key];\n    }\n    var argCount = numArgs(macroArgs);\n    var args;\n    var kwargs = getKeywordArgs(macroArgs);\n    if (argCount &gt; argNames.length) {\n      args = macroArgs.slice(0, argNames.length);\n\n      // Positional arguments that should be passed in as\n      // keyword arguments (essentially default values)\n      macroArgs.slice(args.length, argCount).forEach(function (val, i) {\n        if (i &lt; kwargNames.length) {\n          kwargs[kwargNames[i]] = val;\n        }\n      });\n      args.push(kwargs);\n    } else if (argCount &lt; argNames.length) {\n      args = macroArgs.slice(0, argCount);\n      for (var i = argCount; i &lt; argNames.length; i++) {\n        var arg = argNames[i];\n\n        // Keyword arguments that should be passed as\n        // positional arguments, i.e. the caller explicitly\n        // used the name of a positional arg\n        args.push(kwargs[arg]);\n        delete kwargs[arg];\n      }\n      args.push(kwargs);\n    } else {\n      args = macroArgs;\n    }\n    return func.apply(this, args);\n  }"
+ },
+ {
+  "template": "{% macro m() %}M{% endmacro %}{% set n = m %}{{ n() }}|{% set d = {f: m} %}{{ d.f() }}",
+  "data": {},
+  "includes": {},
+  "out": "M|M"
+ },
+ {
+  "template": "{% macro outer() %}{% macro inner() %}I{% endmacro %}{{ inner() }}{% endmacro %}{{ outer() }}[{{ inner }}]",
+  "data": {},
+  "includes": {},
+  "out": "I[function macro() {\n    for (var _len = arguments.length, macroArgs = new Array(_len), _key = 0; _key &lt; _len; _key++) {\n      macroArgs[_key] = arguments[_key];\n    }\n    var argCount = numArgs(macroArgs);\n    var args;\n    var kwargs = getKeywordArgs(macroArgs);\n    if (argCount &gt; argNames.length) {\n      args = macroArgs.slice(0, argNames.length);\n\n      // Positional arguments that should be passed in as\n      // keyword arguments (essentially default values)\n      macroArgs.slice(args.length, argCount).forEach(function (val, i) {\n        if (i &lt; kwargNames.length) {\n          kwargs[kwargNames[i]] = val;\n        }\n      });\n      args.push(kwargs);\n    } else if (argCount &lt; argNames.length) {\n      args = macroArgs.slice(0, argCount);\n      for (var i = argCount; i &lt; argNames.length; i++) {\n        var arg = argNames[i];\n\n        // Keyword arguments that should be passed as\n        // positional arguments, i.e. the caller explicitly\n        // used the name of a positional arg\n        args.push(kwargs[arg]);\n        delete kwargs[arg];\n      }\n      args.push(kwargs);\n    } else {\n      args = macroArgs;\n    }\n    return func.apply(this, args);\n  }]"
+ },
+ {
+  "template": "{% macro m(n) %}{% if n > 0 %}{{ m(n - 1) }}{{ n }}{% endif %}{% endmacro %}{{ m(4) }}",
+  "data": {},
+  "includes": {},
+  "out": "1234"
+ },
+ {
+  "template": "{% set x = 5 %}{% include \"c.njk\" %}[{{ y }}]",
+  "data": {
+   "z": "Z"
+  },
+  "includes": {
+   "c.njk": "{{ x }}{{ z }}{% set y = 1 %}"
+  },
+  "out": "5Z[]"
+ },
+ {
+  "template": "{% include \"c.njk\" %}{{ m() }}",
+  "data": {},
+  "includes": {
+   "c.njk": "{% macro m() %}M{% endmacro %}"
+  },
+  "err": "Error: Unable to call `m`, which is undefined or falsey"
+ },
+ {
+  "template": "{% include n %}",
+  "data": {
+   "n": 5
+  },
+  "includes": {},
+  "err": "Error: template names must be a string: 5"
+ },
+ {
+  "template": "{% include n %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: template names must be a string: undefined"
+ },
+ {
+  "template": "{% include \"nope.njk\" %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: template not found: nope.njk"
+ },
+ {
+  "template": "a{% include \"nope.njk\" ignore missing %}b",
+  "data": {},
+  "includes": {},
+  "out": "ab"
+ },
+ {
+  "template": "{% include \"a.njk\" %}",
+  "data": {},
+  "includes": {
+   "a.njk": "A{% include \"b.njk\" %}",
+   "b.njk": "B{{ undefinedthing }}"
+  },
+  "out": "AB"
+ },
+ {
+  "template": "{% include \"bad.njk\" %}",
+  "data": {},
+  "includes": {
+   "bad.njk": "{{ x() }}"
+  },
+  "err": "Error: Unable to call `x`, which is undefined or falsey"
+ },
+ {
+  "template": "{% include \"e.njk\" %}",
+  "data": {},
+  "includes": {
+   "e.njk": "{% extends \"base.njk\" %}{% block b %}E{% endblock %}",
+   "base.njk": "[{% block b %}B{% endblock %}]"
+  },
+  "out": "[E]"
+ },
+ {
+  "template": "{% import \"m.njk\" as m %}{{ m.f() }}|{{ m.v }}|[{{ m._p }}]|{{ m.g }}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% macro f() %}F{% endmacro %}{% set v = \"V\" %}{% set _p = 1 %}{% macro _g() %}{% endmacro %}"
+  },
+  "out": "F|V|[]|"
+ },
+ {
+  "template": "{% from \"m.njk\" import f, v as w %}{{ f() }}{{ w }}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% macro f() %}F{% endmacro %}{% set v = \"V\" %}"
+  },
+  "out": "FV"
+ },
+ {
+  "template": "{% from \"m.njk\" import nope %}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% set v = 1 %}"
+  },
+  "err": "Error: cannot import 'nope'"
+ },
+ {
+  "template": "{% from \"m.njk\" import f %}{{ f() }}",
+  "data": {
+   "s": "S"
+  },
+  "includes": {
+   "m.njk": "{% macro f() %}[{{ s }}]{% endmacro %}"
+  },
+  "out": "[]"
+ },
+ {
+  "template": "{% from \"m.njk\" import f with context %}{{ f() }}",
+  "data": {
+   "s": "S"
+  },
+  "includes": {
+   "m.njk": "{% macro f() %}[{{ s }}]{% endmacro %}"
+  },
+  "out": "[S]"
+ },
+ {
+  "template": "{% set s = \"set\" %}{% import \"m.njk\" as m with context %}{{ m.f() }}",
+  "data": {
+   "s": "S"
+  },
+  "includes": {
+   "m.njk": "{% macro f() %}[{{ s }}]{% endmacro %}"
+  },
+  "out": "[set]"
+ },
+ {
+  "template": "{% set q = 1 %}{% import \"m.njk\" as m with context %}{{ q }}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% set q = 2 %}"
+  },
+  "out": "2"
+ },
+ {
+  "template": "{% for x in [1] %}{% set q = 1 %}{% import \"m.njk\" as m with context %}{{ q }}{% endfor %}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% set q = 2 %}"
+  },
+  "out": "2"
+ },
+ {
+  "template": "{% import \"m.njk\" as m %}{{ m }}|{{ m.f }}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% macro f() %}F{% endmacro %}"
+  },
+  "out": "[object Object]|function () {\n      for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 &lt; _len2; _key2++) {\n        args[_key2] = arguments[_key2];\n      }\n      return obj[val].apply(obj, args);\n    }"
+ },
+ {
+  "template": "{% if false %}{% import \"m.njk\" as m %}{% endif %}[{{ m }}]",
+  "data": {},
+  "includes": {
+   "m.njk": ""
+  },
+  "err": "ReferenceError: t_1 is not defined"
+ },
+ {
+  "template": "{% if true %}{% import \"m.njk\" as m %}{{ m.v }}{% endif %}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% set v = 1 %}"
+  },
+  "out": "1"
+ },
+ {
+  "template": "{% for x in [1] %}{% import \"m.njk\" as m %}{{ m.v }}{% endfor %}[{{ m }}]",
+  "data": {},
+  "includes": {
+   "m.njk": "{% set v = 1 %}"
+  },
+  "out": "1[]"
+ },
+ {
+  "template": "{% set x %}{% import \"m.njk\" as m %}{% endset %}{{ m }}",
+  "data": {},
+  "includes": {
+   "m.njk": "x"
+  },
+  "err": "ReferenceError: t_2 is not defined"
+ },
+ {
+  "template": "{% import \"m.njk\" as m %}{{ m.f() }}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% macro f() %}{{ g() }}{% endmacro %}{% macro g() %}G{% endmacro %}"
+  },
+  "out": "G"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}[{{ super() }}]{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "<{% block a %}A{% endblock %}>"
+  },
+  "out": "<[A]>"
+ },
+ {
+  "template": "{% extends \"m.njk\" %}{% block a %}C{{ super() }}{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "<{% block a %}A{% endblock %}>",
+   "m.njk": "{% extends \"b.njk\" %}{% block a %}M{{ super() }}{% endblock %}"
+  },
+  "out": "<CMA>"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}{% if false %}{{ super() }}{% endif %}x{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "<{% block a %}{{ undefinedvar }}A{% endblock %}>"
+  },
+  "out": "<x>"
+ },
+ {
+  "template": "{% block a %}{% if false %}{{ super() }}{% endif %}{% endblock %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: no super block available for \"a\""
+ },
+ {
+  "template": "{{ super() }}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Unable to call `super`, which is undefined or falsey"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block o %}O[{% block i %}I{{ super() }}{% endblock %}]{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% block o %}bo{% block i %}bi{% endblock %}{% endblock %}"
+  },
+  "out": "O[I]"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block i %}I{{ super() }}{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% block o %}bo{% block i %}bi{% endblock %}{% endblock %}"
+  },
+  "out": "boIbi"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}{% macro m() %}{{ super() }}{% endmacro %}[{{ m() }}]{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% block a %}A{% endblock %}"
+  },
+  "out": "[]"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}{% for x in [1] %}{{ super() }}{% endfor %}{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% block a %}A{% endblock %}"
+  },
+  "out": "A"
+ },
+ {
+  "template": "X{% block a %}A{% endblock %}{% extends \"b.njk\" %}{% block c %}C{% endblock %}Y",
+  "data": {},
+  "includes": {
+   "b.njk": "[{% block a %}ba{% endblock %}{% block c %}bc{% endblock %}]"
+  },
+  "out": "[AC]"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% set t = \"child\" %}{% macro m() %}M{% endmacro %}",
+  "data": {},
+  "includes": {
+   "b.njk": "[{{ t }}][{{ m() }}]"
+  },
+  "out": "[child][M]"
+ },
+ {
+  "template": "{% if x %}{% extends \"a.njk\" %}{% else %}{% extends \"b.njk\" %}{% endif %}",
+  "data": {
+   "x": 0
+  },
+  "includes": {
+   "a.njk": "A",
+   "b.njk": "B"
+  },
+  "out": "B"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}[{{ x }}]{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% for x in [1, 2] %}{% block a %}{% endblock %}{% endfor %}"
+  },
+  "out": "[1][2]"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}{% set v = 1 %}{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% block a %}{% endblock %}[{{ v }}]"
+  },
+  "out": "[]"
+ },
+ {
+  "template": "{% block a %}A{% endblock %}{% block a %}B{% endblock %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: Block \"a\" defined more than once."
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block nothere %}x{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "base"
+  },
+  "out": "base"
+ },
+ {
+  "template": "{% extends 5 %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: template names must be a string: 5"
+ },
+ {
+  "template": "{% extends \"nope.njk\" %}",
+  "data": {},
+  "includes": {},
+  "err": "Error: template not found: nope.njk"
+ },
+ {
+  "template": "{% switch x %}{% case 1 %}a{% case 2 %}{% case 3 %}c{% case 4 %}d{% default %}D{% endswitch %}",
+  "data": {
+   "x": 2
+  },
+  "includes": {},
+  "out": "c"
+ },
+ {
+  "template": "{% switch x %}{% case 1 %}a{% default %}D{% endswitch %}",
+  "data": {
+   "x": "1"
+  },
+  "includes": {},
+  "out": "D"
+ },
+ {
+  "template": "{% switch x %}{% case 1 %}a{% case 2 %}{% endswitch %}|",
+  "data": {
+   "x": 2
+  },
+  "includes": {},
+  "out": "|"
+ },
+ {
+  "template": "{% switch 1 %}{% case 1 %}{% include \"m.njk\" %}{% case 2 %}b{% endswitch %}",
+  "data": {},
+  "includes": {
+   "m.njk": "x"
+  },
+  "err": "SyntaxError: Illegal break statement"
+ },
+ {
+  "template": "{% for x in [] %}{% else %}{% include \"m.njk\" %}{% endfor %}",
+  "data": {},
+  "includes": {
+   "m.njk": "x"
+  },
+  "err": "SyntaxError: missing ) after argument list"
+ },
+ {
+  "template": "{{ constructor }}",
+  "data": {},
+  "includes": {},
+  "out": "function Object() { [native code] }"
+ },
+ {
+  "template": "{{ toString }}",
+  "data": {},
+  "includes": {},
+  "out": "function toString() { [native code] }"
+ },
+ {
+  "template": "[{{ hasOwnProperty }}]",
+  "data": {
+   "hasOwnProperty": "mine"
+  },
+  "includes": {},
+  "out": "[mine]"
+ },
+ {
+  "template": "{{ x.constructor }}",
+  "data": {
+   "x": {}
+  },
+  "includes": {},
+  "out": "function () {\n      for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 &lt; _len2; _key2++) {\n        args[_key2] = arguments[_key2];\n      }\n      return obj[val].apply(obj, args);\n    }"
+ },
+ {
+  "template": "{{ x.__proto__ }}",
+  "data": {
+   "x": {}
+  },
+  "includes": {},
+  "out": "[object Object]"
+ },
+ {
+  "template": "{{ s.toUpperCase }}",
+  "data": {
+   "s": "a"
+  },
+  "includes": {},
+  "out": "function () {\n      for (var _len2 = arguments.length, args = new Array(_len2), _key2 = 0; _key2 &lt; _len2; _key2++) {\n        args[_key2] = arguments[_key2];\n      }\n      return obj[val].apply(obj, args);\n    }"
+ },
+ {
+  "template": "{% if s.toUpperCase %}fn{% endif %}|{% if s.nope %}x{% else %}none{% endif %}",
+  "data": {
+   "s": "a"
+  },
+  "includes": {},
+  "out": "fn|none"
+ },
+ {
+  "template": "{% extends \"layout.njk\" %}{% set title = \"Post\" %}{% block content %}<h1>{{ title }}</h1>{{ content | safe }}{% endblock %}",
+  "data": {
+   "content": "<p>Hi & bye</p>"
+  },
+  "includes": {
+   "layout.njk": "<!doctype html>\n<title>{{ title }} | {{ site.name }}</title>\n<main>\n{% block content %}{% endblock %}\n</main>\n{% include \"footer.njk\" %}",
+   "footer.njk": "<footer>{{ site.name }} {{ year }}</footer>\n"
+  },
+  "out": "<!doctype html>\n<title>Post | </title>\n<main>\n<h1>Post</h1><p>Hi & bye</p>\n</main>\n<footer> </footer>\n"
+ },
+ {
+  "template": "{%- for post in posts -%}\n  <li><a href=\"{{ post.url }}\">{{ post.data.title }}</a></li>\n{%- endfor %}",
+  "data": {
+   "posts": [
+    {
+     "url": "/a/",
+     "data": {
+      "title": "A & B"
+     }
+    },
+    {
+     "url": "/b/",
+     "data": {
+      "title": "<C>"
+     }
+    }
+   ]
+  },
+  "includes": {},
+  "out": "<li><a href=\"/a/\">A &amp; B</a></li><li><a href=\"/b/\">&lt;C&gt;</a></li>"
+ },
+ {
+  "template": "{% set nav = [{t: \"Home\", u: \"/\"}, {t: \"About\", u: \"/about/\"}] %}{% for item in nav %}<a{% if item.u == page.url %} aria-current=\"page\"{% endif %} href=\"{{ item.u }}\">{{ item.t }}</a>{% endfor %}",
+  "data": {
+   "page": {
+    "url": "/about/"
+   }
+  },
+  "includes": {},
+  "out": "<a href=\"/\">Home</a><a aria-current=\"page\" href=\"/about/\">About</a>"
+ },
+ {
+  "template": "{% import \"forms.njk\" as forms %}{{ forms.input(\"q\", type=\"search\", value=\"<x>\") }}",
+  "data": {},
+  "includes": {
+   "forms.njk": "{% macro input(name, value=\"\", type=\"text\") -%}\n<input type=\"{{ type }}\" name=\"{{ name }}\" value=\"{{ value }}\">\n{%- endmacro %}"
+  },
+  "out": "<input type=\"search\" name=\"q\" value=\"&lt;x&gt;\">"
+ },
+ {
+  "template": "{% from \"ui.njk\" import card %}{% call card(\"T\") %}<p>{{ body }}</p>{% endcall %}",
+  "data": {
+   "body": "a<b"
+  },
+  "includes": {
+   "ui.njk": "{% macro card(title) %}<div><h2>{{ title }}</h2>{{ caller() }}</div>{% endmacro %}"
+  },
+  "out": "<div><h2>T</h2><p>a&lt;b</p></div>"
+ },
+ {
+  "template": "{% extends \"base.njk\" %}{% block head %}{{ super() }}<meta name=\"x\">{% endblock %}",
+  "data": {},
+  "includes": {
+   "base.njk": "<head>{% block head %}<meta charset=\"utf-8\">{% endblock %}</head>"
+  },
+  "out": "<head><meta charset=\"utf-8\"><meta name=\"x\"></head>"
+ },
+ {
+  "template": "{% include \"a.njk\" %}",
+  "data": {
+   "items": [
+    1,
+    2
+   ]
+  },
+  "includes": {
+   "a.njk": "{% for i in items %}{% include \"b.njk\" %}{% endfor %}",
+   "b.njk": "[{{ i }}:{{ loop.index }}]"
+  },
+  "out": "[1:1][2:2]"
+ },
+ {
+  "template": "a\n{%- if true %}\n  b\n{%- endif %}\nc",
+  "data": {},
+  "includes": {},
+  "out": "a\n  b\nc"
+ },
+ {
+  "template": "{% for x in [1, 2] -%}\n  {{ x }}\n{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "1\n2\n"
+ },
+ {
+  "template": "  {%- set x = 1 -%}  \n  {{- x -}}  \n",
+  "data": {},
+  "includes": {},
+  "out": "1"
+ },
+ {
+  "template": "{% macro m() -%}\n  X  \n{%- endmacro %}[{{ m() }}]",
+  "data": {},
+  "includes": {},
+  "out": "[X]"
+ },
+ {
+  "template": "{% if true %}\r\n  a\r\n{% endif %}\r\n",
+  "data": {},
+  "includes": {},
+  "out": "\r\n  a\r\n\r\n"
+ },
+ {
+  "template": "{{ d + 1 }}|{{ d - 0 }}|{{ d > 0 }}|{{ d == 1704067200000 }}|{{ d == \"x\" }}",
+  "data": {
+   "d": "__DATE__2024-01-01T00:00:00.000Z"
+  },
+  "includes": {},
+  "out": "Mon Jan 01 2024 00:00:00 GMT+0000 (Coordinated Universal Time)1|1704067200000|true|false|false"
+ },
+ {
+  "template": "{{ d == d }}",
+  "data": {
+   "d": "__DATE__2024-01-01T00:00:00.000Z"
+  },
+  "includes": {},
+  "out": "true"
+ },
+ {
+  "template": "{{ \"3\" > \"12\" }}|{{ 3 > \"12\" }}|{{ \"b\" > \"a\" }}|{{ [2] > 1 }}|{{ null < 1 }}|{{ true > false }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|true|true|true|true"
+ },
+ {
+  "template": "{{ 1 + null }}|{{ \"1\" + null }}|{{ 1 - \"x\" }}|{{ \"2\" ** \"3\" }}|{{ \"7\" // \"2\" }}|{{ \"7\" % \"2\" }}",
+  "data": {},
+  "includes": {},
+  "out": "1|1null|NaN|8|3|1"
+ },
+ {
+  "template": "{{ a ~ b }}|{{ a + b }}",
+  "data": {
+   "a": [
+    1,
+    2
+   ],
+   "b": {
+    "c": 1
+   }
+  },
+  "includes": {},
+  "out": "1,2[object Object]|1,2[object Object]"
+ },
+ {
+  "template": "{{ 0.1 * 3 }}|{{ 1 / 3 }}|{{ 100 / 3 * 3 }}|{{ 2 ** 53 + 1 }}|{{ 5e-324 }}|{{ 1.7976931348623157e308 * 10 }}",
+  "data": {},
+  "includes": {},
+  "err": "expected variable end"
+ },
+ {
+  "template": "{{ 1 if a.length else 2 }}|{{ a.length > 0 and a[0] }}",
+  "data": {
+   "a": [
+    "x"
+   ]
+  },
+  "includes": {},
+  "out": "1|x"
+ },
+ {
+  "template": "{{ x.y if x else \"none\" }}",
+  "data": {
+   "x": null
+  },
+  "includes": {},
+  "out": "none"
+ },
+ {
+  "template": "{% if not items %}empty{% endif %}|{% if items.length %}x{% endif %}",
+  "data": {
+   "items": []
+  },
+  "includes": {},
+  "out": "|"
+ },
+ {
+  "template": "{% set x = 1 %}{% for i in [1] %}{% set x = 2 %}{% endfor %}{{ x }}",
+  "data": {},
+  "includes": {},
+  "out": "2"
+ },
+ {
+  "template": "{% for i in [1] %}{% set x = 2 %}{% endfor %}[{{ x }}]",
+  "data": {},
+  "includes": {},
+  "out": "[]"
+ },
+ {
+  "template": "{% set x = 1 %}{% macro m() %}{% set x = 2 %}{{ x }}{% endmacro %}{{ m() }}{{ x }}",
+  "data": {},
+  "includes": {},
+  "out": "21"
+ },
+ {
+  "template": "{% set x = 1 %}{% include \"s.njk\" %}{{ x }}",
+  "data": {},
+  "includes": {
+   "s.njk": "{% set x = 2 %}{{ x }}"
+  },
+  "out": "21"
+ },
+ {
+  "template": "{% set x = 1 %}{% block b %}{% set x = 2 %}{{ x }}{% endblock %}{{ x }}",
+  "data": {},
+  "includes": {},
+  "out": "21"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% set x = \"c\" %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% set x = \"b\" %}{{ x }}"
+  },
+  "out": "b"
+ },
+ {
+  "template": "{% extends \"b.njk\" %}{% block a %}{{ x }}{% endblock %}",
+  "data": {},
+  "includes": {
+   "b.njk": "{% set x = \"b\" %}{% block a %}{% endblock %}"
+  },
+  "out": "b"
+ },
+ {
+  "template": "{% macro m() %}{{ caller() }}{% endmacro %}{% for i in [1, 2] %}{% call m() %}{{ i }}{{ loop.index }}{% endcall %}{% endfor %}",
+  "data": {},
+  "includes": {},
+  "out": "12"
+ },
+ {
+  "template": "{% macro m(a) %}{% for x in [1] %}{{ a }}{{ x }}{% endfor %}{% endmacro %}{{ m(\"A\") }}",
+  "data": {},
+  "includes": {},
+  "out": "A1"
+ },
+ {
+  "template": "{% set f = joiner() %}{% macro m() %}{{ f() }}x{% endmacro %}{{ m() }}{{ m() }}",
+  "data": {},
+  "includes": {},
+  "out": "x,x"
+ },
+ {
+  "template": "{% import \"m.njk\" as m %}{{ m.f() }}",
+  "data": {
+   "v": "data"
+  },
+  "includes": {
+   "m.njk": "{% set v = \"own\" %}{% macro f() %}[{{ v }}]{% endmacro %}"
+  },
+  "out": "[own]"
+ },
+ {
+  "template": "{% import \"m.njk\" as m with context %}{{ m.f() }}",
+  "data": {
+   "v": "data"
+  },
+  "includes": {
+   "m.njk": "{% macro f() %}[{{ v }}]{% endmacro %}"
+  },
+  "out": "[data]"
+ },
+ {
+  "template": "{% import \"m.njk\" as m %}{{ m.f() }}{{ m.f() }}",
+  "data": {},
+  "includes": {
+   "m.njk": "{% set c = cycler(1, 2) %}{% macro f() %}{{ c.next() }}{% endmacro %}"
+  },
+  "out": "12"
+ },
+ {
+  "template": "{{ 1 < 2 < 3 < 4 < 5 < 6 < 7 < 8 < 9 == true == true != false }}",
+  "data": {},
+  "includes": {},
+  "out": "true"
+ },
+ {
+  "template": "{{ a or b or c or d or e or \"f\" }}|{{ a and b }}",
+  "data": {
+   "e": 0
+  },
+  "includes": {},
+  "out": "f|"
+ },
+ {
+  "template": "{{ a[] }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: Cannot read properties of null (reading 'typename')"
+ },
+ {
+  "template": "{{ {1: 2} }}",
+  "data": {},
+  "includes": {},
+  "err": "compilePair: Dict keys must be strings or names"
+ },
+ {
+  "template": "{% macro m(\"a\") %}{% endmacro %}",
+  "data": {},
+  "includes": {},
+  "err": "assertType: invalid type: Literal"
+ },
+ {
+  "template": "{{ - -1 }}",
+  "data": {},
+  "includes": {},
+  "err": "SyntaxError: Invalid left-hand side expression in prefix operation"
+ },
+ {
+  "template": "{{ + +1 }}",
+  "data": {},
+  "includes": {},
+  "err": "SyntaxError: Invalid left-hand side expression in prefix operation"
+ },
+ {
+  "template": "{{ null() }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: Cannot read properties of null (reading 'toString')"
+ },
+ {
+  "template": "{{ r/x/ }}",
+  "data": {},
+  "includes": {},
+  "out": "/x/"
+ }
+]

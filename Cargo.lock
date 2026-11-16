@@ -299,6 +299,8 @@ name = "brrrty-nunjucks"
 version = "0.0.6"
 dependencies = [
  "brrrty-js",
+ "chrono",
+ "indexmap",
  "serde",
  "serde_json",
  "stacker",

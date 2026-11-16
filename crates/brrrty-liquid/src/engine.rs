@@ -78,31 +78,7 @@ pub struct TagError {
     pub help: Option<String>,
 }
 
-/// Why a [`Loader`] could not supply a partial.
-///
-/// `io` is `None` when no root has the file: the partial is missing, and
-/// `tried` lists every path looked at. `io` is `Some` when a file was found
-/// but could not be used: it can't be read, isn't UTF-8, or resolves
-/// outside the loader's roots.
-#[derive(Debug, Default)]
-pub struct LoadError {
-    pub tried: Vec<String>,
-    pub io: Option<std::io::Error>,
-}
-
-/// Finds partials by name. Returns the resolved name and the source.
-///
-/// The engine does the name handling LiquidJS does: it appends `.liquid`
-/// when the name has no extension (Node's `path.extname` rule), then calls
-/// `load` with that file name, as written otherwise (`sub/page.md`,
-/// `./x.liquid`). The loader only maps a file name to a file: it tries each
-/// of its roots in order (11ty's are the includes folder, then the input
-/// folder), refuses names that leave a root, and returns the path it found
-/// and the source. Partials are told apart by that path, so it should be
-/// canonical: a cycle is then found however the name is spelled.
-pub trait Loader: Send + Sync {
-    fn load(&self, name: &str) -> Result<(String, String), LoadError>;
-}
+pub use brrrty_js::{LoadError, Loader};
 
 /// A render's output, and the variables it read that were not defined, in
 /// sorted order.

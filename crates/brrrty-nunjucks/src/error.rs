@@ -13,9 +13,15 @@ pub enum ErrorKind {
     Syntax,
     /// Tags or expressions nest more than 256 levels deep.
     TooDeep,
-    /// A tag Eleventy adds to Nunjucks that Brrrty does not run, such as
-    /// `setAsync`.
+    /// Something Brrrty does not run because it can't reproduce it
+    /// exactly: a tag Eleventy adds to Nunjucks such as `setAsync`, a
+    /// JavaScript method it doesn't emulate, and the like.
     Unsupported,
+    /// Nunjucks fails while rendering. `message` is Nunjucks's, with the
+    /// JavaScript error's name in front (`Error: template not found: x`).
+    Render,
+    /// A loop, the output or nesting went past Brrrty's limits.
+    Limit,
 }
 
 /// An error with its position in the template source.
