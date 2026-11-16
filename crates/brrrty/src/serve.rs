@@ -271,6 +271,8 @@ struct Retired {
 pub struct Session {
     /// Held while the session runs, so `brrrty build` and other sessions leave `staging` be.
     lock: Option<brrrty_core::ServeLock>,
+    /// The highest of the output folder and its parents that the session made.
+    made: Option<PathBuf>,
     settings: Settings,
     /// The flags with the input and output folders fixed at the first build.
     flags: Flags,
@@ -357,7 +359,12 @@ impl Session {
         if fs::symlink_metadata(&staging).is_ok() {
             remove_any(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
         }
+        // The highest folder this session makes, so one left empty goes at the end, as when
+        // 11ty never writes a build.
+        let made = output.ancestors().take_while(|a| !a.exists()).last();
+        let made = made.map(Path::to_path_buf);
         fs::create_dir_all(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
+        let made = made.map(|m| m.canonicalize().unwrap_or(m));
         let lock = match brrrty_core::ServeLock::take(&staging) {
             Ok(l) => l,
             // Another session started at the same moment and won.
@@ -381,6 +388,7 @@ impl Session {
 
         let mut session = Session {
             lock: Some(lock),
+            made,
             settings,
             flags,
             root,
@@ -1070,6 +1078,15 @@ impl Session {
                     self.staging.display()
                 ),
             ));
+        }
+        // Folders the session made and no build filled (the first build failed and none
+        // followed): 11ty leaves no output folder then either.
+        if let Some(made) = &self.made {
+            for dir in self.output.ancestors() {
+                if !dir.starts_with(made) || fs::remove_dir(dir).is_err() {
+                    break;
+                }
+            }
         }
     }
 

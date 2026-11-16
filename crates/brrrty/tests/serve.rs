@@ -405,6 +405,22 @@ fn a_failed_first_build_serves_nothing_until_fixed() {
         assert!(live.next_rebuild().ok);
         assert_eq!(live.page(), "<main><p>ok</p>\n</main>");
     });
+    assert!(t.path().join("_site/index.html").is_file());
+}
+
+#[test]
+fn a_session_that_never_built_leaves_no_output_folder() {
+    let t = site();
+    write(t.path(), "src/index.md", "{% if x %}\n");
+    fs::remove_file(t.path().join("src/style.css")).unwrap();
+    with_session(t.path(), |live| {
+        assert_eq!(get(live.server, "/").0, 404);
+    });
+    assert!(!t.path().join("_site").exists());
+    // One that was there already stays.
+    fs::create_dir(t.path().join("_site")).unwrap();
+    with_session(t.path(), |_| {});
+    assert!(t.path().join("_site").is_dir());
 }
 
 #[test]
