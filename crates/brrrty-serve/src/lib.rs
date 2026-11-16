@@ -17,14 +17,19 @@
 //! It binds to `localhost` unless asked for another host.
 //!
 //! The served folder can be swapped while the server runs
-//! ([`RunningServer::set_root`]), and HTML responses can be rewritten
-//! ([`RunningServer::set_html_hook`]); the rebuild and live-reload layers are
-//! built on those two.
+//! ([`RunningServer::set_root`]), HTML responses can be rewritten
+//! ([`RunningServer::set_html_hook`]), and requests can be answered before
+//! files are looked at, including by taking them over as WebSockets
+//! ([`RunningServer::set_handler`]); the rebuild and live-reload layers are
+//! built on those.
 
 mod http;
 mod mime;
 mod mime_table;
 mod path;
+mod ws;
+
+pub use ws::WebSocket;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -65,7 +70,19 @@ pub struct Limits {
     /// is answered with a 503 and closed straight away. Refusing out loud is
     /// better than leaving the connection unanswered in the backlog, where a
     /// browser just hangs, and it keeps threads bounded either way.
+    ///
+    /// A connection taken over as a WebSocket stops counting here and counts
+    /// against [`Limits::max_sockets`] instead.
     pub max_connections: usize,
+    /// How many WebSockets may be open at once. Past this, an upgrade is
+    /// answered with a 503. Each open tab holds one for as long as it is open,
+    /// so they get a cap of their own: however many tabs there are, file
+    /// requests keep all of [`Limits::max_connections`].
+    pub max_sockets: usize,
+    /// How long a WebSocket may stay silent before the server pings it. One
+    /// that doesn't answer before the next period ends is closed, so a browser
+    /// that vanished without closing doesn't hold its slot for good.
+    pub ping_every: Duration,
 }
 
 impl Default for Limits {
@@ -74,6 +91,8 @@ impl Default for Limits {
             idle_timeout: Duration::from_secs(5),
             head_timeout: Duration::from_secs(15),
             max_connections: 256,
+            max_sockets: 64,
+            ping_every: Duration::from_secs(30),
         }
     }
 }
@@ -172,13 +191,63 @@ pub struct HtmlRewrite {
 /// `text/html`, never for ranged responses.
 pub type HtmlHook = dyn for<'a> Fn(&HtmlPage<'a>) -> HtmlRewrite + Send + Sync;
 
+/// A request, as a [`Handler`] sees it.
+pub struct Incoming<'a>(&'a http::Request);
+
+impl Incoming<'_> {
+    /// The method, as sent.
+    pub fn method(&self) -> &str {
+        &self.0.method
+    }
+
+    /// The path, still percent-encoded, without the query or fragment.
+    /// `None` for a target that isn't a path.
+    pub fn path(&self) -> Option<&str> {
+        self.0.path()
+    }
+
+    /// A header's value; `name` is matched case-insensitively.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.0.header(&name.to_ascii_lowercase())
+    }
+}
+
+/// A response from a [`Handler`].
+#[derive(Debug, Clone)]
+pub struct Reply {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// What a [`Handler`] does with a request it claims.
+pub enum Handled {
+    /// Send this response.
+    Reply(Reply),
+    /// Accept the request as a WebSocket and give it to the function, which is
+    /// called on the connection's thread and should return promptly (keep the
+    /// [`WebSocket`] to send on it later). The server then reads the socket
+    /// until it closes, answering pings. A request that isn't a valid upgrade
+    /// gets a 426 (403 when its `Origin` is another site), and one past
+    /// [`Limits::max_sockets`] a 503.
+    WebSocket(Box<dyn FnOnce(WebSocket) + Send>),
+}
+
+/// Answers requests before files are looked at. Returning `None` leaves the
+/// request to the file server. Whatever paths a handler claims hide files of
+/// the same name, so it should claim only a reserved prefix.
+pub type Handler = dyn for<'a> Fn(&Incoming<'a>) -> Option<Handled> + Send + Sync;
+
 struct Shared {
     root: RwLock<Arc<Root>>,
     hook: RwLock<Option<Arc<HtmlHook>>>,
+    handler: RwLock<Option<Arc<Handler>>>,
     stopping: AtomicBool,
     conns: Mutex<HashMap<u64, TcpStream>>,
     next_conn: AtomicU64,
     active: AtomicUsize,
+    /// Open WebSockets; these don't count in `active`.
+    sockets: AtomicUsize,
     /// Refused connections still draining their input.
     lingering: AtomicUsize,
     limits: Limits,
@@ -205,6 +274,12 @@ impl Drop for ConnGuard {
 struct DeadlineStream {
     stream: TcpStream,
     deadline: Option<Instant>,
+}
+
+impl ws::Deadline for BufReader<DeadlineStream> {
+    fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.get_mut().deadline = deadline;
+    }
 }
 
 impl Read for DeadlineStream {
@@ -253,10 +328,12 @@ impl Server {
         let shared = Arc::new(Shared {
             root: RwLock::new(Arc::new(root)),
             hook: RwLock::new(None),
+            handler: RwLock::new(None),
             stopping: AtomicBool::new(false),
             conns: Mutex::new(HashMap::new()),
             next_conn: AtomicU64::new(0),
             active: AtomicUsize::new(0),
+            sockets: AtomicUsize::new(0),
             lingering: AtomicUsize::new(0),
             limits,
         });
@@ -400,6 +477,16 @@ impl RunningServer {
     /// Rewrite HTML responses with `hook`, or stop doing so with `None`.
     pub fn set_html_hook(&self, hook: Option<Arc<HtmlHook>>) {
         *self.shared.hook.write().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    /// Let `handler` see every request before the file server does, or stop
+    /// doing so with `None`.
+    pub fn set_handler(&self, handler: Option<Arc<Handler>>) {
+        *self
+            .shared
+            .handler
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = handler;
     }
 
     /// Stop accepting, close open connections, and release the port.
@@ -551,7 +638,26 @@ fn handle_connection(stream: TcpStream, shared: &Shared) {
         reader.get_mut().deadline = None;
         let keep_alive = req.keep_alive();
         let head_only = req.method.eq_ignore_ascii_case("HEAD");
-        let resp = route(&req, shared);
+        let handler = shared
+            .handler
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let handled = handler.and_then(|h| h(&Incoming(&req)));
+        let resp = match handled {
+            Some(Handled::WebSocket(start)) => {
+                upgrade(&req, reader, writer, shared, start);
+                return;
+            }
+            Some(Handled::Reply(r)) => {
+                let mut resp = Response::new(r.status);
+                for (n, v) in r.headers {
+                    resp.set_header(&n, v);
+                }
+                resp.body(r.body)
+            }
+            None => route(&req, shared),
+        };
         if http::write_response(&mut writer, resp, head_only, keep_alive).is_err() {
             return;
         }
@@ -561,6 +667,63 @@ fn handle_connection(stream: TcpStream, shared: &Shared) {
             return;
         }
     }
+}
+
+/// Gives a WebSocket's slot back to the connection count when it closes.
+struct SocketSlot<'a>(&'a Shared);
+
+impl Drop for SocketSlot<'_> {
+    fn drop(&mut self) {
+        self.0.sockets.fetch_sub(1, Ordering::SeqCst);
+        // The connection's own guard takes this back off when its thread ends.
+        self.0.active.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Take the connection over as a WebSocket, or refuse the upgrade.
+fn upgrade(
+    req: &Request,
+    mut reader: BufReader<DeadlineStream>,
+    mut writer: TcpStream,
+    shared: &Shared,
+    start: Box<dyn FnOnce(WebSocket) + Send>,
+) {
+    let refuse = |writer: &mut TcpStream, resp: Response| {
+        if http::write_response(writer, resp, false, false).is_ok() {
+            lingering_close(writer);
+        }
+    };
+    let key = match ws::check_upgrade(req) {
+        Ok(key) => ws::accept_key(key),
+        Err(status) => {
+            let mut resp = plain_error(status);
+            if status == 426 {
+                resp.set_header("Upgrade", "websocket");
+                resp.set_header("Sec-WebSocket-Version", "13");
+            }
+            return refuse(&mut writer, resp);
+        }
+    };
+    if shared.sockets.fetch_add(1, Ordering::SeqCst) >= shared.limits.max_sockets {
+        shared.sockets.fetch_sub(1, Ordering::SeqCst);
+        return refuse(&mut writer, plain_error(503).header("Retry-After", "1"));
+    }
+    shared.active.fetch_sub(1, Ordering::SeqCst);
+    let _slot = SocketSlot(shared);
+    let head = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {key}\r\n\r\n"
+    );
+    if io::Write::write_all(&mut writer, head.as_bytes()).is_err() {
+        return;
+    }
+    let socket = WebSocket::new(writer);
+    start(socket.clone());
+    ws::serve(
+        &mut reader,
+        &socket,
+        shared.limits.ping_every,
+        &shared.stopping,
+    );
 }
 
 fn plain_error(status: u16) -> Response {

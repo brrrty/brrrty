@@ -181,14 +181,18 @@ fn a_missing_output_folder_is_an_error() {
 
 /// The first port of a run of `n` free ports on loopback, with the run held
 /// by the listeners returned.
+///
+/// The runs are looked for below the OS's ephemeral range (49152 and up on macOS, 32768 and up
+/// on Linux): client connections, which other tests open by the hundred, take their ports
+/// from that range, so a run there is often broken by one.
 fn free_run(n: u16) -> (u16, Vec<TcpListener>) {
-    for _ in 0..200 {
-        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
-        let base = probe.local_addr().unwrap().port();
-        if base > 65_000 {
-            continue;
-        }
-        drop(probe);
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        ^ std::process::id();
+    for attempt in 0..200u32 {
+        let base = 20_000 + ((seed.wrapping_add(attempt.wrapping_mul(7919))) % 12_000) as u16;
         let held: Vec<_> = (0..n)
             .map_while(|i| TcpListener::bind(("127.0.0.1", base + i)).ok())
             .collect();
@@ -1167,4 +1171,273 @@ mod symlinks {
         assert_eq!(get(&srv, "/about").text(), "about page");
         let _ = &srv;
     }
+}
+
+// ---- handlers and WebSockets -------------------------------------------
+
+use brrrty_serve::{Handled, Incoming, WebSocket};
+use std::sync::Mutex;
+
+/// A handler that answers `/.x/hello`, takes `/.x/ws` over as a WebSocket (keeping each
+/// socket in `sockets`), and leaves everything else to the files.
+fn with_handler(srv: &RunningServer) -> Arc<Mutex<Vec<WebSocket>>> {
+    let sockets: Arc<Mutex<Vec<WebSocket>>> = Arc::default();
+    let kept = Arc::clone(&sockets);
+    srv.set_handler(Some(Arc::new(move |req: &Incoming| match req.path()? {
+        "/.x/hello" => Some(Handled::Reply(brrrty_serve::Reply {
+            status: 200,
+            headers: vec![("Content-Type".into(), "text/plain".into())],
+            body: format!("hi {}", req.header("X-Name").unwrap_or("?")).into_bytes(),
+        })),
+        "/.x/ws" => {
+            let kept = Arc::clone(&kept);
+            Some(Handled::WebSocket(Box::new(move |ws| {
+                kept.lock().unwrap().push(ws);
+            })))
+        }
+        _ => None,
+    })));
+    sockets
+}
+
+const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+
+fn upgrade_request(extra: &str) -> String {
+    format!(
+        "GET /.x/ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {KEY}\r\n{extra}\r\n"
+    )
+}
+
+/// Open a WebSocket to `/.x/ws`; gives the stream after the 101.
+fn open_socket(srv: &RunningServer) -> TcpStream {
+    let mut s = connect(srv);
+    s.write_all(upgrade_request("Origin: http://localhost\r\n").as_bytes())
+        .unwrap();
+    let r = read_reply(&mut s, true);
+    assert_eq!(r.status, 101);
+    assert_eq!(
+        r.header("sec-websocket-accept"),
+        Some("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    );
+    assert_eq!(r.header("upgrade"), Some("websocket"));
+    s
+}
+
+/// Read one unmasked frame from the server.
+fn read_frame(s: &mut TcpStream) -> (u8, Vec<u8>) {
+    let mut head = [0u8; 2];
+    s.read_exact(&mut head).unwrap();
+    assert_eq!(head[1] & 0x80, 0, "server frames are not masked");
+    let len = match head[1] & 0x7f {
+        126 => {
+            let mut b = [0u8; 2];
+            s.read_exact(&mut b).unwrap();
+            u16::from_be_bytes(b) as usize
+        }
+        127 => {
+            let mut b = [0u8; 8];
+            s.read_exact(&mut b).unwrap();
+            u64::from_be_bytes(b) as usize
+        }
+        n => n as usize,
+    };
+    let mut payload = vec![0u8; len];
+    s.read_exact(&mut payload).unwrap();
+    (head[0] & 0x0f, payload)
+}
+
+/// Send a masked frame, as a browser does.
+fn send_frame(s: &mut TcpStream, opcode: u8, payload: &[u8]) {
+    let mask = [1u8, 2, 3, 4];
+    let mut f = vec![0x80 | opcode, 0x80 | payload.len() as u8];
+    f.extend_from_slice(&mask);
+    f.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+    s.write_all(&f).unwrap();
+}
+
+fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !f() {
+        assert!(Instant::now() < until, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_handler_answers_before_the_files_and_passes_the_rest_on() {
+    let f = fixture(true);
+    let srv = start(&f);
+    write(&f.site, ".x/hello", "the file");
+    with_handler(&srv);
+    let r = request(&srv, "GET", "/.x/hello", &[("x-name", "you")]);
+    assert_eq!(r.status, 200);
+    assert_eq!(r.text(), "hi you");
+    assert_eq!(r.header("content-type"), Some("text/plain"));
+    let head = request(&srv, "HEAD", "/.x/hello", &[]);
+    assert_eq!(head.header("content-length"), Some("4"));
+    assert!(head.body.is_empty());
+    assert_eq!(get(&srv, "/about").text(), "about page");
+    srv.set_handler(None);
+    assert_eq!(get(&srv, "/.x/hello").text(), "the file");
+}
+
+#[test]
+fn a_websocket_carries_messages_out_and_answers_ping_and_close() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let sockets = with_handler(&srv);
+    let mut s = open_socket(&srv);
+    wait_until("the socket to be kept", || {
+        sockets.lock().unwrap().len() == 1
+    });
+    let ws = sockets.lock().unwrap()[0].clone();
+    ws.send_text("hello").unwrap();
+    assert_eq!(read_frame(&mut s), (0x1, b"hello".to_vec()));
+    let long = "x".repeat(70_000);
+    ws.send_text(&long).unwrap();
+    assert_eq!(read_frame(&mut s), (0x1, long.into_bytes()));
+    // Text from the browser is read and dropped; a ping gets its pong.
+    send_frame(&mut s, 0x1, b"ignored");
+    send_frame(&mut s, 0x9, b"p1");
+    assert_eq!(read_frame(&mut s), (0xA, b"p1".to_vec()));
+    // Close is echoed, and the socket is no longer open.
+    send_frame(&mut s, 0x8, &1000u16.to_be_bytes());
+    assert_eq!(read_frame(&mut s), (0x8, 1000u16.to_be_bytes().to_vec()));
+    assert!(closed_by_peer(&mut s));
+    wait_until("the socket to close", || !ws.is_open());
+    assert!(ws.send_text("late").is_err());
+}
+
+#[test]
+fn a_browser_that_goes_away_closes_its_socket() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let sockets = with_handler(&srv);
+    let s = open_socket(&srv);
+    wait_until("the socket to be kept", || {
+        sockets.lock().unwrap().len() == 1
+    });
+    let ws = sockets.lock().unwrap()[0].clone();
+    drop(s);
+    wait_until("the socket to close", || !ws.is_open());
+}
+
+#[test]
+fn a_silent_browser_is_pinged_and_dropped_when_it_never_answers() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            ping_every: Duration::from_millis(200),
+            ..Limits::default()
+        },
+    );
+    let sockets = with_handler(&srv);
+    let mut s = open_socket(&srv);
+    wait_until("the socket to be kept", || {
+        sockets.lock().unwrap().len() == 1
+    });
+    let ws = sockets.lock().unwrap()[0].clone();
+    assert_eq!(read_frame(&mut s).0, 0x9, "a ping after a quiet period");
+    // Answering keeps it open past another period...
+    send_frame(&mut s, 0xA, b"");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(ws.is_open());
+    // ...and staying silent through a ping closes it.
+    wait_until("the silent socket to close", || !ws.is_open());
+}
+
+#[test]
+fn upgrades_that_are_not_valid_are_refused() {
+    let f = fixture(true);
+    let srv = start(&f);
+    with_handler(&srv);
+    // A plain request to the socket's path.
+    let r = get(&srv, "/.x/ws");
+    assert_eq!(r.status, 426);
+    assert_eq!(r.header("upgrade"), Some("websocket"));
+    assert_eq!(r.header("sec-websocket-version"), Some("13"));
+    // Another version.
+    let bad_version = upgrade_request("").replace("Version: 13", "Version: 8");
+    assert_eq!(raw(&srv, bad_version.as_bytes()).status, 426);
+    // No key.
+    let no_key = upgrade_request("").replace(&format!("Sec-WebSocket-Key: {KEY}\r\n"), "");
+    assert_eq!(raw(&srv, no_key.as_bytes()).status, 400);
+    // A page on another site.
+    let other = upgrade_request("Origin: http://evil.example\r\n");
+    assert_eq!(raw(&srv, other.as_bytes()).status, 403);
+    let lookalike = upgrade_request("Origin: http://localhost.evil.example\r\n");
+    assert_eq!(raw(&srv, lookalike.as_bytes()).status, 403);
+    // The same host by another scheme spelling is fine, and no Origin (not a browser) too.
+    let mut s = connect(&srv);
+    s.write_all(upgrade_request("").as_bytes()).unwrap();
+    assert_eq!(read_reply(&mut s, true).status, 101);
+}
+
+#[test]
+fn websockets_have_their_own_cap_and_never_starve_file_requests() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            max_connections: 2,
+            max_sockets: 3,
+            ..Limits::default()
+        },
+    );
+    let sockets = with_handler(&srv);
+    let mut open: Vec<TcpStream> = (0..3).map(|_| open_socket(&srv)).collect();
+    wait_until("three sockets", || sockets.lock().unwrap().len() == 3);
+    // The fourth socket is refused...
+    let mut s = connect(&srv);
+    s.write_all(upgrade_request("").as_bytes()).unwrap();
+    assert_eq!(read_reply(&mut s, false).status, 503);
+    // The refused request held a regular slot while it was read; it frees once closed.
+    drop(s);
+    // Files are still served on both regular slots at once, with three sockets open.
+    let mut held = Vec::new();
+    for _ in 0..200 {
+        let mut c = connect(&srv);
+        c.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\n\r\n")
+            .unwrap();
+        if read_reply(&mut c, false).status == 200 {
+            held.push(c);
+            if held.len() == 2 {
+                break;
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert_eq!(held.len(), 2, "both regular slots serve files");
+    drop(held);
+    // Closing a socket frees its slot.
+    let gone = open.pop().unwrap();
+    drop(gone);
+    let mut ok = false;
+    for _ in 0..200 {
+        let mut s = connect(&srv);
+        s.write_all(upgrade_request("").as_bytes()).unwrap();
+        if read_reply(&mut s, true).status == 101 {
+            ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(ok, "a socket slot never freed up");
+}
+
+#[test]
+fn stopping_the_server_ends_open_websockets() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let sockets = with_handler(&srv);
+    let mut s = open_socket(&srv);
+    wait_until("the socket to be kept", || {
+        sockets.lock().unwrap().len() == 1
+    });
+    let ws = sockets.lock().unwrap()[0].clone();
+    srv.stop();
+    assert!(closed_by_peer(&mut s));
+    wait_until("the socket to close", || !ws.is_open());
 }
