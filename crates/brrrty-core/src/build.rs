@@ -79,6 +79,10 @@ struct Source {
     layouts: Vec<Arc<LayoutFile>>,
     /// Keys left out of the data because Brrrty can't supply their value.
     withheld: Vec<(String, Withheld)>,
+    /// A template in a language Brrrty doesn't render yet (Nunjucks): its
+    /// pages are collection items, with this problem as their content, and
+    /// are never written.
+    unsupported: Option<Problem>,
 }
 
 /// One page to write: a template, or one page pagination made from it.
@@ -112,6 +116,9 @@ enum Loaded {
     LayoutFailed(Problem),
     /// A problem in a data file, the same for every page it applies to.
     DataFailed(Problem),
+    /// A template Brrrty doesn't render (reported on its own) whose place in
+    /// the collections it can't work out either, and why.
+    Unplaced(Problem),
 }
 
 /// A template that loaded.
@@ -316,10 +323,52 @@ fn at(p: Problem, line: Option<usize>) -> Problem {
 /// Load one template: its front matter, layouts, data and output path.
 /// Problems carry paths relative to the project root.
 fn load(shared: &Shared<'_>, rel: &Path) -> Loaded {
-    match load_page(shared, rel) {
+    let loaded = match load_page(shared, rel) {
         Ok(l) => l,
         Err(p) => Loaded::Failed(p),
+    };
+    if !is_nunjucks(rel) {
+        return loaded;
     }
+    // A Nunjucks template is already reported as unsupported; anything else
+    // wrong with it only keeps it out of the collections.
+    match loaded {
+        Loaded::Failed(p) | Loaded::LayoutFailed(p) | Loaded::DataFailed(p) => Loaded::Unplaced(p),
+        other => other,
+    }
+}
+
+fn is_nunjucks(rel: &Path) -> bool {
+    rel.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("njk"))
+}
+
+/// Nunjucks compiles a string that has `{%`, `{{` or `{#` in it
+/// (`Nunjucks.needsCompilation`); anything else it leaves as written.
+fn has_nunjucks(v: &Value) -> bool {
+    match v {
+        Value::String(s) => s.contains("{%") || s.contains("{{") || s.contains("{#"),
+        Value::Array(a) => a.iter().any(has_nunjucks),
+        Value::Object(o) => o.values().any(has_nunjucks),
+        _ => false,
+    }
+}
+
+/// Why Brrrty can't place a Nunjucks template without running Nunjucks, if
+/// it can't: its permalink or computed data is a Nunjucks template, or it
+/// overrides its template language.
+fn nunjucks_unplaced(data: &Data) -> Option<&'static str> {
+    if data.contains_key("templateEngineOverride") {
+        return Some("it sets `templateEngineOverride`");
+    }
+    let dynamic = !matches!(data.get("dynamicPermalink"), Some(Value::Bool(false)));
+    if dynamic && data.get("permalink").is_some_and(has_nunjucks) {
+        return Some("its `permalink` is a Nunjucks template");
+    }
+    if data.get("eleventyComputed").is_some_and(has_nunjucks) {
+        return Some("its `eleventyComputed` values are Nunjucks templates");
+    }
+    None
 }
 
 /// The layout chain `layout` names, for the page at `shown`.
@@ -385,7 +434,23 @@ fn source_of(
     Some(data_dir.display().to_string())
 }
 
+/// Load one template. A page whose layout Brrrty can't render and that
+/// fails for another reason too reports only the layout's problem, once for
+/// all its pages, as it did before the layout became placeable.
 fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
+    let mut blocked = None;
+    let loaded = load_page_inner(shared, rel, &mut blocked);
+    match (loaded, blocked) {
+        (Err(_), Some(layout)) => Ok(Loaded::LayoutFailed(layout)),
+        (other, _) => other,
+    }
+}
+
+fn load_page_inner(
+    shared: &Shared<'_>,
+    rel: &Path,
+    blocked: &mut Option<Problem>,
+) -> Result<Loaded, Problem> {
     let shown = shared.input_rel.join(rel);
     let full = shared.input.join(rel);
     let bytes = fs::read(&full).map_err(|e| {
@@ -478,6 +543,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
             Err(loaded) => return Ok(loaded),
         },
     };
+    *blocked = layouts.iter().find_map(|l| l.unrenderable()).cloned();
 
     // Keys whose value Brrrty can't know are left out, so a page that reads
     // one is caught when it renders.
@@ -509,12 +575,22 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let (engines, syntax) = engines_for(&ext, data.get("templateEngineOverride")).map_err(|p| {
-        at(
-            p.with_path(&shown),
-            key_line(&text, "templateEngineOverride"),
-        )
-    })?;
+    let nunjucks = ext == "njk";
+    let (engines, syntax) = if nunjucks {
+        // Placed without rendering: everything that would run Nunjucks to
+        // place the page keeps it out of the collections instead.
+        if let Some(why) = nunjucks_unplaced(&data) {
+            return Err(Problem::error(codes::TEMPLATE_UNSUPPORTED, why).with_path(&shown));
+        }
+        (Engines::Raw, "njk".to_string())
+    } else {
+        engines_for(&ext, data.get("templateEngineOverride")).map_err(|p| {
+            at(
+                p.with_path(&shown),
+                key_line(&text, "templateEngineOverride"),
+            )
+        })?
+    };
 
     // `page`, in the order 11ty fills it in, after any `page` keys of the
     // page's own.
@@ -572,6 +648,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         engines,
         layouts,
         withheld,
+        unsupported: nunjucks.then(|| unsupported_template(&shown)),
     });
     let computed_membership = plan
         .as_ref()
@@ -1369,7 +1446,20 @@ fn build_in_pool(
     if let Some(v) = globals.get("pkg") {
         global.insert("pkg".to_string(), v.clone());
     }
-    let dir_data = DirDataIndex::load(&input, &input_rel, &discovery.templates);
+    // Nunjucks templates aren't rendered, but they are loaded, with their
+    // data files: they are collection items like any other page.
+    let (nunjucks, javascript): (Vec<PathBuf>, Vec<PathBuf>) = discovery
+        .unsupported
+        .iter()
+        .cloned()
+        .partition(|rel| is_nunjucks(rel));
+    let loadable: Vec<PathBuf> = discovery
+        .templates
+        .iter()
+        .cloned()
+        .chain(nunjucks)
+        .collect();
+    let dir_data = DirDataIndex::load(&input, &input_rel, &loadable);
     let shared = Shared {
         engine: &engine,
         loader: &loader,
@@ -1383,18 +1473,16 @@ fn build_in_pool(
         data_dir: data_dir.clone(),
     };
 
-    let loaded: Vec<Loaded> = discovery
-        .templates
-        .par_iter()
-        .map(|rel| load(&shared, rel))
-        .collect();
+    let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
     let mut templates: Vec<Templ> = Vec::new();
     let mut from_layouts = Vec::new();
     let mut from_data = Vec::new();
     let mut unbuilt = 0usize;
+    let mut unplaced: Vec<Problem> = Vec::new();
     for item in loaded {
         match item {
             Loaded::Template(t) => templates.push(*t),
+            Loaded::Unplaced(p) => unplaced.push(p),
             Loaded::Failed(p) => {
                 unbuilt += 1;
                 report.problems.push(p);
@@ -1411,11 +1499,14 @@ fn build_in_pool(
     }
     report
         .problems
-        .extend(shared_problems(from_layouts, "layout"));
-    report
-        .problems
         .extend(shared_problems(from_data, "data file"));
-    if strict && has_error(&report) {
+    // Layout problems are counted once, with the pages refused when they
+    // would be written.
+    let mut layout_refusals = from_layouts;
+    if strict && (has_error(&report) || !layout_refusals.is_empty()) {
+        report
+            .problems
+            .extend(shared_problems(layout_refusals, "layout"));
         return finish(report, strict, start);
     }
 
@@ -1439,7 +1530,8 @@ fn build_in_pool(
             .collect();
     let mut gap = collections_gap(
         unbuilt,
-        discovery.unsupported.len(),
+        &unplaced,
+        javascript.len(),
         templates.iter().any(|t| t.computed_membership),
         js_data,
     );
@@ -1495,11 +1587,16 @@ fn build_in_pool(
             template_order[i] = place;
         }
         let clean = built.failed.is_empty() && built.skipped.is_empty();
-        for (_, problem) in built.failed {
-            report.problems.push(problem);
+        for (i, problem) in built.failed {
+            match blocking_layout(&slots[i]) {
+                Some(layout) => layout_refusals.push(layout),
+                None => report.problems.push(problem),
+            }
         }
         for i in built.skipped {
-            if let Slot::Deferred(d) = &slots[i] {
+            if let Some(layout) = blocking_layout(&slots[i]) {
+                layout_refusals.push(layout);
+            } else if let Slot::Deferred(d) = &slots[i] {
                 report.problems.push(
                     Problem::error(
                         codes::PAGINATION_UNSUPPORTED,
@@ -1517,7 +1614,9 @@ fn build_in_pool(
         }
     } else if let Some(why) = &gap {
         for slot in &slots {
-            if let Slot::Deferred(d) = slot {
+            if let Some(layout) = blocking_layout(slot) {
+                layout_refusals.push(layout);
+            } else if let Slot::Deferred(d) = slot {
                 report.problems.push(
                     Problem::error(
                         codes::PAGINATION_UNSUPPORTED,
@@ -1567,7 +1666,10 @@ fn build_in_pool(
             }
         }
     }
-    if strict && has_error(&report) {
+    if strict && (has_error(&report) || !layout_refusals.is_empty()) {
+        report
+            .problems
+            .extend(shared_problems(layout_refusals, "layout"));
         return finish(report, strict, start);
     }
 
@@ -1599,11 +1701,22 @@ fn build_in_pool(
         }
     }
     // A page that shares its output with another is not written, but its
-    // content is still rendered for the pages that read it.
+    // content is still rendered for the pages that read it. A Nunjucks
+    // template is reported once, as unsupported, and never written.
     let writes = |p: &Prepared| {
-        p.output_rel
-            .as_ref()
-            .is_some_and(|o| !colliding.contains(o))
+        p.source.unsupported.is_none()
+            && p.output_rel
+                .as_ref()
+                .is_some_and(|o| !colliding.contains(o))
+    };
+    // A page whose layout Brrrty can't render yet is refused when it would
+    // be written; its content still serves the pages that read it.
+    let unsupported_layout = |p: &Prepared| {
+        p.source
+            .layouts
+            .iter()
+            .find_map(|l| l.unrenderable())
+            .cloned()
     };
     if strict && has_error(&report) {
         return finish(report, strict, start);
@@ -1632,6 +1745,7 @@ fn build_in_pool(
             page_number: p.page_number,
             item: page_item[i],
             renderable: content::renderable(&p.data),
+            unsupported: p.source.unsupported.as_ref(),
         })
         .collect();
     let check = |i: usize, undefined: &BTreeSet<String>| {
@@ -1642,18 +1756,31 @@ fn build_in_pool(
     let contents = content::render_all(&pipeline, &jobs, &check);
     let settled = contents.settled_source();
 
-    // Each result names the page whose problem explains it, if another.
-    type Written = Result<(), (Problem, Option<usize>)>;
+    // Each result names the page whose problem explains it, if another; a
+    // layout Brrrty can't render is reported once for all its pages.
+    enum Refused {
+        Page(Problem, Option<usize>),
+        Layout(Problem),
+    }
+    impl From<(Problem, Option<usize>)> for Refused {
+        fn from((p, other): (Problem, Option<usize>)) -> Refused {
+            Refused::Page(p, other)
+        }
+    }
+    type Written = Result<(), Refused>;
     let results: Vec<Written> = (0..prepared.len())
         .into_par_iter()
         .filter(|&i| writes(&prepared[i]))
-        .map(|i| {
+        .map(|i| -> Written {
             let p = &prepared[i];
+            if let Some(problem) = unsupported_layout(p) {
+                return Err(Refused::Layout(problem));
+            }
             let src = &p.source;
             let shown = &src.shown;
             let output_rel = p.output_rel.as_deref().unwrap_or(Path::new(""));
             let Some(dest) = contained_output_path(&out, output_rel) else {
-                return Err((
+                return Err(Refused::Page(
                     Problem::error(
                         codes::OUTPUT_ESCAPES,
                         format!(
@@ -1675,7 +1802,7 @@ fn build_in_pool(
                 .find(|(_, o)| *o == Outcome::Refused)
                 .and_then(|(id, _)| contents.page_of(*id))
             {
-                return Err((contents.needs_problem(i, j), Some(j)));
+                return Err(Refused::Page(contents.needs_problem(i, j), Some(j)));
             }
             let rendered = rendered.map_err(|p| (p, None))?;
             if let Some(problem) = missing_data_problem(
@@ -1684,7 +1811,7 @@ fn build_in_pool(
                 &data_dir,
                 gap.as_deref(),
             ) {
-                return Err((problem.with_path(shown), None));
+                return Err(Refused::Page(problem.with_path(shown), None));
             }
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
@@ -1701,7 +1828,8 @@ fn build_in_pool(
                         .with_path(shown),
                     None,
                 )
-            })
+            })?;
+            Ok(())
         })
         .collect();
     // The pages of one template often fail the same way: say it once. A page
@@ -1718,18 +1846,27 @@ fn build_in_pool(
         }
     };
     let mut pointed: Vec<usize> = Vec::new();
+    let mut from_layouts = layout_refusals;
     for r in results {
         match r {
             Ok(()) => report.written += 1,
-            Err((p, other)) => {
+            Err(Refused::Page(p, other)) => {
                 report_problem(&mut report, p);
                 pointed.extend(other);
             }
+            Err(Refused::Layout(p)) => from_layouts.push(p),
         }
     }
+    report
+        .problems
+        .extend(shared_problems(from_layouts, "layout"));
     let mut explained: BTreeSet<usize> = BTreeSet::new();
     while let Some(j) = pointed.pop() {
-        if writes(&prepared[j]) || !contents.renders(j) || !explained.insert(j) {
+        if writes(&prepared[j])
+            || prepared[j].source.unsupported.is_some()
+            || !contents.renders(j)
+            || !explained.insert(j)
+        {
             continue;
         }
         if let Err((p, other)) = contents.content(j) {
@@ -1743,7 +1880,7 @@ fn build_in_pool(
 
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
-        .filter(|p| writes(p))
+        .filter(|p| writes(p) && unsupported_layout(p).is_none())
         .filter_map(|p| {
             p.output_rel
                 .as_ref()
@@ -1777,6 +1914,20 @@ fn unsupported_template(shown: &Path) -> Problem {
     .with_help(help)
 }
 
+/// The problem of a layout Brrrty can't render, when a template that
+/// paginates a collection uses one: it is refused for that layout.
+fn blocking_layout(slot: &Slot) -> Option<Problem> {
+    match slot {
+        Slot::Deferred(d) => d
+            .source
+            .layouts
+            .iter()
+            .find_map(|l| l.unrenderable())
+            .cloned(),
+        Slot::Ready(_) => None,
+    }
+}
+
 /// Which template page a slot holds while the collections are built.
 enum Slot {
     Ready(Vec<Prepared>),
@@ -1787,7 +1938,8 @@ enum Slot {
 /// without a page would be wrong, so every read of `collections` is refused.
 fn collections_gap(
     unbuilt: usize,
-    unsupported: usize,
+    unplaced: &[Problem],
+    javascript: usize,
     computed: bool,
     js_data: usize,
 ) -> Option<String> {
@@ -1805,11 +1957,31 @@ fn collections_gap(
             plural(unbuilt, "its page", "their pages")
         ));
     }
-    if unsupported > 0 {
+    if let Some(first) = unplaced.first() {
+        let path = first
+            .path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let more = match unplaced.len() {
+            1 => String::new(),
+            2 => " (and 1 more template)".to_string(),
+            n => format!(" (and {} more templates)", n - 1),
+        };
         return Some(format!(
-            "{unsupported} {} a template language Brrrty doesn't support yet, so the collections would be missing {}",
-            plural(unsupported, "template uses", "templates use"),
-            plural(unsupported, "its page", "their pages")
+            "Brrrty can't tell where {path} goes in the collections: {}{more}",
+            first.message
+        ));
+    }
+    if javascript > 0 {
+        return Some(format!(
+            "{javascript} JavaScript {}, whose data Brrrty can't read yet, so the collections would be missing {}",
+            plural(
+                javascript,
+                "template (.11ty.js) is in the site",
+                "templates (.11ty.js) are in the site"
+            ),
+            plural(javascript, "its pages", "their pages")
         ));
     }
     if js_data > 0 {

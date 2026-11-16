@@ -209,10 +209,14 @@ impl Pipeline<'_> {
                 with_content.insert(k.clone(), v.clone());
             }
             let layout_data = Value::Object(Arc::new(with_content));
-            let out = self.liquid(&layout.template, &layout_data, &mut undefined, job)?;
-            content = match layout.kind {
-                Kind::Liquid => out,
-                Kind::Markdown => self.markdown.render(&out),
+            content = match &layout.kind {
+                Kind::Liquid(t) => self.liquid(t, &layout_data, &mut undefined, job)?,
+                Kind::Markdown(t) => {
+                    let out = self.liquid(t, &layout_data, &mut undefined, job)?;
+                    self.markdown.render(&out)
+                }
+                // Pages with such a layout are refused before they get here.
+                Kind::Unrenderable(p) => return Err(p.clone()),
             };
         }
         Ok(Output {

@@ -231,25 +231,235 @@ fn collections_are_refused_when_a_template_failed() {
     assert_eq!(read(t.path(), "a/index.html"), "<p>a</p>\n");
 }
 
-/// A template language Brrrty doesn't render is a template 11ty puts in the
-/// collections.
-#[test]
-fn collections_are_refused_when_a_template_language_is_unsupported() {
-    let t = site("{{ collections.all | size }}");
-    write(t.path(), "src/n.njk", "x");
-    let r = run(t.path());
-    let report = r
-        .problems
+/// The report problem of a site, which must be the only one besides the
+/// unsupported templates and layouts.
+fn report_problem(r: &BuildReport) -> &Problem {
+    r.problems
         .iter()
         .find(|p| p.path.as_deref() == Some(Path::new("src/report.liquid")))
-        .unwrap_or_else(|| panic!("{:#?}", r.problems));
-    assert!(
-        report
-            .message
-            .starts_with("this page uses `collections`, but 1 template uses a template language"),
-        "{}",
-        report.message
+        .unwrap_or_else(|| panic!("{:#?}", r.problems))
+}
+
+/// Probed: Nunjucks templates, and pages with a Nunjucks layout, are
+/// collection items with their front matter, data files, layout data,
+/// computed values, permalinks, pagination and dates. Brrrty places them
+/// without running Nunjucks and writes the pages that read them exactly as
+/// 11ty does; it only refuses to write the Nunjucks pages themselves.
+#[test]
+fn nunjucks_templates_are_collection_items() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let files: &[(&str, &str)] = &[
+        (
+            "_includes/l.njk",
+            "---\ntags: fromlayout\nwho: layout\n---\n<l>{{ content | safe }}</l>\n",
+        ),
+        (
+            "_includes/m.liquid",
+            "---\nlayout: l.njk\n---\n<m>{{ content }}</m>\n",
+        ),
+        (
+            "a.njk",
+            "---\ndate: 2020-01-03\ntags: post\ntitle: A\n---\n{% set x = 1 %}A {{ title }}\n",
+        ),
+        (
+            "b.njk",
+            "---\ndate: 2020-01-02\ntags: [post, other]\ntitle: B\nlayout: l.njk\n---\nB\n",
+        ),
+        (
+            "c.md",
+            "---\ndate: 2020-01-04\ntags: post\ntitle: C\nlayout: l.njk\n---\n# C {{ title }}\n",
+        ),
+        (
+            "c2.md",
+            "---\ndate: 2020-01-05\ntitle: C2\nlayout: m.liquid\n---\nC2\n",
+        ),
+        (
+            "d.njk",
+            "---\ndate: 2020-01-01\ntags: post\ntitle: D\npermalink: /dee/\n---\nD\n",
+        ),
+        (
+            "e.njk",
+            "---\ndate: 2020-01-06\ntags: post\ntitle: E\npermalink: false\n---\nE\n",
+        ),
+        (
+            "f.njk",
+            "---\ndate: 2020-01-07\ntags: post\ntitle: F\neleventyComputed:\n  title: Fixed\n  n: 5\n---\nF\n",
+        ),
+        (
+            "g.njk",
+            "---\ndate: 2020-01-08\ntags: pg\nitems: [p, q, r]\npagination:\n  data: items\n  size: 1\n  addAllPagesToCollections: true\n---\nG\n",
+        ),
+        (
+            "h.njk",
+            "---\ndate: 2020-01-09\ntags: post\ntitle: H\npermalink: /h.json\ndynamicPermalink: false\n---\nH\n",
+        ),
+        (
+            "sub/i.njk",
+            "---\ntags: post\ntitle: I\ndate: 2019-12-31\n---\nI\n",
+        ),
+        (
+            "list.liquid",
+            "---\ndate: 2020-02-01\neleventyExcludeFromCollections: true\n---\n{% for p in collections.post %}[{{ p.url }}|{{ p.outputPath }}|{{ p.inputPath }}|{{ p.fileSlug }}|{{ p.filePathStem }}|{{ p.date | date: '%F' }}|{{ p.data.title }}|{{ p.data.n }}|{{ p.data.who }}|{{ p.data.tags | join: ',' }}|{{ p.data.page.templateSyntax }}|{{ p.data.page.outputFileExtension }}]\n{% endfor %}{% for p in collections.pg %}({{ p.url }} {{ p.data.pagination.items | join: ',' }} {{ p.pageNumber }})\n{% endfor %}fl={% for p in collections.fromlayout %}{{ p.inputPath }},{% endfor %}\nall={% for p in collections.all %}{{ p.inputPath }},{% endfor %}\nc={% for p in collections.post %}{% if p.fileSlug == 'c' %}{{ p.templateContent }}{% endif %}{% endfor %}\n",
+        ),
+        (
+            "keys.liquid",
+            "---\npermalink: keys.txt\ndate: 2020-02-01\neleventyExcludeFromCollections: true\n---\n{% for c in collections %}{{ c[0] }}={{ c[1].size }},{% endfor %}",
+        ),
+        (
+            "raw.liquid",
+            "---\ndate: 2020-02-01\neleventyExcludeFromCollections: true\n---\n{% for p in collections.all %}{% if p.fileSlug == 'a' %}{{ p.data.page.rawInput }}|{{ p.data.page | json }}{% endif %}{% endfor %}",
+        ),
+    ];
+    for (rel, text) in files {
+        write(root, &format!("src/{rel}"), text);
+    }
+    let r = run(root);
+    for p in errors(&r) {
+        assert!(
+            [codes::TEMPLATE_UNSUPPORTED, codes::LAYOUT_UNSUPPORTED].contains(&p.code),
+            "{p:#?}"
+        );
+    }
+    assert_eq!(
+        read(root, "list/index.html"),
+        "[/sub/i/|./_site/sub/i/index.html|./src/sub/i.njk|i|/sub/i|%F|I|||post|njk|html]
+[/dee/|./_site/dee/index.html|./src/d.njk|d|/d|%F|D|||post|njk|html]
+[/b/|./_site/b/index.html|./src/b.njk|b|/b|%F|B||layout|fromlayout,post,other|njk|html]
+[/a/|./_site/a/index.html|./src/a.njk|a|/a|%F|A|||post|njk|html]
+[/c/|./_site/c/index.html|./src/c.md|c|/c|%F|C||layout|fromlayout,post|liquid,md|html]
+[false|false|./src/e.njk|e|/e|%F|E|||post|njk|html]
+[/f/|./_site/f/index.html|./src/f.njk|f|/f|%F|Fixed|5||post|njk|html]
+[/h.json|./_site/h.json|./src/h.njk|h|/h|%F|H|||post|njk|html]
+(/g/ p 0)
+(/g/1/ q 1)
+(/g/2/ r 2)
+fl=./src/b.njk,./src/c.md,./src/c2.md,
+all=./src/sub/i.njk,./src/d.njk,./src/b.njk,./src/a.njk,./src/c.md,./src/c2.md,./src/e.njk,./src/f.njk,./src/g.njk,./src/g.njk,./src/g.njk,./src/h.njk,
+c=<h1>C C</h1>
+
+"
     );
+    assert_eq!(
+        read(root, "keys.txt"),
+        "post=8,pg=3,fromlayout=3,other=1,all=12,"
+    );
+    assert_eq!(
+        read(root, "raw/index.html"),
+        r#"{% set x = 1 %}A {{ title }}
+|{"inputPath":"./src/a.njk","fileSlug":"a","filePathStem":"/a","outputFileExtension":"html","templateSyntax":"njk","date":"2020-01-03T00:00:00.000Z","rawInput":"{% set x = 1 %}A {{ title }}\n","url":"/a/","outputPath":"./_site/a/index.html"}"#
+    );
+    // Only the pages Brrrty can render are written; the Nunjucks layout is
+    // reported once for the two pages that use it.
+    assert_eq!(r.written, 3);
+    let layout = errors(&r)
+        .into_iter()
+        .find(|p| p.code == codes::LAYOUT_UNSUPPORTED)
+        .unwrap();
+    assert_eq!(
+        layout.path.as_deref(),
+        Some(Path::new("src/_includes/l.njk"))
+    );
+    assert!(
+        layout
+            .help
+            .as_deref()
+            .unwrap()
+            .ends_with("2 pages use this layout and were not written."),
+        "{layout:?}"
+    );
+    assert!(!root.join("_site/a/index.html").exists());
+    assert!(!root.join("_site/c/index.html").exists());
+}
+
+/// Reading what only Nunjucks can make is refused: the content of a
+/// Nunjucks page, and collections holding a Nunjucks page whose permalink
+/// or computed data is a Nunjucks template.
+#[test]
+fn reads_that_need_nunjucks_are_refused() {
+    let t = site("{% for p in collections.all %}{{ p.templateContent }}{% endfor %}");
+    write(t.path(), "src/n.njk", "---\ndate: 2020-01-03\n---\nN");
+    let r = run(t.path());
+    let p = report_problem(&r);
+    assert_eq!(p.code, codes::CONTENT_UNAVAILABLE);
+    assert_eq!(
+        p.message,
+        "this page reads `templateContent` of src/n.njk, a Nunjucks template Brrrty can't render yet"
+    );
+    assert_eq!(read(t.path(), "a/index.html"), "<p>a</p>\n");
+    assert_eq!(errors(&r).len(), 2, "{:#?}", r.problems);
+
+    for (front, why) in [
+        (
+            "permalink: \"/{{ title }}/\"\n",
+            "its `permalink` is a Nunjucks template",
+        ),
+        (
+            "permalink: \"/n/{# note #}\"\n",
+            "its `permalink` is a Nunjucks template",
+        ),
+        (
+            "eleventyComputed:\n  t: \"{{ title }}\"\n",
+            "its `eleventyComputed` values are Nunjucks templates",
+        ),
+        (
+            "templateEngineOverride: md\n",
+            "it sets `templateEngineOverride`",
+        ),
+    ] {
+        let t = site("{{ collections.all | size }}");
+        write(t.path(), "src/n.njk", &format!("---\n{front}---\nN"));
+        let r = run(t.path());
+        assert_eq!(
+            report_problem(&r).message,
+            format!(
+                "this page uses `collections`, but Brrrty can't tell where src/n.njk goes in the collections: {why}"
+            ),
+            "{front}"
+        );
+        // Only the Nunjucks template itself is reported besides.
+        assert_eq!(errors(&r).len(), 2, "{:#?}", r.problems);
+    }
+}
+
+/// A JavaScript template's data comes from running it, so collections
+/// stay refused while one is in the site.
+#[test]
+fn collections_are_refused_with_a_javascript_template() {
+    let t = site("{{ collections.all | size }}");
+    write(t.path(), "src/j.11ty.js", "module.exports = () => 'x';");
+    let r = run(t.path());
+    assert_eq!(
+        report_problem(&r).message,
+        "this page uses `collections`, but 1 JavaScript template (.11ty.js) is in the site, whose data Brrrty can't read yet, so the collections would be missing its pages"
+    );
+}
+
+/// A layout whose Liquid doesn't parse refuses only the pages it wraps:
+/// their data and content are known, so the collections still hold them.
+#[test]
+fn a_broken_layout_keeps_its_pages_in_the_collections() {
+    let t = site(
+        "{% for p in collections.all %}{{ p.url }}={{ p.templateContent | strip }} {% endfor %}",
+    );
+    write(t.path(), "src/_includes/bad.liquid", "{% if %}");
+    write(
+        t.path(),
+        "src/c.md",
+        "---\ndate: 2020-01-03\nlayout: bad\n---\nc\n",
+    );
+    let r = run(t.path());
+    assert_eq!(
+        read(t.path(), "report.txt"),
+        "/a/=<p>a</p> /b/=<p>b</p> /c/=<p>c</p> "
+    );
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{:#?}", r.problems);
+    assert_eq!(
+        errs[0].path.as_deref(),
+        Some(Path::new("src/_includes/bad.liquid"))
+    );
+    assert!(!t.path().join("_site/c/index.html").exists());
 }
 
 /// Pagination over a collection that nothing publishes to makes no pages, as
@@ -548,4 +758,33 @@ fn a_javascript_data_file_refuses_collections() {
     );
     assert_eq!(read(t.path(), "a/index.html"), "<p>a</p>\n");
     assert_eq!(read(t.path(), "js/p/index.html"), "<p>p</p>\n");
+}
+
+/// A page that fails for another reason too, under a layout Brrrty can't
+/// render, reports only the layout, once with its page count, as before
+/// such layouts were placed.
+#[test]
+fn a_failing_page_under_an_unrenderable_layout_reports_the_layout() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "src/_includes/l.njk", "{{ content | safe }}");
+    for name in ["a", "b"] {
+        write(
+            t.path(),
+            &format!("src/{name}.md"),
+            "---\nlayout: l.njk\npermalink: \"/{{ title | nope }}/\"\n---\nx\n",
+        );
+    }
+    let r = run(t.path());
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{:#?}", r.problems);
+    assert_eq!(errs[0].code, codes::LAYOUT_UNSUPPORTED);
+    assert!(
+        errs[0]
+            .help
+            .as_deref()
+            .unwrap()
+            .ends_with("2 pages use this layout and were not written."),
+        "{:?}",
+        errs[0]
+    );
 }
