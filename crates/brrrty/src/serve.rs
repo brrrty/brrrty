@@ -3,9 +3,13 @@
 //! Every build goes into a fresh folder under `<output>/.brrrty-serve/`, and the server is
 //! switched to it only once the build has finished without errors, so a page is never served
 //! half written and a broken edit leaves the last good build in place. An old build folder is
-//! removed once no request is still using it. When the session stops, the last good build is
-//! moved into the output folder file by file, the way `brrrty build` would have written it,
-//! and the staging folder is removed.
+//! removed once no request is still using it.
+//!
+//! After every good build the output folder is brought up to date too, as 11ty's `--serve`
+//! writes it on every build: each file whose bytes changed is copied in and renamed into place,
+//! so `_site` is current while the session runs and after it is killed. Like `brrrty build`,
+//! this never deletes a file from the output folder. When the session stops, the server is
+//! pointed at the output folder and the staging folder is removed.
 //!
 //! ```no_run
 //! # use std::path::Path;
@@ -29,7 +33,7 @@ use brrrty_core::ignore_files::IgnoreRules;
 use brrrty_core::{BuildOptions, Problem, RunMode};
 use brrrty_markdown::MarkdownIt;
 use brrrty_serve::{RetiredRoot, RunningServer};
-use notify::event::{AccessKind, AccessMode, CreateKind};
+use notify::event::{AccessKind, AccessMode, ModifyKind};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::options::{Flags, build_options};
@@ -108,10 +112,11 @@ pub type RebuildHook = dyn Fn(&Rebuild) + Send + Sync;
 pub struct Finished {
     /// Rebuilds run after the first build.
     pub rebuilds: usize,
-    /// The last good build was moved into the output folder.
+    /// The output folder holds the last good build (false when there was none, or a file
+    /// could not be written).
     pub output_written: bool,
-    /// Files that could not be moved into the output folder, or staging left behind.
-    pub problems: Vec<String>,
+    /// What went wrong bringing the output folder up to date or removing staging.
+    pub problems: Vec<Problem>,
 }
 
 /// Why a session could not start.
@@ -182,7 +187,19 @@ pub struct Session {
     rules: Option<IgnoreRules>,
     /// `None` once the session is finishing.
     watcher: Option<RecommendedWatcher>,
+    /// Folders watched without their subfolders: the input folder and the project folder.
+    tops: Vec<PathBuf>,
+    /// Folders watched recursively.
     watched: Vec<PathBuf>,
+    /// The watches can't be trusted (the watcher asked for a rescan, or the input folder
+    /// itself went away): set them all up again before the next build.
+    rewatch: bool,
+    /// What went wrong the last time the output folder was brought up to date.
+    mirror_problems: Vec<Problem>,
+    /// A temporary file name counter, for copies on their way into the output folder.
+    next_tmp: u64,
+    /// The watcher's last error, so a repeated one is printed once.
+    last_watch_error: Option<String>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     hook: Option<Arc<RebuildHook>>,
@@ -205,9 +222,10 @@ impl Session {
         flags.output = Some(opts.output.clone());
 
         let staging = output.join(STAGING_DIR);
-        // A folder left by a session that was killed before it could clean up.
-        if staging.exists() {
-            fs::remove_dir_all(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
+        // A folder left by a session that was killed before it could clean up, or a symlink
+        // by that name, which is removed and never followed.
+        if fs::symlink_metadata(&staging).is_ok() {
+            remove_any(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
         }
         fs::create_dir_all(&staging).map_err(|e| StartError::Staging(staging.clone(), e))?;
         // Compare against real paths: the watcher reports them.
@@ -237,7 +255,12 @@ impl Session {
             passthrough: Vec::new(),
             rules: None,
             watcher: Some(watcher),
+            tops: Vec::new(),
             watched: Vec::new(),
+            rewatch: false,
+            mirror_problems: Vec::new(),
+            next_tmp: 0,
+            last_watch_error: None,
             tx,
             rx,
             hook: None,
@@ -250,6 +273,7 @@ impl Session {
         session.first_problems = problems;
         match dir {
             Some(dir) => {
+                session.mirror(&dir);
                 session.serving = dir.clone();
                 session.current = Some(dir);
             }
@@ -298,8 +322,8 @@ impl Session {
         self.hook = Some(hook);
     }
 
-    /// Watch and rebuild until stopped, then move the last good build into the output folder,
-    /// point the server at it, and remove the staging folder.
+    /// Watch and rebuild until stopped, then point the server at the output folder, which
+    /// holds the last good build, and remove the staging folder.
     pub fn run(mut self, server: &RunningServer) -> Finished {
         let mut finished = Finished::default();
         // The server may have been started on something else.
@@ -365,6 +389,7 @@ impl Session {
             match server.swap_root(&dir) {
                 Ok(old) => {
                     self.retire(old);
+                    self.mirror(&dir);
                     self.current = Some(dir);
                 }
                 Err(e) => {
@@ -407,6 +432,8 @@ impl Session {
         };
         self.refresh(&opts);
         let dir = self.new_build_dir();
+        // The user (or a `brrrty build`) may have removed the output folder meanwhile.
+        let _ = fs::create_dir_all(&self.staging);
         if let Err(e) = fs::create_dir_all(&dir) {
             let p = Problem::error(
                 brrrty_core::codes::WRITE_FAILED,
@@ -444,6 +471,11 @@ impl Session {
         pt.sort();
         pt.dedup();
         self.passthrough = pt;
+        if self.rewatch {
+            self.rewatch_all();
+        } else {
+            self.sync_subfolders();
+        }
         // Passthrough folders outside the input folder need watches of their own.
         let extra: Vec<PathBuf> = self
             .passthrough
@@ -471,6 +503,7 @@ impl Session {
         }
         for top in tops {
             self.watch(&top, RecursiveMode::NonRecursive)?;
+            self.tops.push(top.clone());
             // The project folder's own subfolders are not sources unless they hold the input.
             let deep = top == self.input;
             if let Ok(entries) = fs::read_dir(&top) {
@@ -483,6 +516,67 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Drop every watch and set them up again from what is on disk now. notify walks each
+    /// folder it is asked to watch recursively, so this is a full-tree check.
+    fn rewatch_all(&mut self) {
+        let old: Vec<PathBuf> = self.tops.drain(..).chain(self.watched.drain(..)).collect();
+        for p in old {
+            self.unwatch(&p);
+        }
+        // The input folder may still be missing; try again before the next build.
+        self.rewatch = self.watch_all().is_err();
+        let extra: Vec<PathBuf> = self
+            .passthrough
+            .iter()
+            .filter(|p| !p.starts_with(&self.input) && p.exists())
+            .cloned()
+            .collect();
+        for p in extra {
+            self.watch_subfolder(&p);
+        }
+    }
+
+    /// Make the recursive watches on the input folder's subfolders match the disk: forget
+    /// the ones whose folder is gone and watch every subfolder that has none.
+    fn sync_subfolders(&mut self) {
+        let gone: Vec<PathBuf> = self
+            .watched
+            .iter()
+            .filter(|p| !p.is_dir())
+            .cloned()
+            .collect();
+        for p in gone {
+            self.forget(&p);
+        }
+        if let Ok(entries) = fs::read_dir(&self.input) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    self.watch_subfolder(&p);
+                }
+            }
+        }
+    }
+
+    /// Drop the watches on `p` and on anything under it. With inotify a removed folder's
+    /// watch is gone even if a folder of the same name comes back, so the name must not
+    /// stay listed as watched.
+    fn forget(&mut self, p: &Path) {
+        let (gone, kept): (Vec<PathBuf>, Vec<PathBuf>) =
+            self.watched.drain(..).partition(|w| w.starts_with(p));
+        self.watched = kept;
+        for w in gone {
+            self.unwatch(&w);
+        }
+    }
+
+    fn unwatch(&mut self, p: &Path) {
+        if let Some(w) = &mut self.watcher {
+            // It may already be gone with its folder.
+            let _ = w.unwatch(p);
+        }
     }
 
     fn watch_subfolder(&mut self, p: &Path) {
@@ -516,7 +610,35 @@ impl Session {
     /// Add the paths of `ev` that should start a rebuild, relative to the project folder.
     /// Gives whether there was one, even one already in `changed`.
     fn collect(&mut self, ev: notify::Result<Event>, changed: &mut Vec<PathBuf>) -> bool {
-        let Ok(ev) = ev else { return false };
+        let ev = match ev {
+            Ok(ev) => ev,
+            Err(e) => {
+                // Such as running out of inotify watches. Say so once, and set the watches
+                // up again before the next build; no rebuild of its own, so an error that
+                // keeps coming back can't loop.
+                let message = e.to_string();
+                if self.last_watch_error.as_deref() != Some(message.as_str()) {
+                    eprintln!("Brrrty's file watcher reported a problem: {message}");
+                    self.last_watch_error = Some(message);
+                }
+                self.rewatch = true;
+                return false;
+            }
+        };
+        // The watcher lost track (an inotify queue overflow, FSEvents dropping events):
+        // watch everything again and rebuild, since any change may have been missed.
+        if ev.need_rescan() {
+            self.rewatch = true;
+            let rel = self
+                .input
+                .strip_prefix(&self.root)
+                .unwrap_or(&self.input)
+                .to_path_buf();
+            if !changed.contains(&rel) {
+                changed.push(rel);
+            }
+            return true;
+        }
         match ev.kind {
             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) | EventKind::Any => {
             }
@@ -524,15 +646,33 @@ impl Session {
             _ => return false,
         }
         let mut any = false;
+        let moved_or_removed = matches!(
+            ev.kind,
+            EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_)) | EventKind::Any
+        );
+        let appeared = matches!(
+            ev.kind,
+            EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_)) | EventKind::Any
+        );
         for p in &ev.paths {
-            // A new folder in a folder watched shallowly needs its own watch.
-            if matches!(
-                ev.kind,
-                EventKind::Create(CreateKind::Folder | CreateKind::Any)
-            ) && p.parent() == Some(self.input.as_path())
-                && p.is_dir()
-            {
+            if moved_or_removed {
+                // A watched folder (or one holding it) went away or was renamed.
+                self.forget(p);
+                if self.tops.iter().any(|t| t.starts_with(p)) {
+                    self.rewatch = true;
+                }
+            }
+            // A folder created, re-created or moved into the input folder, which is watched
+            // shallowly, needs its own watch. Moved in arrives as a rename, not a create.
+            if p.parent() == Some(self.input.as_path()) && p.is_dir() {
+                if appeared {
+                    // Possibly a new folder under an old name: its old watch is dead.
+                    self.forget(p);
+                }
                 self.watch_subfolder(p);
+            }
+            if self.rewatch && p.is_dir() && (*p == self.input || *p == self.root) {
+                self.rewatch_all();
             }
             if self.counts(p) {
                 any = true;
@@ -546,7 +686,7 @@ impl Session {
     }
 
     /// Whether a change to `p` should start a rebuild.
-    pub fn counts(&self, p: &Path) -> bool {
+    fn counts(&self, p: &Path) -> bool {
         if self.skipped(p) {
             return false;
         }
@@ -590,11 +730,16 @@ impl Session {
         // Stop watching first: nothing after this is an edit.
         self.watcher = None;
         if let Some(cur) = self.current.take() {
-            let mut errors = Vec::new();
-            move_build(&cur, &self.output, &mut errors);
-            finished.output_written = errors.is_empty();
-            finished.problems.extend(errors);
+            // The output folder is brought up to date after every build; only a copy that
+            // failed needs another try.
+            if !self.mirror_problems.is_empty() {
+                self.mirror(&cur);
+            }
+            finished.output_written = self.mirror_problems.is_empty();
+            finished.problems.append(&mut self.mirror_problems);
         }
+        // Serve the output folder, which holds the same files, before staging goes, so no
+        // request in between finds nothing.
         if self.output.is_dir()
             && let Ok(old) = server.swap_root(&self.output)
         {
@@ -617,30 +762,38 @@ impl Session {
         if let Err(e) = fs::remove_dir_all(&self.staging)
             && e.kind() != io::ErrorKind::NotFound
         {
-            finished.problems.push(format!(
-                "could not remove the staging folder {}: {e}",
-                self.staging.display()
+            finished.problems.push(Problem::warning(
+                brrrty_core::codes::SERVE_STAGING_LEFT,
+                format!(
+                    "could not remove the staging folder {}: {e}",
+                    self.staging.display()
+                ),
             ));
         }
     }
-}
 
-/// Move the build in `from` into the output folder `to` with [`move_tree`], leaving out a
-/// top-level `.brrrty-serve` (which a permalink or passthrough could name): that name in the
-/// output folder is the staging folder, which is removed next and must never be shipped.
-fn move_build(from: &Path, to: &Path, errors: &mut Vec<String>) {
-    let staged = from.join(STAGING_DIR);
-    if fs::symlink_metadata(&staged).is_ok() {
-        errors.push(format!(
-            "the site wrote {STAGING_DIR}, which is Brrrty's staging folder, so it was left out of {}",
-            to.display()
-        ));
-        if let Err(e) = remove_any(&staged) {
-            errors.push(format!("cannot remove {}: {e}", staged.display()));
-            return;
+    /// Bring the output folder up to date with the build in `build`, printing what went wrong.
+    fn mirror(&mut self, build: &Path) {
+        let mut m = Mirror {
+            staging: &self.staging,
+            next_tmp: &mut self.next_tmp,
+            problems: Vec::new(),
+        };
+        let staged = build.join(STAGING_DIR);
+        if fs::symlink_metadata(&staged).is_ok() {
+            // `<output>/.brrrty-serve` is the staging folder: the site's own file by that
+            // name is left out, and must never be shipped.
+            m.problem(format!(
+                "the site wrote {STAGING_DIR}, which is Brrrty's staging folder, so it was left out of {}",
+                self.output.display()
+            ));
+        }
+        m.tree(build, &self.output, true);
+        self.mirror_problems = m.problems;
+        if !self.mirror_problems.is_empty() {
+            report::print_problems(&self.mirror_problems, &self.root, self.settings.color);
         }
     }
-    move_tree(from, to, errors);
 }
 
 fn remove_any(p: &Path) -> io::Result<()> {
@@ -651,43 +804,78 @@ fn remove_any(p: &Path) -> io::Result<()> {
     }
 }
 
-/// Move every file of `from` into `to` at the same path, replacing what is there, the way a
-/// build into `to` would write it. Files in `to` that `from` doesn't have are kept, as
-/// `brrrty build` keeps them. Each file is moved with one rename, so it is never half written.
-/// A symlink in `to` is replaced rather than followed, so nothing lands outside `to`.
-fn move_tree(from: &Path, to: &Path, errors: &mut Vec<String>) {
-    let entries = match fs::read_dir(from) {
-        Ok(e) => e,
-        Err(e) => {
-            errors.push(format!("cannot read {}: {e}", from.display()));
-            return;
-        }
-    };
-    for entry in entries.flatten() {
-        let src = entry.path();
-        let dst = to.join(entry.file_name());
-        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
-        let existing = fs::symlink_metadata(&dst).ok();
-        let result = if is_dir {
-            (|| {
-                match &existing {
-                    Some(m) if m.is_dir() => {}
-                    Some(_) => fs::remove_file(&dst)?,
-                    None => {}
+/// Copies a build into the output folder.
+struct Mirror<'a> {
+    staging: &'a Path,
+    next_tmp: &'a mut u64,
+    problems: Vec<Problem>,
+}
+
+impl Mirror<'_> {
+    fn problem(&mut self, message: String) {
+        self.problems
+            .push(Problem::warning(brrrty_core::codes::WRITE_FAILED, message));
+    }
+
+    /// Copy every file of `from` into `to` at the same path, unless `to` already has the
+    /// same bytes there. Files in `to` that `from` doesn't have are kept, as `brrrty build`
+    /// keeps them. A file is copied into staging first and then renamed into place, so it is
+    /// never seen half written. A symlink in `to` is replaced, never followed, so nothing
+    /// lands outside `to`. At the top, the staging folder's own name is skipped.
+    fn tree(&mut self, from: &Path, to: &Path, top: bool) {
+        let entries = match fs::read_dir(from) {
+            Ok(e) => e,
+            Err(e) => return self.problem(format!("cannot read {}: {e}", from.display())),
+        };
+        for entry in entries.flatten() {
+            if top && entry.file_name() == STAGING_DIR {
+                continue;
+            }
+            let src = entry.path();
+            let dst = to.join(entry.file_name());
+            let existing = fs::symlink_metadata(&dst).ok();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                let made = (|| {
+                    match &existing {
+                        Some(m) if m.is_dir() => {}
+                        Some(_) => fs::remove_file(&dst)?,
+                        None => {}
+                    }
+                    fs::create_dir_all(&dst)
+                })();
+                match made {
+                    Ok(()) => self.tree(&src, &dst, false),
+                    Err(e) => self.problem(format!("cannot make {}: {e}", dst.display())),
                 }
-                fs::create_dir_all(&dst)
-            })()
-            .map(|()| move_tree(&src, &dst, errors))
-        } else {
-            (|| {
+                continue;
+            }
+            if existing.as_ref().is_some_and(|m| m.is_file()) && same_bytes(&src, &dst) {
+                continue;
+            }
+            *self.next_tmp += 1;
+            let tmp = self.staging.join(format!("copy-{}", self.next_tmp));
+            let copied = (|| {
+                fs::copy(&src, &tmp)?;
                 if existing.as_ref().is_some_and(|m| m.is_dir()) {
                     fs::remove_dir_all(&dst)?;
                 }
-                fs::rename(&src, &dst)
-            })()
-        };
-        if let Err(e) = result {
-            errors.push(format!("cannot move {} into place: {e}", dst.display()));
+                fs::rename(&tmp, &dst)
+            })();
+            if let Err(e) = copied {
+                let _ = fs::remove_file(&tmp);
+                self.problem(format!("cannot write {}: {e}", dst.display()));
+            }
         }
     }
+}
+
+/// Whether two regular files hold the same bytes.
+fn same_bytes(a: &Path, b: &Path) -> bool {
+    let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else {
+        return false;
+    };
+    if ma.len() != mb.len() {
+        return false;
+    }
+    matches!((fs::read(a), fs::read(b)), (Ok(x), Ok(y)) if x == y)
 }

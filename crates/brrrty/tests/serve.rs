@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -179,16 +180,20 @@ fn an_include_and_a_stylesheet_rebuild_and_css_alone_is_marked() {
 }
 
 #[test]
-fn a_burst_of_twenty_edits_makes_at_most_two_builds_and_serves_the_last() {
+fn a_burst_of_twenty_edits_inside_the_debounce_makes_one_build() {
     let t = site();
     with_session(t.path(), |live| {
         live.settle();
+        let mut last = Instant::now();
+        let mut widest = Duration::ZERO;
         for i in 1..=20 {
             write(
                 live.root,
                 "src/index.md",
                 &format!("---\nlayout: base.liquid\n---\nv{i}\n"),
             );
+            widest = widest.max(last.elapsed());
+            last = Instant::now();
             std::thread::sleep(Duration::from_millis(10));
         }
         wait_for("the last edit to be served", || {
@@ -199,7 +204,17 @@ fn a_burst_of_twenty_edits_makes_at_most_two_builds_and_serves_the_last() {
         while live.rebuilds.recv_timeout(QUIET).is_ok() {
             builds += 1;
         }
-        assert!((1..=2).contains(&builds), "{builds} builds");
+        // Every save landed well inside the 150 ms window, so the burst is one build. Only
+        // a machine so loaded that two saves were 100 ms apart may split it, and then
+        // into no more than two.
+        if widest < Duration::from_millis(100) {
+            assert_eq!(builds, 1, "widest gap {widest:?}");
+        } else {
+            assert!(
+                (1..=2).contains(&builds),
+                "{builds} builds, widest gap {widest:?}"
+            );
+        }
         assert_eq!(live.page(), "<main><p>v20</p>\n</main>");
     });
 }
@@ -447,8 +462,217 @@ fn a_page_named_like_staging_never_reaches_the_output() {
         "<main><p>v0</p>\n</main>"
     );
     assert!(
-        finished.problems.iter().any(|p| p.contains(STAGING_DIR)),
+        finished
+            .problems
+            .iter()
+            .any(|p| p.message.contains(STAGING_DIR)),
         "{:?}",
         finished.problems
     );
+}
+
+fn read(root: &Path, rel: &str) -> Option<String> {
+    fs::read_to_string(root.join(rel)).ok()
+}
+
+fn page_md(body: &str) -> String {
+    format!("---\nlayout: base.liquid\n---\n{body}\n")
+}
+
+#[test]
+fn the_output_folder_is_current_after_every_good_build() {
+    let t = site();
+    write(t.path(), "src/about.md", "about");
+    write(t.path(), "src/old.md", "old");
+    with_session(t.path(), |live| {
+        assert_eq!(
+            read(live.root, "_site/index.html").as_deref(),
+            Some("<main><p>v0</p>\n</main>")
+        );
+        live.settle();
+        let about = live.root.join("_site/about/index.html");
+        let before = fs::metadata(&about).unwrap().modified().unwrap();
+        write(live.root, "src/index.md", &page_md("v1"));
+        assert!(live.next_rebuild().ok);
+        // Current before the hook runs, as 11ty writes before it reloads.
+        assert_eq!(
+            read(live.root, "_site/index.html").as_deref(),
+            Some("<main><p>v1</p>\n</main>")
+        );
+        // Unchanged files are left alone.
+        assert_eq!(fs::metadata(&about).unwrap().modified().unwrap(), before);
+        // A failed build leaves the output folder as it was.
+        write(live.root, "src/index.md", &page_md("{% if x %}"));
+        assert!(!live.next_rebuild().ok);
+        assert_eq!(
+            read(live.root, "_site/index.html").as_deref(),
+            Some("<main><p>v1</p>\n</main>")
+        );
+        // Like `brrrty build`, nothing is deleted from the output folder; the server, which
+        // serves the build itself, no longer has the page.
+        fs::remove_file(live.root.join("src/old.md")).unwrap();
+        write(live.root, "src/index.md", &page_md("v2"));
+        wait_for("the fix", || live.page() == "<main><p>v2</p>\n</main>");
+        assert_eq!(get(live.server, "/old/").0, 404);
+        assert_eq!(
+            read(live.root, "_site/old/index.html").as_deref(),
+            Some("<p>old</p>\n")
+        );
+    });
+}
+
+const CHILD_ENV: &str = "BRRRTY_SERVE_TEST_CHILD";
+
+/// Not a test of its own: the body of the session that
+/// `a_killed_session_leaves_the_last_good_build_in_the_output` starts in a child process.
+#[test]
+fn serve_child_process() {
+    let Some(root) = std::env::var_os(CHILD_ENV) else {
+        return;
+    };
+    let settings = Settings {
+        flags: Flags {
+            input: Some(PathBuf::from("src")),
+            ..Flags::default()
+        },
+        quiet: true,
+        ..Settings::default()
+    };
+    let session = Session::start(Path::new(&root), settings).unwrap();
+    let server = Server::start(session.serving(), "localhost", 0).unwrap();
+    session.run(&server);
+}
+
+#[test]
+fn a_killed_session_leaves_the_last_good_build_in_the_output() {
+    let t = site();
+    let root = t.path();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["serve_child_process", "--exact", "--test-threads=1"])
+        .env(CHILD_ENV, root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let index = |want: &str| read(root, "_site/index.html").as_deref() == Some(want);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for("the first build", || index("<main><p>v0</p>\n</main>"));
+        // Keep saving until the watcher, which starts with the session, has seen one.
+        let mut n = 0;
+        wait_for("an edit to reach the output folder", || {
+            n += 1;
+            write(root, "src/index.md", &page_md(&format!("v{n}")));
+            std::thread::sleep(Duration::from_millis(500));
+            index(&format!("<main><p>v{n}</p>\n</main>"))
+        });
+        write(root, "src/index.md", &page_md("{% if x %}"));
+        std::thread::sleep(QUIET);
+        n
+    }));
+    // SIGKILL on Unix: no cleanup runs.
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let n = match outcome {
+        Ok(n) => n,
+        Err(p) => std::panic::resume_unwind(p),
+    };
+    assert_eq!(
+        read(root, "_site/index.html").as_deref(),
+        Some(format!("<main><p>v{n}</p>\n</main>").as_str())
+    );
+    // The staging folder it left is removed by the next `brrrty build`.
+    let opts = brrrty::options::build_options(
+        root,
+        &Flags {
+            input: Some(PathBuf::from("src")),
+            ..Flags::default()
+        },
+    )
+    .unwrap();
+    write(root, "src/index.md", &page_md("built"));
+    assert!(!brrrty_core::build(&opts, &brrrty_markdown::MarkdownIt::new()).has_errors());
+    assert!(!root.join("_site").join(STAGING_DIR).exists());
+}
+
+#[test]
+fn a_folder_deleted_and_recreated_is_still_watched() {
+    let t = site();
+    write(t.path(), "src/posts/a.md", "one");
+    with_session(t.path(), |live| {
+        let post = || get(live.server, "/posts/a/").1;
+        live.settle();
+        // Slowly: the removal is seen before the folder comes back.
+        fs::remove_dir_all(live.root.join("src/posts")).unwrap();
+        wait_for("the removal", || get(live.server, "/posts/a/").0 == 404);
+        write(live.root, "src/posts/a.md", "two");
+        wait_for("the new folder", || post() == "<p>two</p>\n");
+        live.settle();
+        write(live.root, "src/posts/a.md", "three");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(post(), "<p>three</p>\n");
+
+        // Quickly: removed and back before the session looks.
+        fs::remove_dir_all(live.root.join("src/posts")).unwrap();
+        write(live.root, "src/posts/a.md", "four");
+        wait_for("the new folder", || post() == "<p>four</p>\n");
+        live.settle();
+        write(live.root, "src/posts/a.md", "five");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(post(), "<p>five</p>\n");
+        // A folder made inside it afterwards is watched too.
+        write(live.root, "src/posts/deep/b.md", "deep");
+        wait_for("the deep page", || {
+            get(live.server, "/posts/deep/b/").1 == "<p>deep</p>\n"
+        });
+        live.settle();
+        write(live.root, "src/posts/deep/b.md", "deeper");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(get(live.server, "/posts/deep/b/").1, "<p>deeper</p>\n");
+    });
+}
+
+#[test]
+fn a_folder_moved_into_the_input_is_watched() {
+    let t = site();
+    write(t.path(), "drafts/b.md", "draft");
+    write(t.path(), "drafts/deep/c.md", "deep");
+    with_session(t.path(), |live| {
+        live.settle();
+        fs::rename(live.root.join("drafts"), live.root.join("src/drafts")).unwrap();
+        wait_for("the moved folder", || {
+            get(live.server, "/drafts/b/").1 == "<p>draft</p>\n"
+        });
+        live.settle();
+        write(live.root, "src/drafts/b.md", "edited");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(get(live.server, "/drafts/b/").1, "<p>edited</p>\n");
+        write(live.root, "src/drafts/deep/c.md", "deep edit");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(get(live.server, "/drafts/deep/c/").1, "<p>deep edit</p>\n");
+        // Moved out and back in under the same name.
+        fs::rename(live.root.join("src/drafts"), live.root.join("away")).unwrap();
+        wait_for("the move out", || get(live.server, "/drafts/b/").0 == 404);
+        fs::rename(live.root.join("away"), live.root.join("src/drafts")).unwrap();
+        wait_for("the move back", || get(live.server, "/drafts/b/").0 == 200);
+        live.settle();
+        write(live.root, "src/drafts/b.md", "again");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(get(live.server, "/drafts/b/").1, "<p>again</p>\n");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_staging_symlink_is_replaced_at_start() {
+    let t = site();
+    fs::create_dir_all(t.path().join("_site")).unwrap();
+    std::os::unix::fs::symlink(
+        t.path().join("nowhere"),
+        t.path().join("_site").join(STAGING_DIR),
+    )
+    .unwrap();
+    with_session(t.path(), |live| {
+        assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
+    });
+    assert!(!t.path().join("nowhere").exists());
 }
