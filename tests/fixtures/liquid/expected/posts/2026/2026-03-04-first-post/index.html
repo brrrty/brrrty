@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><title>First Post | blog</title></head>
+<body class="plain">
+<article>
+<h1>First Post</h1>
+<p class="meta">2026-03-04 by Layout Author</p>
+<p>Hello from <strong>First Post</strong> at /posts/2026/2026-03-04-first-post/.</p>
+<p>Liquid stays as written here: {{ not_rendered }} and {% if x %}.</p>
+<pre><code class="language-liquid">{% for post in collections.posts %}{{ post.data.title }}{% endfor %}
+</code></pre>
+<aside class="callout">Note (First Post)</aside>
+<p>A <em>Markdown</em> fragment for first-post.</p>
+<ul>
+<li>templateSyntax: liquid,md</li>
+<li>fileSlug: first-post</li>
+<li>filePathStem: /posts/2026/first-post</li>
+</ul>
+
+</article>
+
+<footer>/posts/2026/2026-03-04-first-post/ base,post,first</footer>
+</body>
+</html>

@@ -1,0 +1,27 @@
+---
+title: Home
+obj:
+  b: B
+  2: two
+  a: A
+  1: one
+date: 2026-06-15T12:00:00Z
+---
+<h1>{{ title }}</h1>
+<ul>
+<li>url: {{ page.url }}</li>
+<li>fileSlug: [{{ page.fileSlug }}]</li>
+<li>filePathStem: {{ page.filePathStem }}</li>
+<li>inputPath: {{ page.inputPath }}</li>
+<li>outputFileExtension: {{ page.outputFileExtension }}</li>
+<li>templateSyntax: {{ page.templateSyntax }}</li>
+<li>date: {{ page.date | date: "%Y-%m-%d" }}</li>
+<li>unknown: [{{ not_defined }}][{{ not_defined.deeper }}]</li>
+<li>eleventy: {{ eleventy.version }} / {{ eleventy.generator }} / {{ eleventy.env.source }} {{ eleventy.env.runMode }} / {{ eleventy.directories.input }} {{ eleventy.directories.includes }} {{ eleventy.directories.data }}</li>
+<li>pkg: {{ pkg.name }} {{ pkg.version }}</li>
+<li>order: {% for kv in obj %}{{ kv[0] }}={{ kv[1] }};{% endfor %} {{ obj | json }}</li>
+<li>filters: {{ "Hello, World!" | slugify }} {{ "/a/b/" | url }} {{ "Hi There" | slug }}</li>
+</ul>
+{% include "callout", message: "From the home page" %}
+{%- comment %}rawInput is the body as written, before Liquid runs.{% endcomment %}
+<pre>{{ page.rawInput | size }}</pre>

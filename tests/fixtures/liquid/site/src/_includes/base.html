@@ -1,0 +1,13 @@
+---
+section: site
+theme: plain
+tags: [base]
+---
+<!doctype html>
+<html>
+<head><title>{{ title }} | {{ section }}</title></head>
+<body class="{{ theme }}">
+{{ content }}
+<footer>{{ page.url }} {{ tags | join: "," }}</footer>
+</body>
+</html>
