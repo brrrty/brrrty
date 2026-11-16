@@ -201,6 +201,7 @@ pub fn engine(clock: Clock) -> Engine {
         },
     );
     crate::object::register(&mut e);
+    crate::jshelpers::register(&mut e);
     register_text(&mut e);
     e.register_get("ignores", |c: &mut Config| Ignores(c.0.clone()));
     e.register_fn("add", |i: &mut Ignores, glob: ImmutableString| {
@@ -233,6 +234,8 @@ pub fn engine(clock: Clock) -> Engine {
     e.register_fn("now", now);
     e.register_fn("date", |ms: INT| JsDate(time_clip(ms as f64)));
     e.register_fn("date", |_: ()| JsDate(f64::NAN));
+    // `new Date(null)` is the epoch.
+    e.register_fn("date", |_: crate::object::JsNull| JsDate(0.0));
     e.register_fn("date", |d: JsDate| d);
     e.register_fn("date", |ms: rhai::FLOAT| JsDate(time_clip(ms)));
     e.register_fn("date_to_utc_string", |d: &mut JsDate| utc_string(d.0));

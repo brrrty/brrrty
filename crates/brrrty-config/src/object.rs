@@ -28,9 +28,9 @@ use crate::convert::{to_dynamic, to_value_at};
 
 /// JavaScript's `null`, as a value a script can hold. It is equal to `()`
 /// (`undefined`), and falsy, but it stays `null` when it comes back out:
-/// `null_value()` makes one. Scalars and array items that were `null` in
-/// Brrrty's data arrive as this; a key of an object that holds `null`
-/// reads as `()`, and the object remembers it was `null`.
+/// `null_value()` makes one. Everything that was `null` in Brrrty's data
+/// arrives as this, an object key included, so copying a value keeps its
+/// `null`. (`x ?? d` only defaults `()`; test `x == ()` to catch both.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JsNull;
 
@@ -152,12 +152,8 @@ impl IntoIterator for JsObject {
     }
 }
 
-fn unnull(d: Dynamic) -> Dynamic {
-    if d.is::<JsNull>() { Dynamic::UNIT } else { d }
-}
-
 fn get(o: &mut JsObject, key: ImmutableString) -> Dynamic {
-    o.raw(key.as_str()).map_or(Dynamic::UNIT, unnull)
+    o.raw(key.as_str()).unwrap_or(Dynamic::UNIT)
 }
 
 fn set(o: &mut JsObject, key: ImmutableString, v: Dynamic) -> Result<(), Box<EvalAltResult>> {
@@ -171,15 +167,6 @@ fn set(o: &mut JsObject, key: ImmutableString, v: Dynamic) -> Result<(), Box<Eva
     Ok(())
 }
 
-fn debug(o: &mut JsObject) -> String {
-    let items: Vec<String> = o
-        .js_keys()
-        .into_iter()
-        .map(|k| format!("{k:?}: {:?}", o.raw(k).unwrap_or(Dynamic::UNIT)))
-        .collect();
-    format!("object({{{}}})", items.join(", "))
-}
-
 pub fn register(e: &mut Engine) {
     e.register_type_with_name::<JsNull>("null")
         .register_fn("null_value", || JsNull)
@@ -190,7 +177,9 @@ pub fn register(e: &mut Engine) {
         .register_fn("!=", |_: (), _: JsNull| false)
         .register_fn("!=", |_: JsNull, _: JsNull| false)
         .register_fn("to_string", |_: &mut JsNull| "null".to_string())
-        .register_fn("to_debug", |_: &mut JsNull| "null".to_string());
+        .register_fn("to_debug", |_: &mut JsNull| "null".to_string())
+        .register_fn("+", |s: ImmutableString, _: JsNull| format!("{s}null"))
+        .register_fn("+", |_: JsNull, s: ImmutableString| format!("null{s}"));
     let mut globals = rhai::Module::new();
     globals.set_var("NULL", JsNull);
     e.register_global_module(globals.into());
@@ -232,8 +221,18 @@ pub fn register(e: &mut Engine) {
             o.contains(k.as_str())
         })
         .register_fn("remove", |o: &mut JsObject, k: ImmutableString| {
-            unnull(o.owned().shift_remove(k.as_str()).unwrap_or(Dynamic::UNIT))
+            o.owned().shift_remove(k.as_str()).unwrap_or(Dynamic::UNIT)
         })
-        .register_fn("to_debug", debug)
-        .register_fn("to_string", debug);
+        // Text made from an object is JavaScript's `String(obj)`, never
+        // a dump of Brrrty's own types. `entries()` shows the contents.
+        .register_fn("to_debug", |_: &mut JsObject| "[object Object]".to_string())
+        .register_fn("to_string", |_: &mut JsObject| {
+            "[object Object]".to_string()
+        })
+        .register_fn("+", |s: ImmutableString, _: JsObject| {
+            format!("{s}[object Object]")
+        })
+        .register_fn("+", |_: JsObject, s: ImmutableString| {
+            format!("[object Object]{s}")
+        });
 }

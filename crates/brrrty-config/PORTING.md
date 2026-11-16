@@ -1,0 +1,122 @@
+# Porting an `eleventy.config.js` to `brrrty.config.rhai`
+
+A port is authored code. Brrrty checks it the way it checks everything:
+build the site with 11ty and with Brrrty and compare the output
+(`cargo xtask scoreboard`). This guide says what Brrrty guarantees, where
+Rhai is not JavaScript, and which helper to call when you need the
+JavaScript behavior.
+
+## What Brrrty guarantees
+
+**Data crossing the boundary is exact, in both directions.** Page data,
+collection items and arguments arrive in your script as the values 11ty
+would give a JS filter, and what a filter returns goes back out as data:
+
+- Numbers are floats (JS numbers). Strings, booleans and arrays keep their
+  shape. Dates are dates (`get_time(d)`, `year(d)`).
+- `undefined` is `()`. `null` is `null_value()` (also written `NULL`); it
+  equals `()`, is falsy, and comes back out as `null`. This holds for
+  scalars, array items and object keys, so copying a value keeps its null.
+  `x ?? default` only replaces `()`, so test `x == ()` to catch both.
+- Objects are `object()`s and keep JS key order (below).
+- A returned value is converted by data rules, never by `Debug` or Rhai's
+  own printing. Text made from an object or null (`` `${o}` ``, `"a" + o`,
+  `to_string`) is JavaScript's: `[object Object]` and `null`.
+- Arguments arrive in the order the template wrote them. A keyword
+  argument arrives in place as a two-item array `[name, value]`.
+
+**Anything that would make output nondeterministic is refused**, and only
+the pages that hit it:
+
+- A filter that changes a variable it captured from the script (a counter,
+  a cache, an `object()` in a closure). 11ty carries the change from page
+  to page in order, and Brrrty renders in parallel. Keep filters pure.
+- A filter that uses randomness: declare it with
+  `config.add_nondeterministic_filter("name")`.
+- A regular expression or text where Rust and JavaScript would differ
+  (below).
+
+A filter that throws, returns something that isn't data, or runs too long
+refuses its page, with the template's position and the script's.
+
+## Rhai is not JavaScript
+
+Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
+
+| JavaScript | In Rhai | Use |
+|---|---|---|
+| `7 / 2` is `3.5` | `7 / 2` is `3` (integer literals) | `js_div(7, 2)`, or write `7.0 / 2`. Numbers that come from data are floats already. |
+| `a + b` | `+` is Rhai's: strings join, numbers add, mixed is an error | `js_concat(a, b)` (string if either side is a string, array, object or date; else the numeric sum, `undefined` is `NaN`) |
+| `String(v)`, `` `${v}` `` | `to_string()` is Rhai's for arrays and maps | `js_string(v)` (`[1,null]` is `1,`, objects are `[object Object]`) |
+| `arr.sort()` | `sort()` compares values, in place | `js_sort(arr)`: by `String(item)` in UTF-16 order, `undefined` last, returns a new array |
+| `arr.sort((a, b) => ...)` | `sort(fn)` needs `-1/0/1` integers and sorts in place | `js_sort_by(arr, \|a, b\| ...)`: any number (fractions, `NaN` is 0) or a bool; same result as V8, including for short arrays with sloppy comparators |
+| `Math.round(x)` | `round()` rounds halves away from zero | `js_round(x)`: halves round up (`-4.5` is `-4`), `-0` stays `-0` |
+| `if (x)` | Only `bool` is allowed | `if truthy(x)` |
+| `x \|\| y` | `\|\|` needs bools | `if truthy(x) { x } else { y }` |
+| `new Date(ts)` | | `date(ts)` takes a number, a date, `()` (invalid) or null (the epoch) |
+| `new URL(u).hostname` | | `url_hostname(u)`, or `()` when `u` isn't an absolute URL |
+| `d.toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'})` | | `to_locale_date_string(d)` |
+| `Date.now()` | | `get_time(now())` (follows `SOURCE_DATE_EPOCH`) |
+| `obj.x` on a missing key | | `()`, as `undefined` |
+| `arr[i]` with a float index | an error | `arr[n.to_int()]` |
+| `str[0]` | a `char` | `str.sub_string(0, 1)` (Rhai counts characters, JS counts UTF-16 units) |
+| `a.length` | `len()` | `a.len()` (characters for strings) |
+
+Rhai's closures are `|a, b| ...`, the last expression is the value, and a
+missing argument is `()`, so `|s, n| { let n = n ?? 40; ... }` is
+`(s, n = 40) =>`. A thrown error (`throw "msg"`) refuses the page.
+
+## `object()` and key order
+
+A JavaScript object keeps its keys in insertion order, integer-like keys
+first. Rhai's `#{ ... }` maps are sorted by key. Use `object()` wherever the
+order can show in output:
+
+```rhai
+let o = object();
+o.zebra = 1;          // or o["zebra"] = 1
+o.apple = 2;
+o.keys()              // ["zebra", "apple"]
+for k in o { ... }    // keys, like for...in (for (k, v) gives a counter)
+o.entries()           // [[k, v], ...]
+```
+
+`object(map)` copies a map in (its keys arrive sorted). Methods: `keys`,
+`values`, `entries`, `len`, `contains`, `remove`. Data from Brrrty arrives as
+`object()`s, so returning it as it came keeps its order.
+
+## Regular expressions
+
+`regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`
+and `regex_test(s, pattern)` (each also takes `flags`) use the `regex`
+crate, with JavaScript's `\s`, `\d`, `\w`, `\b` and `.`, JavaScript's `$1`
+`$&` `$<name>` replacements, and JavaScript's `split` (captures included).
+
+Only syntax that means exactly the same in both is accepted. Everything
+else is an error naming the pattern, with the script's line:
+
+- no lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`) and no backreferences
+  (`\1`, `\k<n>`);
+- no `\p{..}`, `\a`, `\A`, `\z`, `\c`, `\u{..}`; no `(?i)`-style groups;
+  no `[]` or `[^]`; no bare `{`, `}` or `]`; no `--` or `\w` range ends in a
+  class; no flags other than `g i m s u`.
+
+Some text is refused, since the answer would differ:
+
+- non-ASCII text when `i` is used and the pattern has letters (Rust folds
+  more characters, such as the Kelvin sign);
+- text with characters outside the BMP (emoji) when the pattern could split
+  a surrogate pair (`.`, a negated class, an empty match), unless you add
+  `u`;
+- text with `\r`, U+2028 or U+2029 when `m` is used with `^` or `$`.
+
+## Checklist
+
+1. Port one filter at a time. Keep the JS next to it while you work.
+2. Use `object()` for anything built in a loop whose order can show.
+3. Replace each JS operator in the table above with its helper.
+4. Run the JS and the port on the same inputs in Node and compare. Include
+   `undefined`, `null`, `0`, `""`, non-ASCII text and emoji.
+5. Run `cargo xtask scoreboard`. Every page that builds must be identical to
+   11ty's. A refused page names its reason; fix the port, or the pattern,
+   until it builds.

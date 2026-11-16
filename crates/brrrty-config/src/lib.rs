@@ -45,6 +45,10 @@
 //! to page in order and Brrrty renders pages in parallel; keep filters
 //! pure.
 //!
+//! Rhai's operators aren't changed. Where they differ from JavaScript's,
+//! `js_string`, `js_concat`, `js_sort`, `js_sort_by`, `js_div` and
+//! `js_round` do what JavaScript does; see `PORTING.md`.
+//!
 //! ## Key order
 //!
 //! A JavaScript object keeps its keys in the order they were added (integer
@@ -72,6 +76,7 @@
 mod api;
 mod convert;
 mod filters;
+mod jshelpers;
 mod object;
 mod regex;
 

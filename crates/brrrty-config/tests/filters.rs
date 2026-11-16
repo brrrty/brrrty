@@ -745,22 +745,27 @@ fn null_is_unit_to_a_script_and_can_be_made_on_purpose() {
            config.add_filter("setnull", |v| { let o = object(); o.a = null_value(); o.b = (); o });
            config.add_filter("falsy", |v| truthy(v));
            config.add_filter("copy", |o| { let c = object(); for k in o { c[k] = o[k]; } c });
+           config.add_filter("copyq", |o| { let c = object(); c.q = o.n; c });
+           config.add_filter("copyq", |o| { let c = object(); c.q = o.n; c });
            config.add_filter("cnst", |v| NULL);"#,
     );
     let r = |tpl: &str, json: &str| render(&cfg, tpl, json).unwrap();
     assert_eq!(r("{{ n | isnull }}", r#"{"n":null}"#), "true");
     assert_eq!(r("{{ n | falsy }}", r#"{"n":null}"#), "false");
     assert_eq!(r("{{ o | keyisnull }}", r#"{"o":{"k":null}}"#), "true");
-    assert_eq!(r("{{ o | key | json }}", r#"{"o":{"k":null}}"#), "");
+    assert_eq!(r("{{ o | key | json }}", r#"{"o":{"k":null}}"#), "null");
     assert_eq!(r("{{ 1 | mk | json }}", "{}"), "null");
     assert_eq!(r("{{ 1 | cnst | json }}", "{}"), "null");
     // `o.b = ()` is `undefined`, which JSON drops.
     assert_eq!(r("{{ 1 | setnull | json }}", "{}"), r#"{"a":null}"#);
-    // Copying key by key through `o[k]` keeps `null` as undefined; the
-    // object itself keeps its nulls when it isn't changed.
+    // Copying key by key keeps the null, by index and by property.
     assert_eq!(
         r("{{ o | copy | json }}", r#"{"o":{"k":null,"j":1}}"#),
-        r#"{"j":1}"#
+        r#"{"k":null,"j":1}"#
+    );
+    assert_eq!(
+        r("{{ o | copyq | json }}", r#"{"o":{"n":null}}"#),
+        r#"{"q":null}"#
     );
 }
 
@@ -912,4 +917,188 @@ fn regex_text_that_would_match_differently_is_refused() {
         eval(r#"regex_replace("a\nb", "$", "!", "gm")"#),
         s("a!\nb!")
     );
+}
+
+fn text(expr: &str) -> String {
+    eval(&format!("js_string({expr})")).to_js_string()
+}
+
+#[test]
+fn js_string_is_javascripts_string() {
+    // Node: String(x).
+    assert_eq!(text("[1, null_value(), (), \"a\", [2, 3]]"), "1,,,a,2,3");
+    assert_eq!(text("object()"), "[object Object]");
+    assert_eq!(text("#{ a: 1 }"), "[object Object]");
+    assert_eq!(text("1e21"), "1e+21");
+    assert_eq!(text("0.1 + 0.2"), "0.30000000000000004");
+    assert_eq!(text("-0.0"), "0");
+    assert_eq!(text("true"), "true");
+    assert_eq!(text("null_value()"), "null");
+    assert_eq!(text("()"), "undefined");
+    assert_eq!(text("[]"), "");
+    assert_eq!(text("7"), "7");
+}
+
+#[test]
+fn js_concat_is_javascripts_plus() {
+    // Node: 1+"a", "a"+1, 1+1, undefined+1, null+1, true+1, [1,2]+"x",
+    // {}+"x", [1]+[2], 1.5+2, "a"+null, "a"+undefined, null+null,
+    // undefined+undefined.
+    let c = |a: &str, b: &str| eval(&format!("js_concat({a}, {b})")).to_js_string();
+    assert_eq!(c("1", "\"a\""), "1a");
+    assert_eq!(c("\"a\"", "1"), "a1");
+    assert_eq!(c("1", "1"), "2");
+    assert_eq!(c("()", "1"), "NaN");
+    assert_eq!(c("null_value()", "1"), "1");
+    assert_eq!(c("true", "1"), "2");
+    assert_eq!(c("[1, 2]", "\"x\""), "1,2x");
+    assert_eq!(c("object()", "\"x\""), "[object Object]x");
+    assert_eq!(c("[1]", "[2]"), "12");
+    assert_eq!(c("1.5", "2"), "3.5");
+    assert_eq!(c("\"a\"", "null_value()"), "anull");
+    assert_eq!(c("\"a\"", "()"), "aundefined");
+    assert_eq!(c("null_value()", "null_value()"), "0");
+    assert_eq!(c("()", "()"), "NaN");
+}
+
+fn list(expr: &str) -> String {
+    eval(expr).to_js_string()
+}
+
+#[test]
+fn js_sort_is_the_default_sort() {
+    // Node: [3,1,2,undefined,10].sort() is 1,10,2,3 then undefined.
+    assert_eq!(list("js_sort([3, 1, 2, (), 10])"), "1,10,2,3,");
+    assert_eq!(
+        list(
+            r#"js_sort([10, 9, 1, "b", (), "a", null_value(), "B", [2], "é", "z", "\U0001F600", "\uFFFF"])"#
+        ),
+        "1,10,2,9,B,a,b,,z,é,\u{1F600},\u{FFFF},"
+    );
+}
+
+#[test]
+fn js_sort_by_takes_javascript_comparators() {
+    assert_eq!(list("js_sort_by([5, 1, 4], |a, b| a - b)"), "1,4,5");
+    // A fractional result counts by its sign.
+    assert_eq!(
+        list("js_sort_by([1.5, 1.2, 1.9, 0.3], |a, b| (a - b) * 0.1)"),
+        "0.3,1.2,1.5,1.9"
+    );
+    assert_eq!(list("js_sort_by([3, 1, 2], |a, b| b > a)"), "3,1,2");
+    assert_eq!(
+        list(r#"js_sort_by(["b", "a", (), "c"], |a, b| if a < b { -1 } else { 1 })"#),
+        "a,b,c,"
+    );
+    // Stable.
+    assert_eq!(
+        list(
+            r#"js_sort_by([#{ k: 1, n: "a" }, #{ k: 1, n: "b" }, #{ k: 0, n: "c" }], |a, b| a.k - b.k).map(|x| x.n)"#
+        ),
+        "c,a,b"
+    );
+    // A comparator that never settles doesn't panic.
+    let _ = list("js_sort_by([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], |a, b| 1)");
+}
+
+#[test]
+fn js_div_and_js_round_are_javascripts() {
+    assert_eq!(eval("js_div(7, 2)"), Value::Number(3.5));
+    assert_eq!(eval("js_div(1, 0)").to_js_string(), "Infinity");
+    assert_eq!(eval("js_div(0, 0)").to_js_string(), "NaN");
+    assert_eq!(
+        eval("js_div(9007199254740993.0, 2)"),
+        Value::Number(4503599627370496.0)
+    );
+    // Node: Math.round(-4.5, -0.4, 2.5, 0.5, -0.5, -1.5, 0.49999999999999994,
+    // 4503599627370497) is -4, -0, 3, 1, -0, -1, 0, 4503599627370497.
+    let r = |x: &str| match eval(&format!("js_round({x})")) {
+        Value::Number(n) => n,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(r("-4.5"), -4.0);
+    assert!(r("-0.4") == 0.0 && r("-0.4").is_sign_negative());
+    assert_eq!(r("2.5"), 3.0);
+    assert_eq!(r("0.5"), 1.0);
+    assert!(r("-0.5").is_sign_negative() && r("-0.5") == 0.0);
+    assert_eq!(r("-1.5"), -1.0);
+    assert_eq!(r("0.49999999999999994"), 0.0);
+    assert_eq!(r("4503599627370497.0"), 4503599627370497.0);
+    assert_eq!(r("3"), 3.0);
+}
+
+#[test]
+fn text_made_from_brrrty_types_is_javascripts_never_a_dump() {
+    let cfg = load(
+        r#"config.add_filter("a", |o| `x${o}y`);
+           config.add_filter("b", |o| "p" + o);
+           config.add_filter("c", |o| o + "q");
+           config.add_filter("d", |n| `${n}`);
+           config.add_filter("e", |o| [o, o.n].to_string());
+           config.add_filter("f", |o| o.to_debug());"#,
+    );
+    let r = |tpl: &str| render(&cfg, tpl, r#"{"o":{"n":null},"n":null}"#).unwrap();
+    assert_eq!(r("{{ o | a }}"), "x[object Object]y");
+    assert_eq!(r("{{ o | b }}"), "p[object Object]");
+    assert_eq!(r("{{ o | c }}"), "[object Object]q");
+    assert_eq!(r("{{ n | d }}"), "null");
+    assert!(
+        !r("{{ o | e }}").contains("JsObject"),
+        "{}",
+        r("{{ o | e }}")
+    );
+    assert_eq!(r("{{ o | f }}"), "[object Object]");
+}
+
+#[test]
+fn a_filter_that_changes_a_captured_object_is_refused() {
+    for (setup, body) in [
+        ("let c = object(); c.n = 0;", "{ c.n = c.n + 1; c.n }"),
+        ("let c = [object()];", "{ c[0].n = 1; 1 }"),
+        ("let c = #{ o: object() };", "{ c.o.n = 1; 1 }"),
+        ("let c = [1, 2];", "{ c.push(3); 1 }"),
+        ("let c = #{ a: [object()] };", "{ c.a[0].z = 1; 1 }"),
+    ] {
+        let (t, r) = site(
+            &format!("{setup}\nconfig.add_filter(\"f\", |v| {body});\n"),
+            &[("a.liquid", "{{ 1 | f }}"), ("b.liquid", "ok")],
+        );
+        assert!(t.path().join("_site/b/index.html").exists());
+        assert!(
+            !t.path().join("_site/a/index.html").exists(),
+            "{setup} {body}"
+        );
+        let p = r
+            .problems
+            .iter()
+            .find(|p| p.code == codes::LIQUID_RENDER)
+            .unwrap();
+        assert!(
+            p.message.contains("changed a variable it captured"),
+            "{}",
+            p.message
+        );
+    }
+    // Reading a captured object is fine.
+    let (t, _) = site(
+        "let c = object(); c.n = 5;\nconfig.add_filter(\"f\", |v| c.n + v);\n",
+        &[("a.liquid", "{{ 1 | f }}")],
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/a/index.html")).unwrap(),
+        "6"
+    );
+}
+
+#[test]
+fn the_i_flag_only_matters_when_the_pattern_has_letters() {
+    // No letters to fold, so non-ASCII text is fine (tag stripping with `gi`).
+    assert_eq!(
+        eval(r#"regex_replace("\u00e9\u2014<b>x</b>", "(<([^>]+)>)", "", "gi")"#),
+        s("\u{e9}\u{2014}x")
+    );
+    for pat in ["a", "[a-z]", "\\w", "\\x41"] {
+        let p = load_err(&format!("regex_test(\"\\u00e9\", {}, \"i\");", json(pat)));
+        assert!(p.message.contains("`i` flag"), "{pat}: {}", p.message);
+    }
 }

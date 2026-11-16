@@ -111,12 +111,56 @@ fn call(
     }
 }
 
-/// What a closure's captured variables hold now, as text.
+/// What a closure's captured variables hold now, as text: a deep
+/// snapshot, so a change inside an object, array or map shows.
 fn captured(f: &FnPtr) -> Vec<String> {
     f.curry()
         .iter()
-        .map(|d| format!("{:?}", d.flatten_clone()))
+        .map(|d| {
+            let mut out = String::new();
+            snapshot(d, &mut out, 0);
+            out
+        })
         .collect()
+}
+
+fn snapshot(d: &Dynamic, out: &mut String, depth: usize) {
+    use crate::object::{JsNull, JsObject};
+    use std::fmt::Write;
+    if depth > 64 {
+        out.push_str("<deep>");
+        return;
+    }
+    let d = d.flatten_clone();
+    if let Some(o) = d.read_lock::<JsObject>() {
+        out.push_str("object{");
+        for k in o.js_keys() {
+            let _ = write!(out, "{k:?}:");
+            snapshot(&o.raw(k).unwrap_or(Dynamic::UNIT), out, depth + 1);
+            out.push(',');
+        }
+        out.push('}');
+    } else if let Some(a) = d.read_lock::<rhai::Array>() {
+        out.push('[');
+        for x in a.iter() {
+            snapshot(x, out, depth + 1);
+            out.push(',');
+        }
+        out.push(']');
+    } else if let Some(m) = d.read_lock::<rhai::Map>() {
+        out.push_str("#{");
+        for (k, x) in m.iter() {
+            let _ = write!(out, "{k:?}:");
+            snapshot(x, out, depth + 1);
+            out.push(',');
+        }
+        out.push('}');
+    } else if d.is::<JsNull>() {
+        out.push_str("null");
+    } else {
+        // Scalars, dates and function pointers print their value.
+        let _ = write!(out, "{}:{d:?}", d.type_name());
+    }
 }
 
 /// A Rhai error as one line: what went wrong, and where in the script.

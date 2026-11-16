@@ -58,6 +58,9 @@ struct Info {
     matches_units: bool,
     /// `^` or `$`.
     anchors: bool,
+    /// A letter (or `\w`, or an escape that may be one) that `i` would
+    /// fold; without one, `i` changes nothing.
+    cased: bool,
 }
 
 type Cache = HashMap<(String, String), Arc<JsRegex>>;
@@ -171,6 +174,7 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                 atom = true;
                 match n {
                     's' | 'd' | 'w' => {
+                        info.cased |= n == 'w';
                         let set = match n {
                             's' => SPACE,
                             'd' => "0-9",
@@ -182,6 +186,7 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                     }
                     'S' | 'D' | 'W' => {
                         info.matches_units = true;
+                        info.cased |= n == 'W';
                         let set = match n {
                             'S' => SPACE,
                             'D' => "0-9",
@@ -208,11 +213,13 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                         out.push(n);
                     }
                     'x' if hex(&chars, i, 2) => {
+                        info.cased = true;
                         out.push_str("\\x");
                         out.extend(&chars[i..i + 2]);
                         i += 2;
                     }
                     'u' if hex(&chars, i, 4) => {
+                        info.cased = true;
                         let unit =
                             u32::from_str_radix(&chars[i..i + 4].iter().collect::<String>(), 16)
                                 .unwrap_or(0);
@@ -265,6 +272,7 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                             match n {
                                 's' | 'd' | 'w' => {
                                     set = true;
+                                    info.cased |= n == 'w';
                                     out.push_str(match n {
                                         's' => SPACE,
                                         'd' => "0-9",
@@ -280,11 +288,13 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                                     out.push(n);
                                 }
                                 'x' if hex(&chars, i, 2) => {
+                                    info.cased = true;
                                     out.push_str("\\x");
                                     out.extend(&chars[i..i + 2]);
                                     i += 2;
                                 }
                                 'u' if hex(&chars, i, 4) => {
+                                    info.cased = true;
                                     let unit = u32::from_str_radix(
                                         &chars[i..i + 4].iter().collect::<String>(),
                                         16,
@@ -334,7 +344,10 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
                             out.push('\\');
                             out.push(c);
                         }
-                        _ => out.push(c),
+                        _ => {
+                            info.cased |= c.is_ascii_alphabetic();
+                            out.push(c)
+                        }
                     }
                     prev_set = set;
                 }
@@ -447,6 +460,7 @@ fn translate(pattern: &str, dotall: bool) -> Result<(String, Info), String> {
             }
             _ => {
                 atom = true;
+                info.cased |= c.is_ascii_alphabetic();
                 out.push(c);
             }
         }
@@ -462,7 +476,7 @@ fn advance(s: &str, i: usize) -> usize {
 impl JsRegex {
     /// Refuse text the pattern would treat differently from JavaScript.
     fn check(&self, s: &str) -> Result<(), String> {
-        if self.icase && !s.is_ascii() {
+        if self.icase && self.info.cased && !s.is_ascii() {
             return Err("the `i` flag is only supported for ASCII text: JavaScript and Rust fold the case of other characters differently".into());
         }
         if !self.unicode && !self.astral_safe && s.chars().any(|c| c as u32 > 0xFFFF) {
