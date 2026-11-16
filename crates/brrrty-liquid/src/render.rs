@@ -246,6 +246,31 @@ impl<'a> Renderer<'a> {
                     self.check_size(&out)?;
                     out
                 }
+                Some(Filter::Args(run)) => {
+                    let mut argv = Vec::new();
+                    for arg in &f.args {
+                        argv.push(match arg {
+                            FilterArg::Positional(e) => self.eval(e)?.to_value(),
+                            FilterArg::Keyword { name, value } => {
+                                let value = match value {
+                                    Some(e) => self.eval(e)?.to_value(),
+                                    None => Value::Undefined,
+                                };
+                                Value::Array(Arc::new(vec![
+                                    Value::String(name.as_str().into()),
+                                    value,
+                                ]))
+                            }
+                        });
+                    }
+                    let ctx = FilterCtx {
+                        timezone: self.tz(),
+                    };
+                    let out = run(&v.to_value(), &argv, &ctx)
+                        .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
+                    self.check_size(&out)?;
+                    out
+                }
                 None if self.engine.options.strict_filters => {
                     return Err(self.unknown_filter(&f.name));
                 }

@@ -1512,6 +1512,9 @@ fn build_in_pool(
         timezone: Tz::Local,
     });
     engine.register_eleventy_filters();
+    for f in &opts.config.filters {
+        engine.register_args_filter(&f.name, f.run.clone());
+    }
     let includes = input.join("_includes");
     let includes = includes.canonicalize().unwrap_or(includes);
     let loader = FsLoader::new(

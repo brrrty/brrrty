@@ -1,8 +1,9 @@
 //! Rhai values to Brrrty data and back.
 //!
 //! Rhai's object maps keep their keys sorted, not in the order they were
-//! written, so a map made in a script comes out with its keys sorted.
-//! Everything else keeps its shape: integers and floats become JavaScript
+//! written, so a map made in a script comes out with its keys sorted. An
+//! `object()` (see `object.rs`) keeps insertion order, and every object that
+//! comes in from Brrrty is one. Everything else keeps its shape: integers and floats become JavaScript
 //! numbers, `()` is `undefined`, and a date made with `now()` or `date()`
 //! is a JavaScript `Date`.
 
@@ -14,6 +15,7 @@ use chrono::{DateTime, FixedOffset};
 use rhai::{Array, Dynamic, Map};
 
 use crate::api::JsDate;
+use crate::object::JsObject;
 
 /// How deeply data may nest. Deeper data is refused rather than walked, so
 /// converting it can't overflow the stack.
@@ -63,6 +65,15 @@ fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
         }
         return Ok(Value::Object(Arc::new(out)));
     }
+    if let Some(o) = v.read_lock::<JsObject>() {
+        // Insertion order: that is how a `Value` object is kept, and its
+        // readers list the keys in JavaScript's order.
+        let mut out = Data::new();
+        for (k, x) in o.0.iter() {
+            out.insert(k.clone(), to_value_at(x, depth + 1)?);
+        }
+        return Ok(Value::Object(Arc::new(out)));
+    }
     if let Some(d) = v.read_lock::<JsDate>() {
         return date_value(d.0)
             .ok_or_else(|| "an invalid date can't be data in Brrrty yet".to_string());
@@ -96,11 +107,9 @@ pub fn to_dynamic(v: &Value) -> Dynamic {
         }
         Value::String(s) => Dynamic::from(s.to_string()),
         Value::Array(a) => Dynamic::from_array(a.iter().map(to_dynamic).collect()),
-        Value::Object(o) => Dynamic::from_map(
-            o.iter()
-                .map(|(k, x)| (k.as_str().into(), to_dynamic(x)))
-                .collect(),
-        ),
+        Value::Object(o) => Dynamic::from(JsObject(
+            o.iter().map(|(k, x)| (k.clone(), to_dynamic(x))).collect(),
+        )),
         Value::Date(d) => Dynamic::from(JsDate(d.timestamp_millis() as f64)),
     }
 }

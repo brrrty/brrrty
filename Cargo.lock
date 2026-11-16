@@ -205,10 +205,16 @@ version = "0.0.4"
 dependencies = [
  "brrrty-core",
  "brrrty-js",
+ "brrrty-liquid",
+ "brrrty-markdown",
  "chrono",
  "indexmap",
+ "regex",
  "rhai",
+ "serde_json",
+ "stacker",
  "tempfile",
+ "url",
 ]
 
 [[package]]

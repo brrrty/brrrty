@@ -31,6 +31,24 @@ pub struct ConfigOptions {
     pub global_data: Data,
     /// Warnings from reading the config, reported with the build's.
     pub problems: Vec<Problem>,
+    /// `add_filter` filters, in the order they were added. A later one
+    /// replaces an earlier one of the same name, and any standard filter.
+    pub filters: Vec<ConfigFilter>,
+}
+
+/// A filter the config added.
+#[derive(Clone)]
+pub struct ConfigFilter {
+    pub name: String,
+    pub run: brrrty_liquid::ArgsFilterFn,
+}
+
+impl std::fmt::Debug for ConfigFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigFilter")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One `addPassthroughCopy` entry.

@@ -215,10 +215,10 @@ fn a_syntax_error_has_its_line_and_column() {
 
 #[test]
 fn a_runtime_error_has_its_line_and_column() {
-    let p = err("let a = 1;\n  config.add_filter(\"x\", || 1);\n");
+    let p = err("let a = 1;\n  config.add_widget(\"x\", || 1);\n");
     assert_eq!(p.code, codes::CONFIG_ERROR);
     assert_eq!(p.line, Some(2));
-    assert!(p.message.contains("add_filter"), "{}", p.message);
+    assert!(p.message.contains("add_widget"), "{}", p.message);
     let p = err(r#"throw "custom";"#);
     assert_eq!(p.code, codes::CONFIG_ERROR);
     assert!(p.message.contains("custom"), "{}", p.message);

@@ -15,6 +15,40 @@
 //! #{ dir: #{ input: "src" } }
 //! ```
 //!
+//! ## Filters
+//!
+//! `config.add_filter("name", |value, arg| ...)` adds a filter, the way
+//! `addFilter` does. It gets the value, then the arguments as the template
+//! wrote them (a keyword argument arrives in place as `[name, value]`); a
+//! missing argument is `()`, so `n ?? 40` is a default. A filter that
+//! fails refuses its page, with the template's position and the script's.
+//! `config.add_nondeterministic_filter("shuffle")` stands in for a filter
+//! that uses `Math.random`: its output can never match 11ty's, so pages
+//! that use it are refused.
+//!
+//! Scripts also get `regex_replace(s, pattern, replacement, flags)`,
+//! `regex_split(s, pattern)` and `regex_test(s, pattern)` with JavaScript
+//! pattern semantics, on the `regex` crate: no lookaround and no
+//! backreferences (see the `regex` module for the other differences), and
+//! `url_hostname(s)`, `date(ms)`, `to_locale_date_string(d)`.
+//!
+//! ## Key order
+//!
+//! A JavaScript object keeps its keys in the order they were added (integer
+//! keys first). Rhai's `#{ ... }` maps are sorted by key instead, so
+//! **use `object()` wherever key order can show in output**:
+//!
+//! ```rhai
+//! let o = object();   // o.z = 1; o["a"] = 2;  o.keys() is ["z", "a"]
+//! #{ z: 1, a: 2 }    // a plain map: its keys are sorted, ["a", "z"]
+//! ```
+//!
+//! `o.keys()`, `o.values()`, `o.entries()`, `o.len()`, `o.contains(k)` and
+//! `o.remove(k)` work, `for k in o { ... }` walks the keys (like `for...in`;
+//! Rhai's own `for (k, v) in` gives a counter, not a value), and
+//! `object(map)` converts a map. Objects that come in from Brrrty, such as
+//! page data, are `object()`s, so returning them keeps their order.
+//!
 //! A script runs with limits on its operations, call depth and data sizes,
 //! so one that never ends or grows without bound is stopped with a problem
 //! that points at the file.
@@ -24,8 +58,12 @@
 
 mod api;
 mod convert;
+mod filters;
+mod object;
+mod regex;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub use api::{
     MAX_ARRAY_SIZE, MAX_CALL_LEVELS, MAX_MAP_SIZE, MAX_OPERATIONS, MAX_SECONDS, MAX_STRING_SIZE,
@@ -70,6 +108,9 @@ pub struct SiteConfig {
     pub global_data: Data,
     /// Warnings about what the script set.
     pub problems: Vec<Problem>,
+    /// `add_filter` filters, in order; a later one replaces an earlier one
+    /// of the same name.
+    pub filters: Vec<brrrty_core::ConfigFilter>,
 }
 
 impl SiteConfig {
@@ -81,6 +122,7 @@ impl SiteConfig {
             ignores: self.ignores.clone(),
             global_data: self.global_data.clone(),
             problems: self.problems.clone(),
+            filters: self.filters.clone(),
         }
     }
 }
@@ -171,6 +213,7 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
 
 /// Run a script and read what it set. Problems have no path yet.
 fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
+    api::start_clock();
     let engine = api::engine(clock);
     let ast = engine.compile(src).map_err(|e| vec![syntax_problem(&e)])?;
     let (config, state) = api::Config::new();
@@ -186,6 +229,16 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
         .map_err(|e| vec![runtime_problem(*e)])?;
     let mut problems = Vec::new();
     let dir = read_returned(returned, &mut problems)?;
+    // The script's filters run later, while pages render.
+    let runtime = Arc::new(filters::Runtime { engine, ast });
+    let filters = state
+        .filters
+        .into_iter()
+        .map(|(name, def)| brrrty_core::ConfigFilter {
+            run: filters::make(runtime.clone(), name.clone(), def),
+            name,
+        })
+        .collect();
     Ok(SiteConfig {
         file: PathBuf::from(CONFIG_FILE),
         dir,
@@ -197,6 +250,7 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
         ignores: state.ignores.into_iter().collect(),
         global_data,
         problems,
+        filters,
     })
 }
 
@@ -217,9 +271,16 @@ fn syntax_problem(e: &ParseError) -> Problem {
     )
 }
 
-/// A runtime error as one problem: the innermost error, where it happened,
+/// A runtime error taken apart: the innermost error's text and position,
 /// and the function it happened in.
-fn runtime_problem(e: EvalAltResult) -> Problem {
+pub(crate) struct ErrorParts {
+    pub message: String,
+    pub position: Position,
+    pub code: &'static str,
+    pub limit: bool,
+}
+
+pub(crate) fn error_parts(e: EvalAltResult) -> ErrorParts {
     let outer = e.position();
     let mut inner = e;
     let mut function = None;
@@ -227,7 +288,7 @@ fn runtime_problem(e: EvalAltResult) -> Problem {
         function.get_or_insert(name);
         inner = *err;
     }
-    let pos = if inner.position().is_none() {
+    let position = if inner.position().is_none() {
         outer
     } else {
         inner.position()
@@ -246,7 +307,7 @@ fn runtime_problem(e: EvalAltResult) -> Problem {
     } else {
         codes::CONFIG_ERROR
     };
-    let text = match &inner {
+    let mut message = match &inner {
         EvalAltResult::ErrorRuntime(token, _) if token.is::<api::InvalidValue>() => {
             code = codes::CONFIG_INVALID;
             token.clone_cast::<api::InvalidValue>().0
@@ -254,19 +315,29 @@ fn runtime_problem(e: EvalAltResult) -> Problem {
         EvalAltResult::ErrorTerminated(token, _) => token.to_string(),
         other => other.to_string(),
     };
-    let mut message = text;
     if let Some(f) = function {
         message.push_str(&format!(" (in function `{f}`)"));
     }
-    let p = if limit {
-        Problem::error(code, message).with_help(format!(
+    ErrorParts {
+        message,
+        position,
+        code,
+        limit,
+    }
+}
+
+/// A runtime error as one problem.
+fn runtime_problem(e: EvalAltResult) -> Problem {
+    let parts = error_parts(e);
+    let p = if parts.limit {
+        Problem::error(parts.code, parts.message).with_help(format!(
             "a config script may run {MAX_OPERATIONS} operations for up to {MAX_SECONDS} seconds, nest {MAX_CALL_LEVELS} calls, and build strings up to {} MiB and up to {MAX_ARRAY_SIZE} array items or {MAX_MAP_SIZE} map keys; look for a loop or recursion that never stops",
             MAX_STRING_SIZE / 1024 / 1024
         ))
     } else {
-        Problem::error(code, message)
+        Problem::error(parts.code, parts.message)
     };
-    at(p, pos)
+    at(p, parts.position)
 }
 
 /// The returned object: `()` or a map with `dir`.

@@ -49,6 +49,15 @@ pub type FilterFn = Arc<
     dyn Fn(&Value, &[Value], &[(String, Value)], &FilterCtx) -> Result<Value, String> + Send + Sync,
 >;
 
+/// A filter written the way 11ty passes arguments to a JavaScript filter:
+/// `(input, arguments in the order written, context)`. A keyword argument
+/// keeps its place and arrives as a two-item array `[name, value]`, where
+/// `name` is as written (`'k'` keeps its quotes) and a keyword with
+/// nothing after its colon has the value `undefined`. An `Err` becomes a
+/// render error at the tag or output that used the filter.
+pub type ArgsFilterFn =
+    Arc<dyn Fn(&Value, &[Value], &FilterCtx) -> Result<Value, String> + Send + Sync>;
+
 /// Why a [`Loader`] could not supply a partial.
 ///
 /// `io` is `None` when no root has the file: the partial is missing, and
@@ -87,6 +96,9 @@ pub struct Rendered {
 #[derive(Clone)]
 pub(crate) enum Filter {
     User(FilterFn),
+    /// A filter that takes keyword arguments in place, as 11ty's JS
+    /// filters do.
+    Args(ArgsFilterFn),
     /// A standard filter. It gets the renderer, for the time zone, the
     /// size limit and the filters that evaluate expressions, and every
     /// argument as written: a keyword argument arrives as a `[name, value]`
@@ -125,6 +137,12 @@ impl Engine {
     /// one of the same name.
     pub fn register_filter(&mut self, name: &str, f: FilterFn) {
         self.filters.insert(name.to_string(), Filter::User(f));
+    }
+
+    /// Adds or replaces the filter `name` with one that gets its arguments
+    /// as 11ty gives them to a JavaScript filter (see [`ArgsFilterFn`]).
+    pub fn register_args_filter(&mut self, name: &str, f: ArgsFilterFn) {
+        self.filters.insert(name.to_string(), Filter::Args(f));
     }
 
     /// Adds an engine-neutral filter, such as one of Eleventy's. Keyword

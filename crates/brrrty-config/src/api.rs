@@ -12,6 +12,8 @@ use rhai::{Dynamic, Engine, EvalAltResult, FnPtr, INT, ImmutableString, Map, Pos
 
 use crate::Clock;
 use crate::convert::{deep_copy, to_value};
+use crate::filters::FilterDef;
+use crate::regex;
 
 /// Most operations a config script may run: a few seconds of work. A loop
 /// that never ends stops here.
@@ -31,6 +33,18 @@ pub const MAX_ARRAY_SIZE: usize = 100_000;
 /// Most keys in all maps nested in one value.
 pub const MAX_MAP_SIZE: usize = 100_000;
 
+thread_local! {
+    /// When the script, or the filter call, running on this thread began.
+    static RUN_START: std::cell::Cell<std::time::Instant> =
+        std::cell::Cell::new(std::time::Instant::now());
+}
+
+/// Start the clock that stops a run after [`MAX_SECONDS`]. Call it where a
+/// run begins on this thread.
+pub fn start_clock() {
+    RUN_START.with(|s| s.set(std::time::Instant::now()));
+}
+
 /// A JavaScript `Date`: milliseconds since 1970, `NaN` when invalid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JsDate(pub f64);
@@ -49,6 +63,7 @@ pub struct State {
     pub passthrough: IndexMap<String, Option<String>>,
     pub ignores: IndexSet<String>,
     pub global_data: IndexMap<String, Pending>,
+    pub filters: IndexMap<String, FilterDef>,
 }
 
 /// The `config` object.
@@ -134,13 +149,14 @@ pub fn engine(clock: Clock) -> Engine {
         // Config scripts are one file: no imports, and no `eval`.
         .set_module_resolver(rhai::module_resolvers::DummyModuleResolver::new())
         .disable_symbol("eval");
-    let started = std::time::Instant::now();
     e.on_progress(move |ops| {
-        (ops % 1024 == 0 && started.elapsed().as_secs() >= MAX_SECONDS).then(|| {
-            Dynamic::from(format!(
-                "the script ran for more than {MAX_SECONDS} seconds and was stopped"
-            ))
-        })
+        (ops % 1024 == 0 && RUN_START.with(|s| s.get().elapsed().as_secs() >= MAX_SECONDS)).then(
+            || {
+                Dynamic::from(format!(
+                    "the script ran for more than {MAX_SECONDS} seconds and was stopped"
+                ))
+            },
+        )
     });
     e.on_print(|s| println!("{s}"));
     e.on_debug(|s, _src, pos| eprintln!("{} {pos}: {s}", crate::CONFIG_FILE));
@@ -172,6 +188,24 @@ pub fn engine(clock: Clock) -> Engine {
             Ok(())
         },
     );
+    e.register_fn(
+        "add_filter",
+        |c: &mut Config, name: ImmutableString, f: FnPtr| {
+            lock(&c.0)
+                .filters
+                .insert(name.to_string(), FilterDef::Fn(f));
+        },
+    );
+    e.register_fn(
+        "add_nondeterministic_filter",
+        |c: &mut Config, name: ImmutableString| {
+            lock(&c.0)
+                .filters
+                .insert(name.to_string(), FilterDef::Nondeterministic);
+        },
+    );
+    crate::object::register(&mut e);
+    register_text(&mut e);
     e.register_get("ignores", |c: &mut Config| Ignores(c.0.clone()));
     e.register_fn("add", |i: &mut Ignores, glob: ImmutableString| {
         lock(&i.0).ignores.insert(glob.to_string());
@@ -202,6 +236,8 @@ pub fn engine(clock: Clock) -> Engine {
     let now = move || JsDate(clock.now_ms());
     e.register_fn("now", now);
     e.register_fn("date", |ms: INT| JsDate(time_clip(ms as f64)));
+    e.register_fn("date", |_: ()| JsDate(f64::NAN));
+    e.register_fn("date", |d: JsDate| d);
     e.register_fn("date", |ms: rhai::FLOAT| JsDate(time_clip(ms)));
     e.register_fn("date_to_utc_string", |d: &mut JsDate| utc_string(d.0));
     e.register_fn("get_time", |d: &mut JsDate| number(d.0));
@@ -216,6 +252,81 @@ pub fn engine(clock: Clock) -> Engine {
         tz::date_to_string(Tz::Local, d.0)
     });
     e
+}
+
+const MONTHS_LONG: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// `d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day:
+/// 'numeric' })` in `tz`. A year before 1 prints as ICU prints it, one
+/// more than its absolute value (the era is not shown).
+pub fn locale_date_string(tz: Tz, ms: f64) -> String {
+    match tz::fields(tz, ms) {
+        None => "Invalid Date".into(),
+        Some(f) => {
+            let year = if f.year >= 1 { f.year } else { 1 - f.year };
+            format!("{} {}, {year}", MONTHS_LONG[f.month0 as usize], f.day)
+        }
+    }
+}
+
+/// Text helpers a filter needs: JavaScript regular expressions, and URLs.
+fn register_text(e: &mut Engine) {
+    type Res<T> = Result<T, Box<EvalAltResult>>;
+    fn re(pattern: &str, flags: &str) -> Res<std::sync::Arc<regex::JsRegex>> {
+        regex::compile(pattern, flags).map_err(runtime)
+    }
+    e.register_fn(
+        "regex_replace",
+        move |s: &str, p: &str, r: &str, f: &str| -> Res<String> { Ok(re(p, f)?.replace(s, r)) },
+    );
+    e.register_fn(
+        "regex_replace",
+        move |s: &str, p: &str, r: &str| -> Res<String> { Ok(re(p, "")?.replace(s, r)) },
+    );
+    let split = move |s: &str, p: &str, f: &str| -> Res<rhai::Array> {
+        Ok(re(p, f)?
+            .split(s)
+            .into_iter()
+            .map(|x| x.map_or(Dynamic::UNIT, Dynamic::from))
+            .collect())
+    };
+    e.register_fn("regex_split", move |s: &str, p: &str| split(s, p, ""));
+    e.register_fn("regex_split", move |s: &str, p: &str, f: &str| {
+        split(s, p, f)
+    });
+    e.register_fn("regex_test", move |s: &str, p: &str| -> Res<bool> {
+        Ok(re(p, "")?.is_match(s))
+    });
+    e.register_fn(
+        "regex_test",
+        move |s: &str, p: &str, f: &str| -> Res<bool> { Ok(re(p, f)?.is_match(s)) },
+    );
+    // `new URL(s).hostname`, or `()` when `s` isn't an absolute URL.
+    e.register_fn("url_hostname", |s: Dynamic| -> Dynamic {
+        let Ok(text) = s.into_immutable_string() else {
+            return Dynamic::UNIT;
+        };
+        match url::Url::parse(text.as_str()) {
+            Ok(u) => Dynamic::from(u.host_str().unwrap_or("").to_string()),
+            Err(_) => Dynamic::UNIT,
+        }
+    });
+    e.register_fn("to_locale_date_string", |d: &mut JsDate| {
+        locale_date_string(Tz::Local, d.0)
+    });
 }
 
 /// 11ty's `addGlobalData`: two plain objects merge deeply, anything else
@@ -269,6 +380,23 @@ mod tests {
         );
         assert_eq!(utc_string(8.64e15), "Sat, 13 Sep 275760 00:00:00 GMT");
         assert_eq!(utc_string(f64::NAN), "Invalid Date");
+    }
+
+    #[test]
+    fn locale_dates_match_node() {
+        // Node 26, TZ=UTC: `new Date(t).toLocaleDateString('en-US', ...)`.
+        for (t, want) in [
+            (0.0, "January 1, 1970"),
+            (1_700_000_000_000.0, "November 14, 2023"),
+            (-62_198_755_200_000.0, "January 1, 2"),
+            (8.64e15, "September 13, 275760"),
+            (253_402_300_800_000.0, "January 1, 10000"),
+            (-1.0, "December 31, 1969"),
+            (951_782_400_000.0, "February 29, 2000"),
+            (f64::NAN, "Invalid Date"),
+        ] {
+            assert_eq!(locale_date_string(Tz::Utc, t), want, "{t}");
+        }
     }
 
     #[test]

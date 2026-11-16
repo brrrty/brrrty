@@ -19,7 +19,9 @@ mod render;
 mod tags;
 
 pub use ast::Template;
-pub use engine::{Engine, EngineOptions, FilterCtx, FilterFn, LoadError, Loader, Rendered, Tz};
+pub use engine::{
+    ArgsFilterFn, Engine, EngineOptions, FilterCtx, FilterFn, LoadError, Loader, Rendered, Tz,
+};
 pub use error::{ErrorKind, LiquidError};
 
 /// Parses `source`. `template_name` names the template in errors.
