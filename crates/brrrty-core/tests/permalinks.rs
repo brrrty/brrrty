@@ -465,7 +465,7 @@ fn a_computed_permalink_reading_page_url_is_a_cycle() {
     let p = assert_refused(
         "eleventyComputed:\n  permalink: \"/c8/{{ page.url }}.html\"\n",
         codes::COMPUTED_CYCLE,
-        "Dependency Cycle Found: page.url -> permalink -> page.url",
+        "computed values depend on each other in a loop: page.url -> permalink -> page.url",
     );
     assert!(p.help.is_some());
 }

@@ -97,7 +97,7 @@ fn unsupported_templates_are_errors() {
         .unwrap();
     assert_eq!(
         p.help.as_deref(),
-        Some("Nunjucks and JavaScript template support is in progress.")
+        Some("Nunjucks support is coming soon. Liquid, Markdown and HTML templates work now.")
     );
     assert!(root.join("_site/ok/index.html").exists());
 }

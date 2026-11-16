@@ -89,7 +89,7 @@ pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
                                 ),
                             )
                             .with_path(&shown)
-                            .with_help("Brrrty doesn't build lists from data folders yet."),
+                            .with_help("Brrrty doesn't build lists from data folders yet. Give the file and its folders names that aren't list positions like `0`, or put the list in one file."),
                         );
                         out.unavailable.insert(root_key);
                     }

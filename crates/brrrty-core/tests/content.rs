@@ -108,13 +108,9 @@ fn a_page_reading_its_own_content_is_a_cycle() {
         p.message,
         "this page reads its own `templateContent` through a collection"
     );
-    assert!(
-        p.help
-            .as_deref()
-            .unwrap()
-            .contains("11ty stops the whole build"),
-        "{:?}",
-        p.help
+    assert_eq!(
+        p.help.as_deref(),
+        Some("Skip the page itself when you loop, for example with `{% if p.url != page.url %}`.")
     );
     assert!(!exists(t.path(), "all/index.html"));
     assert_eq!(read(t.path(), "x/index.html"), "x");

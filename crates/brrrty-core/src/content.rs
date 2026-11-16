@@ -470,7 +470,7 @@ impl Contents {
                     ),
                 )
                 .with_help(format!(
-                    "11ty renders a page that reads content not rendered yet once more, after every other page. {label} is still not rendered then, so 11ty stops the whole build here (\"contains a circular reference (using collections) to its own templateContent\")."
+                    "11ty renders a page that reads content not rendered yet once more, after every other page. {label} is still not rendered then, so 11ty stops the whole build here. A layout can read it instead: layouts render after every page's content."
                 ));
                 (self.at(i, p), None)
             }
@@ -492,7 +492,6 @@ impl Contents {
     }
 
     fn blocked_problem(&self, i: usize, waits: &[usize]) -> (Problem, Option<usize>) {
-        let help = "11ty stops the whole build here (\"contains a circular reference (using collections) to its own templateContent\").";
         if waits.contains(&i) {
             let p = Problem::error(
                 codes::CONTENT_CYCLE,
@@ -501,9 +500,9 @@ impl Contents {
                     "this page reads its own `templateContent` through a collection".to_string(),
                 ),
             )
-            .with_help(format!(
-                "{help} Skip the page itself when you loop, for example with `{{% if p.url != page.url %}}`."
-            ));
+            .with_help(
+                "Skip the page itself when you loop, for example with `{% if p.url != page.url %}`.",
+            );
             return (self.at(i, p), None);
         }
         if let Some(path) = self.cycle_from(i) {
@@ -524,7 +523,9 @@ impl Contents {
                 codes::CONTENT_CYCLE,
                 format!("`templateContent` reads go in a circle: {}", shorten(&ring)),
             )
-            .with_help(help);
+            .with_help(
+                "Change one of these pages so it doesn't read the next one's `templateContent`.",
+            );
             return (self.at(i, p), None);
         }
         let j = waits.first().copied().unwrap_or(i);

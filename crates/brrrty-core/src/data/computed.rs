@@ -81,9 +81,8 @@ pub(crate) struct Applied {
     pub permalink: Permalink,
 }
 
-fn unsupported(message: String) -> Problem {
-    Problem::error(codes::COMPUTED_UNSUPPORTED, message)
-        .with_help("Computed data of this shape isn't supported yet.")
+fn unsupported(message: String, help: String) -> Problem {
+    Problem::error(codes::COMPUTED_UNSUPPORTED, message).with_help(help)
 }
 
 impl Plan {
@@ -108,12 +107,14 @@ impl Plan {
             {
                 return Err(unsupported(
                     "`eleventyComputed` key `permalink` as a map isn't supported yet".to_string(),
+                    "Set the `permalink` map in front matter or a data file, or compute `permalink` as a string.".to_string(),
                 ));
             }
             if REFUSED_ROOTS.contains(&key.as_str()) {
-                return Err(unsupported(format!(
-                    "`eleventyComputed` key `{key}` isn't supported yet"
-                )));
+                return Err(unsupported(
+                    format!("`eleventyComputed` key `{key}` isn't supported yet"),
+                    format!("Set `{key}` in front matter or a data file instead of computing it."),
+                ));
             }
         }
         let mut leaves = Vec::new();
@@ -170,9 +171,13 @@ impl Plan {
                 if symbol.starts_with("collections.") {
                     return Err(Problem::error(
                         codes::DATA_UNSUPPORTED,
-                        "this page uses `collections`, which Brrrty doesn't build yet",
+                        format!(
+                            "computed value `{name}` reads `collections`, which Brrrty doesn't support in computed data yet"
+                        ),
                     )
-                    .with_help("Collections are in progress."));
+                    .with_help(
+                        "Read `collections` in the template itself, for example `{% assign posts = collections.post %}`.",
+                    ));
                 }
                 if symbol != *name && known.contains_key(symbol.as_str()) {
                     used.push(symbol);
@@ -188,9 +193,12 @@ impl Plan {
             let path: Vec<&str> = cycle.iter().map(|&i| graph.names[i].as_str()).collect();
             Problem::error(
                 codes::COMPUTED_CYCLE,
-                format!("Dependency Cycle Found: {}", path.join(" -> ")),
+                format!(
+                    "computed values depend on each other in a loop: {}",
+                    path.join(" -> ")
+                ),
             )
-            .with_help("11ty stops the whole build here; make the computed values not depend on each other in a loop.")
+            .with_help("Change one of these values so it doesn't read the next one.")
         })?;
         let mut leaves: Vec<Option<Leaf>> = leaves.into_iter().map(Some).collect();
         let steps = order
@@ -244,7 +252,14 @@ impl Plan {
                 let _ = set_path(Arc::make_mut(own), &step.path, value.clone());
             }
             set_path(&mut data, &step.path, value).map_err(|why| {
-                unsupported(format!("computed key `{key}` can't be set: {why}")).with_path(shown)
+                unsupported(
+                    format!("computed key `{key}` can't be set: {why}"),
+                    format!(
+                        "Compute the whole `{}` value instead, or set it in front matter.",
+                        step.path[0]
+                    ),
+                )
+                .with_path(shown)
             })?;
         }
         // The data is a JavaScript object: index-like keys come first. The
@@ -329,10 +344,13 @@ fn collect(object: &Data, path: &mut Vec<String>, out: &mut Vec<Leaf>) -> Result
     for (key, value) in Value::js_entries(object) {
         path.push(key.clone());
         if key.is_empty() || key.contains(['.', '[', ']']) {
-            return Err(unsupported(format!(
-                "`eleventyComputed` key `{}` isn't supported yet",
-                path.join(".")
-            )));
+            return Err(unsupported(
+                format!(
+                    "`eleventyComputed` key `{}` isn't supported yet",
+                    path.join(".")
+                ),
+                "Rename the key so it isn't empty and has no `.`, `[` or `]`.".to_string(),
+            ));
         }
         match value {
             Value::Object(o) => collect(o, path, out)?,

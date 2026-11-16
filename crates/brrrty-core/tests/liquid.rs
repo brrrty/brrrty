@@ -403,7 +403,7 @@ fn layout_problems_are_clear_errors() {
     assert_eq!(
         njk.help.as_deref(),
         Some(
-            "Nunjucks support is in progress. Liquid, Markdown and HTML layouts work. 1 page uses this layout and was not written."
+            "Nunjucks support is coming soon. Liquid, Markdown and HTML layouts work now. 1 page uses this layout and was not written."
         )
     );
     let invalid: Vec<_> = r

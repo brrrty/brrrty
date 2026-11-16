@@ -78,14 +78,14 @@ fn a_cycle_between_computed_keys_refuses_the_page() {
     assert_refused(
         "  a: \"{{ b }}\"\n  b: \"{{ c }}\"\n  c: \"{{ a }}\"\n",
         codes::COMPUTED_CYCLE,
-        "Dependency Cycle Found: a -> b -> c -> a",
+        "computed values depend on each other in a loop: a -> b -> c -> a",
     );
     // The path is the one `dependency-graph` finds, from the first key in
     // insertion order that leads into the loop (probed).
     assert_refused(
         "  z: \"{{ y }}\"\n  x: \"{{ w }}\"\n  y: \"{{ x }}\"\n  w: \"{{ y }}\"\n",
         codes::COMPUTED_CYCLE,
-        "Dependency Cycle Found: z -> y -> x -> w -> y",
+        "computed values depend on each other in a loop: z -> y -> x -> w -> y",
     );
     let t = tempfile::tempdir().unwrap();
     write(
@@ -170,6 +170,42 @@ fn a_computed_value_reading_collections_is_refused() {
         codes::DATA_UNSUPPORTED,
         "collections",
     );
+}
+
+/// Each refusal's help says what to do instead.
+#[test]
+fn refusals_say_what_to_do() {
+    for (front, help) in [
+        (
+            "  layout: base\n",
+            "Set `layout` in front matter or a data file instead of computing it.",
+        ),
+        (
+            "  permalink:\n    build: /x/\n",
+            "Set the `permalink` map in front matter or a data file, or compute `permalink` as a string.",
+        ),
+        (
+            "  \"a.b\": x\n",
+            "Rename the key so it isn't empty and has no `.`, `[` or `]`.",
+        ),
+        (
+            "  n: \"{{ collections.all | size }}\"\n",
+            "Read `collections` in the template itself, for example `{% assign posts = collections.post %}`.",
+        ),
+        (
+            "  a: \"{{ b }}\"\n  b: \"{{ a }}\"\n",
+            "Change one of these values so it doesn't read the next one.",
+        ),
+        (
+            "  fresh:\n    \"0\": a\n",
+            "Compute the whole `fresh` value instead, or set it in front matter.",
+        ),
+    ] {
+        let (_t, r) = with_computed(front);
+        let p = only_error(&r);
+        assert_eq!(p.help.as_deref(), Some(help), "{front}");
+        assert!(!p.message.contains("11ty"), "{}", p.message);
+    }
 }
 
 /// Probed with the `lodash.set` rules: an index-like key under a missing

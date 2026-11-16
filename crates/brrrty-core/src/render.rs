@@ -96,7 +96,7 @@ pub(crate) fn engines_for(ext: &str, over: Option<&Json>) -> Result<(Engines, St
                     "templateEngineOverride `{text}` uses {other}, which Brrrty doesn't support yet"
                 ),
             )
-            .with_help("Liquid, Markdown and HTML work; Nunjucks support is in progress."));
+            .with_help("Nunjucks support is coming soon. Until then, use `liquid`, `md`, `html` or `liquid,md`."));
         }
         Some(other) => {
             return Err(override_error(format!(

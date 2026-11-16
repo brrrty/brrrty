@@ -1286,14 +1286,9 @@ fn build_in_pool(
     };
     report.problems.extend(discovery.warnings.iter().cloned());
     for path in &discovery.unsupported {
-        report.problems.push(
-            Problem::error(
-                codes::TEMPLATE_UNSUPPORTED,
-                "this template language is not supported yet",
-            )
-            .with_path(input_rel.join(path))
-            .with_help("Nunjucks and JavaScript template support is in progress."),
-        );
+        report
+            .problems
+            .push(unsupported_template(&input_rel.join(path)));
     }
     // 11ty skips these silently unless a plugin adds them; say so once per extension.
     let mut by_ext: std::collections::BTreeMap<String, Vec<&PathBuf>> = Default::default();
@@ -1762,6 +1757,24 @@ fn build_in_pool(
     report.unchanged = pt.unchanged;
     report.problems.extend(pt.problems);
     finish(report, strict, start)
+}
+
+/// The problem for a template in a language Brrrty doesn't render yet.
+fn unsupported_template(shown: &Path) -> Problem {
+    let njk = shown
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("njk"));
+    let help = if njk {
+        "Nunjucks support is coming soon. Liquid, Markdown and HTML templates work now."
+    } else {
+        "JavaScript templates are coming soon. Liquid, Markdown and HTML templates work now."
+    };
+    Problem::error(
+        codes::TEMPLATE_UNSUPPORTED,
+        "this template language is not supported yet",
+    )
+    .with_path(shown)
+    .with_help(help)
 }
 
 /// Which template page a slot holds while the collections are built.

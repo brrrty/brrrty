@@ -247,7 +247,7 @@ impl<'a> Layouts<'a> {
             return Err(file(
                 codes::LAYOUT_UNSUPPORTED,
                 "Nunjucks layouts aren't supported yet".to_string(),
-                "Nunjucks support is in progress. Liquid, Markdown and HTML layouts work.",
+                "Nunjucks support is coming soon. Liquid, Markdown and HTML layouts work now.",
             ));
         } else if [".11ty.js", ".11ty.cjs", ".11ty.mjs"]
             .iter()
@@ -256,7 +256,7 @@ impl<'a> Layouts<'a> {
             return Err(file(
                 codes::LAYOUT_UNSUPPORTED,
                 "JavaScript layouts aren't supported yet".to_string(),
-                "Liquid, Markdown and HTML layouts work.",
+                "JavaScript layouts are coming soon. Liquid, Markdown and HTML layouts work now.",
             ));
         } else {
             return Err(file(
