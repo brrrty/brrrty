@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 /// Stable ids for every [`Problem`] code.
 pub mod codes {
+    pub const BUILD_THREADS_FAILED: &str = "build-threads-failed";
     pub const CWD_UNAVAILABLE: &str = "cwd-unavailable";
+    pub const DATA_RESERVED: &str = "data-reserved";
+    pub const DATA_UNSUPPORTED: &str = "data-unsupported";
     pub const DATE_INVALID: &str = "date-invalid";
     pub const DISCOVER_FAILED: &str = "discover-failed";
     pub const ELEVENTY_CONFIG_IGNORED: &str = "eleventy-config-ignored";
@@ -13,6 +16,14 @@ pub mod codes {
     pub const IGNORE_LINE_INVALID: &str = "ignore-line-invalid";
     pub const INPUT_MISSING: &str = "input-missing";
     pub const INPUT_NOT_A_DIRECTORY: &str = "input-not-a-directory";
+    pub const LAYOUT_CYCLE: &str = "layout-cycle";
+    pub const LAYOUT_INVALID: &str = "layout-invalid";
+    pub const LAYOUT_MISSING: &str = "layout-missing";
+    pub const LAYOUT_UNSUPPORTED: &str = "layout-unsupported";
+    pub const LIQUID_LIMIT: &str = "liquid-limit";
+    pub const LIQUID_RENDER: &str = "liquid-render";
+    pub const LIQUID_SYNTAX: &str = "liquid-syntax";
+    pub const LIQUID_UNKNOWN_FILTER: &str = "liquid-unknown-filter";
     pub const OUTPUT_COLLISION: &str = "output-collision";
     pub const OUTPUT_ESCAPES: &str = "output-escapes";
     pub const OUTPUT_OVERLAPS_SOURCE: &str = "output-overlaps-source";
@@ -27,8 +38,9 @@ pub mod codes {
     pub const PERMALINK_TEMPLATED: &str = "permalink-templated";
     pub const SYMLINK_BROKEN: &str = "symlink-broken";
     pub const SYMLINK_LOOP: &str = "symlink-loop";
+    pub const TEMPLATE_ENGINE_OVERRIDE_INVALID: &str = "template-engine-override-invalid";
+    pub const TEMPLATE_ENGINE_UNSUPPORTED: &str = "template-engine-unsupported";
     pub const TEMPLATE_NOT_UTF8: &str = "template-not-utf8";
-    pub const TEMPLATE_SYNTAX_UNSUPPORTED: &str = "template-syntax-unsupported";
     pub const TEMPLATE_PLUGIN_ONLY: &str = "template-plugin-only";
     pub const TEMPLATE_UNREADABLE: &str = "template-unreadable";
     pub const TEMPLATE_UNSUPPORTED: &str = "template-unsupported";

@@ -97,7 +97,7 @@ fn unsupported_templates_are_errors() {
         .unwrap();
     assert_eq!(
         p.help.as_deref(),
-        Some("Liquid and Nunjucks support is in progress.")
+        Some("Nunjucks and JavaScript template support is in progress.")
     );
     assert!(root.join("_site/ok/index.html").exists());
 }
@@ -360,79 +360,42 @@ fn input_that_is_a_file_is_a_clear_error() {
 }
 
 #[test]
-fn template_syntax_in_body_is_an_error_with_file_position() {
+fn pagination_and_computed_data_are_still_errors() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(
-        root,
-        "src/a.md",
-        "---\ntitle: x\n---\nhello\n  {{ name }}\n",
-    );
-    write(root, "src/b.html", "<p>{% if x %}</p>\n");
-    write(root, "src/ok.md", "fine { not syntax }\n");
-    let r = build(&opts(root), &MarkdownIt::new());
-    let all: Vec<_> = r
-        .problems
-        .iter()
-        .filter(|p| p.code == codes::TEMPLATE_SYNTAX_UNSUPPORTED)
-        .collect();
-    assert_eq!(all.len(), 2, "{:?}", r.problems);
-    let a = all
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/a.md")))
-        .unwrap();
-    assert_eq!((a.line, a.column), (Some(5), Some(3)));
-    assert_eq!(a.message, "Template syntax ({{ or {%) isn't supported yet");
-    assert_eq!(
-        a.help.as_deref(),
-        Some("Liquid and Nunjucks support is in progress.")
-    );
-    let b = all
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/b.html")))
-        .unwrap();
-    assert_eq!((b.line, b.column), (Some(1), Some(4)));
-    assert!(!root.join("_site/a/index.html").exists());
-    assert!(!root.join("_site/b/index.html").exists());
-    assert!(root.join("_site/ok/index.html").exists());
-}
-
-#[test]
-fn unsupported_front_matter_keys_are_errors() {
-    let t = tempfile::tempdir().unwrap();
-    let root = t.path();
-    write(
-        root,
-        "src/a.md",
-        "---\nlayout: base.njk\ntags: [x]\n---\nbody\n",
-    );
     write(
         root,
         "src/b.md",
         "---\npagination:\n  data: x\neleventyComputed:\n  y: 1\n---\nbody\n",
     );
+    // A layout's front matter is page data too.
+    write(
+        root,
+        "src/_includes/paged.liquid",
+        "---\npagination:\n  data: x\n---\n{{ content }}",
+    );
+    write(root, "src/d.md", "---\nlayout: paged\n---\nbody\n");
     write(root, "src/c.md", "---\ntitle: ok\ntags: [x]\n---\nbody\n");
     let r = build(&opts(root), &MarkdownIt::new());
-    let a = r
-        .problems
-        .iter()
-        .find(|p| p.path.as_deref() == Some(Path::new("src/a.md")))
-        .unwrap();
-    assert_eq!(a.code, codes::FRONT_MATTER_UNSUPPORTED);
-    assert!(a.message.contains("`layout`"), "{}", a.message);
-    assert_eq!(
-        a.help.as_deref(),
-        Some("Layouts, pagination, and computed data are in progress.")
-    );
     let b = r
         .problems
         .iter()
         .find(|p| p.path.as_deref() == Some(Path::new("src/b.md")))
         .unwrap();
+    assert_eq!(b.code, codes::FRONT_MATTER_UNSUPPORTED);
     assert!(b.message.contains("`pagination`") && b.message.contains("`eleventyComputed`"));
-    assert!(!root.join("_site/a/index.html").exists());
+    assert_eq!(
+        b.help.as_deref(),
+        Some("Pagination and computed data are in progress.")
+    );
+    let d = r
+        .problems
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("src/d.md")))
+        .unwrap();
+    assert!(d.message.contains("`pagination`"), "{}", d.message);
     assert!(root.join("_site/c/index.html").exists());
-    assert_eq!(error_count(&r), 2);
+    assert_eq!(error_count(&r), 2, "{:?}", r.problems);
 }
 
 #[test]
@@ -506,7 +469,7 @@ fn problem_paths_are_root_relative() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(root, "src/bad.md", "---\ntitle: [unclosed\n---\n");
-    write(root, "src/posts/raw.md", "{{ x }}\n");
+    write(root, "src/posts/raw.md", "{{ x | nope }}\n");
     let r = build(&opts(root), &MarkdownIt::new());
     assert!(!r.problems.is_empty());
     for p in &r.problems {
@@ -524,7 +487,7 @@ fn problem_paths_are_root_relative() {
         r.problems
             .iter()
             .any(|p| p.path.as_deref() == Some(Path::new("src/posts/raw.md"))
-                && p.code == codes::TEMPLATE_SYNTAX_UNSUPPORTED)
+                && p.code == codes::LIQUID_UNKNOWN_FILTER)
     );
 }
 

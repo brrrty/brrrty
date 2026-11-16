@@ -55,6 +55,20 @@ pub fn file_slug(rel_to_input: &Path) -> String {
     stem.to_string()
 }
 
+/// 11ty's `page.filePathStem`: the path from the input folder without its
+/// extension, with the file name's date prefix removed as in [`file_slug`]
+/// (but `index` kept).
+pub fn file_path_stem(rel_to_input: &Path) -> String {
+    let mut parts: Vec<String> = rel_to_input
+        .parent()
+        .into_iter()
+        .flat_map(|p| p.components())
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.push(strip_date(stem(rel_to_input)).to_string());
+    format!("/{}", parts.join("/"))
+}
+
 fn midnight(date: NaiveDate) -> DateTime<Utc> {
     date.and_hms_opt(0, 0, 0)
         .expect("midnight is valid")
@@ -143,6 +157,20 @@ mod tests {
         assert_eq!(file_slug(Path::new("sub/deep/index.html")), "deep");
         assert_eq!(file_slug(Path::new("index.md")), "");
         assert_eq!(file_slug(Path::new("about.md")), "about");
+    }
+
+    /// Probed: `/index`, `/posts/index`, `/posts/2026/first-post`.
+    #[test]
+    fn file_path_stems() {
+        assert_eq!(file_path_stem(Path::new("index.liquid")), "/index");
+        assert_eq!(
+            file_path_stem(Path::new("posts/index.liquid")),
+            "/posts/index"
+        );
+        assert_eq!(
+            file_path_stem(Path::new("posts/2026/2026-03-04-first-post.md")),
+            "/posts/2026/first-post"
+        );
     }
 
     #[test]

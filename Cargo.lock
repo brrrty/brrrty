@@ -183,10 +183,12 @@ name = "brrrty-core"
 version = "0.0.2"
 dependencies = [
  "brrrty-js",
+ "brrrty-liquid",
  "brrrty-markdown",
  "chrono",
  "globset",
  "ignore",
+ "indexmap",
  "rayon",
  "regex",
  "serde_json",

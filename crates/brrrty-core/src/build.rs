@@ -1,20 +1,32 @@
 //! The build pipeline: discover, parse, resolve, render, write, copy.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use brrrty_js::Value;
+use brrrty_liquid::{Engine, EngineOptions, Tz};
 use brrrty_markdown::MarkdownRenderer;
+use indexmap::IndexMap;
 use rayon::prelude::*;
+use serde_json::{Map, Value as Json};
 
+use crate::data::{
+    global_data_names, js_object, key_line, local_data_files, merge, reserved_keys,
+    reserved_problem,
+};
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::split_front_matter;
+use crate::layout::{ChainError, LayoutFile, Layouts};
+use crate::loader::FsLoader;
 use crate::options::BuildOptions;
-use crate::page::{Page, file_slug, resolve_date};
+use crate::page::{Page, file_path_stem, file_slug, resolve_date};
 use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Permalink, resolve_permalink};
 use crate::problem::{Problem, Severity, codes};
+use crate::render::{Engines, Job, Pipeline, body_line, engines_for};
 
 /// What a build did.
 #[derive(Debug)]
@@ -52,36 +64,197 @@ fn contained_output_path(out: &Path, rel: &Path) -> Option<PathBuf> {
 struct Prepared {
     page: Page,
     output_rel: PathBuf,
+    /// The page's path relative to the project root.
+    shown: PathBuf,
+    body_line: usize,
+    engines: Engines,
+    data: IndexMap<String, Value>,
+    layouts: Vec<Arc<LayoutFile>>,
 }
 
-fn with_path_if_missing(p: Problem, rel: &Path) -> Problem {
-    if p.path.is_some() {
-        p
+/// What loading one template gave.
+enum Loaded {
+    Page(Box<Prepared>),
+    /// `permalink: false`.
+    Skip,
+    /// A problem with this page.
+    Failed(Problem),
+    /// A problem in a layout file, the same for every page that uses it.
+    LayoutFailed(Problem),
+}
+
+/// What every page shares while loading.
+struct Shared<'a> {
+    input: &'a Path,
+    input_rel: &'a Path,
+    layouts: &'a Layouts<'a>,
+    /// `eleventy` and `pkg`, the data 11ty supplies to every page.
+    globals: Map<String, Json>,
+    /// The output folder as 11ty spells it in `page.outputPath`.
+    output_shown: String,
+}
+
+/// 11ty's spelling of a folder: `./src/`, `../x/`, or an absolute path, with
+/// a trailing slash.
+fn dot_dir(p: &Path) -> String {
+    let joined = p
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    if p.is_absolute() {
+        let shown = p.display().to_string();
+        return format!("{}/", shown.trim_end_matches('/'));
+    }
+    if joined.is_empty() {
+        "./".to_string()
+    } else if joined == ".." || joined.starts_with("../") {
+        format!("{joined}/")
     } else {
-        p.with_path(rel)
+        format!("./{joined}/")
     }
 }
 
-/// Load one template. Problems carry paths relative to the project root.
-fn load(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
-    load_page(input, input_rel, rel).map_err(|mut p| {
-        // Problems from here are relative to the input folder.
-        p.path = Some(input_rel.join(p.path.as_deref().unwrap_or(rel)));
-        p
-    })
+fn slash_path(p: &Path) -> String {
+    p.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
-fn load_page(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepared>, Problem> {
-    let full = input.join(rel);
+/// The data 11ty gives every page: `eleventy`, then `pkg` (the project's
+/// `package.json`, or `{}`).
+fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Map<String, Json>, String) {
+    let input = dot_dir(input_rel);
+    let output = crate::options::normalize(&opts.output);
+    let output_shown = dot_dir(&output);
+    let eleventy = serde_json::json!({
+        "version": ELEVENTY_VERSION,
+        "generator": format!("Eleventy v{ELEVENTY_VERSION}"),
+        "env": {
+            "source": "cli",
+            "runMode": "build",
+            "root": root.display().to_string(),
+        },
+        "directories": {
+            "input": input,
+            "data": format!("{input}_data/"),
+            "includes": format!("{input}_includes/"),
+            "output": output_shown,
+        },
+    });
+    let pkg = fs::read_to_string(root.join("package.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Json>(&t).ok())
+        .filter(Json::is_object)
+        .unwrap_or_else(|| Json::Object(Map::new()));
+    let mut g = Map::new();
+    g.insert("eleventy".to_string(), eleventy);
+    g.insert("pkg".to_string(), pkg);
+    (g, output_shown)
+}
+
+/// The version of 11ty whose output Brrrty reproduces.
+const ELEVENTY_VERSION: &str = "3.1.8";
+
+fn at(p: Problem, line: Option<usize>) -> Problem {
+    match line {
+        Some(l) => p.at(l, 1),
+        None => p,
+    }
+}
+
+/// Load one template: its front matter, layouts, data and output path.
+/// Problems carry paths relative to the project root.
+fn load(shared: &Shared<'_>, rel: &Path) -> Loaded {
+    match load_page(shared, rel) {
+        Ok(l) => l,
+        Err(p) => Loaded::Failed(p),
+    }
+}
+
+fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
+    let shown = shared.input_rel.join(rel);
+    let full = shared.input.join(rel);
     let bytes = fs::read(&full).map_err(|e| {
-        Problem::error(codes::TEMPLATE_UNREADABLE, format!("cannot read file: {e}")).with_path(rel)
+        Problem::error(codes::TEMPLATE_UNREADABLE, format!("cannot read file: {e}"))
+            .with_path(&shown)
     })?;
     let text = String::from_utf8(bytes).map_err(|_| {
         Problem::error(codes::TEMPLATE_NOT_UTF8, "file is not valid UTF-8")
-            .with_path(rel)
+            .with_path(&shown)
             .with_help("save the file as UTF-8")
     })?;
-    let (data, body) = split_front_matter(&text).map_err(|p| with_path_if_missing(p, rel))?;
+    let (front, body) = split_front_matter(&text).map_err(|p| p.with_path(&shown))?;
+
+    // Data files can set anything, a layout or permalink included, so check
+    // them before reading anything else into the page.
+    if let Some(file) = local_data_files(shared.input, shared.input_rel, rel).first() {
+        return Err(Problem::error(
+            codes::DATA_UNSUPPORTED,
+            format!(
+                "data file {} applies to this page, and Brrrty doesn't read data files yet",
+                file.display()
+            ),
+        )
+        .with_path(&shown)
+        .with_help("Template and directory data files are in progress."));
+    }
+
+    let layouts = match front.get("layout") {
+        None => Vec::new(),
+        Some(v) if !crate::js::js_truthy(v) => Vec::new(),
+        Some(Json::String(name)) => match shared.layouts.chain(name, &shown, &text) {
+            Ok(chain) => chain,
+            Err(ChainError::Page(p)) => return Err(p),
+            Err(ChainError::Layout(p)) => return Ok(Loaded::LayoutFailed(p)),
+        },
+        Some(other) => {
+            return Err(at(
+                Problem::error(
+                    codes::LAYOUT_INVALID,
+                    format!(
+                        "`layout` must be a layout name, found {}",
+                        serde_json::to_string(other).unwrap_or_default()
+                    ),
+                )
+                .with_path(&shown)
+                .with_help("write the layout's name, like `layout: base`"),
+                key_line(&text, "layout"),
+            ));
+        }
+    };
+
+    // 11ty refuses reserved names anywhere in the data.
+    let reserved = reserved_keys(&front);
+    if !reserved.is_empty() {
+        let key = reserved[0].split('.').next().unwrap_or("");
+        return Err(at(
+            reserved_problem(&reserved).with_path(&shown),
+            key_line(&text, key),
+        ));
+    }
+    for layout in &layouts {
+        let reserved = reserved_keys(&layout.data);
+        if !reserved.is_empty() {
+            return Ok(Loaded::LayoutFailed(
+                reserved_problem(&reserved).with_path(&layout.shown),
+            ));
+        }
+    }
+
+    // The layout chain's data, farthest first and without `layout`, then the
+    // page's own, over the data 11ty supplies.
+    let mut layout_data = Map::new();
+    for layout in layouts.iter().rev() {
+        merge(&mut layout_data, &layout.data);
+    }
+    layout_data.shift_remove("layout");
+    let mut data = shared.globals.clone();
+    merge(&mut data, &layout_data);
+    merge(&mut data, &front);
+
+    reject_unsupported_keys(&data, &shown)?;
     let meta = fs::metadata(&full).ok();
     let modified = meta
         .as_ref()
@@ -91,14 +264,45 @@ fn load_page(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepar
         .as_ref()
         .and_then(|m| m.created().ok())
         .unwrap_or(modified);
-    let date = resolve_date(&data, &input_rel.join(rel), created, modified)
-        .map_err(|p| with_path_if_missing(p, rel))?;
-    let permalink = resolve_permalink(rel, &data).map_err(|p| with_path_if_missing(p, rel))?;
-    let Permalink::Write { output_rel, .. } = permalink else {
-        return Ok(None);
+    let date = resolve_date(&data, &shown, created, modified).map_err(|p| p.with_path(&shown))?;
+    let permalink = resolve_permalink(rel, &data).map_err(|p| p.with_path(&shown))?;
+    let Permalink::Write { url, output_rel } = permalink else {
+        return Ok(Loaded::Skip);
     };
-    reject_unsupported_features(&text, &data, body, rel)?;
-    Ok(Some(Prepared {
+    let ext = rel
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let (engines, syntax) = engines_for(&ext, data.get("templateEngineOverride")).map_err(|p| {
+        at(
+            p.with_path(&shown),
+            key_line(&text, "templateEngineOverride"),
+        )
+    })?;
+
+    // `page`, in the order 11ty fills it in, after any `page` keys of the
+    // page's own.
+    let mut page = match data.get("page") {
+        Some(Json::Object(own)) => js_object(own),
+        _ => IndexMap::new(),
+    };
+    let string = |s: String| Value::String(s.into());
+    let input_path = format!("{}{}", dot_dir(shared.input_rel), slash_path(rel));
+    let output_path = format!("{}{}", shared.output_shown, slash_path(&output_rel));
+    page.insert("inputPath".into(), string(input_path));
+    page.insert("fileSlug".into(), string(file_slug(rel)));
+    page.insert("filePathStem".into(), string(file_path_stem(rel)));
+    page.insert("outputFileExtension".into(), string("html".into()));
+    page.insert("templateSyntax".into(), string(syntax));
+    page.insert("date".into(), Value::Date(date.fixed_offset()));
+    page.insert("rawInput".into(), string(body.to_string()));
+    page.insert("url".into(), string(url));
+    page.insert("outputPath".into(), string(output_path));
+    let mut values = js_object(&data);
+    values.insert("page".into(), Value::Object(Arc::new(page)));
+
+    Ok(Loaded::Page(Box::new(Prepared {
+        body_line: body_line(&text, body),
         page: Page {
             input_path: rel.to_path_buf(),
             file_slug: file_slug(rel),
@@ -107,50 +311,97 @@ fn load_page(input: &Path, input_rel: &Path, rel: &Path) -> Result<Option<Prepar
             body: body.to_string(),
         },
         output_rel,
-    }))
+        shown,
+        engines,
+        data: values,
+        layouts,
+    })))
 }
 
 /// Front matter keys that change a page's output in ways Brrrty can't reproduce yet.
-const UNSUPPORTED_KEYS: &[&str] = &["layout", "pagination", "eleventyComputed"];
+const UNSUPPORTED_KEYS: &[&str] = &["pagination", "eleventyComputed"];
 
 /// Refuse pages that 11ty would process further than Brrrty can yet, instead of writing
 /// output that silently differs.
-fn reject_unsupported_features(
-    text: &str,
-    data: &serde_json::Map<String, serde_json::Value>,
-    body: &str,
-    rel: &Path,
-) -> Result<(), Problem> {
+fn reject_unsupported_keys(data: &Map<String, Json>, shown: &Path) -> Result<(), Problem> {
     let keys: Vec<String> = UNSUPPORTED_KEYS
         .iter()
         .filter(|k| data.contains_key(**k))
         .map(|k| format!("`{k}`"))
         .collect();
-    if !keys.is_empty() {
-        let message = if keys.len() == 1 {
-            format!("Front matter key {} isn't supported yet", keys[0])
-        } else {
-            format!("Front matter keys {} aren't supported yet", keys.join(", "))
-        };
-        return Err(Problem::error(codes::FRONT_MATTER_UNSUPPORTED, message)
-            .with_path(rel)
-            .with_help("Layouts, pagination, and computed data are in progress."));
+    if keys.is_empty() {
+        return Ok(());
     }
-    if let Some(at) = body.find("{{").into_iter().chain(body.find("{%")).min() {
-        // `body` is the tail of the file, so its start is where the file text ends minus its length.
-        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-        let upto = &text[..text.len() - body.len() + at];
-        let line = upto.matches('\n').count() + 1;
-        let column = upto.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
-        return Err(Problem::error(
-            codes::TEMPLATE_SYNTAX_UNSUPPORTED,
-            "Template syntax ({{ or {%) isn't supported yet",
+    let message = if keys.len() == 1 {
+        format!("Front matter key {} isn't supported yet", keys[0])
+    } else {
+        format!("Front matter keys {} aren't supported yet", keys.join(", "))
+    };
+    Err(Problem::error(codes::FRONT_MATTER_UNSUPPORTED, message)
+        .with_path(shown)
+        .with_help("Pagination and computed data are in progress."))
+}
+
+/// The problem for a page that read data Brrrty doesn't supply yet.
+fn missing_data_problem(
+    undefined: &BTreeSet<String>,
+    data_names: &BTreeSet<String>,
+    data_dir: &Path,
+) -> Option<Problem> {
+    if undefined.contains("collections") {
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                "this page uses `collections`, which Brrrty doesn't build yet",
+            )
+            .with_help("Collections are in progress."),
+        );
+    }
+    let used: Vec<String> = undefined
+        .intersection(data_names)
+        .map(|n| format!("`{n}`"))
+        .collect();
+    if used.is_empty() {
+        return None;
+    }
+    Some(
+        Problem::error(
+            codes::DATA_UNSUPPORTED,
+            format!(
+                "this page uses {} from {}, which Brrrty doesn't read yet",
+                used.join(", "),
+                data_dir.display()
+            ),
         )
-        .with_path(rel)
-        .at(line, column)
-        .with_help("Liquid and Nunjucks support is in progress."));
+        .with_help("Global data files are in progress."),
+    )
+}
+
+/// One problem per distinct layout problem, saying how many pages it stopped.
+fn layout_problems(found: Vec<Problem>) -> Vec<Problem> {
+    let mut counted: Vec<(Problem, usize)> = Vec::new();
+    for p in found {
+        match counted.iter_mut().find(|(q, _)| *q == p) {
+            Some((_, n)) => *n += 1,
+            None => counted.push((p, 1)),
+        }
     }
-    Ok(())
+    counted
+        .into_iter()
+        .map(|(mut p, n)| {
+            let pages = if n == 1 {
+                "1 page uses this layout and was not written.".to_string()
+            } else {
+                format!("{n} pages use this layout and were not written.")
+            };
+            p.help = Some(match p.help.take() {
+                Some(h) if h.ends_with('.') => format!("{h} {pages}"),
+                Some(h) => format!("{h}. {pages}"),
+                None => pages,
+            });
+            p
+        })
+        .collect()
 }
 
 /// Sort by path then code, and in strict mode keep only up to the first error.
@@ -158,6 +409,7 @@ fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport 
     report.problems.sort_by(|a, b| {
         a.path
             .cmp(&b.path)
+            .then_with(|| a.line.cmp(&b.line))
             .then_with(|| a.code.cmp(b.code))
             .then_with(|| a.message.cmp(&b.message))
     });
@@ -173,9 +425,39 @@ fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport 
     report
 }
 
+/// Stack for each render thread. Deeply nested Markdown and Liquid recurse
+/// deeply; the default 2 MiB is not enough for 10,000 nested blockquotes.
+const RENDER_STACK: usize = 16 * 1024 * 1024;
+
 /// Build the site described by `opts`.
 pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildReport {
     let start = Instant::now();
+    match rayon::ThreadPoolBuilder::new()
+        .stack_size(RENDER_STACK)
+        .build()
+    {
+        Ok(pool) => pool.install(|| build_in_pool(opts, markdown, start)),
+        Err(e) => {
+            let report = BuildReport {
+                written: 0,
+                copied: 0,
+                unchanged: 0,
+                problems: vec![Problem::error(
+                    codes::BUILD_THREADS_FAILED,
+                    format!("cannot start the render threads: {e}"),
+                )],
+                elapsed: Duration::ZERO,
+            };
+            finish(report, opts.strict, start)
+        }
+    }
+}
+
+fn build_in_pool(
+    opts: &BuildOptions,
+    markdown: &dyn MarkdownRenderer,
+    start: Instant,
+) -> BuildReport {
     let mut report = BuildReport {
         written: 0,
         copied: 0,
@@ -211,7 +493,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
             }
         }
     }
-    let (_, input, out) = match (opts.root_dir(), opts.input_dir(), opts.output_dir()) {
+    let (root, input, out) = match (opts.root_dir(), opts.input_dir(), opts.output_dir()) {
         (Ok(r), Ok(i), Ok(o)) => (r, i, o),
         (Err(p), _, _) | (_, Err(p), _) | (_, _, Err(p)) => {
             report.problems.push(p);
@@ -243,7 +525,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                 "this template language is not supported yet",
             )
             .with_path(input_rel.join(path))
-            .with_help("Liquid and Nunjucks support is in progress."),
+            .with_help("Nunjucks and JavaScript template support is in progress."),
         );
     }
     // 11ty skips these silently unless a plugin adds them; say so once per extension.
@@ -275,19 +557,47 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
         return finish(report, strict, start);
     }
 
-    let loaded: Vec<Result<Option<Prepared>, Problem>> = discovery
+    let mut engine = Engine::new(EngineOptions {
+        strict_filters: true,
+        timezone: Tz::Local,
+    });
+    engine.register_eleventy_filters();
+    let includes = input.join("_includes");
+    let includes = includes.canonicalize().unwrap_or(includes);
+    let loader = FsLoader::new(
+        includes,
+        input_rel.join("_includes"),
+        input.clone(),
+        input_rel.clone(),
+    );
+    let layouts = Layouts::new(&engine, input.clone(), input_rel.clone());
+    let data_dir = input_rel.join("_data");
+    let data_names = global_data_names(&input.join("_data"));
+    let (globals, output_shown) = globals(opts, &root, &input_rel);
+    let shared = Shared {
+        input: &input,
+        input_rel: &input_rel,
+        layouts: &layouts,
+        globals,
+        output_shown,
+    };
+
+    let loaded: Vec<Loaded> = discovery
         .templates
         .par_iter()
-        .map(|rel| load(&input, &input_rel, rel))
+        .map(|rel| load(&shared, rel))
         .collect();
     let mut prepared = Vec::new();
+    let mut from_layouts = Vec::new();
     for item in loaded {
         match item {
-            Ok(Some(p)) => prepared.push(p),
-            Ok(None) => {}
-            Err(p) => report.problems.push(p),
+            Loaded::Page(p) => prepared.push(*p),
+            Loaded::Skip => {}
+            Loaded::Failed(p) => report.problems.push(p),
+            Loaded::LayoutFailed(p) => from_layouts.push(p),
         }
     }
+    report.problems.extend(layout_problems(from_layouts));
     if strict && has_error(&report) {
         return finish(report, strict, start);
     }
@@ -329,10 +639,15 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
     }
 
     // Render and write.
+    let pipeline = Pipeline {
+        engine: &engine,
+        loader: &loader,
+        markdown,
+    };
     let results: Vec<Result<(), Problem>> = prepared
         .par_iter()
         .map(|p| {
-            let rel = &p.page.input_path;
+            let shown = &p.shown;
             let Some(dest) = contained_output_path(&out, &p.output_rel) else {
                 return Err(Problem::error(
                     codes::OUTPUT_ESCAPES,
@@ -341,25 +656,29 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                         p.output_rel.display()
                     ),
                 )
-                .with_path(input_rel.join(rel)));
+                .with_path(shown));
             };
-            let is_markdown = rel
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("md"));
-            let html = if is_markdown {
-                markdown.render(&p.page.body)
-            } else {
-                p.page.body.clone()
-            };
+            let rendered = pipeline.render(&Job {
+                shown,
+                body: &p.page.body,
+                body_line: p.body_line,
+                engines: p.engines,
+                data: &p.data,
+                layouts: &p.layouts,
+            })?;
+            if let Some(problem) = missing_data_problem(&rendered.undefined, &data_names, &data_dir)
+            {
+                return Err(problem.with_path(shown));
+            }
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
                     Problem::error(codes::WRITE_FAILED, format!("cannot create folder: {e}"))
-                        .with_path(input_rel.join(rel))
+                        .with_path(shown)
                 })?;
             }
-            fs::write(&dest, html).map_err(|e| {
+            fs::write(&dest, rendered.html).map_err(|e| {
                 Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
-                    .with_path(input_rel.join(rel))
+                    .with_path(shown)
             })
         })
         .collect();

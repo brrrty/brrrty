@@ -158,10 +158,10 @@ fn file_as_input_names_the_path() {
 
 #[test]
 fn issue_link_for_11ty_js_templates_names_the_full_extension() {
-    let dir = site(&[("src/a.11ty.js", "x\n"), ("src/b.liquid", "x\n")]);
+    let dir = site(&[("src/a.11ty.js", "x\n"), ("src/b.njk", "x\n")]);
     let err = stderr(&run_in(dir.path(), &["--input", "src"]));
     assert!(err.contains("%20.11ty.js%20templates"), "{err}");
-    assert!(err.contains("%20.liquid%20templates"), "{err}");
+    assert!(err.contains("%20.njk%20templates"), "{err}");
     assert!(!err.contains("Unsupported%3A%20.js%20"), "{err}");
 }
 
