@@ -118,7 +118,13 @@ impl FsLoader {
     fn folders(&self) -> String {
         self.roots
             .iter()
-            .map(|r| r.shown.display().to_string())
+            .map(|r| {
+                if r.shown.as_os_str().is_empty() {
+                    "the project folder".to_string()
+                } else {
+                    r.shown.display().to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join(" and ")
     }
@@ -302,5 +308,21 @@ mod tests {
         // A link that stays inside is fine.
         std::os::unix::fs::symlink("a.liquid", t.path().join("src/_includes/in.liquid")).unwrap();
         assert_eq!(l.load("in.liquid").unwrap().1, "A");
+        // Nunjucks's second root is the project folder, named as such.
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("x.njk"), "X").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("x.njk"), t.path().join("link.njk"))
+            .unwrap();
+        let root = t.path().canonicalize().unwrap();
+        let n = FsLoader::nunjucks(
+            root.join("src/_includes"),
+            PathBuf::from("src/_includes"),
+            root,
+        );
+        let e = n.load("link.njk").unwrap_err().io.unwrap().to_string();
+        assert!(
+            e.contains("outside src/_includes and the project folder"),
+            "{e}"
+        );
     }
 }

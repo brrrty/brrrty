@@ -401,3 +401,32 @@ fn config_filters_run_in_nunjucks() {
     assert_clean(&r);
     assert_eq!(read(root, "a/index.html"), "xx|&lt;&lt;\n");
 }
+
+/// A panic while Nunjucks renders a page refuses that page as a crash in
+/// Brrrty's engine; the rest of the site still builds.
+#[test]
+fn a_panic_in_a_render_refuses_only_that_page() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/a.njk", "{{ \"x\" | boom }}\n");
+    write(root, "src/b.njk", "fine\n");
+    let config = ConfigOptions {
+        filters: vec![brrrty_core::ConfigFilter {
+            name: "boom".to_string(),
+            run: std::sync::Arc::new(|_v, _args, _ctx| panic!("deliberate test panic")),
+        }],
+        ..Default::default()
+    };
+    let r = build(&opts(root, config), &MarkdownIt::new());
+    let p = only_error(&r);
+    assert_eq!(p.code, codes::NUNJUCKS_RENDER);
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/a.njk")));
+    assert!(
+        p.message
+            .contains("Brrrty's Nunjucks engine crashed: deliberate test panic"),
+        "{p:?}"
+    );
+    assert!(p.help.as_deref().unwrap_or("").contains("bug in Brrrty"));
+    assert_eq!(read(root, "b/index.html"), "fine\n");
+    assert!(!root.join("_site/a/index.html").exists());
+}
