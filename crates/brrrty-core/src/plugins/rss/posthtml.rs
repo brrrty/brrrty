@@ -829,7 +829,11 @@ fn looks_json(s: &str) -> bool {
         let inner = &s[1..s.len() - 1];
         let joined = inner.replace("},{", "}\n{");
         // `reduce` without a start value gives the last item's result.
-        return joined.split('\n').map(looks_json).next_back().unwrap_or(false);
+        return joined
+            .split('\n')
+            .map(looks_json)
+            .next_back()
+            .unwrap_or(false);
     }
     false
 }
