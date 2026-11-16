@@ -277,7 +277,12 @@ impl Page<'_> {
         if diff.is_none() {
             return Ok(found);
         }
-        let d = g.language("diff").expect("Prism always has diff here");
+        let Some(d) = g.language("diff") else {
+            return Err(Error::Unsupported(
+                "Brrrty's Prism grammars have no `diff` grammar, which `diff-` languages need"
+                    .into(),
+            ));
+        };
         self.state.set(&format!("diff-{aliased}"), d);
         // The diff-highlight hook names `language` (when it matches
         // /^diff-([\w-]+)/i) the diff grammar too before it tokenizes; it is
