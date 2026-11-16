@@ -154,13 +154,24 @@ struct Built {
 }
 
 /// What a file in a build holds, as far as bringing the output folder up to date goes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum Version {
     /// A page, by the hash of the bytes the build wrote.
     Page(u64),
     /// A passthrough copy, by its source as it was just before the build; `None` when that
     /// could not be read, which matches nothing.
     Copy(Option<Stamp>),
+}
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Version) -> bool {
+        match (self, other) {
+            (Version::Page(a), Version::Page(b)) => a == b,
+            // An unknown stamp never counts as unchanged.
+            (Version::Copy(Some(a)), Version::Copy(Some(b))) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// A file a build wrote, relative to the build folder.
@@ -680,8 +691,7 @@ impl Session {
                 version: Version::Page(p.hash),
             })
             .chain(report.passthrough.iter().map(|(src, dest)| {
-                let src = self.root.join(src);
-                let stamp = self.copied.get(&src).cloned();
+                let stamp = stamp_of(&self.copied, &self.root.join(src)).cloned();
                 Entry {
                     rel: dest.clone(),
                     version: Version::Copy(stamp),
@@ -1218,6 +1228,22 @@ fn stamps(paths: &[PathBuf]) -> HashMap<PathBuf, Stamp> {
         }
     }
     out
+}
+
+/// The stamp `stamps` took for the passthrough file at `src`. `stamps` walks the resolved
+/// passthrough roots, so its keys sit under real folders: look `src` up as written, then with
+/// its folder resolved, then resolved whole (a passthrough entry that is a symlink to a file).
+fn stamp_of<'a>(stamps: &'a HashMap<PathBuf, Stamp>, src: &Path) -> Option<&'a Stamp> {
+    if let Some(s) = stamps.get(src) {
+        return Some(s);
+    }
+    let in_real_dir = src
+        .parent()
+        .zip(src.file_name())
+        .and_then(|(dir, name)| dir.canonicalize().ok().map(|d| d.join(name)));
+    in_real_dir
+        .and_then(|p| stamps.get(&p))
+        .or_else(|| src.canonicalize().ok().and_then(|p| stamps.get(&p)))
 }
 
 /// A path relative to the project folder, for printing as 11ty does (`./src/index.md`). The

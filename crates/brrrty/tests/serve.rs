@@ -104,11 +104,22 @@ fn with_session(root: &Path, test: impl FnOnce(&Live)) -> Finished {
 /// [`with_session`], with the session's thread held up for `hold` after the first rebuild,
 /// as if that build were still running.
 fn with_session_holding(root: &Path, hold: Duration, test: impl FnOnce(&Live)) -> Finished {
+    let flags = Flags {
+        input: Some(PathBuf::from("src")),
+        ..Flags::default()
+    };
+    with_session_flags(root, flags, hold, test)
+}
+
+/// [`with_session_holding`] with the given flags.
+fn with_session_flags(
+    root: &Path,
+    flags: Flags,
+    hold: Duration,
+    test: impl FnOnce(&Live),
+) -> Finished {
     let settings = Settings {
-        flags: Flags {
-            input: Some(PathBuf::from("src")),
-            ..Flags::default()
-        },
+        flags,
         quiet: true,
         ..Settings::default()
     };
@@ -872,4 +883,31 @@ fn the_output_folder_follows_the_build_and_repairs_what_else_changed_there() {
             std::panic::resume_unwind(p);
         }
     });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_passthrough_folder_is_mirrored_on_every_edit() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("site");
+    write(&root, "src/index.md", "home");
+    write(t.path(), "shared/x.css", "v0");
+    std::os::unix::fs::symlink("../shared", root.join("public")).unwrap();
+    let flags = Flags {
+        input: Some(PathBuf::from("src")),
+        passthrough: vec![PathBuf::from("public")],
+        ..Flags::default()
+    };
+    let finished = with_session_flags(&root, flags, Duration::ZERO, |live| {
+        live.settle();
+        assert_eq!(read(&root, "_site/public/x.css").as_deref(), Some("v0"));
+        for v in ["v1", "v2"] {
+            write(t.path(), "shared/x.css", v);
+            assert!(live.next_rebuild().ok);
+            assert_eq!(get(live.server, "/public/x.css").1, v);
+            assert_eq!(read(&root, "_site/public/x.css").as_deref(), Some(v));
+        }
+    });
+    assert!(finished.problems.is_empty(), "{:?}", finished.problems);
+    assert_eq!(read(&root, "_site/public/x.css").as_deref(), Some("v2"));
 }
