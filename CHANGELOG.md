@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.5 - 2026-11-16
 
 Config written in Rhai:
 

@@ -10,7 +10,7 @@ fn version_flag_prints_name_and_version() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap().trim(),
-        "brrrty 0.0.4"
+        "brrrty 0.0.5"
     );
 }
 
