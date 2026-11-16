@@ -1,0 +1,26 @@
+---
+permalink: report-tags.txt
+date: 2030-01-01
+eleventyExcludeFromCollections: true
+---
+{% for c in collections %}{{ c[0] }}={{ c[1] | size }} {% endfor %}
+alpha: {% for p in collections.alpha %}{{ p.url }} {% endfor %}
+beta: {% for p in collections.beta %}{{ p.url }} {% endfor %}
+space: {% for p in collections["has space"] %}{{ p.url }} {% endfor %}
+slash: {% for p in collections["a/b"] %}{{ p.url }} {% endfor %}
+comma: {% for p in collections["x,y"] %}{{ p.url }} {% endfor %}
+five: {% for p in collections["5"] %}{{ p.url }} {% endfor %}
+c1: {% for p in collections.c1 %}{{ p.url }} {% endfor %}
+c2: {% for p in collections[" c2"] %}{{ p.url }} {% endfor %}
+c3: {% for p in collections.c3 %}{{ p.url }} {% endfor %}
+post: {% for p in collections.post %}{{ p.url }} {% endfor %}
+extra: {% for p in collections.extra %}{{ p.url }} {% endfor %}
+t1: {% for p in collections.t1 %}{{ p.url }} {% endfor %}
+t2: {% for p in collections.t2 %}{{ p.url }} {% endfor %}
+true: {% for p in collections.true %}{{ p.url }} {% endfor %}
+np: {% for p in collections.np %}{{ p.url | json }} {% endfor %}
+pgfirst: {% for p in collections.pgfirst %}{{ p.url }} {% endfor %}
+pgall: {% for p in collections.pgall %}{{ p.url }} {{ p.pageNumber }} {% endfor %}
+listing: {% for p in collections.listing %}{{ p.url }} {% endfor %}
+other: {% for p in collections.other %}{{ p.url }} {% endfor %}
+all-tag: {{ collections.all | size }}

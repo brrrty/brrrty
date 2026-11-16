@@ -4,6 +4,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod build;
+mod collections;
 mod data;
 pub mod discover;
 pub mod frontmatter;

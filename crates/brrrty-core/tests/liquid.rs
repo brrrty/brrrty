@@ -689,9 +689,11 @@ fn pages_that_need_unsupported_data_are_errors() {
     );
     assert_eq!(by_path("src/uses-dir.md").code, codes::DATA_JS_UNSUPPORTED);
     let c = by_path("src/uses-collections.liquid");
+    // The other pages here can't be built, so the collections would be
+    // missing them.
     assert_eq!(
         c.message,
-        "this page uses `collections`, which Brrrty doesn't build yet"
+        "this page uses `collections`, but 1 template could not be built, so the collections would be missing its page"
     );
     // Directory data is read now: its layout applies, and here is missing.
     let posts = by_path("src/posts/one.md");

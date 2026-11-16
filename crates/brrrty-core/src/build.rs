@@ -13,6 +13,7 @@ use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde_json::Value as Json;
 
+use crate::collections::{self, Entry, Membership, Page};
 use crate::data::{
     BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags,
     frozen_keys, frozen_problem, js_help, js_object, key_line, load_global, merge, page_data,
@@ -80,7 +81,9 @@ struct Source {
 /// One page to write: a template, or one page pagination made from it.
 struct Prepared {
     source: Arc<Source>,
-    output_rel: PathBuf,
+    /// Where it is written; `None` for `permalink: false`, which is still a
+    /// page of the collections.
+    output_rel: Option<PathBuf>,
     data: IndexMap<String, Value>,
     /// `pagination.pageNumber` of a generated page.
     page_number: Option<usize>,
@@ -98,14 +101,51 @@ impl Prepared {
 
 /// What loading one template gave.
 enum Loaded {
-    /// The pages to write: none for `permalink: false` or empty pagination.
-    Pages(Vec<Prepared>),
+    /// A template that loaded.
+    Template(Box<Templ>),
     /// A problem with this page.
     Failed(Problem),
     /// A problem in a layout file, the same for every page that uses it.
     LayoutFailed(Problem),
     /// A problem in a data file, the same for every page it applies to.
     DataFailed(Problem),
+}
+
+/// A template that loaded.
+struct Templ {
+    /// Relative to the input folder.
+    rel: PathBuf,
+    membership: Membership,
+    /// Computed data sets `tags` or `eleventyExcludeFromCollections`, which
+    /// Brrrty can't follow into the collections yet.
+    computed_membership: bool,
+    pages: Pages,
+}
+
+/// The pages of a template: made, or waiting for the collections they
+/// paginate.
+enum Pages {
+    /// Every page of the template, including ones with no output. Empty for
+    /// empty pagination.
+    Ready(Vec<Prepared>),
+    Deferred(Box<Deferred>),
+}
+
+/// A template that paginates a collection: it can only be expanded once the
+/// collections it reads exist, in 11ty's order.
+struct Deferred {
+    source: Arc<Source>,
+    values: Data,
+    plan: Option<ComputedPlan>,
+    spec: Spec,
+    rel: PathBuf,
+    shown: PathBuf,
+    raw: bool,
+    /// Where `permalink` and `pagination` come from, when not the page.
+    permalink_from: Option<String>,
+    permalink_line: Option<usize>,
+    pagination_from: Option<String>,
+    pagination_line: Option<usize>,
 }
 
 /// What every page shares while loading.
@@ -458,6 +498,11 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     let plan = computed_plan(&data, &shown, &text, engines == Engines::Raw)?;
     let mut values = js_object(&data);
     values.insert("page".into(), Value::Object(Arc::new(page)));
+    // 11ty puts `collections` here, after the page's own data and before
+    // computed values. It is filled in once every page is placed; until then
+    // reading it counts as undefined.
+    values.insert("collections".into(), Value::Undefined);
+    let membership = Membership::of(&values);
 
     // The permalink renders with the page's data, before `page.url` and
     // `page.outputPath` exist. With computed data, 11ty runs it as the
@@ -492,39 +537,126 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         layouts,
         withheld,
     });
+    let computed_membership = plan
+        .as_ref()
+        .is_some_and(|p| p.sets_root("tags") || p.sets_root("eleventyExcludeFromCollections"));
+    let spec = Spec::new(&values).map_err(|p| {
+        pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
+    })?;
+    let templ = |pages| {
+        Ok(Loaded::Template(Box::new(Templ {
+            rel: rel.to_path_buf(),
+            membership: membership.clone(),
+            computed_membership,
+            pages,
+        })))
+    };
+    let Some(spec) = spec else {
+        let place = Place {
+            shared,
+            plan: plan.as_ref(),
+            locator: &locator,
+            source: &source,
+        };
+        let mut undefined = BTreeSet::new();
+        let (data, permalink) = place.locate(values, &locator, &mut undefined)?;
+        place.check_undefined(&undefined)?;
+        let output_rel = match permalink {
+            Permalink::Write { output_rel, .. } => Some(output_rel),
+            Permalink::Skip => None,
+        };
+        return templ(Pages::Ready(vec![Prepared {
+            source: source.clone(),
+            output_rel,
+            data,
+            page_number: None,
+        }]));
+    };
+    let pagination_line = key_line(&text, "pagination");
+    if membership.consumes.is_some() || spec.path.first().map(String::as_str) == Some("collections")
+    {
+        // Needs the collections: expanded once they are built.
+        check_collection_target(
+            &spec,
+            &membership,
+            &values,
+            from("pagination"),
+            pagination_line,
+            &shown,
+        )?;
+        return templ(Pages::Deferred(Box::new(Deferred {
+            source: source.clone(),
+            values,
+            plan,
+            spec,
+            rel: rel.to_path_buf(),
+            shown: shown.clone(),
+            raw: engines == Engines::Raw,
+            permalink_from: from("permalink"),
+            permalink_line: locator.line,
+            pagination_from: from("pagination"),
+            pagination_line,
+        })));
+    }
     let place = Place {
         shared,
         plan: plan.as_ref(),
         locator: &locator,
         source: &source,
     };
-    let spec = Spec::new(&values).map_err(|p| {
-        pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
-    })?;
-    let pages = match spec {
-        None => {
-            let mut undefined = BTreeSet::new();
-            let (data, permalink) = place.locate(values, &locator, &mut undefined)?;
-            place.check_undefined(&undefined)?;
-            match permalink {
-                Permalink::Write { output_rel, .. } => vec![Prepared {
-                    source: source.clone(),
-                    output_rel,
-                    data,
-                    page_number: None,
-                }],
-                Permalink::Skip => Vec::new(),
-            }
+    let pages = place.paginate(&spec, &values, None).map_err(|p| {
+        if p.path.is_some() {
+            p
+        } else {
+            pagination_problem(p, from("pagination"), pagination_line, &shown)
         }
-        Some(spec) => place.paginate(&spec, &values).map_err(|p| {
-            if p.path.is_some() {
-                p
-            } else {
-                pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
-            }
-        })?,
-    };
-    Ok(Loaded::Pages(pages))
+    })?;
+    templ(Pages::Ready(pages))
+}
+
+/// What 11ty refuses or Brrrty can't follow in a `pagination.data` that
+/// reads collections.
+fn check_collection_target(
+    spec: &Spec,
+    membership: &Membership,
+    values: &Data,
+    from: Option<String>,
+    line: Option<usize>,
+    shown: &Path,
+) -> Result<(), Problem> {
+    let key = spec.key();
+    let fail = |p: Problem| pagination_problem(p, from.clone(), line, shown);
+    if membership.consumes.as_deref() == Some("[keys]") {
+        return Err(fail(
+            Problem::error(
+                codes::PAGINATION_UNSUPPORTED,
+                "pagination over the whole `collections` object isn't supported yet",
+            )
+            .with_help("Paginate one collection, like `collections.posts`."),
+        ));
+    }
+    if membership.consumes.is_none() {
+        return Err(fail(
+            Problem::error(
+                codes::PAGINATION_UNSUPPORTED,
+                format!("Brrrty can't tell which collection `{key}` reads"),
+            )
+            .with_help("Write it as `collections.name` or `collections[\"name\"]`."),
+        ));
+    }
+    // 11ty's own check, which only knows the dotted spelling.
+    for tag in collections::included_tags(values) {
+        if key == format!("collections.{tag}") {
+            return Err(fail(Problem::error(
+                codes::PAGINATION_INVALID,
+                format!(
+                    "pagination circular reference: `{key}` iterates over both the `{tag}` collection and also supplies pages to that collection"
+                ),
+            )
+            .with_help("11ty stops the whole build here.")));
+        }
+    }
+    Ok(())
 }
 
 /// A pagination problem, placed at `pagination:` in the front matter, or
@@ -594,7 +726,12 @@ impl Place<'_, '_> {
     /// A permalink or computed value that read data Brrrty can't supply
     /// would put the page in the wrong place.
     fn check_undefined(&self, undefined: &BTreeSet<String>) -> Result<(), Problem> {
-        match missing_data_problem(undefined, &self.source.withheld, &self.shared.data_dir) {
+        match missing_data_problem(
+            undefined,
+            &self.source.withheld,
+            &self.shared.data_dir,
+            None,
+        ) {
             Some(problem) => Err(problem.with_path(&self.source.shown)),
             None => Ok(()),
         }
@@ -604,18 +741,13 @@ impl Place<'_, '_> {
     /// every page is located first, then each gets `pagination.hrefs` and
     /// `pagination.links` and runs its computed data. An error on any page
     /// refuses them all, since every page lists every other.
-    fn paginate(&self, spec: &Spec, values: &Data) -> Result<Vec<Prepared>, Problem> {
+    fn paginate(
+        &self,
+        spec: &Spec,
+        values: &Data,
+        expand_from: Option<&Data>,
+    ) -> Result<Vec<Prepared>, Problem> {
         let root = spec.path.first().map(String::as_str).unwrap_or("");
-        if root == "collections" {
-            return Err(Problem::error(
-                codes::PAGINATION_UNSUPPORTED,
-                format!(
-                    "pagination over collections is coming in this release (`{}`)",
-                    spec.key()
-                ),
-            )
-            .with_help("Pagination over other data works now; collections are in progress."));
-        }
         if self.source.withheld.iter().any(|(k, _)| k == root) {
             self.check_undefined(&BTreeSet::from([root.to_string()]))?;
         }
@@ -644,7 +776,7 @@ impl Place<'_, '_> {
             || matches!(values.get("eleventyComputed"), Some(Value::Object(c))
                 if c.get("permalink").is_some_and(Value::js_truthy));
 
-        let paging = spec.expand(values)?;
+        let paging = spec.expand(expand_from.unwrap_or(values))?;
         let base = paging.base(values);
         let on_page = |n: usize| {
             move |mut p: Problem| {
@@ -707,15 +839,16 @@ impl Place<'_, '_> {
                             .map_err(on_page(n))?
                     }
                 };
-                let page = match permalink {
-                    Permalink::Write { output_rel, .. } => Some(Prepared {
-                        source: self.source.clone(),
-                        output_rel,
-                        data,
-                        page_number: Some(n),
-                    }),
+                let output_rel = match permalink {
+                    Permalink::Write { output_rel, .. } => Some(output_rel),
                     Permalink::Skip => None,
                 };
+                let page = Some(Prepared {
+                    source: self.source.clone(),
+                    output_rel,
+                    data,
+                    page_number: Some(n),
+                });
                 Ok((page, undefined))
             })
             .collect();
@@ -728,6 +861,49 @@ impl Place<'_, '_> {
         }
         self.check_undefined(&undefined)?;
         Ok(out)
+    }
+}
+
+impl Deferred {
+    /// Expand the template with the collections made so far.
+    fn run(
+        &self,
+        shared: &Shared<'_>,
+        so_far: &Arc<IndexMap<String, Value>>,
+    ) -> Result<Vec<Prepared>, Problem> {
+        let locator = Locator {
+            engine: shared.engine,
+            loader: shared.loader,
+            rel: &self.rel,
+            shown: &self.shown,
+            output_shown: &shared.output_shown,
+            raw: self.raw,
+            from: self.permalink_from.clone(),
+            line: self.permalink_line,
+            subdir: None,
+        };
+        let place = Place {
+            shared,
+            plan: self.plan.as_ref(),
+            locator: &locator,
+            source: &self.source,
+        };
+        let mut target = self.values.clone();
+        target.insert("collections".into(), Value::Object(so_far.clone()));
+        place
+            .paginate(&self.spec, &self.values, Some(&target))
+            .map_err(|p| {
+                if p.path.is_some() {
+                    p
+                } else {
+                    pagination_problem(
+                        p,
+                        self.pagination_from.clone(),
+                        self.pagination_line,
+                        &self.shown,
+                    )
+                }
+            })
     }
 }
 
@@ -749,20 +925,80 @@ fn computed_plan(
     ComputedPlan::new(data, raw).map_err(|p| at(p.with_path(shown), line))
 }
 
+/// The problem for a page that read collection data Brrrty can't give.
+/// `gap` is why the collections can't be built, when they can't.
+fn collections_problem(undefined: &BTreeSet<String>, gap: Option<&str>) -> Option<Problem> {
+    use brrrty_js::traps::{ITEM_PREFIX, OPEN_PREFIX};
+    let item = |k: &str| undefined.contains(&format!("{ITEM_PREFIX}{k}"));
+    if item("templateContent") || item("content") {
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                "this page reads `templateContent` or `content` of a collection item, which Brrrty doesn't render yet",
+            )
+            .with_help("Rendered content of collection items is coming in this release."),
+        );
+    }
+    if item("template") {
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                "this page reads `template` of a collection item, 11ty's internal template object",
+            )
+            .with_help("Brrrty has no equivalent; read the item's `data`, `url` or `inputPath`."),
+        );
+    }
+    if item("collections") {
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                "this page reads `data.collections` of a collection item, which Brrrty doesn't build yet",
+            )
+            .with_help("Read `collections` directly instead."),
+        );
+    }
+    if let Some(name) = undefined.iter().find_map(|n| n.strip_prefix(OPEN_PREFIX)) {
+        let what = if name == "*" {
+            "this page lists every collection".to_string()
+        } else {
+            format!("this page reads `collections.{name}`, which is not a tag collection")
+        };
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                format!("{what}, and this site has an 11ty config file that may add collections"),
+            )
+            .with_help(
+                "Brrrty doesn't read your 11ty config yet; collections defined there are coming in a later release.",
+            ),
+        );
+    }
+    if undefined.contains("collections") {
+        return Some(match gap {
+            Some(why) => Problem::error(
+                codes::DATA_UNSUPPORTED,
+                format!("this page uses `collections`, but {why}"),
+            )
+            .with_help("Fix the problems reported above."),
+            None => Problem::error(
+                codes::DATA_UNSUPPORTED,
+                "a permalink, `pagination` or computed value reads `collections`, which Brrrty doesn't support there yet",
+            )
+            .with_help("Read `collections` in the page itself, or set the value in front matter."),
+        });
+    }
+    None
+}
+
 /// The problem for a page that read data Brrrty doesn't supply yet.
 fn missing_data_problem(
     undefined: &BTreeSet<String>,
     withheld: &[(String, Withheld)],
     data_dir: &Path,
+    gap: Option<&str>,
 ) -> Option<Problem> {
-    if undefined.contains("collections") {
-        return Some(
-            Problem::error(
-                codes::DATA_UNSUPPORTED,
-                "this page uses `collections`, which Brrrty doesn't build yet",
-            )
-            .with_help("Collections are in progress."),
-        );
+    if let Some(p) = collections_problem(undefined, gap) {
+        return Some(p);
     }
     let used: Vec<&(String, Withheld)> = withheld
         .iter()
@@ -918,6 +1154,7 @@ fn build_in_pool(
         report.problems.push(p);
         return finish(report, strict, start);
     }
+    let mut has_config = false;
     if let Ok(root) = opts.root_dir() {
         for name in [
             "eleventy.config.js",
@@ -926,6 +1163,7 @@ fn build_in_pool(
             ".eleventy.js",
         ] {
             if root.join(name).is_file() {
+                has_config = true;
                 report.problems.push(
                     Problem::warning(
                         codes::ELEVENTY_CONFIG_IGNORED,
@@ -1072,15 +1310,25 @@ fn build_in_pool(
         .par_iter()
         .map(|rel| load(&shared, rel))
         .collect();
-    let mut prepared = Vec::new();
+    let mut templates: Vec<Templ> = Vec::new();
     let mut from_layouts = Vec::new();
     let mut from_data = Vec::new();
+    let mut unbuilt = 0usize;
     for item in loaded {
         match item {
-            Loaded::Pages(pages) => prepared.extend(pages),
-            Loaded::Failed(p) => report.problems.push(p),
-            Loaded::LayoutFailed(p) => from_layouts.push(p),
-            Loaded::DataFailed(p) => from_data.push(p),
+            Loaded::Template(t) => templates.push(*t),
+            Loaded::Failed(p) => {
+                unbuilt += 1;
+                report.problems.push(p);
+            }
+            Loaded::LayoutFailed(p) => {
+                unbuilt += 1;
+                from_layouts.push(p);
+            }
+            Loaded::DataFailed(p) => {
+                unbuilt += 1;
+                from_data.push(p);
+            }
         }
     }
     report
@@ -1093,10 +1341,127 @@ fn build_in_pool(
         return finish(report, strict, start);
     }
 
+    // Collections: every page of every template, in the order 11ty reads
+    // the files (folder by folder, shallowest first).
+    templates.sort_by(|a, b| {
+        a.rel
+            .components()
+            .count()
+            .cmp(&b.rel.components().count())
+            .then_with(|| a.rel.cmp(&b.rel))
+    });
+    let mut gap = collections_gap(
+        unbuilt,
+        discovery.unsupported.len(),
+        templates.iter().any(|t| t.computed_membership),
+    );
+    let input_dot = dot_dir(&input_rel);
+    let mut slots: Vec<Slot> = Vec::new();
+    let mut entries: Vec<Entry> = Vec::new();
+    for t in templates {
+        let input_path = format!("{input_dot}{}", slash_path(&t.rel));
+        let (pages, slot) = match t.pages {
+            Pages::Ready(p) => (
+                Some(
+                    p.iter()
+                        .map(|x| Page::new(&x.data, x.page_number))
+                        .collect(),
+                ),
+                Slot::Ready(p),
+            ),
+            Pages::Deferred(d) => (None, Slot::Deferred(d)),
+        };
+        entries.push(Entry {
+            input_path,
+            membership: t.membership,
+            pages,
+        });
+        slots.push(slot);
+    }
+    let mut collections_value: Option<Arc<IndexMap<String, Value>>> = None;
+    let mut made: Vec<Option<Vec<Prepared>>> = slots.iter().map(|_| None).collect();
+    if gap.is_none() {
+        let built = collections::build(entries, |i, so_far| {
+            let Slot::Deferred(d) = &slots[i] else {
+                return Ok(Vec::new());
+            };
+            let pages = d.run(&shared, so_far)?;
+            let items = pages
+                .iter()
+                .map(|p| Page::new(&p.data, p.page_number))
+                .collect();
+            made[i] = Some(pages);
+            Ok(items)
+        });
+        let clean = built.failed.is_empty() && built.skipped.is_empty();
+        for (_, problem) in built.failed {
+            report.problems.push(problem);
+        }
+        for i in built.skipped {
+            if let Slot::Deferred(d) = &slots[i] {
+                report.problems.push(
+                    Problem::error(
+                        codes::PAGINATION_UNSUPPORTED,
+                        "this page paginates a collection, but another template that paginates a collection failed first",
+                    )
+                    .with_path(&d.shown)
+                    .with_help("Fix the problem reported above."),
+                );
+            }
+        }
+        if clean {
+            collections_value = Some(built.collections);
+        } else {
+            gap = Some("a template that paginates a collection failed, so the collections would be missing its pages".to_string());
+        }
+    } else if let Some(why) = &gap {
+        for slot in &slots {
+            if let Slot::Deferred(d) = slot {
+                report.problems.push(
+                    Problem::error(
+                        codes::PAGINATION_UNSUPPORTED,
+                        format!("this page paginates a collection, but {why}"),
+                    )
+                    .with_path(&d.shown)
+                    .with_help("Fix the problems reported above."),
+                );
+            }
+        }
+    }
+    let mut prepared: Vec<Prepared> = Vec::new();
+    for (slot, made) in slots.into_iter().zip(made) {
+        match slot {
+            Slot::Ready(p) => prepared.extend(p),
+            Slot::Deferred(_) => prepared.extend(made.into_iter().flatten()),
+        }
+    }
+    // The registered `collections` object makes a read of a name that isn't
+    // a tag a trap when the site's config may add collections.
+    let _open = collections_value
+        .as_ref()
+        .filter(|_| has_config)
+        .map(|c| OpenGuard::new(brrrty_js::traps::object_id(c)));
+    for p in &mut prepared {
+        match &collections_value {
+            Some(c) => {
+                p.data
+                    .insert("collections".to_string(), Value::Object(c.clone()));
+            }
+            None => {
+                p.data.shift_remove("collections");
+            }
+        }
+    }
+    if strict && has_error(&report) {
+        return finish(report, strict, start);
+    }
+
     // Detect outputs that two or more pages claim.
     let mut by_output: BTreeMap<&Path, Vec<&Prepared>> = BTreeMap::new();
     for p in &prepared {
-        by_output.entry(p.output_rel.as_path()).or_default().push(p);
+        if let Some(output) = &p.output_rel {
+            by_output.entry(output.as_path()).or_default().push(p);
+        }
     }
     let mut colliding: BTreeSet<PathBuf> = BTreeSet::new();
     for (output, pages) in &by_output {
@@ -1118,7 +1483,7 @@ fn build_in_pool(
             colliding.insert(output.to_path_buf());
         }
     }
-    prepared.retain(|p| !colliding.contains(&p.output_rel));
+    prepared.retain(|p| p.output_rel.as_ref().is_none_or(|o| !colliding.contains(o)));
     if strict && has_error(&report) {
         return finish(report, strict, start);
     }
@@ -1131,15 +1496,16 @@ fn build_in_pool(
     };
     let results: Vec<Result<(), Problem>> = prepared
         .par_iter()
-        .map(|p| {
+        .filter_map(|p| p.output_rel.as_ref().map(|o| (p, o)))
+        .map(|(p, output_rel)| {
             let src = &p.source;
             let shown = &src.shown;
-            let Some(dest) = contained_output_path(&out, &p.output_rel) else {
+            let Some(dest) = contained_output_path(&out, output_rel) else {
                 return Err(Problem::error(
                     codes::OUTPUT_ESCAPES,
                     format!(
                         "{} would be written outside the output folder",
-                        p.output_rel.display()
+                        output_rel.display()
                     ),
                 )
                 .with_path(shown));
@@ -1152,9 +1518,12 @@ fn build_in_pool(
                 data: &p.data,
                 layouts: &src.layouts,
             })?;
-            if let Some(problem) =
-                missing_data_problem(&rendered.undefined, &src.withheld, &data_dir)
-            {
+            if let Some(problem) = missing_data_problem(
+                &rendered.undefined,
+                &src.withheld,
+                &data_dir,
+                gap.as_deref(),
+            ) {
                 return Err(problem.with_path(shown));
             }
             if let Some(parent) = dest.parent() {
@@ -1191,11 +1560,10 @@ fn build_in_pool(
 
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
-        .map(|p| {
-            (
-                out.join(&p.output_rel),
-                input_rel.join(&p.source.input_path),
-            )
+        .filter_map(|p| {
+            p.output_rel
+                .as_ref()
+                .map(|o| (out.join(o), input_rel.join(&p.source.input_path)))
         })
         .collect();
     let pt = copy_passthrough_avoiding(opts, &pages);
@@ -1205,6 +1573,57 @@ fn build_in_pool(
     report.unchanged = pt.unchanged;
     report.problems.extend(pt.problems);
     finish(report, strict, start)
+}
+
+/// Which template page a slot holds while the collections are built.
+enum Slot {
+    Ready(Vec<Prepared>),
+    Deferred(Box<Deferred>),
+}
+
+/// Why the collections can't be built, when they can't. A collection built
+/// without a page would be wrong, so every read of `collections` is refused.
+fn collections_gap(unbuilt: usize, unsupported: usize, computed: bool) -> Option<String> {
+    let plural = |n: usize, one: &str, many: &str| {
+        if n == 1 {
+            one.to_string()
+        } else {
+            many.to_string()
+        }
+    };
+    if unbuilt > 0 {
+        return Some(format!(
+            "{unbuilt} {} could not be built, so the collections would be missing {}",
+            plural(unbuilt, "template", "templates"),
+            plural(unbuilt, "its page", "their pages")
+        ));
+    }
+    if unsupported > 0 {
+        return Some(format!(
+            "{unsupported} {} a template language Brrrty doesn't support yet, so the collections would be missing {}",
+            plural(unsupported, "template uses", "templates use"),
+            plural(unsupported, "its page", "their pages")
+        ));
+    }
+    computed.then(|| {
+        "computed data sets `tags` or `eleventyExcludeFromCollections`, which Brrrty can't follow into the collections yet".to_string()
+    })
+}
+
+/// Unregisters the open `collections` object when the build ends.
+struct OpenGuard(usize);
+
+impl OpenGuard {
+    fn new(id: usize) -> OpenGuard {
+        brrrty_js::traps::open(id);
+        OpenGuard(id)
+    }
+}
+
+impl Drop for OpenGuard {
+    fn drop(&mut self) {
+        brrrty_js::traps::close(self.0);
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,8 @@
+---
+permalink: report-all.txt
+date: 2030-01-01
+eleventyExcludeFromCollections: true
+---
+{% for p in collections.all -%}
+{{ p.url | json }} {{ p.inputPath }} {{ p.fileSlug }} {{ p.filePathStem }} {{ p.date | json }} {{ p.pageNumber | json }} {{ p.groupNumber }} {{ p.data.title | json }} {{ p.page.url | json }} {{ p.page.fileSlug }} {{ p.rawInput | json }}
+{% endfor -%}

@@ -273,6 +273,10 @@ impl<'a> Context<'a> {
             }
         }
         if let Some(v) = self.data_get(&k) {
+            // A marker for data Brrrty doesn't have yet counts as undefined.
+            if matches!(v, Value::Undefined) {
+                self.undefined.borrow_mut().insert(k);
+            }
             return Val::V(v);
         }
         // Recorded even for `size`, so a data key of that name can't be

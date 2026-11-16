@@ -1,0 +1,9 @@
+---
+permalink: report-sort.txt
+date: 2030-01-01
+eleventyExcludeFromCollections: true
+---
+{% assign newest = collections.post | reverse %}{% for p in newest %}{{ p.data.title }} {% endfor %}
+{% assign by = collections.all | sort: "url" %}{{ by | map: "url" | join: "," }}
+{{ collections.all | where: "data.title", "Two" | map: "url" | join: "," }}
+{{ collections.all.first.url }} {{ collections.all.last.url }}

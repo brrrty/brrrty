@@ -106,6 +106,7 @@ impl Value {
     /// first in numeric order, then the other keys in insertion order. This
     /// is the order `Object.keys` and `for...in` give.
     pub fn js_entries(o: &IndexMap<String, Value>) -> Vec<(&String, &Value)> {
+        crate::traps::entries(o);
         let mut index: Vec<(u32, (&String, &Value))> = Vec::new();
         let mut rest = Vec::new();
         for (k, v) in o {

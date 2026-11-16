@@ -248,21 +248,6 @@ fn a_size_that_is_not_a_number_is_refused() {
     );
 }
 
-/// Ruling: collections come with Task 7.
-#[test]
-fn pagination_over_collections_is_refused() {
-    let p = assert_refused(
-        "pagination:\n  data: collections.posts\n  size: 10\n",
-        codes::PAGINATION_UNSUPPORTED,
-        "collections",
-    );
-    assert!(
-        p.message.contains("coming in this release"),
-        "{}",
-        p.message
-    );
-}
-
 /// A page paginating JavaScript data Brrrty can't run is refused, naming
 /// the file, like any other page that reads it.
 #[test]

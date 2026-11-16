@@ -161,7 +161,8 @@ fn reserved_names_in_computed_data_are_refused() {
 }
 
 /// Probed: a computed value that reads `collections` works in 11ty, which
-/// computes it after collections exist. Brrrty has no collections yet.
+/// computes it after collections exist. Brrrty places pages before it builds
+/// collections, so the value is refused.
 #[test]
 fn a_computed_value_reading_collections_is_refused() {
     assert_refused(

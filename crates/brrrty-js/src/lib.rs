@@ -3,6 +3,7 @@
 mod eleventy;
 mod eleventy_tables;
 mod number;
+pub mod traps;
 pub mod tz;
 mod value;
 mod zones;

@@ -112,10 +112,17 @@ impl<'a> Renderer<'a> {
 
     pub fn render_tracked(mut self, nodes: &[Node]) -> Result<Rendered, LiquidError> {
         let mut out = String::new();
-        match self.render_nodes(nodes, &mut out) {
+        brrrty_js::traps::clear();
+        let result = self.render_nodes(nodes, &mut out);
+        let traps = brrrty_js::traps::take();
+        match result {
             Ok(()) => Ok(Rendered {
                 output: out,
-                undefined: self.ctx.undefined.into_inner().into_iter().collect(),
+                undefined: {
+                    let mut all = self.ctx.undefined.into_inner();
+                    all.extend(traps);
+                    all.into_iter().collect()
+                },
             }),
             Err(RenderErr::Located(e)) => Err(*e),
             Err(RenderErr::Plain { .. }) => unreachable!("render_nodes locates every error"),

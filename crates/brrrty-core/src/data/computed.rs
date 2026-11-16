@@ -87,6 +87,13 @@ fn unsupported(message: String) -> Problem {
 }
 
 impl Plan {
+    /// Whether an entry sets `root` at the top level of the data.
+    pub fn sets_root(&self, root: &str) -> bool {
+        self.steps
+            .iter()
+            .any(|s| s.page.is_none() && s.path.first().map(String::as_str) == Some(root))
+    }
+
     /// The plan for the merged `eleventyComputed` of a page, or `None` when
     /// there is nothing to compute (11ty ignores a value that isn't a plain
     /// object).
