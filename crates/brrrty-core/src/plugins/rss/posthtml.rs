@@ -13,6 +13,12 @@
 //! dropped, and every attribute is printed in double quotes (a value that
 //! looks like JSON in single quotes), so `disabled` becomes `disabled=""`.
 
+/// How deeply elements may nest. `posthtml-render` and `tree.walk` recurse once per level, and
+/// in Node 26 they run out of stack between 3,000 and 3,500 nested `<div>`s, which stops an 11ty
+/// build. Brrrty refuses deeper HTML with a message instead, well inside that, so the tree it
+/// renders, walks and drops recursively never gets near the end of its own stack.
+pub const MAX_DEPTH: usize = 2000;
+
 /// A node of the tree, as `posthtml-parser` makes it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -105,11 +111,15 @@ struct Builder {
     attribname: String,
     attribvalue: String,
     attribs: Option<Vec<(String, String)>>,
+    /// The names in `attribs`, so a repeated name is found without a scan.
+    attrib_names: std::collections::HashSet<String>,
     stack: Vec<String>,
     foreign: Vec<bool>,
     // posthtml-parser's state.
     open: Vec<Element>,
     root: Vec<Node>,
+    /// An element would have nested deeper than [`MAX_DEPTH`]. Nothing deeper is built.
+    too_deep: bool,
 }
 
 impl Builder {
@@ -119,10 +129,12 @@ impl Builder {
             attribname: String::new(),
             attribvalue: String::new(),
             attribs: None,
+            attrib_names: std::collections::HashSet::new(),
             stack: Vec::new(),
             foreign: Vec::new(),
             open: Vec::new(),
             root: Vec::new(),
+            too_deep: false,
         }
     }
 
@@ -162,6 +174,11 @@ impl Builder {
     }
 
     fn cb_open_tag(&mut self, name: &str, attrs: Vec<(String, String)>) {
+        if self.open.len() >= MAX_DEPTH {
+            // The parse is refused; keep the tree shallow so it is cheap to drop.
+            self.too_deep = true;
+            return;
+        }
         let attrs = (!attrs.is_empty()).then(|| {
             // `posthtml-parser` turns `&quot;` back into `"`.
             attrs
@@ -207,6 +224,7 @@ impl Builder {
             }
         }
         self.attribs = Some(Vec::new());
+        self.attrib_names.clear();
     }
 
     fn end_open_tag(&mut self) {
@@ -275,8 +293,9 @@ impl Builder {
         // `attribs.__proto__ = "x"` sets nothing in JavaScript.
         if let Some(a) = &mut self.attribs
             && name != "__proto__"
-            && !a.iter().any(|(k, _)| *k == name)
+            && !self.attrib_names.contains(&name)
         {
+            self.attrib_names.insert(name.clone());
             a.push((name, value));
         }
     }
@@ -793,8 +812,9 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-/// `posthtml-parser`'s tree for `html`.
-pub fn parse(html: &str) -> Vec<Node> {
+/// `posthtml-parser`'s tree for `html`, or why Brrrty won't build it: elements nested more
+/// than [`MAX_DEPTH`] deep.
+pub fn parse(html: &str) -> Result<Vec<Node>, String> {
     let mut b = Builder::new();
     let mut t = Tokenizer {
         buf: html.as_bytes(),
@@ -807,7 +827,12 @@ pub fn parse(html: &str) -> Vec<Node> {
         sequence_index: 0,
     };
     t.run(&mut b);
-    b.root
+    if b.too_deep {
+        return Err(format!(
+            "its HTML nests elements more than {MAX_DEPTH} deep. 11ty's posthtml runs out of stack on HTML nested a few thousand deep, which stops the build; Brrrty refuses it before that"
+        ));
+    }
+    Ok(b.root)
 }
 
 /// `posthtml-render`'s `is-json` 2.0.1 check: a value that looks like JSON
@@ -894,7 +919,7 @@ mod tests {
     use super::*;
 
     fn round(html: &str) -> String {
-        render(&parse(html), Closing::Default)
+        render(&parse(html).unwrap(), Closing::Default)
     }
 
     /// Probed: `posthtml().process(html)` with posthtml 0.16.7.
@@ -934,5 +959,30 @@ mod tests {
         assert!(is_json("[{\"a\":1},{\"b\":2}]"));
         assert!(!is_json("[1,2]"));
         assert!(!is_json("1"));
+    }
+
+    /// Nesting up to the limit parses and prints; one level more is refused, even 100,000
+    /// levels, without a deep recursion anywhere.
+    #[test]
+    fn nesting_past_the_limit_is_refused() {
+        let nest = |n: usize| format!("{}x{}", "<div>".repeat(n), "</div>".repeat(n));
+        let ok = nest(MAX_DEPTH);
+        assert_eq!(round(&ok), ok);
+        for n in [MAX_DEPTH + 1, 100_000] {
+            let why = parse(&nest(n)).unwrap_err();
+            assert!(why.contains("more than 2000 deep"), "{why}");
+        }
+        // Unclosed tags count too.
+        assert!(parse(&"<span>".repeat(100_000)).is_err());
+    }
+
+    /// The first of two attributes with one name wins, however many there are.
+    #[test]
+    fn repeated_attributes_keep_the_first() {
+        let attrs: String = (0..50_000).map(|i| format!(" a{}={i}", i % 3)).collect();
+        assert_eq!(
+            round(&format!("<p{attrs}>")),
+            "<p a0=\"0\" a1=\"1\" a2=\"2\"></p>"
+        );
     }
 }

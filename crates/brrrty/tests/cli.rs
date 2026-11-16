@@ -476,3 +476,33 @@ fn script_panics_are_problems_not_crashes() {
     assert!(!filter.path().join("_site/f/index.html").exists());
     assert!(!filter.path().join("_site/c/index.html").exists());
 }
+
+/// A feed post nested 100,000 elements deep used to overflow the stack and abort (exit 134).
+/// Its feed is now refused with `feed-failed` (11ty's posthtml runs out of stack and stops the
+/// build), and every other page is written.
+#[test]
+fn a_deeply_nested_feed_post_refuses_the_feed_not_the_build() {
+    let deep = format!(
+        "---\ntags: posts\ntitle: Deep\n---\n{}x{}\n",
+        "<div>".repeat(100_000),
+        "</div>".repeat(100_000)
+    );
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.add_plugin(\"rss\", #{ type: \"atom\", output_path: \"/feed.xml\", \
+             collection: #{ name: \"posts\" }, metadata: #{ title: \"T\", base: \"https://example.com/\" } });\n",
+        ),
+        ("posts/deep.html", deep.as_str()),
+        ("posts/ok.md", "---\ntags: posts\ntitle: Ok\n---\nok\n"),
+        ("index.md", "home\n"),
+    ]);
+    let out = run_in(t.path(), &[]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("feed-failed"), "{err}");
+    assert!(err.contains("more than 2000 deep"), "{err}");
+    assert!(!t.path().join("_site/feed.xml").exists());
+    assert!(t.path().join("_site/index.html").is_file());
+    assert!(t.path().join("_site/posts/ok/index.html").is_file());
+}

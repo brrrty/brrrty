@@ -122,7 +122,7 @@ pub fn html_to_absolute_urls(html: &str, base: &str) -> Result<String, String> {
     if base.is_empty() {
         return Err("eleventy-plugin-rss: htmlToAbsoluteUrls(absolutePostUrl) was missing the full URL base `absolutePostUrl` argument.".into());
     }
-    let mut tree = posthtml::parse(html);
+    let mut tree = posthtml::parse(html)?;
     urls::transform(&mut tree, &mut |u, _, _| {
         Ok(absolute_url(u.trim_matches(posthtml::js_space), base))
     })?;
@@ -147,7 +147,7 @@ pub fn render_transforms(
     if out.rsplit('.').next() != Some("html") {
         return Ok(html.to_string());
     }
-    let mut tree = posthtml::parse(html);
+    let mut tree = posthtml::parse(html)?;
     urls::transform(&mut tree, &mut |u, _, _| {
         base::transform_url(u.trim_matches(posthtml::js_space), base, page_url)
     })?;
