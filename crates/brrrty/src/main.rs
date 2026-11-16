@@ -1,4 +1,4 @@
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -58,7 +58,10 @@ fn run_build(args: BuildArgs) -> ExitCode {
     let root = match std::env::current_dir() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Brrrty could not find the current folder: {e}");
+            let _ = writeln!(
+                std::io::stderr(),
+                "Brrrty could not find the current folder: {e}"
+            );
             return ExitCode::from(1);
         }
     };
@@ -94,7 +97,9 @@ fn run_build(args: BuildArgs) -> ExitCode {
     };
     let report = build(&opts, &MarkdownIt::new());
     if !args.quiet {
-        println!(
+        // A closed stdout (`| head -1`) is not a failure of the build.
+        let _ = writeln!(
+            std::io::stdout(),
             "Wrote {} files, copied {} files in {:.2} seconds (brrrty {})",
             report.written,
             report.copied,

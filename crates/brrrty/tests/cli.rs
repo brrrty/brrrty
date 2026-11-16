@@ -506,3 +506,61 @@ fn a_deeply_nested_feed_post_refuses_the_feed_not_the_build() {
     assert!(t.path().join("_site/index.html").is_file());
     assert!(t.path().join("_site/posts/ok/index.html").is_file());
 }
+
+/// Runs `brrrty args` in `root` with stdout and stderr connected to pipes
+/// whose read ends are already closed, as in `brrrty build 2>&1 | head -1`
+/// once `head` exits: every write fails with a broken pipe.
+fn run_with_closed_pipes(root: &std::path::Path, args: &[&str]) -> std::process::ExitStatus {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .args(args)
+        .current_dir(root)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    drop(child.stderr.take());
+    child.wait().unwrap()
+}
+
+/// A closed stdout or stderr doesn't abort (exit 134) or panic: the build
+/// runs, and the exit code is the build's own.
+#[test]
+fn a_closed_output_pipe_keeps_the_builds_exit_code() {
+    let mut files: Vec<(String, String)> = (0..30)
+        .map(|i| (format!("bad{i}.njk"), "{{ nope | nofilter }}\n".to_string()))
+        .collect();
+    files.push(("ok.md".to_string(), "ok\n".to_string()));
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&refs);
+    let status = run_with_closed_pipes(t.path(), &[]);
+    assert_eq!(status.code(), Some(1), "{status:?}");
+    assert!(t.path().join("_site/ok/index.html").exists());
+
+    let clean = site(&[("a.md", "a\n")]);
+    let status = run_with_closed_pipes(clean.path(), &[]);
+    assert_eq!(status.code(), Some(0), "{status:?}");
+
+    let logs = site(&[
+        ("brrrty.config.rhai", "print(\"hi\");\ndebug(\"there\");\n"),
+        ("a.njk", "{{ \"x\" | log }}\n"),
+    ]);
+    let status = run_with_closed_pipes(logs.path(), &[]);
+    assert_eq!(status.code(), Some(0), "{status:?}");
+    assert_eq!(
+        std::fs::read_to_string(logs.path().join("_site/a/index.html")).unwrap(),
+        "x\n"
+    );
+}
+
+/// The panic hook itself doesn't panic on a closed stderr: still 101.
+#[cfg(debug_assertions)]
+#[test]
+fn a_closed_stderr_keeps_the_bug_reports_exit_code() {
+    let t = site(&[]);
+    let status = run_with_closed_pipes(t.path(), &["--__panic"]);
+    assert_eq!(status.code(), Some(101), "{status:?}");
+}

@@ -12,6 +12,7 @@
 //! generates from those packages.
 
 use std::cell::Cell;
+use std::io::Write as _;
 use std::sync::Arc;
 
 use unicode_normalization::UnicodeNormalization;
@@ -367,7 +368,8 @@ fn log_filter(input: &Value, args: &[Value], env: &FilterEnv) -> Result<Value, S
     let mut all = Vec::with_capacity(args.len() + 1);
     all.push(input.clone());
     all.extend_from_slice(args);
-    eprintln!("{}", console_format(&all));
+    // A closed stderr (`2>&1 | head -1`) must not panic mid-render.
+    let _ = writeln!(std::io::stderr(), "{}", console_format(&all));
     env.returns_input();
     Ok(input.clone())
 }

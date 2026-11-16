@@ -1,5 +1,7 @@
 //! Bug reporting: issue links and the panic hook.
 
+use std::io::Write as _;
+
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// Everything except the unreserved characters `A-Z a-z 0-9 - . _ ~`.
@@ -87,13 +89,17 @@ pub fn install_panic_hook() {
             keep /= 2;
         };
         let message = truncate_chars(&message, keep);
-        eprintln!("Brrrty hit an internal bug. This is never your fault.");
-        eprintln!("  {message}");
-        eprintln!("  at {location}");
+        // A closed stderr (`2>&1 | head -1`) must not panic inside the
+        // hook, which would abort: each write's error is ignored.
+        let mut err = std::io::stderr().lock();
+        let _ = writeln!(err, "Brrrty hit an internal bug. This is never your fault.");
+        let _ = writeln!(err, "  {message}");
+        let _ = writeln!(err, "  at {location}");
         if std::env::var_os("RUST_BACKTRACE").is_some() {
-            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+            let _ = writeln!(err, "{}", std::backtrace::Backtrace::force_capture());
         }
-        eprintln!("Please report it: {url}");
+        let _ = writeln!(err, "Please report it: {url}");
+        drop(err);
         std::process::exit(101);
     }));
 }

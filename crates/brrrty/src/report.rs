@@ -1,6 +1,8 @@
 //! Renders build problems through miette.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::Path;
 
 use brrrty_core::{Problem, Severity, codes};
@@ -158,11 +160,23 @@ pub fn render_problem(p: &Problem, root: &Path, color: bool) -> String {
 }
 
 /// Print every problem, issue links for unsupported templates, and the counts line.
+///
+/// It is written to stderr in one go, and a write that fails (a closed
+/// pipe, as in `brrrty build 2>&1 | head -1`) is ignored: the build is done
+/// and its exit code stands.
 pub fn print_problems(problems: &[Problem], root: &Path, color: bool) {
+    let _ = std::io::stderr()
+        .lock()
+        .write_all(problems_text(problems, root, color).as_bytes());
+}
+
+/// What [`print_problems`] prints.
+fn problems_text(problems: &[Problem], root: &Path, color: bool) -> String {
+    let mut out = String::new();
     let mut extensions = BTreeSet::new();
     for p in problems {
-        eprint!("{}", render_problem(p, root, color));
-        eprintln!();
+        out.push_str(&render_problem(p, root, color));
+        out.push('\n');
         if p.code == codes::TEMPLATE_UNSUPPORTED
             && let Some(ext) = extension_of(p)
         {
@@ -172,7 +186,11 @@ pub fn print_problems(problems: &[Problem], root: &Path, color: bool) {
     for ext in extensions {
         let title = format!("Unsupported: .{ext} templates");
         let body = format!("{}\nExtension: .{ext}", environment());
-        eprintln!("Report it or help build it: {}", issue_url(&title, &body));
+        let _ = writeln!(
+            out,
+            "Report it or help build it: {}",
+            issue_url(&title, &body)
+        );
     }
     let errors = problems
         .iter()
@@ -188,11 +206,13 @@ pub fn print_problems(problems: &[Problem], root: &Path, color: bool) {
         1 => ", 1 note".to_string(),
         n => format!(", {n} notes"),
     };
-    eprintln!(
+    let _ = writeln!(
+        out,
         "{errors} {}, {warnings} {}{notes}",
         if errors == 1 { "error" } else { "errors" },
         if warnings == 1 { "warning" } else { "warnings" }
     );
+    out
 }
 
 #[cfg(test)]

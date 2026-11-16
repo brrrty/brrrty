@@ -3,6 +3,7 @@
 //! `config` mirrors 11ty's `eleventyConfig` in snake_case. Each call records
 //! what it set in [`State`]; nothing runs until the whole script has.
 
+use std::io::Write as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -170,8 +171,14 @@ pub fn engine_for(clock: Clock, label: String, root: &Path) -> Engine {
             },
         )
     });
-    e.on_print(|s| println!("{s}"));
-    e.on_debug(move |s, _src, pos| eprintln!("{label} {pos}: {s}"));
+    // A closed stdout or stderr (`| head -1`) doesn't stop the script:
+    // a failed write is ignored rather than panicking mid-render.
+    e.on_print(|s| {
+        let _ = writeln!(std::io::stdout(), "{s}");
+    });
+    e.on_debug(move |s, _src, pos| {
+        let _ = writeln!(std::io::stderr(), "{label} {pos}: {s}");
+    });
 
     // Debug builds only: a panic on demand, so tests can check that a panic inside a script
     // run becomes a Problem through the real binary, panic hook and all.
