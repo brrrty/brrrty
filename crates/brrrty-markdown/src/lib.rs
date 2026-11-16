@@ -45,16 +45,16 @@ impl markdown_it::NodeValue for EmptyBlockquote {
 
 /// Fixes to the parsed tree where the port's output differs from markdown-it's:
 /// - a blockquote with nothing to show (or only reference definitions) is `<blockquote></blockquote>`;
-/// - a code span of only spaces keeps all its spaces (markdown-it strips one from each end only
-///   when there is something else inside).
-fn fix_tree(ast: &mut markdown_it::Node) {
+/// - a code span of only spaces keeps all its spaces, in markdown-it 15 (`keep_space_only_code`).
+///   11ty's bundled 14.3.3 still strips one space from each end of three or more.
+fn fix_tree(ast: &mut markdown_it::Node, keep_space_only_code: bool) {
     use markdown_it::parser::inline::Text;
     use markdown_it::plugins::cmark::block::blockquote::Blockquote;
     use markdown_it::plugins::cmark::inline::backticks::CodeInline;
     ast.walk_mut(|n, _| {
         if n.is::<Blockquote>() && n.children.iter().all(|c| c.render().is_empty()) {
             n.replace(EmptyBlockquote);
-        } else if let Some(code) = n.cast::<CodeInline>() {
+        } else if let (true, Some(code)) = (keep_space_only_code, n.cast::<CodeInline>()) {
             let marker_len = code.marker_len;
             let Some(span) = n.srcmap.map(|m| m.get_byte_offsets()) else {
                 return;
@@ -117,7 +117,7 @@ impl Default for MarkdownIt {
 impl MarkdownRenderer for MarkdownIt {
     fn render(&self, source: &str) -> String {
         let mut ast = self.md.parse(source);
-        fix_tree(&mut ast);
+        fix_tree(&mut ast, false);
         ast.render()
     }
 }
@@ -196,7 +196,7 @@ impl DefaultMarkdownIt {
         padded.push_str(source);
         padded.push(EDGE);
         let mut ast = self.inline.parse(&padded);
-        fix_tree(&mut ast);
+        fix_tree(&mut ast, true);
         ast.walk_mut(|n, _| {
             if n.is::<Softbreak>() {
                 n.replace(RawBreak("\n"));
@@ -213,7 +213,7 @@ impl DefaultMarkdownIt {
     fn render_block(&self, source: &str) -> String {
         use markdown_it::plugins::cmark::block::fence::CodeFence;
         let mut ast = self.block.parse(source);
-        fix_tree(&mut ast);
+        fix_tree(&mut ast, true);
         if !source.ends_with('\n') {
             // markdown-it leaves the newline off the last line of a fence that runs to the end of
             // the text; the port adds one.
@@ -346,5 +346,45 @@ mod tests {
             md().render("para\n\n    indented\n"),
             "<p>para</p>\n<p>indented</p>\n"
         );
+    }
+
+    /// A code span of only spaces: 11ty's bundled markdown-it 14.3.3 strips one space from each
+    /// end of three or more, and 15.0.3 (`DefaultMarkdownIt`) keeps them all. Expected values are
+    /// what each version printed in Node.
+    #[test]
+    fn space_only_code_spans_follow_each_version() {
+        let cases = [
+            (
+                "`   `",
+                "<p><code> </code></p>\n",
+                "<p><code>   </code></p>\n",
+            ),
+            (
+                "`    `",
+                "<p><code>  </code></p>\n",
+                "<p><code>    </code></p>\n",
+            ),
+            (
+                "` \n `",
+                "<p><code> </code></p>\n",
+                "<p><code>   </code></p>\n",
+            ),
+            (
+                "a `   ` b",
+                "<p>a <code> </code> b</p>\n",
+                "<p>a <code>   </code> b</p>\n",
+            ),
+            (
+                "`  `",
+                "<p><code>  </code></p>\n",
+                "<p><code>  </code></p>\n",
+            ),
+        ];
+        let (v14, v15) = (MarkdownIt::new(), DefaultMarkdownIt::new());
+        for (src, want14, want15) in cases {
+            assert_eq!(v14.render(src), want14, "14.3.3: {src:?}");
+            assert_eq!(v15.render(src), want15, "15.0.3: {src:?}");
+        }
+        assert_eq!(v15.render_inline("a `   ` b"), "a <code>   </code> b");
     }
 }

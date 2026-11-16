@@ -2,7 +2,7 @@
 //! The inputs and outputs are in `tests/probes/markdown_it.json`, made by
 //! `tools/gen-markdown-probes.cjs`.
 
-use brrrty_markdown::{DefaultMarkdownIt, MarkdownRenderer};
+use brrrty_markdown::{DefaultMarkdownIt, MarkdownIt, MarkdownRenderer};
 use serde_json::Value;
 
 fn probes(kind: &str) -> Vec<(String, String)> {
@@ -49,4 +49,30 @@ fn render_matches_markdown_it() {
 #[test]
 fn render_inline_matches_markdown_it() {
     check("render_inline", |md, s| md.render_inline(s));
+}
+
+/// 11ty's own instance (markdown-it 14.3.3, html on, `code` off). The unclosed-fence cases are
+/// known gaps (see PORTING.md) and are listed here so they stay visible.
+#[test]
+fn eleventy_instance_matches_its_markdown_it() {
+    let md = MarkdownIt::new();
+    let known_gaps = [
+        "```js\r\n\n  ",
+        "```js\r><div>+ + \n ",
+        "```\nx\n  ",
+        "```\n  ",
+        "```\n\n",
+        "<div>x</div>",
+    ];
+    let cases = probes("render_eleventy");
+    assert!(cases.len() >= 25);
+    let bad: Vec<String> = cases
+        .iter()
+        .filter(|(s, _)| !known_gaps.contains(&s.as_str()))
+        .filter_map(|(s, want)| {
+            let got = md.render(s);
+            (&got != want).then(|| format!("{s:?}\n  want {want:?}\n  got  {got:?}"))
+        })
+        .collect();
+    assert!(bad.is_empty(), "{} differ:\n{}", bad.len(), bad.join("\n"));
 }

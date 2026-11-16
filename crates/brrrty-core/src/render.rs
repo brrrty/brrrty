@@ -190,9 +190,9 @@ impl Pipeline<'_> {
             Engines::Raw => job.body.to_string(),
             Engines::Liquid => page_liquid(&mut undefined)?,
             Engines::Markdown { liquid: true } => {
-                self.markdown.render(&page_liquid(&mut undefined)?)
+                self.render_markdown(&page_liquid(&mut undefined)?, job.shown)?
             }
-            Engines::Markdown { liquid: false } => self.markdown.render(job.body),
+            Engines::Markdown { liquid: false } => self.render_markdown(job.body, job.shown)?,
         };
         Ok(Output { html, undefined })
     }
@@ -213,7 +213,7 @@ impl Pipeline<'_> {
                 Kind::Liquid(t) => self.liquid(t, &layout_data, &mut undefined, job)?,
                 Kind::Markdown(t) => {
                     let out = self.liquid(t, &layout_data, &mut undefined, job)?;
-                    self.markdown.render(&out)
+                    self.render_markdown(&out, &layout.shown)?
                 }
                 // Pages with such a layout are refused before they get here.
                 Kind::Unrenderable(p) => return Err(p.clone()),
@@ -223,6 +223,26 @@ impl Pipeline<'_> {
             html: content,
             undefined,
         })
+    }
+
+    /// Renders Markdown, turning a panic in the Markdown library into a Problem for this page.
+    fn render_markdown(&self, source: &str, file: &Path) -> Result<String, Problem> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.markdown.render(source)))
+            .map_err(|panic| {
+                let why = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "it panicked".into());
+                Problem::error(
+                    codes::MARKDOWN_RENDER_FAILED,
+                    format!("the Markdown renderer failed on this file: {why}"),
+                )
+                .with_path(file)
+                .with_help(
+                    "this is a bug in Brrrty's Markdown library. Changing the Markdown near the construct it chokes on (for example, putting `~~strikethrough~~` or emphasis on one line, or a blank line before a list) usually works around it. Please report the file at https://github.com/brrrty/brrrty/issues",
+                )
+            })
     }
 
     fn liquid(

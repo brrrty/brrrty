@@ -124,9 +124,15 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   an emphasis marker next to an emoji or other symbol (`_a_😀` is `<em>` in
   markdown-it); a single-column table whose header ends in `|` and whose delimiter
   row has no pipe; an empty list item right after a blockquote's lazy line; a
-  reference definition with an odd destination (`[x]: /u[x]é`); and input that makes
-  the port panic (for example a strikethrough across a CRLF inside a list item),
-  which refuses that page with the panic text.
+  reference definition with an odd destination (`[x]: /u[x]é`); a table after a
+  blockquote's lazy line; a table indented four spaces; a `<div>` followed by a table;
+  `> <!-- -->`; and input that makes the port panic (for example a strikethrough across
+  a CRLF inside a list item), which refuses that page with the panic text. In 11ty's own
+  Markdown (markdown-it 14.3.3, which `.md` pages use), the same port also differs on a
+  fence that runs to the end of the text (it adds a final newline), on an HTML block at
+  the end of the text with no newline, on lines indented four spaces or more that the
+  `code` rule no longer takes, and on some raw-HTML edge cases. A panic there refuses the
+  page with `markdown-render-failed`, and the rest of the site builds.
 
 ## `object()` and key order
 

@@ -5,9 +5,12 @@
 //
 //   MARKDOWN_IT=/path/to/node_modules/markdown-it node tools/gen-markdown-probes.cjs > tests/probes/markdown_it.json
 //
-// MARKDOWN_IT is the markdown-it package directory (version 15.0.3).
+// MARKDOWN_IT is the markdown-it package directory (version 15.0.3). MARKDOWN_IT_11TY is the
+// 14.3.3 copy under @11ty/eleventy/node_modules.
 const markdownIt = require(process.env.MARKDOWN_IT || (() => { throw new Error('set MARKDOWN_IT to the markdown-it package directory'); })());
 const md = markdownIt();
+// 11ty 3.1.8's own instance: its bundled markdown-it 14.3.3, html on, `code` rule off.
+const eleventy = require(process.env.MARKDOWN_IT_11TY || (() => { throw new Error('set MARKDOWN_IT_11TY to 11ty\'s bundled markdown-it directory (14.3.3)'); })())({ html: true }).disable('code');
 
 // Found by tools/gen-markdown-fuzz.cjs and fixed.
 const FUZZ_BLOCK = ['>', '> ', '> >', '>  ', '* > ', '> [x]: /u', '> a\n\n>', '\n\n>', 'a\n|--', '[* \n|--', "' \r:-:", '## h\n|--', '2) x\n---:', 'a | b\n---|---', '>|\n|--', '```js\r\n\n  ', '```js\r><div>+ + \n ', '```\nx\n  ', '```\n  '];
@@ -44,9 +47,11 @@ const BLOCK = [
   'Term\n: Definition', '* * *', '+ plus', 'a\\\nb', '\\# not heading', '1\\. not list', '[link]( <a b> )', '&#0; &#xD800; &#1234567;',
 ];
 
+const SPACE_CODE = ['`   `', '`    `', '` \n `', 'a `   ` b', '`  `', '` a `'];
 const run = (fn, list) => [...list, ...(list === BLOCK ? FUZZ_BLOCK : FUZZ_INLINE)].map((s) => ({ s, out: fn(s) }));
 process.stdout.write(JSON.stringify({
   markdown_it: '15.0.3',
   render: run((s) => md.render(s), BLOCK),
+  render_eleventy: [...FUZZ_BLOCK, ...SPACE_CODE, 'a', '# h', '> q', '<div>x</div>', '    indented'].map((s) => ({ s, out: eleventy.render(s) })),
   render_inline: run((s) => md.renderInline(s), INLINE),
 }, null, 0).replace(/\},\{/g, '},\n{') + '\n');
