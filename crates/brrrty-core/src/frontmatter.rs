@@ -222,6 +222,25 @@ mod tests {
         assert_eq!(v("1e400"), s("1e400"));
     }
 
+    /// Probed with 11ty 3.1.8 (`{{ x | json }}`): front matter numbers that
+    /// overflow to infinity stay strings, as js-yaml leaves them, however
+    /// they are spelled. Underflow is 0, and a binary number too long for
+    /// 64 bits but still finite is a number.
+    #[test]
+    fn overflowing_numbers_stay_strings() {
+        let big_dec = format!("1{}", "0".repeat(400));
+        let big_hex = format!("0x1{}", "0".repeat(300));
+        for text in [
+            "1e400", "-1e400", "+1e400", "1E400", "1e+400", "1.5e999", ".5e400", &big_dec, &big_hex,
+        ] {
+            assert_eq!(v(text), s(text), "{text}");
+        }
+        assert_eq!(v("1e-400"), n(0.0));
+        assert!(
+            matches!(v(&format!("0b{}", "1".repeat(836))), Value::Number(x) if x.is_finite() && x > 1e251)
+        );
+    }
+
     /// Probed with 11ty 3.1.8: only `~`, `null`, `Null` and `NULL` are null and
     /// only `true`/`false` in three spellings are booleans. `yes`, `no`, `on`
     /// and `off` are strings.
