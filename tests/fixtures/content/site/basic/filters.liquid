@@ -1,0 +1,9 @@
+---
+permalink: filters.txt
+---
+map: {{ collections.post | map: "templateContent" | join: "~" | strip_newlines }}
+where: {{ collections.post | where: "content", "<p>B B</p>\n" | map: "url" | join: "," }}
+sort: {{ collections.post | sort: "templateContent" | map: "fileSlug" | join: "," }}
+size: {% for p in collections.post %}{{ p.templateContent | size }},{% endfor %}
+exp: {{ collections.post | where_exp: "p", "p.templateContent contains 'Heading'" | map: "fileSlug" | join: "," }}
+first: {{ collections.post.first.content | strip_html | strip }}

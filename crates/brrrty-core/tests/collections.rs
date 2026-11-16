@@ -140,34 +140,36 @@ fn listing_collections_is_refused_with_a_config_file() {
     );
 }
 
-/// Task 8 renders content. Until then a page that reads `templateContent`
-/// or `content` of an item, directly or by listing the item, is refused.
+/// Probed: an item's `templateContent` and `content` are the page's
+/// content without its layout, read directly or through a filter. Listing
+/// an item's keys also lists `template`, which Brrrty has no value for, so
+/// that is still refused.
 #[test]
-fn reading_item_content_is_refused_until_it_is_rendered() {
+fn item_content_reads_like_11ty() {
+    let t = site(
+        "{% for p in collections.all %}{{ p.templateContent }}{% endfor %}|{% for p in collections.all %}{{ p.content }}{% endfor %}|{{ collections.all | map: \"templateContent\" | join: \",\" }}",
+    );
+    let r = run(t.path());
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        read(t.path(), "report.txt"),
+        "<p>a</p>\n<p>b</p>\n|<p>a</p>\n<p>b</p>\n|<p>a</p>\n,<p>b</p>\n"
+    );
     for body in [
-        "{% for p in collections.all %}{{ p.templateContent }}{% endfor %}",
-        "{% for p in collections.all %}{{ p.content }}{% endfor %}",
         "{% for p in collections.all %}{{ p | json }}{% endfor %}",
         "{% for p in collections.all %}{% for k in p %}{{ k[0] }}{% endfor %}{% endfor %}",
-        "{{ collections.all | map: \"templateContent\" | join: \",\" }}",
     ] {
         let t = site(body);
         let r = run(t.path());
         let errs = errors(&r);
         assert_eq!(errs.len(), 1, "{body}: {:#?}", r.problems);
         assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED, "{body}");
-        assert_eq!(
-            errs[0].message,
-            "this page reads `templateContent` or `content` of a collection item, which Brrrty doesn't render yet",
-            "{body}"
-        );
-        assert_eq!(
-            errs[0].help.as_deref(),
-            Some("Rendered content of collection items is coming in this release."),
-            "{body}"
+        assert!(
+            errs[0].message.contains("`template` of a collection item"),
+            "{body}: {}",
+            errs[0].message
         );
         assert!(!t.path().join("_site/report.txt").exists(), "{body}");
-        // The pages themselves still build.
         assert_eq!(read(t.path(), "a/index.html"), "<p>a</p>\n");
     }
 }
@@ -394,37 +396,36 @@ fn layouts_read_collections() {
     assert_eq!(read(t.path(), "withl/index.html"), "3:<p>w</p>\n");
 }
 
-/// Every filter that reads a property of the items sees the marker, with or
-/// without a config file (probed filters: where, reject, find, find_index,
-/// has, group_by, map, sort, sum and their `_exp` forms).
+/// Every filter that reads a property of the items sees the item's content
+/// (probed: where, reject, find, find_index, has, group_by, map, sort, sum
+/// and their `_exp` forms, each printed with `size`), and the fields Brrrty
+/// can't fill stay refused, with or without a config file.
 #[test]
-fn filters_reading_item_content_are_refused() {
+fn filters_reading_item_fields() {
     let t = "templateContent";
     let filters = [
-        format!("where: \"{t}\""),
-        format!("where: \"{t}\", \"x\""),
-        format!("reject: \"{t}\""),
-        format!("find: \"{t}\", \"x\""),
-        format!("find_index: \"{t}\", \"x\""),
-        format!("has: \"{t}\", \"x\""),
-        format!("group_by: \"{t}\""),
-        format!("map: \"{t}\""),
-        format!("sort: \"{t}\""),
-        format!("sort_natural: \"{t}\""),
-        format!("sum: \"{t}\""),
-        format!("where_exp: \"i\", \"i.{t} == 1\""),
-        format!("reject_exp: \"i\", \"i.{t} == 1\""),
-        format!("find_exp: \"i\", \"i.{t} == 1\""),
-        format!("find_index_exp: \"i\", \"i.{t} == 1\""),
-        format!("has_exp: \"i\", \"i.{t} == 1\""),
-        format!("group_by_exp: \"i\", \"i.{t}\""),
-        "where: \"content\"".to_string(),
-        "where: \"data.collections\"".to_string(),
-        "map: \"template\"".to_string(),
+        (format!("where: \"{t}\""), "2"),
+        (format!("where: \"{t}\", \"x\""), "0"),
+        (format!("reject: \"{t}\""), "0"),
+        (format!("find: \"{t}\", \"x\""), "0"),
+        (format!("find_index: \"{t}\", \"x\""), "0"),
+        (format!("has: \"{t}\", \"x\""), "0"),
+        (format!("group_by: \"{t}\""), "2"),
+        (format!("map: \"{t}\""), "2"),
+        (format!("sort: \"{t}\""), "2"),
+        (format!("sort_natural: \"{t}\""), "2"),
+        (format!("sum: \"{t}\""), "0"),
+        (format!("where_exp: \"i\", \"i.{t} == 1\""), "0"),
+        (format!("reject_exp: \"i\", \"i.{t} == 1\""), "2"),
+        (format!("find_exp: \"i\", \"i.{t} == 1\""), "0"),
+        (format!("find_index_exp: \"i\", \"i.{t} == 1\""), "0"),
+        (format!("has_exp: \"i\", \"i.{t} == 1\""), "0"),
+        (format!("group_by_exp: \"i\", \"i.{t}\""), "2"),
+        ("where: \"content\"".to_string(), "2"),
     ];
+    let refused = ["where: \"data.collections\"", "map: \"template\""];
     for config in [false, true] {
-        for f in &filters {
-            let t = site(&format!("{{{{ collections.all | {f} | size }}}}"));
+        let with_config = |t: &tempfile::TempDir| {
             if config {
                 write(
                     t.path(),
@@ -432,6 +433,21 @@ fn filters_reading_item_content_are_refused() {
                     "module.exports = () => ({});",
                 );
             }
+        };
+        for (f, size) in &filters {
+            let t = site(&format!("{{{{ collections.all | {f} | size }}}}"));
+            with_config(&t);
+            let r = run(t.path());
+            assert!(
+                errors(&r).is_empty(),
+                "{f} (config {config}): {:#?}",
+                r.problems
+            );
+            assert_eq!(read(t.path(), "report.txt"), *size, "{f} (config {config})");
+        }
+        for f in refused {
+            let t = site(&format!("{{{{ collections.all | {f} | size }}}}"));
+            with_config(&t);
             let r = run(t.path());
             let errs = errors(&r);
             assert_eq!(errs.len(), 1, "{f} (config {config}): {:#?}", r.problems);

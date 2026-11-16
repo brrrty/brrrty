@@ -295,7 +295,8 @@ impl<'a> Context<'a> {
             return Some(v.clone());
         }
         match self.data {
-            Value::Object(o) => o.get(key).cloned(),
+            // A sub-evaluation over a collection item reads its content.
+            Value::Object(o) => brrrty_js::traps::read_top(self.data, key, o.get(key).cloned()),
             // A filter can use a string or an array as the data, as
             // LiquidJS's `Object(value)` does: `length` and indexes are
             // its own properties.

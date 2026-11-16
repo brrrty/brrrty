@@ -1,0 +1,5 @@
+---
+layout: base.liquid
+---
+{% for p in collections.post %}[{{ p.inputPath }}|TC={{ p.templateContent }}|C={{ p.content }}|eq={% if p.content == p.templateContent %}y{% else %}n{% endif %}]
+{% endfor %}

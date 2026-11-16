@@ -1,0 +1,9 @@
+---
+pagination:
+  data: letters
+  size: 1
+  addAllPagesToCollections: true
+tags: lf
+permalink: "leak/f/{{ pagination.pageNumber }}/"
+---
+F{{ pagination.items[0] }}{% if pagination.pageNumber == 1 %}{% for p in collections.lz %}{{ p.templateContent }}{% endfor %}{% endif %}

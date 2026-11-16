@@ -169,10 +169,10 @@ pub(crate) struct Pipeline<'a> {
 }
 
 impl Pipeline<'_> {
-    pub fn render(&self, job: &Job<'_>) -> Result<Output, Problem> {
+    /// The page's content without its layouts: what 11ty calls
+    /// `templateContent`, and what a collection item's `content` holds.
+    pub fn content(&self, job: &Job<'_>) -> Result<Output, Problem> {
         let mut undefined = BTreeSet::new();
-        let page_data = job.data;
-        let data = Value::Object(Arc::new(page_data.clone()));
         let page_liquid = |undefined: &mut BTreeSet<String>| -> Result<String, Problem> {
             // 11ty skips the engine when the body has no Liquid in it.
             if !job.body.contains("{{") && !job.body.contains("{%") {
@@ -183,9 +183,10 @@ impl Pipeline<'_> {
                 .engine
                 .parse(&name, job.body)
                 .map_err(|e| self.problem(&e, job))?;
+            let data = Value::Object(Arc::new(job.data.clone()));
             self.liquid(&t, &data, undefined, job)
         };
-        let mut content = match job.engines {
+        let html = match job.engines {
             Engines::Raw => job.body.to_string(),
             Engines::Liquid => page_liquid(&mut undefined)?,
             Engines::Markdown { liquid: true } => {
@@ -193,11 +194,18 @@ impl Pipeline<'_> {
             }
             Engines::Markdown { liquid: false } => self.markdown.render(job.body),
         };
+        Ok(Output { html, undefined })
+    }
+
+    /// The page's layout chain around `content`, its rendered content.
+    pub fn layouts(&self, job: &Job<'_>, content: &str) -> Result<Output, Problem> {
+        let mut undefined = BTreeSet::new();
+        let mut content = content.to_string();
         for layout in job.layouts {
             // 11ty renders a layout with `{ content, ...data }`.
-            let mut with_content = IndexMap::with_capacity(page_data.len() + 1);
+            let mut with_content = IndexMap::with_capacity(job.data.len() + 1);
             with_content.insert("content".to_string(), Value::String(content.into()));
-            for (k, v) in page_data {
+            for (k, v) in job.data {
                 with_content.insert(k.clone(), v.clone());
             }
             let layout_data = Value::Object(Arc::new(with_content));

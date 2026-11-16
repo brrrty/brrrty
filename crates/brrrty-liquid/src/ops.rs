@@ -264,9 +264,9 @@ pub(crate) fn read_property(obj: &Val, key: &Value) -> Val {
         });
     }
     let name = key.to_js_string();
-    let own = own_property(v, &name);
+    let mut own = own_property(v, &name);
     if let Value::Object(o) = v {
-        brrrty_js::traps::read(o, &name, own.as_ref());
+        own = brrrty_js::traps::read(o, &name, own);
     }
     let special = matches!(key, Value::String(_));
     Val::V(match name.as_str() {

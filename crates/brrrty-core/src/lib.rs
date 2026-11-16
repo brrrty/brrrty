@@ -5,6 +5,7 @@
 
 pub mod build;
 mod collections;
+mod content;
 mod data;
 pub mod discover;
 pub mod frontmatter;

@@ -394,6 +394,9 @@ pub(crate) struct Built {
     /// failed, and the one that did.
     pub skipped: Vec<usize>,
     pub failed: Vec<(usize, Problem)>,
+    /// The entries in the order 11ty visits them: the order it renders
+    /// their content in.
+    pub order: Vec<usize>,
 }
 
 /// Build the collections. `entries` are in 11ty's template order. `generate`
@@ -420,6 +423,7 @@ pub(crate) fn build(
     let mut data: IndexMap<String, Value> = IndexMap::new();
     let mut failed: Vec<(usize, Problem)> = Vec::new();
     let mut skipped: Vec<usize> = Vec::new();
+    let mut order: Vec<usize> = Vec::new();
 
     let snapshot = |added: &Vec<Page>, sorted: &mut Vec<usize>, dirty: &mut bool, tag: &str| {
         if *dirty {
@@ -448,6 +452,7 @@ pub(crate) fn build(
             let v = snapshot(&added, &mut sorted, &mut dirty, tag);
             data.insert(tag.to_string(), v);
         } else if let Some(&i) = by_path.get(&node) {
+            order.push(i);
             let pages = match entries[i].pages.take() {
                 Some(p) => p,
                 None if !failed.is_empty() => {
@@ -479,6 +484,7 @@ pub(crate) fn build(
         collections: Arc::new(js_top(&data)),
         skipped,
         failed,
+        order,
     }
 }
 

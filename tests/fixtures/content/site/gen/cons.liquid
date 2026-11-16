@@ -1,0 +1,7 @@
+---
+pagination:
+  data: collections.g
+  size: 2
+permalink: "cons/{{ pagination.pageNumber }}/"
+---
+{% for p in pagination.items %}<{{ p.templateContent }}>{% endfor %}

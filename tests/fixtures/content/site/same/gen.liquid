@@ -1,0 +1,9 @@
+---
+pagination:
+  data: letters
+  size: 1
+  addAllPagesToCollections: true
+tags: sg
+permalink: "same/{{ pagination.pageNumber }}/"
+---
+S{{ pagination.items[0] }}{% for p in collections.sg %}{% if p.pageNumber < pagination.pageNumber %}({{ p.templateContent }}){% endif %}{% endfor %}

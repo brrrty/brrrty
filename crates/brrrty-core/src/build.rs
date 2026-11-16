@@ -14,6 +14,7 @@ use rayon::prelude::*;
 use serde_json::Value as Json;
 
 use crate::collections::{self, Entry, Membership, Page};
+use crate::content::{self, ContentPage};
 use crate::data::{
     BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags,
     frozen_keys, frozen_problem, js_help, js_object, key_line, load_global, merge, page_data,
@@ -30,6 +31,7 @@ use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Located, Locator, Permalink};
 use crate::problem::{Problem, Severity, codes};
 use crate::render::{Engines, Job, Pipeline, body_line, engines_for};
+use brrrty_js::traps::{self, Outcome};
 
 /// What a build did.
 #[derive(Debug)]
@@ -933,10 +935,12 @@ fn collections_problem(undefined: &BTreeSet<String>, gap: Option<&str>) -> Optio
     if item("templateContent") || item("content") {
         return Some(
             Problem::error(
-                codes::DATA_UNSUPPORTED,
-                "this page reads `templateContent` or `content` of a collection item, which Brrrty doesn't render yet",
+                codes::CONTENT_UNAVAILABLE,
+                "a permalink or computed value reads `templateContent` or `content` of a collection item, before 11ty renders any content",
             )
-            .with_help("Rendered content of collection items is coming in this release."),
+            .with_help(
+                "11ty places every page before it renders content, and stops the whole build here (\"Tried to use templateContent too early\").",
+            ),
         );
     }
     if item("template") {
@@ -1358,18 +1362,24 @@ fn build_in_pool(
     let input_dot = dot_dir(&input_rel);
     let mut slots: Vec<Slot> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
+    // Each template's collection items, in page order: a page's content is
+    // what its item's `templateContent` reads.
+    let mut slot_items: Vec<Vec<Value>> = Vec::new();
     for t in templates {
         let input_path = format!("{input_dot}{}", slash_path(&t.rel));
         let (pages, slot) = match t.pages {
-            Pages::Ready(p) => (
-                Some(
-                    p.iter()
-                        .map(|x| Page::new(&x.data, x.page_number))
-                        .collect(),
-                ),
-                Slot::Ready(p),
-            ),
-            Pages::Deferred(d) => (None, Slot::Deferred(d)),
+            Pages::Ready(p) => {
+                let items: Vec<Page> = p
+                    .iter()
+                    .map(|x| Page::new(&x.data, x.page_number))
+                    .collect();
+                slot_items.push(items.iter().map(|x| x.item.clone()).collect());
+                (Some(items), Slot::Ready(p))
+            }
+            Pages::Deferred(d) => {
+                slot_items.push(Vec::new());
+                (None, Slot::Deferred(d))
+            }
         };
         entries.push(Entry {
             input_path,
@@ -1380,19 +1390,26 @@ fn build_in_pool(
     }
     let mut collections_value: Option<Arc<IndexMap<String, Value>>> = None;
     let mut made: Vec<Option<Vec<Prepared>>> = slots.iter().map(|_| None).collect();
+    // Each template's place in 11ty's order, which is file order until the
+    // collections give the real one.
+    let mut template_order: Vec<usize> = (0..slots.len()).collect();
     if gap.is_none() {
         let built = collections::build(entries, |i, so_far| {
             let Slot::Deferred(d) = &slots[i] else {
                 return Ok(Vec::new());
             };
             let pages = d.run(&shared, so_far)?;
-            let items = pages
+            let items: Vec<Page> = pages
                 .iter()
                 .map(|p| Page::new(&p.data, p.page_number))
                 .collect();
+            slot_items[i] = items.iter().map(|x| x.item.clone()).collect();
             made[i] = Some(pages);
             Ok(items)
         });
+        for (place, &i) in built.order.iter().enumerate() {
+            template_order[i] = place;
+        }
         let clean = built.failed.is_empty() && built.skipped.is_empty();
         for (_, problem) in built.failed {
             report.problems.push(problem);
@@ -1429,11 +1446,25 @@ fn build_in_pool(
         }
     }
     let mut prepared: Vec<Prepared> = Vec::new();
-    for (slot, made) in slots.into_iter().zip(made) {
-        match slot {
-            Slot::Ready(p) => prepared.extend(p),
-            Slot::Deferred(_) => prepared.extend(made.into_iter().flatten()),
+    // For each page: its template's place in 11ty's order, and its item.
+    let mut page_template: Vec<usize> = Vec::new();
+    let mut page_item: Vec<Option<usize>> = Vec::new();
+    for (i, (slot, made)) in slots.into_iter().zip(made).enumerate() {
+        let pages = match slot {
+            Slot::Ready(p) => p,
+            Slot::Deferred(_) => made.unwrap_or_default(),
+        };
+        for (n, _) in pages.iter().enumerate() {
+            page_template.push(template_order[i]);
+            // Registered even when the collections are refused: a page that
+            // paginated one before that still holds its items.
+            let item = match slot_items[i].get(n) {
+                Some(Value::Object(o)) => Some(traps::object_id(o)),
+                _ => None,
+            };
+            page_item.push(item);
         }
+        prepared.extend(pages);
     }
     // The registered `collections` object makes a read of a name that isn't
     // a tag a trap when the site's config may add collections.
@@ -1483,75 +1514,143 @@ fn build_in_pool(
             colliding.insert(output.to_path_buf());
         }
     }
-    prepared.retain(|p| p.output_rel.as_ref().is_none_or(|o| !colliding.contains(o)));
+    // A page that shares its output with another is not written, but its
+    // content is still rendered for the pages that read it.
+    let writes = |p: &Prepared| {
+        p.output_rel
+            .as_ref()
+            .is_some_and(|o| !colliding.contains(o))
+    };
     if strict && has_error(&report) {
         return finish(report, strict, start);
     }
 
-    // Render and write.
+    // Render every page's content in 11ty's dependency order, then the
+    // layouts, which can read any page's content.
     let pipeline = Pipeline {
         engine: &engine,
         loader: &loader,
         markdown,
     };
-    let results: Vec<Result<(), Problem>> = prepared
-        .par_iter()
-        .filter_map(|p| p.output_rel.as_ref().map(|o| (p, o)))
-        .map(|(p, output_rel)| {
+    let jobs: Vec<ContentPage<'_>> = prepared
+        .iter()
+        .enumerate()
+        .map(|(i, p)| ContentPage {
+            job: Job {
+                shown: &p.source.shown,
+                body: &p.source.body,
+                body_line: p.source.body_line,
+                engines: p.source.engines,
+                data: &p.data,
+                layouts: &p.source.layouts,
+            },
+            template: page_template[i],
+            page_number: p.page_number,
+            item: page_item[i],
+            renderable: content::renderable(&p.data),
+        })
+        .collect();
+    let check = |i: usize, undefined: &BTreeSet<String>| {
+        let src = &prepared[i].source;
+        missing_data_problem(undefined, &src.withheld, &data_dir, gap.as_deref())
+            .map(|p| p.with_path(&src.shown))
+    };
+    let contents = content::render_all(&pipeline, &jobs, &check);
+    let settled = contents.settled_source();
+
+    // Each result names the page whose problem explains it, if another.
+    type Written = Result<(), (Problem, Option<usize>)>;
+    let results: Vec<Written> = (0..prepared.len())
+        .into_par_iter()
+        .filter(|&i| writes(&prepared[i]))
+        .map(|i| {
+            let p = &prepared[i];
             let src = &p.source;
             let shown = &src.shown;
+            let output_rel = p.output_rel.as_deref().unwrap_or(Path::new(""));
             let Some(dest) = contained_output_path(&out, output_rel) else {
-                return Err(Problem::error(
-                    codes::OUTPUT_ESCAPES,
-                    format!(
-                        "{} would be written outside the output folder",
-                        output_rel.display()
-                    ),
-                )
-                .with_path(shown));
+                return Err((
+                    Problem::error(
+                        codes::OUTPUT_ESCAPES,
+                        format!(
+                            "{} would be written outside the output folder",
+                            output_rel.display()
+                        ),
+                    )
+                    .with_path(shown),
+                    None,
+                ));
             };
-            let rendered = pipeline.render(&Job {
-                shown,
-                body: &src.body,
-                body_line: src.body_line,
-                engines: src.engines,
-                data: &p.data,
-                layouts: &src.layouts,
-            })?;
+            let content = contents.content(i)?;
+            let guard = traps::install(settled.clone());
+            let rendered = pipeline.layouts(&jobs[i].job, content);
+            let reads = traps::take_item_reads();
+            drop(guard);
+            if let Some(j) = reads
+                .iter()
+                .find(|(_, o)| *o == Outcome::Refused)
+                .and_then(|(id, _)| contents.page_of(*id))
+            {
+                return Err((contents.needs_problem(i, j), Some(j)));
+            }
+            let rendered = rendered.map_err(|p| (p, None))?;
             if let Some(problem) = missing_data_problem(
                 &rendered.undefined,
                 &src.withheld,
                 &data_dir,
                 gap.as_deref(),
             ) {
-                return Err(problem.with_path(shown));
+                return Err((problem.with_path(shown), None));
             }
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
-                    Problem::error(codes::WRITE_FAILED, format!("cannot create folder: {e}"))
-                        .with_path(shown)
+                    (
+                        Problem::error(codes::WRITE_FAILED, format!("cannot create folder: {e}"))
+                            .with_path(shown),
+                        None,
+                    )
                 })?;
             }
             fs::write(&dest, rendered.html).map_err(|e| {
-                Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
-                    .with_path(shown)
+                (
+                    Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
+                        .with_path(shown),
+                    None,
+                )
             })
         })
         .collect();
-    // The pages of one template often fail the same way: say it once.
+    // The pages of one template often fail the same way: say it once. A page
+    // that isn't written reports its own problem only when another page's
+    // problem points to it.
     let mut seen = BTreeSet::new();
+    let mut report_problem = |report: &mut BuildReport, p: Problem| {
+        let key = format!(
+            "{}|{:?}|{:?}|{:?}|{}",
+            p.code, p.path, p.line, p.column, p.message
+        );
+        if seen.insert(key) {
+            report.problems.push(p);
+        }
+    };
+    let mut pointed: Vec<usize> = Vec::new();
     for r in results {
         match r {
             Ok(()) => report.written += 1,
-            Err(p) => {
-                let key = format!(
-                    "{}|{:?}|{:?}|{:?}|{}",
-                    p.code, p.path, p.line, p.column, p.message
-                );
-                if seen.insert(key) {
-                    report.problems.push(p);
-                }
+            Err((p, other)) => {
+                report_problem(&mut report, p);
+                pointed.extend(other);
             }
+        }
+    }
+    let mut explained: BTreeSet<usize> = BTreeSet::new();
+    while let Some(j) = pointed.pop() {
+        if writes(&prepared[j]) || !contents.renders(j) || !explained.insert(j) {
+            continue;
+        }
+        if let Err((p, other)) = contents.content(j) {
+            report_problem(&mut report, p);
+            pointed.extend(other);
         }
     }
     if strict && has_error(&report) {
@@ -1560,6 +1659,7 @@ fn build_in_pool(
 
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
+        .filter(|p| writes(p))
         .filter_map(|p| {
             p.output_rel
                 .as_ref()
