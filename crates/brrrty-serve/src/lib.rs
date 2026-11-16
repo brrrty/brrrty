@@ -52,6 +52,10 @@ pub const DEFAULT_HOST: &str = "localhost";
 /// server's `portReassignmentRetryCount`.
 pub const PORT_RETRIES: u16 = 10;
 
+/// A folder name never served at the top of the folder: `brrrty serve`'s staging folder
+/// inside the output folder, whatever it holds.
+pub const HIDDEN_DIR: &str = ".brrrty-serve";
+
 /// A write that makes no progress for this long fails.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 

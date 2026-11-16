@@ -1023,6 +1023,33 @@ fn the_hook_sees_builtin_pages_and_sub_requests() {
 
 // ---- path traversal ---------------------------------------------------
 
+#[test]
+fn the_staging_folder_is_never_served() {
+    let f = fixture(false);
+    write(&f.site, ".brrrty-serve/lock", "123");
+    write(&f.site, ".brrrty-serve/build-1/index.html", "staged");
+    let srv = start(&f);
+    for target in [
+        "/.brrrty-serve/lock",
+        "/.brrrty-serve/build-1/",
+        "/.brrrty-serve/build-1/index.html",
+        "/.brrrty-serve/",
+        "/.brrrty-serve",
+        "/%2ebrrrty-serve/lock",
+        "//.brrrty-serve/lock",
+        "/./.brrrty-serve/lock",
+        "/.BRRRTY-SERVE/lock",
+    ] {
+        let r = get(&srv, target);
+        assert_eq!(r.status, 404, "{target}");
+        assert!(
+            !r.text().contains("staged") && !r.text().contains("123"),
+            "{target}"
+        );
+    }
+    assert_eq!(get(&srv, "/.hidden").status, 200);
+}
+
 fn assert_contained(srv: &RunningServer, r: &Reply, what: &str) {
     let body = r.text();
     assert!(

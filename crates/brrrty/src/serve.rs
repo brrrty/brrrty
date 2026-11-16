@@ -1358,6 +1358,11 @@ mod echo_tests {
     }
 
     #[test]
+    fn the_server_hides_the_staging_folder() {
+        assert_eq!(STAGING_DIR, brrrty_serve::HIDDEN_DIR);
+    }
+
+    #[test]
     fn changed_paths_print_as_11ty_prints_them() {
         assert_eq!(shown(Path::new("src/index.md")), "./src/index.md");
         // The input folder is the project folder and the watcher lost track of it.

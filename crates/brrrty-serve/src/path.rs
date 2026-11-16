@@ -174,6 +174,13 @@ pub(crate) fn resolve(root: &Root, raw_path: &str) -> Resolved {
             s => segments.push(s.to_string()),
         }
     }
+    // Compared without case: the folder may be on a case-insensitive file system.
+    if segments
+        .first()
+        .is_some_and(|s| s.eq_ignore_ascii_case(crate::HIDDEN_DIR))
+    {
+        return Resolved::NotFound;
+    }
 
     if !trailing_slash && let Some(f) = root.file(&segments, None) {
         return Resolved::File(f);
