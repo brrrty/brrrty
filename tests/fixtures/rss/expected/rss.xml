@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet href="/feed.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xml:base="https://example.com/" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    
+    <title>Example Blog</title>
+    <link>https://example.com/</link>
+    <atom:link href="https://example.com/rss.xml" rel="self" type="application/rss+xml" />
+    <description>Every post</description>
+    <language></language><image>https://example.com/icon.png</image>
+    <item>
+      <title>Ünïcode 🎉</title>
+      <link>https://example.com/posts/2024-07-01-unicode/</link><description>&lt;p&gt;Emoji 🎉, an entity &amp;amp; and a [path](/ünïcode path/) with spaces&lt;br&gt;
+and a backslash &#92; in text.&lt;/p&gt;
+</description><pubDate>Sun, 30 Jun 2024 19:00:00 -0500</pubDate>
+      <dc:creator>A. Writer</dc:creator>
+      <guid>https://example.com/posts/2024-07-01-unicode/</guid>
+    </item>
+    <item>
+      <title>Plain text</title>
+      <link>https://example.com/notes/plain.txt</link><description>&lt;p&gt;A &lt;a href=&quot;rel/&quot;&gt;relative link&lt;/a&gt; that stays as it is: this page isn&#39;t HTML.&lt;/p&gt;
+</description><pubDate>Fri, 31 May 2024 19:00:00 -0500</pubDate>
+      <dc:creator>A. Writer</dc:creator>
+      <guid>https://example.com/notes/plain.txt</guid>
+    </item>
+    <item>
+      <title>It&#39;s &quot;quoted&quot; &amp; &lt;b&gt;bold&lt;/b&gt;</title>
+      <link>https://example.com/posts/2024-04-01-summary/</link><description>A &lt;b&gt;summary&lt;/b&gt; &amp; more</description>
+      <content:encoded>&lt;p&gt;Body with a &lt;a href=&quot;https://example.com/summary-link/&quot;&gt;link&lt;/a&gt;.&lt;/p&gt;
+</content:encoded><pubDate>Sun, 31 Mar 2024 19:00:00 -0500</pubDate>
+      <dc:creator>A. Writer</dc:creator>
+      <guid>https://example.com/posts/2024-04-01-summary/</guid>
+    </item>
+    <item>
+      <title>Code</title>
+      <link>https://example.com/posts/2024-03-01-code/</link><description>&lt;p&gt;Inline &lt;code&gt;&amp;lt;a href=&amp;quot;/not-a-link&amp;quot;&amp;gt;&lt;/code&gt; stays text.&lt;/p&gt;
+&lt;p&gt;indented, which 11ty makes a paragraph: &lt;a href=&quot;https://example.com/in-paragraph&quot;&gt;x&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;&amp;lt;img src=&quot;/escaped.png&quot;&amp;gt; &lt;a href=&quot;https://example.com/in-pre&quot;&gt;real&lt;/a&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;script&gt;var html = &quot;&lt;img src=&#39;/in-script.png&#39;&gt;&quot;;&lt;/script&gt;
+&lt;meta http-equiv=&quot;refresh&quot; content=&quot;5; url=https://example.com/moved/&quot;&gt;
+</description><pubDate>Thu, 29 Feb 2024 18:00:00 -0600</pubDate>
+      <dc:creator>A. Writer</dc:creator>
+      <guid>https://example.com/posts/2024-03-01-code/</guid>
+    </item>
+    <item>
+      <title>Media</title>
+      <link>https://example.com/posts/2024-02-01-media/</link><description>&lt;img src=&quot;https://example.com/posts/2024-02-01-media/photo.png&quot; srcset=&quot;https://example.com/posts/2024-02-01-media/photo.png 1x, https://example.com/posts/2024-02-01-media/photo@2x.png 2x&quot; alt=&quot;A photo&quot;&gt;
+&lt;picture&gt;
+&lt;source srcset=&quot;https://example.com/posts/2024-02-01-media/wide.webp 1200w, https://example.com/posts/2024-02-01-media/narrow.webp 600w&quot; type=&quot;image/webp&quot;&gt;
+&lt;img src=&quot;https://example.com/fallback.png&quot; alt=&quot;&quot;&gt;
+&lt;/picture&gt;
+&lt;p&gt;&lt;video poster=&quot;https://example.com/posts/2024-02-01-media/poster.jpg&quot; src=&quot;https://example.com/clip.mp4&quot; controls=&quot;&quot;&gt;&lt;/video&gt;&lt;/p&gt;
+&lt;p&gt;&lt;audio src=&quot;https://example.com/posts/2024-02-01-media/sound.mp3&quot;&gt;&lt;/audio&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://example.com/posts/2024-02-01-media/go&quot; ping=&quot;https://example.com/p1, https://example.com/p2&quot;&gt;pinged&lt;/a&gt; &lt;IMG SRC=&quot;upper.png&quot;&gt; &lt;input disabled=&quot;&quot;&gt; &lt;iframe src=&quot;https://example.com/embed/1&quot;&gt;&lt;/iframe&gt;&lt;/p&gt;
+&lt;blockquote cite=&quot;https://example.com/source&quot;&gt;Quoted&lt;/blockquote&gt;
+&lt;div data-json=&#39;{&quot;a&quot;: 1}&#39; title=&quot;single &amp;quot;quoted&amp;quot;&quot; class=&quot;bare&quot;&gt;JSON&lt;/div&gt;
+</description><pubDate>Wed, 31 Jan 2024 18:00:00 -0600</pubDate>
+      <dc:creator>A. Writer</dc:creator>
+      <guid>https://example.com/posts/2024-02-01-media/</guid>
+    </item>
+    <item>
+      <title>Links</title>
+      <link>https://example.com/posts/2024-01-01-links/</link><description>&lt;p&gt;A &lt;a href=&quot;https://example.com/posts/2024-01-01-links/next/&quot;&gt;relative link&lt;/a&gt;, a &lt;a href=&quot;https://example.com/about/&quot;&gt;rooted one&lt;/a&gt;, an &lt;a href=&quot;https://example.com/posts/2024-01-01-links/#top&quot;&gt;anchor&lt;/a&gt;,
+a &lt;a href=&quot;https://example.com/posts/2024-01-01-links/page#frag&quot;&gt;query&lt;/a&gt;, &lt;a href=&quot;https://example.com/posts/other/&quot;&gt;up&lt;/a&gt;, &lt;a href=&quot;mailto:writer@example.com&quot;&gt;mail&lt;/a&gt;,
+&lt;a href=&quot;https://cdn.example.org/lib.js&quot;&gt;protocol-relative&lt;/a&gt;, &lt;a href=&quot;https://example.org/x?y=1&amp;amp;z=2&quot;&gt;full&lt;/a&gt;
+and &lt;a href=&quot;https://example.com/padded/&quot;&gt;padded&lt;/a&gt; and &lt;a href=&quot;https://example.com/posts/2024-01-01-links/&quot;&gt;empty&lt;/a&gt;.&lt;/p&gt;
+</description><pubDate>Sun, 31 Dec 2023 18:00:00 -0600</pubDate>
+      <dc:creator>A. Writer</dc:creator>
+      <guid>https://example.com/posts/2024-01-01-links/</guid>
+    </item>
+  </channel>
+</rss>

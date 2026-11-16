@@ -43,6 +43,9 @@ pub struct ConfigOptions {
     /// (`@11ty/eleventy-plugin-syntaxhighlight`). Brrrty doesn't highlight
     /// yet, so every page it would change is refused.
     pub syntax_highlight: bool,
+    /// The feeds `feedPlugin` (`@11ty/eleventy-plugin-rss`) adds, in the
+    /// order they were added: each is a virtual template.
+    pub feeds: Vec<crate::plugins::rss::FeedOptions>,
 }
 
 /// One `.rhai` data file to run.

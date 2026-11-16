@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+  
+  <title>Example Blog</title>
+  <subtitle>Notes &amp; &quot;quotes&quot; &lt;here&gt;</subtitle>
+  <link href="https://example.com/atom.xml" rel="self" />
+  <link href="https://example.com/blog/" />
+  <updated>2024-07-01T00:00:00Z</updated>
+  <id>https://example.com/blog/</id>
+  <icon>https://example.com/icon.png</icon>
+  <logo>https://example.com/logo.png</logo>
+  <author>
+    <name>A. Writer</name>
+    <email>writer@example.com</email>
+  </author>
+  <entry>
+    <title>Ünïcode 🎉</title>
+    <link href="https://example.com/posts/2024-07-01-unicode/" />
+    <updated>2024-07-01T00:00:00Z</updated>
+    <id>https://example.com/posts/2024-07-01-unicode/</id>
+    <content type="html">&lt;p&gt;Emoji 🎉, an entity &amp;amp; and a [path](/ünïcode path/) with spaces&lt;br&gt;
+and a backslash &#92; in text.&lt;/p&gt;
+</content>
+  </entry>
+  <entry>
+    <title>Plain text</title>
+    <link href="https://example.com/notes/plain.txt" />
+    <updated>2024-06-01T00:00:00Z</updated>
+    <id>https://example.com/notes/plain.txt</id>
+    <content type="html">&lt;p&gt;A &lt;a href=&quot;rel/&quot;&gt;relative link&lt;/a&gt; that stays as it is: this page isn&#39;t HTML.&lt;/p&gt;
+</content>
+  </entry>
+  <entry>
+    <title>It&#39;s &quot;quoted&quot; &amp; &lt;b&gt;bold&lt;/b&gt;</title>
+    <link href="https://example.com/posts/2024-04-01-summary/" />
+    <updated>2024-04-01T00:00:00Z</updated>
+    <id>https://example.com/posts/2024-04-01-summary/</id>
+    <summary>A &lt;b&gt;summary&lt;/b&gt; &amp; more</summary>
+    <content type="html">&lt;p&gt;Body with a &lt;a href=&quot;https://example.com/summary-link/&quot;&gt;link&lt;/a&gt;.&lt;/p&gt;
+</content>
+  </entry>
+</feed>

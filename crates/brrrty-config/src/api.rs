@@ -68,6 +68,8 @@ pub struct State {
     pub collections: IndexMap<String, (FnPtr, Position)>,
     /// `add_plugin("syntaxhighlight")` was called.
     pub syntax_highlight: bool,
+    /// `add_plugin("rss", ...)` feeds, in order.
+    pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
 }
 
 /// The `config` object.
@@ -414,7 +416,7 @@ fn register_text(e: &mut Engine) {
 }
 
 /// The plugins `add_plugin` knows, by the name a script gives.
-pub const PLUGINS: [&str; 1] = ["syntaxhighlight"];
+pub const PLUGINS: [&str; 2] = ["rss", "syntaxhighlight"];
 
 /// `eleventyConfig.addPlugin(plugin, options)` for a plugin Brrrty has its
 /// own version of, named as in [`PLUGINS`].
@@ -432,6 +434,24 @@ fn add_plugin(
         "syntaxhighlight" => {
             let _ = options;
             state.syntax_highlight = true;
+            Ok(())
+        }
+        // `@11ty/eleventy-plugin-rss`'s `feedPlugin`: one feed per call.
+        "rss" => {
+            let options = options.unwrap_or_default();
+            let value = to_value(&Dynamic::from_map(options))
+                .map_err(|why| invalid(format!("add_plugin(\"rss\", ...): {why}"), pos))?;
+            let feed = crate::plugins::feed(&value).map_err(|why| invalid(why, pos))?;
+            if state.feeds.iter().any(|f| f.input_path == feed.input_path) {
+                return Err(invalid(
+                    format!(
+                        "Virtual template conflict: you can\u{2019}t add multiple virtual templates that have the same inputPath: {} (11ty's error; give one feed another `input_path`, or another `metadata.title` or `type`)",
+                        feed.input_path
+                    ),
+                    pos,
+                ));
+            }
+            state.feeds.push(feed);
             Ok(())
         }
         _ => Err(invalid(

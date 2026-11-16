@@ -1,0 +1,9 @@
+---
+date: 2020-01-02
+permalink: /filters.txt
+---
+{{ "/x/" | htmlBaseUrl: "https://example.com/sub/" }}
+{{ "/x/" | htmlBaseUrl }}
+{{ "https://example.com" | addPathPrefixToFullUrl }}
+{% assign newest = collections.postsNewest | eleventyFeedHasUrl | eleventyFeedSortByDate: "descending" | eleventyFeedHead: 2 %}{% for p in newest %}{{ p.url }} {% endfor %}
+{% assign oldest = collections.postsNewest | eleventyFeedHead: -1 %}{% for p in oldest %}{{ p.url }}{% endfor %}

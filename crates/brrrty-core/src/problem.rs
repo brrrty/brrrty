@@ -25,6 +25,8 @@ pub mod codes {
     pub const DATE_INVALID: &str = "date-invalid";
     pub const DISCOVER_FAILED: &str = "discover-failed";
     pub const ELEVENTY_CONFIG_IGNORED: &str = "eleventy-config-ignored";
+    pub const FEED_FAILED: &str = "feed-failed";
+    pub const FEED_UNSUPPORTED: &str = "feed-unsupported";
     pub const FRONT_MATTER_INVALID: &str = "front-matter-invalid";
     pub const FRONT_MATTER_UNSUPPORTED: &str = "front-matter-unsupported";
     pub const IGNORE_FILE_INVALID: &str = "ignore-file-invalid";

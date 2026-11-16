@@ -27,6 +27,60 @@ fn source_date_epoch(fixture: &Path) -> Result<Option<u64>, String> {
     }
 }
 
+/// The fixture's `tz`, the local time zone both builds run in, if its
+/// `fixture.toml` sets one.
+fn time_zone(fixture: &Path) -> Result<Option<String>, String> {
+    let file = fixture.join("fixture.toml");
+    if !file.is_file() {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e| format!("bad {}: {e}", file.display()))?;
+    match table.get("tz") {
+        None => Ok(None),
+        Some(toml::Value::String(s)) => Ok(Some(s.clone())),
+        Some(v) => Err(format!(
+            "{}: tz must be a zone name, got {v}",
+            file.display()
+        )),
+    }
+}
+
+/// Install a fixture's npm packages (the 11ty plugins its config uses)
+/// from its lock file, when it has dependencies and they aren't installed.
+fn install_packages(site: &Path) -> Result<(), String> {
+    let pkg = site.join("package.json");
+    let Ok(text) = fs::read_to_string(&pkg) else {
+        return Ok(());
+    };
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("bad {}: {e}", pkg.display()))?;
+    let has_deps = json
+        .get("dependencies")
+        .and_then(|d| d.as_object())
+        .is_some_and(|d| !d.is_empty());
+    if !has_deps || site.join("node_modules").is_dir() {
+        return Ok(());
+    }
+    println!("installing packages in {}", site.display());
+    let out = Command::new("npm")
+        .args(["ci", "--no-audit", "--no-fund"])
+        .current_dir(site)
+        .output()
+        .map_err(|e| format!("cannot run npm: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "npm ci failed in {}:\n{}",
+            site.display(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(())
+}
+
 /// Returns Ok(true) when every requested fixture was refreshed.
 pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
     let dir = root.join("tests").join("fixtures");
@@ -70,6 +124,7 @@ pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
         }
         println!("refreshing fixture {n}");
         let epoch = source_date_epoch(&fixture)?;
+        install_packages(&fixture.join("site"))?;
         let mut cmd = Command::new("npx");
         cmd.args(["--yes", ELEVENTY, "--quiet"])
             .arg(format!("--output={}", tmp.display()))
@@ -78,6 +133,9 @@ pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
             .env_remove("SOURCE_DATE_EPOCH");
         if let Some(e) = epoch {
             cmd.env("SOURCE_DATE_EPOCH", e.to_string());
+        }
+        if let Some(tz) = time_zone(&fixture)? {
+            cmd.env("TZ", tz);
         }
         let out = cmd.output().map_err(|e| format!("cannot run npx: {e}"))?;
         if !out.status.success() {

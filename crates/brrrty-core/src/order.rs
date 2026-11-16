@@ -104,6 +104,9 @@ pub(crate) struct OrderTemplate {
     /// 11ty finds its date without reading the disk: a `date` in its data,
     /// or a `YYYY-MM-DD` in its input path.
     pub dated: bool,
+    /// A virtual template (a feed): 11ty adds them to the glob's list of
+    /// files, after every file.
+    pub added_last: bool,
 }
 
 /// A layout file, by a name as written.
@@ -138,8 +141,9 @@ pub(crate) fn entry_order(
 ) -> Vec<usize> {
     let mut barrier: Vec<usize> = (0..templates.len()).collect();
     barrier.sort_by(|&a, &b| {
-        let ka = (templates[a].data_files, walk_key(&templates[a].rel));
-        let kb = (templates[b].data_files, walk_key(&templates[b].rel));
+        let (ta, tb) = (&templates[a], &templates[b]);
+        let ka = (ta.data_files, ta.added_last, walk_key(&ta.rel));
+        let kb = (tb.data_files, tb.added_last, walk_key(&tb.rel));
         ka.cmp(&kb)
     });
     let mut sim = Sim::new(templates, layouts, input_dir);
@@ -412,6 +416,7 @@ mod tests {
             data_files,
             layout: layout.map(str::to_string),
             dated: true,
+            added_last: false,
         }
     }
 

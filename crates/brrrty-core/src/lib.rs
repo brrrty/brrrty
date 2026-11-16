@@ -20,6 +20,7 @@ pub mod page;
 mod paginate;
 pub mod passthrough;
 pub mod permalink;
+pub mod plugins;
 pub mod problem;
 mod render;
 mod yaml;

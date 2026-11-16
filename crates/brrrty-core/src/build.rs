@@ -30,6 +30,7 @@ use crate::page::{file_path_stem, file_slug, resolve_date};
 use crate::paginate::{Links, Spec};
 use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Located, Locator, Permalink};
+use crate::plugins::rss::{FeedOptions, FeedTemplate};
 use crate::problem::{Problem, Severity, codes};
 use crate::render::{Engines, Job, Pipeline, body_line, engines_for};
 use brrrty_js::traps::{self, Outcome};
@@ -83,6 +84,8 @@ struct Source {
     /// pages are collection items, with this problem as their content, and
     /// are never written.
     unsupported: Option<Problem>,
+    /// A feed `feedPlugin` adds: Brrrty renders its Nunjucks template itself.
+    feed: Option<Arc<FeedTemplate>>,
 }
 
 /// One page to write: a template, or one page pagination made from it.
@@ -184,6 +187,8 @@ struct Shared<'a> {
     /// Directory and template data files.
     dir_data: &'a DirDataIndex,
     data_dir: PathBuf,
+    /// Virtual templates (the feeds), by their path in the input folder.
+    virtuals: &'a HashMap<PathBuf, FeedOptions>,
 }
 
 /// Why a data key has no value.
@@ -346,7 +351,7 @@ fn load(shared: &Shared<'_>, rel: &Path) -> Loaded {
         Ok(l) => l,
         Err(p) => Loaded::Failed(p),
     };
-    if !is_nunjucks(rel) {
+    if !is_nunjucks(rel) || shared.virtuals.contains_key(rel) {
         return loaded;
     }
     // A Nunjucks template is already reported as unsupported; anything else
@@ -472,16 +477,29 @@ fn load_page_inner(
 ) -> Result<Loaded, Problem> {
     let shown = shared.input_rel.join(rel);
     let full = shared.input.join(rel);
-    let bytes = fs::read(&full).map_err(|e| {
-        Problem::error(codes::TEMPLATE_UNREADABLE, format!("cannot read file: {e}"))
-            .with_path(&shown)
-    })?;
-    let text = String::from_utf8(bytes).map_err(|_| {
-        Problem::error(codes::TEMPLATE_NOT_UTF8, "file is not valid UTF-8")
-            .with_path(&shown)
-            .with_help("save the file as UTF-8")
-    })?;
+    let feed = shared.virtuals.get(rel);
+    let text = match feed {
+        // A virtual template's text and data come from the config.
+        Some(f) => f.content(),
+        None => {
+            let bytes = fs::read(&full).map_err(|e| {
+                Problem::error(codes::TEMPLATE_UNREADABLE, format!("cannot read file: {e}"))
+                    .with_path(&shown)
+            })?;
+            String::from_utf8(bytes).map_err(|_| {
+                Problem::error(codes::TEMPLATE_NOT_UTF8, "file is not valid UTF-8")
+                    .with_path(&shown)
+                    .with_help("save the file as UTF-8")
+            })?
+        }
+    };
     let (mut front, body) = split_front_matter(&text).map_err(|p| p.with_path(&shown))?;
+    if let Some(f) = feed {
+        // `Object.assign(frontMatterData, virtualTemplateData)`.
+        for (k, v) in &f.data {
+            front.insert(k.clone(), v.clone());
+        }
+    }
 
     // 11ty refuses reserved names and bad `tags` anywhere in the data, and
     // additions to its frozen `eleventy` and `pkg`.
@@ -580,11 +598,17 @@ fn load_page_inner(
     }
 
     let source = |key: &str| source_of(key, &front, &local, &data_layouts, &shared.data_dir);
-    let meta = fs::metadata(&full).ok();
-    let modified = meta
-        .as_ref()
-        .and_then(|m| m.modified().ok())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let meta = fs::metadata(&full).ok().filter(|_| feed.is_none());
+    // A virtual template has no file: 11ty dates it `new Date()`.
+    let now = || match brrrty_js::clock::source_date_epoch() {
+        Ok(Some(ms)) => SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(ms.max(0) as u64),
+        _ => SystemTime::now(),
+    };
+    let modified = match &meta {
+        Some(m) => m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        None if feed.is_some() => now(),
+        None => SystemTime::UNIX_EPOCH,
+    };
     let created = meta
         .as_ref()
         .and_then(|m| m.created().ok())
@@ -689,7 +713,8 @@ fn load_page_inner(
         engines,
         layouts,
         withheld,
-        unsupported: nunjucks.then(|| unsupported_template(&shown)),
+        unsupported: (nunjucks && feed.is_none()).then(|| unsupported_template(&shown)),
+        feed: feed.map(|f| f.template.clone()),
     });
     let computed_membership = plan
         .as_ref()
@@ -734,10 +759,13 @@ fn load_page_inner(
         rel: rel.to_path_buf(),
         data_files: order_files.len(),
         layout: order_layouts.first().map(|(n, _)| n.clone()),
-        dated: reads_no_file_date(
-            data.get("date"),
-            &format!("{}{}", dot_dir(shared.input_rel), slash_path(rel)),
-        ),
+        // A virtual template never reads the disk for its date.
+        dated: feed.is_some()
+            || reads_no_file_date(
+                data.get("date"),
+                &format!("{}{}", dot_dir(shared.input_rel), slash_path(rel)),
+            ),
+        added_last: feed.is_some(),
     };
     let templ = |pages| {
         Ok(Loaded::Template(Box::new(Templ {
@@ -1545,6 +1573,13 @@ fn build_in_pool(
     for f in &opts.config.filters {
         engine.register_args_filter(&f.name, f.run.clone());
     }
+    // 11ty runs a config's plugins after the config, so a plugin's filters
+    // win over the config's own of the same name.
+    if !opts.config.feeds.is_empty() {
+        for (name, f) in crate::plugins::rss::universal_filters() {
+            engine.register_args_filter(name, f);
+        }
+    }
     let includes = input.join("_includes");
     let includes = includes.canonicalize().unwrap_or(includes);
     let loader = FsLoader::new(
@@ -1618,12 +1653,39 @@ fn build_in_pool(
         .iter()
         .cloned()
         .partition(|rel| is_nunjucks(rel));
-    let loadable: Vec<PathBuf> = discovery
+    let mut loadable: Vec<PathBuf> = discovery
         .templates
         .iter()
         .cloned()
         .chain(nunjucks)
         .collect();
+    // The feeds' virtual templates come after every file, as 11ty adds
+    // them. One that has a file's path is refused, as 11ty refuses it.
+    let mut virtuals: HashMap<PathBuf, FeedOptions> = HashMap::new();
+    let on_disk: HashSet<PathBuf> = loadable
+        .iter()
+        .chain(&discovery.unsupported)
+        .cloned()
+        .collect();
+    for feed in &opts.config.feeds {
+        let rel = PathBuf::from(&feed.input_path);
+        if on_disk.contains(&rel) {
+            report.problems.push(
+                Problem::error(
+                    codes::FEED_UNSUPPORTED,
+                    format!(
+                        "a feed's virtual template has the same path as a file: `{}`",
+                        feed.input_path
+                    ),
+                )
+                .with_path(input_rel.join(&rel))
+                .with_help("11ty stops the whole build here (\"A virtual template had the same path as a file on the file system\"). Give the feed another `input_path`, or rename the file."),
+            );
+            continue;
+        }
+        loadable.push(rel.clone());
+        virtuals.insert(rel, feed.clone());
+    }
     let dir_data = DirDataIndex::load(
         &input,
         &input_rel,
@@ -1643,6 +1705,7 @@ fn build_in_pool(
         withheld,
         dir_data: &dir_data,
         data_dir: data_dir.clone(),
+        virtuals: &virtuals,
     };
 
     let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
@@ -1950,6 +2013,7 @@ fn build_in_pool(
                 engines: p.source.engines,
                 data: &p.data,
                 layouts: &p.source.layouts,
+                feed: p.source.feed.as_deref(),
             },
             template: page_template[i],
             page_number: p.page_number,

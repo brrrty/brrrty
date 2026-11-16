@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="">
+  <script src="/feed.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+  <title>Blog Title</title>
+  <subtitle>This is a longer description about your blog.</subtitle>
+  <link href="https://example.com/everything.xml" rel="self" />
+  <link href="https://example.com/" />
+  <updated>2026-01-01T12:00:00Z</updated>
+  <id>https://example.com/</id>
+  <author>
+    <name>Your Name</name>
+  </author>
+  <entry>
+    <title></title>
+    <link href="https://example.com/rss.xml" />
+    <updated>2026-01-01T12:00:00Z</updated>
+    <id>https://example.com/rss.xml</id>
+    <content type="html">&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;?xml-stylesheet href=&quot;/feed.xsl&quot; type=&quot;text/xsl&quot;?&gt;
+&lt;rss version=&quot;2.0&quot; xmlns:dc=&quot;http://purl.org/dc/elements/1.1/&quot; xml:base=&quot;https://example.com/&quot; xmlns:atom=&quot;http://www.w3.org/2005/Atom&quot;&gt;
+  &lt;channel&gt;
+    
+    &lt;title&gt;Example Blog&lt;/title&gt;
+    &lt;link&gt;https://example.com/&lt;/link&gt;
+    &lt;atom:link href=&quot;https://example.com/rss.xml&quot; rel=&quot;self&quot; type=&quot;application/rss+xml&quot; /&gt;
+    &lt;description&gt;Every post&lt;/description&gt;
+    &lt;language&gt;&lt;/language&gt;&lt;image&gt;https://example.com/icon.png&lt;/image&gt;
+    &lt;item&gt;
+      &lt;title&gt;Ünïcode 🎉&lt;/title&gt;
+      &lt;link&gt;https://example.com/posts/2024-07-01-unicode/&lt;/link&gt;&lt;description&gt;&amp;lt;p&amp;gt;Emoji 🎉, an entity &amp;amp;amp; and a [path](/ünïcode path/) with spaces&amp;lt;br&amp;gt;
+and a backslash &amp;#92; in text.&amp;lt;/p&amp;gt;
+&lt;/description&gt;&lt;pubDate&gt;Sun, 30 Jun 2024 19:00:00 -0500&lt;/pubDate&gt;
+      &lt;dc:creator&gt;A. Writer&lt;/dc:creator&gt;
+      &lt;guid&gt;https://example.com/posts/2024-07-01-unicode/&lt;/guid&gt;
+    &lt;/item&gt;
+    &lt;item&gt;
+      &lt;title&gt;Plain text&lt;/title&gt;
+      &lt;link&gt;https://example.com/notes/plain.txt&lt;/link&gt;&lt;description&gt;&amp;lt;p&amp;gt;A &amp;lt;a href=&amp;quot;rel/&amp;quot;&amp;gt;relative link&amp;lt;/a&amp;gt; that stays as it is: this page isn&amp;#39;t HTML.&amp;lt;/p&amp;gt;
+&lt;/description&gt;&lt;pubDate&gt;Fri, 31 May 2024 19:00:00 -0500&lt;/pubDate&gt;
+      &lt;dc:creator&gt;A. Writer&lt;/dc:creator&gt;
+      &lt;guid&gt;https://example.com/notes/plain.txt&lt;/guid&gt;
+    &lt;/item&gt;
+    &lt;item&gt;
+      &lt;title&gt;It&amp;#39;s &amp;quot;quoted&amp;quot; &amp;amp; &amp;lt;b&amp;gt;bold&amp;lt;/b&amp;gt;&lt;/title&gt;
+      &lt;link&gt;https://example.com/posts/2024-04-01-summary/&lt;/link&gt;&lt;description&gt;A &amp;lt;b&amp;gt;summary&amp;lt;/b&amp;gt; &amp;amp; more&lt;/description&gt;
+      &lt;content:encoded&gt;&amp;lt;p&amp;gt;Body with a &amp;lt;a href=&amp;quot;https://example.com/summary-link/&amp;quot;&amp;gt;link&amp;lt;/a&amp;gt;.&amp;lt;/p&amp;gt;
+&lt;/content:encoded&gt;&lt;pubDate&gt;Sun, 31 Mar 2024 19:00:00 -0500&lt;/pubDate&gt;
+      &lt;dc:creator&gt;A. Writer&lt;/dc:creator&gt;
+      &lt;guid&gt;https://example.com/posts/2024-04-01-summary/&lt;/guid&gt;
+    &lt;/item&gt;
+    &lt;item&gt;
+      &lt;title&gt;Code&lt;/title&gt;
+      &lt;link&gt;https://example.com/posts/2024-03-01-code/&lt;/link&gt;&lt;description&gt;&amp;lt;p&amp;gt;Inline &amp;lt;code&amp;gt;&amp;amp;lt;a href=&amp;amp;quot;/not-a-link&amp;amp;quot;&amp;amp;gt;&amp;lt;/code&amp;gt; stays text.&amp;lt;/p&amp;gt;
+&amp;lt;p&amp;gt;indented, which 11ty makes a paragraph: &amp;lt;a href=&amp;quot;https://example.com/in-paragraph&amp;quot;&amp;gt;x&amp;lt;/a&amp;gt;&amp;lt;/p&amp;gt;
+&amp;lt;pre&amp;gt;&amp;lt;code&amp;gt;&amp;amp;lt;img src=&amp;quot;/escaped.png&amp;quot;&amp;amp;gt; &amp;lt;a href=&amp;quot;https://example.com/in-pre&amp;quot;&amp;gt;real&amp;lt;/a&amp;gt;&amp;lt;/code&amp;gt;&amp;lt;/pre&amp;gt;
+&amp;lt;script&amp;gt;var html = &amp;quot;&amp;lt;img src=&amp;#39;/in-script.png&amp;#39;&amp;gt;&amp;quot;;&amp;lt;/script&amp;gt;
+&amp;lt;meta http-equiv=&amp;quot;refresh&amp;quot; content=&amp;quot;5; url=https://example.com/moved/&amp;quot;&amp;gt;
+&lt;/description&gt;&lt;pubDate&gt;Thu, 29 Feb 2024 18:00:00 -0600&lt;/pubDate&gt;
+      &lt;dc:creator&gt;A. Writer&lt;/dc:creator&gt;
+      &lt;guid&gt;https://example.com/posts/2024-03-01-code/&lt;/guid&gt;
+    &lt;/item&gt;
+    &lt;item&gt;
+      &lt;title&gt;Media&lt;/title&gt;
+      &lt;link&gt;https://example.com/posts/2024-02-01-media/&lt;/link&gt;&lt;description&gt;&amp;lt;img src=&amp;quot;https://example.com/posts/2024-02-01-media/photo.png&amp;quot; srcset=&amp;quot;https://example.com/posts/2024-02-01-media/photo.png 1x, https://example.com/posts/2024-02-01-media/photo@2x.png 2x&amp;quot; alt=&amp;quot;A photo&amp;quot;&amp;gt;
+&amp;lt;picture&amp;gt;
+&amp;lt;source srcset=&amp;quot;https://example.com/posts/2024-02-01-media/wide.webp 1200w, https://example.com/posts/2024-02-01-media/narrow.webp 600w&amp;quot; type=&amp;quot;image/webp&amp;quot;&amp;gt;
+&amp;lt;img src=&amp;quot;https://example.com/fallback.png&amp;quot; alt=&amp;quot;&amp;quot;&amp;gt;
+&amp;lt;/picture&amp;gt;
+&amp;lt;p&amp;gt;&amp;lt;video poster=&amp;quot;https://example.com/posts/2024-02-01-media/poster.jpg&amp;quot; src=&amp;quot;https://example.com/clip.mp4&amp;quot; controls=&amp;quot;&amp;quot;&amp;gt;&amp;lt;/video&amp;gt;&amp;lt;/p&amp;gt;
+&amp;lt;p&amp;gt;&amp;lt;audio src=&amp;quot;https://example.com/posts/2024-02-01-media/sound.mp3&amp;quot;&amp;gt;&amp;lt;/audio&amp;gt;&amp;lt;/p&amp;gt;
+&amp;lt;p&amp;gt;&amp;lt;a href=&amp;quot;https://example.com/posts/2024-02-01-media/go&amp;quot; ping=&amp;quot;https://example.com/p1, https://example.com/p2&amp;quot;&amp;gt;pinged&amp;lt;/a&amp;gt; &amp;lt;IMG SRC=&amp;quot;upper.png&amp;quot;&amp;gt; &amp;lt;input disabled=&amp;quot;&amp;quot;&amp;gt; &amp;lt;iframe src=&amp;quot;https://example.com/embed/1&amp;quot;&amp;gt;&amp;lt;/iframe&amp;gt;&amp;lt;/p&amp;gt;
+&amp;lt;blockquote cite=&amp;quot;https://example.com/source&amp;quot;&amp;gt;Quoted&amp;lt;/blockquote&amp;gt;
+&amp;lt;div data-json=&amp;#39;{&amp;quot;a&amp;quot;: 1}&amp;#39; title=&amp;quot;single &amp;amp;quot;quoted&amp;amp;quot;&amp;quot; class=&amp;quot;bare&amp;quot;&amp;gt;JSON&amp;lt;/div&amp;gt;
+&lt;/description&gt;&lt;pubDate&gt;Wed, 31 Jan 2024 18:00:00 -0600&lt;/pubDate&gt;
+      &lt;dc:creator&gt;A. Writer&lt;/dc:creator&gt;
+      &lt;guid&gt;https://example.com/posts/2024-02-01-media/&lt;/guid&gt;
+    &lt;/item&gt;
+    &lt;item&gt;
+      &lt;title&gt;Links&lt;/title&gt;
+      &lt;link&gt;https://example.com/posts/2024-01-01-links/&lt;/link&gt;&lt;description&gt;&amp;lt;p&amp;gt;A &amp;lt;a href=&amp;quot;https://example.com/posts/2024-01-01-links/next/&amp;quot;&amp;gt;relative link&amp;lt;/a&amp;gt;, a &amp;lt;a href=&amp;quot;https://example.com/about/&amp;quot;&amp;gt;rooted one&amp;lt;/a&amp;gt;, an &amp;lt;a href=&amp;quot;https://example.com/posts/2024-01-01-links/#top&amp;quot;&amp;gt;anchor&amp;lt;/a&amp;gt;,
+a &amp;lt;a href=&amp;quot;https://example.com/posts/2024-01-01-links/page#frag&amp;quot;&amp;gt;query&amp;lt;/a&amp;gt;, &amp;lt;a href=&amp;quot;https://example.com/posts/other/&amp;quot;&amp;gt;up&amp;lt;/a&amp;gt;, &amp;lt;a href=&amp;quot;mailto:writer@example.com&amp;quot;&amp;gt;mail&amp;lt;/a&amp;gt;,
+&amp;lt;a href=&amp;quot;https://cdn.example.org/lib.js&amp;quot;&amp;gt;protocol-relative&amp;lt;/a&amp;gt;, &amp;lt;a href=&amp;quot;https://example.org/x?y=1&amp;amp;amp;z=2&amp;quot;&amp;gt;full&amp;lt;/a&amp;gt;
+and &amp;lt;a href=&amp;quot;https://example.com/padded/&amp;quot;&amp;gt;padded&amp;lt;/a&amp;gt; and &amp;lt;a href=&amp;quot;https://example.com/posts/2024-01-01-links/&amp;quot;&amp;gt;empty&amp;lt;/a&amp;gt;.&amp;lt;/p&amp;gt;
+&lt;/description&gt;&lt;pubDate&gt;Sun, 31 Dec 2023 18:00:00 -0600&lt;/pubDate&gt;
+      &lt;dc:creator&gt;A. Writer&lt;/dc:creator&gt;
+      &lt;guid&gt;https://example.com/posts/2024-01-01-links/&lt;/guid&gt;
+    &lt;/item&gt;
+  &lt;/channel&gt;
+&lt;/rss&gt;</content>
+  </entry>
+  <entry>
+    <title></title>
+    <link href="https://example.com/feed.json" />
+    <updated>2026-01-01T12:00:00Z</updated>
+    <id>https://example.com/feed.json</id>
+    <content type="html">{
+  &quot;version&quot;: &quot;https://jsonfeed.org/version/1.1&quot;,
+  &quot;title&quot;: &quot;Example Blog&quot;,
+  &quot;language&quot;: &quot;&quot;,
+  &quot;home_page_url&quot;: &quot;https://example.com/&quot;,
+  &quot;feed_url&quot;: &quot;https://example.com/feed.json&quot;,
+  &quot;description&quot;: &quot;The JSON feed&quot;,
+  &quot;authors&quot;: [
+    {
+      &quot;name&quot;: &quot;A. Writer&quot;,
+      &quot;url&quot;: &quot;mailto:writer@example.com&quot;
+    }
+  ],
+  &quot;items&quot;: [
+    {
+      &quot;id&quot;: &quot;https://example.com/notes/plain.txt&quot;,
+      &quot;url&quot;: &quot;https://example.com/notes/plain.txt&quot;,
+      &quot;title&quot;: &quot;Plain text&quot;,
+      &quot;content_html&quot;: &quot;&lt;p&gt;A &lt;a href=&#92;&quot;rel/&#92;&quot;&gt;relative link&lt;/a&gt; that stays as it is: this page isn&#39;t HTML.&lt;/p&gt;&#92;n&quot;,
+      &quot;date_published&quot;: &quot;2024-06-01T00:00:00Z&quot;
+    }
+    ,
+    {
+      &quot;id&quot;: &quot;https://example.com/posts/2024-07-01-unicode/&quot;,
+      &quot;url&quot;: &quot;https://example.com/posts/2024-07-01-unicode/&quot;,
+      &quot;title&quot;: &quot;Ünïcode 🎉&quot;,
+      &quot;content_html&quot;: &quot;&lt;p&gt;Emoji 🎉, an entity &amp;amp; and a [path](/ünïcode path/) with spaces&lt;br&gt;&#92;nand a backslash &#92;&#92; in text.&lt;/p&gt;&#92;n&quot;,
+      &quot;date_published&quot;: &quot;2024-07-01T00:00:00Z&quot;
+    }
+    
+  ]
+}</content>
+  </entry>
+  <entry>
+    <title></title>
+    <link href="https://example.com/atom.xml" />
+    <updated>2026-01-01T12:00:00Z</updated>
+    <id>https://example.com/atom.xml</id>
+    <content type="html">&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;
+&lt;feed xmlns=&quot;http://www.w3.org/2005/Atom&quot; xml:lang=&quot;en&quot;&gt;
+  
+  &lt;title&gt;Example Blog&lt;/title&gt;
+  &lt;subtitle&gt;Notes &amp;amp; &amp;quot;quotes&amp;quot; &amp;lt;here&amp;gt;&lt;/subtitle&gt;
+  &lt;link href=&quot;https://example.com/atom.xml&quot; rel=&quot;self&quot; /&gt;
+  &lt;link href=&quot;https://example.com/blog/&quot; /&gt;
+  &lt;updated&gt;2024-07-01T00:00:00Z&lt;/updated&gt;
+  &lt;id&gt;https://example.com/blog/&lt;/id&gt;
+  &lt;icon&gt;https://example.com/icon.png&lt;/icon&gt;
+  &lt;logo&gt;https://example.com/logo.png&lt;/logo&gt;
+  &lt;author&gt;
+    &lt;name&gt;A. Writer&lt;/name&gt;
+    &lt;email&gt;writer@example.com&lt;/email&gt;
+  &lt;/author&gt;
+  &lt;entry&gt;
+    &lt;title&gt;Ünïcode 🎉&lt;/title&gt;
+    &lt;link href=&quot;https://example.com/posts/2024-07-01-unicode/&quot; /&gt;
+    &lt;updated&gt;2024-07-01T00:00:00Z&lt;/updated&gt;
+    &lt;id&gt;https://example.com/posts/2024-07-01-unicode/&lt;/id&gt;
+    &lt;content type=&quot;html&quot;&gt;&amp;lt;p&amp;gt;Emoji 🎉, an entity &amp;amp;amp; and a [path](/ünïcode path/) with spaces&amp;lt;br&amp;gt;
+and a backslash &amp;#92; in text.&amp;lt;/p&amp;gt;
+&lt;/content&gt;
+  &lt;/entry&gt;
+  &lt;entry&gt;
+    &lt;title&gt;Plain text&lt;/title&gt;
+    &lt;link href=&quot;https://example.com/notes/plain.txt&quot; /&gt;
+    &lt;updated&gt;2024-06-01T00:00:00Z&lt;/updated&gt;
+    &lt;id&gt;https://example.com/notes/plain.txt&lt;/id&gt;
+    &lt;content type=&quot;html&quot;&gt;&amp;lt;p&amp;gt;A &amp;lt;a href=&amp;quot;rel/&amp;quot;&amp;gt;relative link&amp;lt;/a&amp;gt; that stays as it is: this page isn&amp;#39;t HTML.&amp;lt;/p&amp;gt;
+&lt;/content&gt;
+  &lt;/entry&gt;
+  &lt;entry&gt;
+    &lt;title&gt;It&amp;#39;s &amp;quot;quoted&amp;quot; &amp;amp; &amp;lt;b&amp;gt;bold&amp;lt;/b&amp;gt;&lt;/title&gt;
+    &lt;link href=&quot;https://example.com/posts/2024-04-01-summary/&quot; /&gt;
+    &lt;updated&gt;2024-04-01T00:00:00Z&lt;/updated&gt;
+    &lt;id&gt;https://example.com/posts/2024-04-01-summary/&lt;/id&gt;
+    &lt;summary&gt;A &amp;lt;b&amp;gt;summary&amp;lt;/b&amp;gt; &amp;amp; more&lt;/summary&gt;
+    &lt;content type=&quot;html&quot;&gt;&amp;lt;p&amp;gt;Body with a &amp;lt;a href=&amp;quot;https://example.com/summary-link/&amp;quot;&amp;gt;link&amp;lt;/a&amp;gt;.&amp;lt;/p&amp;gt;
+&lt;/content&gt;
+  &lt;/entry&gt;
+&lt;/feed&gt;</content>
+  </entry>
+  <entry>
+    <title>Ünïcode 🎉</title>
+    <link href="https://example.com/posts/2024-07-01-unicode/" />
+    <updated>2024-07-01T00:00:00Z</updated>
+    <id>https://example.com/posts/2024-07-01-unicode/</id>
+    <content type="html">&lt;p&gt;Emoji 🎉, an entity &amp;amp; and a [path](/ünïcode path/) with spaces&lt;br&gt;
+and a backslash &#92; in text.&lt;/p&gt;
+</content>
+  </entry>
+  <entry>
+    <title>Plain text</title>
+    <link href="https://example.com/notes/plain.txt" />
+    <updated>2024-06-01T00:00:00Z</updated>
+    <id>https://example.com/notes/plain.txt</id>
+    <content type="html">&lt;p&gt;A &lt;a href=&quot;rel/&quot;&gt;relative link&lt;/a&gt; that stays as it is: this page isn&#39;t HTML.&lt;/p&gt;
+</content>
+  </entry>
+</feed>

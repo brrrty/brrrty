@@ -234,6 +234,7 @@ dependencies = [
  "saphyr-parser",
  "serde_json",
  "tempfile",
+ "url",
 ]
 
 [[package]]

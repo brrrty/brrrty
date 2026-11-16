@@ -55,9 +55,12 @@
 //! ## Plugins
 //!
 //! `config.add_plugin("name", #{ ... })` adds a plugin Brrrty has its own
-//! version of. `syntaxhighlight` (`@11ty/eleventy-plugin-syntaxhighlight`)
-//! is a marker until Brrrty highlights code: every page the plugin would
-//! change is refused. Any other name is an error. Brrrty can't see a plugin
+//! version of. `rss` is `@11ty/eleventy-plugin-rss`'s `feedPlugin`, with
+//! its options in snake_case (`output_path`, `collection`, `metadata`):
+//! each call adds a feed. `syntaxhighlight`
+//! (`@11ty/eleventy-plugin-syntaxhighlight`) is a marker until Brrrty
+//! highlights code: every page the plugin would change is refused. Any
+//! other name is an error. Brrrty can't see a plugin
 //! the 11ty config adds and the port leaves out (see `PORTING.md`).
 //!
 //! ## Values
@@ -112,6 +115,7 @@ mod filters;
 mod glob;
 mod jshelpers;
 mod object;
+mod plugins;
 mod regex;
 
 use std::path::{Path, PathBuf};
@@ -168,6 +172,8 @@ pub struct SiteConfig {
     pub collections: Vec<brrrty_core::ConfigCollection>,
     /// `add_plugin("syntaxhighlight")` was called.
     pub syntax_highlight: bool,
+    /// `add_plugin("rss", ...)` feeds, in order.
+    pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
 }
 
 impl SiteConfig {
@@ -183,6 +189,7 @@ impl SiteConfig {
             collections: self.collections.clone(),
             data: None,
             syntax_highlight: self.syntax_highlight,
+            feeds: self.feeds.clone(),
         }
     }
 }
@@ -326,6 +333,7 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
         filters,
         collections,
         syntax_highlight: state.syntax_highlight,
+        feeds: state.feeds,
     })
 }
 

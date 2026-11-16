@@ -270,6 +270,58 @@ options are accepted and don't change this. Without the marker, the same
 pages are written with plain `<pre><code>` blocks, which is wrong for a
 site whose 11ty config uses the plugin: add it.
 
+### `rss`
+
+`@11ty/eleventy-plugin-rss`'s `feedPlugin`, once per feed. The options
+are 11ty's, in snake_case:
+
+```js
+eleventyConfig.addPlugin(feedPlugin, {
+  type: "atom",
+  outputPath: "/atom.xml",
+  collection: { name: "posts", limit: 10 },
+  metadata: { language: "en", title: "My Blog", base: "https://example.com/",
+              author: { name: "Me", email: "" } },
+});
+```
+
+```rhai
+config.add_plugin("rss", #{
+    type: "atom",
+    output_path: "/atom.xml",
+    collection: #{ name: "posts", limit: 10 },
+    metadata: #{ language: "en", title: "My Blog", base: "https://example.com/",
+                 author: #{ name: "Me", email: "" } },
+});
+```
+
+`type` (`atom`, `rss` or `json`), `output_path`, `input_path`,
+`collection` (`name`, `limit`, `sort`), `metadata`, `template_data`,
+`stylesheet` and `script` work as in 11ty, with the same defaults. Keys
+inside `metadata` and `template_data` are data, so keep their own names.
+The feed is a page of the site, as in 11ty: it is in `collections.all`,
+dated when the build runs (`SOURCE_DATE_EPOCH`).
+
+Brrrty renders the plugin's feed templates itself, byte for byte; the post
+HTML in them gets 11ty's `renderTransforms`, which makes every link and
+image URL a full URL on `metadata.base`. What it refuses, where 11ty would
+build something Brrrty can't check: `htmlBasePluginOptions` and
+`rssPluginOptions`; a `limit` that isn't a whole number; a collection name
+with characters that would change the template (`'`, `{`, `%` and the
+like, and for `rss` anything but letters, digits, `_` and `$`); an
+`input_path` that isn't a `.njk` file in the input folder; and an HTML
+element or attribute named like a JavaScript built-in (`toString`,
+`constructor`) in a post the feed shows. Where 11ty stops the build
+(`metadata.base` not a full URL, a collection that doesn't exist), Brrrty
+refuses only the feed.
+
+The plugin's filters for every template language work in Liquid too:
+`htmlBaseUrl`, `addPathPrefixToFullUrl`, `eleventyFeedHasUrl`,
+`eleventyFeedSortByDate` and `eleventyFeedHead`. Its other filters
+(`dateToRfc3339`, `dateToRfc822`, `getNewestCollectionItemDate`,
+`absoluteUrl`, `htmlToAbsoluteUrls`) are Nunjucks-only in 11ty, so a
+Liquid template can't use them there either.
+
 ## Regular expressions
 
 `regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`

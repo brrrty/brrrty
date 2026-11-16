@@ -154,6 +154,8 @@ pub(crate) struct Job<'a> {
     pub engines: Engines,
     pub data: &'a IndexMap<String, Value>,
     pub layouts: &'a [Arc<LayoutFile>],
+    /// A feed's template, which Brrrty renders itself.
+    pub feed: Option<&'a crate::plugins::rss::FeedTemplate>,
 }
 
 /// A rendered page and the variables it read that nothing defined.
@@ -232,6 +234,17 @@ impl Pipeline<'_> {
             let data = Value::Object(Arc::new(job.data.clone()));
             self.liquid(&t, &data, undefined, job)
         };
+        if let Some(feed) = job.feed {
+            let r = crate::plugins::rss::feed::render(feed, job.data).map_err(|why| {
+                Problem::error(codes::FEED_FAILED, format!("this feed can't be built: {why}"))
+                    .with_path(job.shown)
+                    .with_help("11ty stops the whole build here. Fix the feed's options in brrrty.config.rhai, or the data it reads.")
+            })?;
+            return Ok(Output {
+                html: r.text,
+                undefined: r.undefined,
+            });
+        }
         let html = match job.engines {
             Engines::Raw => job.body.to_string(),
             Engines::Liquid => page_liquid(&mut undefined)?,

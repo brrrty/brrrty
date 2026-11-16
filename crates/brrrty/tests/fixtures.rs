@@ -50,6 +50,11 @@ fn every_fixture_matches_reference_output() {
         if let Some(epoch) = epoch {
             cmd.env("SOURCE_DATE_EPOCH", epoch.to_string());
         }
+        // Dates printed in the local zone need the zone the reference was
+        // built in.
+        if let Some(tz) = cfg.get("tz") {
+            cmd.env("TZ", tz.as_str().expect("tz is a zone name"));
+        }
         for p in &passthrough {
             cmd.args(["--passthrough", p]);
         }

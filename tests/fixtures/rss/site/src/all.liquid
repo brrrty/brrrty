@@ -1,0 +1,6 @@
+---
+date: 2020-01-01
+permalink: /all.txt
+---
+{% for p in collections.all %}{{ p.inputPath }}|{{ p.url }}|{{ p.date | date: "%s" }}
+{% endfor %}

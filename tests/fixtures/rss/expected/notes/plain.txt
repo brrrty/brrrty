@@ -1,0 +1,1 @@
+<p>A <a href="rel/">relative link</a> that stays as it is: this page isn't HTML.</p>

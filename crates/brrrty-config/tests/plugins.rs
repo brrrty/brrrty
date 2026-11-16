@@ -194,9 +194,207 @@ fn an_unknown_plugin_is_refused_where_it_is_added() {
     assert_eq!(p.code, codes::CONFIG_INVALID);
     assert!(
         p.message.starts_with(
-            "add_plugin(\"pwa\", ...): Brrrty doesn't have this plugin. It has `syntaxhighlight`"
+            "add_plugin(\"pwa\", ...): Brrrty doesn't have this plugin. It has `rss`, `syntaxhighlight`"
         ),
         "{p:?}"
     );
     assert_eq!(p.line, Some(2));
+}
+
+// ---- rss: `@11ty/eleventy-plugin-rss`'s `feedPlugin` ----
+// Byte-for-byte output is pinned by `tests/fixtures/rss`, built with real
+// 11ty; these pin the options and what is refused.
+
+const FEED: &str = r#"config.add_plugin("rss", #{
+    type: "atom",
+    output_path: "/feed.xml",
+    collection: #{ name: "posts", limit: 2 },
+    metadata: #{ title: "T", base: "https://example.com/" },
+});"#;
+
+fn feed_err(options: &str) -> Problem {
+    load_err(&format!("config.add_plugin(\"rss\", {options});\n"))
+}
+
+#[test]
+fn feed_options_are_checked_like_11ty() {
+    let cases = [
+        (
+            "#{}",
+            "Missing `collection.name` option in feedPlugin from @11ty/eleventy-plugin-rss.",
+        ),
+        (
+            "#{ collection: #{ name: 5 } }",
+            "Only string is supported in `collection.name` option in feedPlugin from @11ty/eleventy-plugin-rss. Received: number",
+        ),
+        (
+            "#{ collection: #{ name: \"p\", sort: \"up\" } }",
+            "Invalid `collection.sort` option in feedPlugin from @11ty/eleventy-plugin-rss. Expected \"auto\", \"ascending\", or \"descending\", received: up",
+        ),
+        (
+            "#{ type: \"xml\", collection: #{ name: \"p\" } }",
+            "Missing or invalid feed type. Received: xml",
+        ),
+    ];
+    for (options, want) in cases {
+        let p = feed_err(options);
+        assert_eq!(p.code, codes::CONFIG_INVALID, "{options}");
+        assert_eq!(p.message, want, "{options}");
+        assert_eq!(p.line, Some(1));
+    }
+}
+
+#[test]
+fn feed_options_brrrty_cant_follow_are_refused() {
+    for (options, part) in [
+        (
+            "#{ collection: #{ name: \"p\" }, html_base_plugin_options: #{} }",
+            "doesn't support the option `html_base_plugin_options`",
+        ),
+        (
+            "#{ collection: #{ name: \"p\", limit: 2.5 } }",
+            "`collection.limit` is 2.5",
+        ),
+        (
+            "#{ type: \"rss\", collection: #{ name: \"my-posts\" } }",
+            "the collection name `my-posts`",
+        ),
+        (
+            "#{ collection: #{ name: \"it's\" } }",
+            "the collection name `it's`",
+        ),
+        (
+            "#{ collection: #{ name: \"p\" }, stylesheet: \"{{ x }}\" }",
+            "`stylesheet` has Nunjucks tags",
+        ),
+        (
+            "#{ collection: #{ name: \"p\" }, input_path: \"feed.liquid\" }",
+            "`input_path` is `feed.liquid`",
+        ),
+        (
+            "#{ collection: #{ name: \"p\" }, input_path: \"../feed.njk\" }",
+            "`input_path` is `../feed.njk`",
+        ),
+    ] {
+        let p = feed_err(options);
+        assert_eq!(p.code, codes::CONFIG_INVALID, "{options}");
+        assert!(p.message.contains(part), "{options}: {}", p.message);
+    }
+    // Two feeds with one virtual path: 11ty's conflict.
+    let p = load_err(&format!("{FEED}\n{FEED}\n"));
+    assert!(p.message.starts_with("Virtual template conflict"), "{p:?}");
+    assert_eq!(p.line, Some(7));
+}
+
+fn posts(more: &[(&'static str, &'static str)]) -> Vec<(&'static str, &'static str)> {
+    let mut v = vec![
+        (
+            "posts/2024-01-01-a.md",
+            "---\ntags: posts\ntitle: A\n---\n[x](x/)\n",
+        ),
+        (
+            "posts/2024-01-02-b.md",
+            "---\ntags: posts\ntitle: B\n---\nB\n",
+        ),
+    ];
+    v.extend_from_slice(more);
+    v
+}
+
+#[test]
+fn a_feed_builds_with_full_urls() {
+    let (t, r) = site(FEED, &posts(&[]));
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    let feed = out(&t, "feed.xml").unwrap();
+    assert!(
+        feed.contains("<link href=\"https://example.com/feed.xml\" rel=\"self\" />"),
+        "{feed}"
+    );
+    assert!(
+        feed.contains("&lt;a href=&quot;https://example.com/posts/2024-01-01-a/x/&quot;&gt;"),
+        "{feed}"
+    );
+    assert!(
+        feed.find("<title>B</title>") < feed.find("<title>A</title>"),
+        "{feed}"
+    );
+}
+
+#[test]
+fn a_feed_of_a_refused_post_is_refused() {
+    let script = format!("{MARKER}\n{FEED}");
+    let (t, r) = site(
+        &script,
+        &posts(&[(
+            "posts/2024-01-03-c.md",
+            "---\ntags: posts\n---\n```js\nx\n```\n",
+        )]),
+    );
+    let errs = errors(&r);
+    let feed = errs
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("src/eleventy-plugin-feed-t-atom.njk")))
+        .expect("the feed is refused");
+    assert_eq!(feed.code, codes::CONTENT_UNAVAILABLE);
+    assert_eq!(out(&t, "feed.xml"), None);
+    assert!(out(&t, "posts/2024-01-01-a/index.html").is_some());
+}
+
+#[test]
+fn a_feed_of_a_missing_collection_is_refused() {
+    let (t, r) = site(
+        r#"config.add_plugin("rss", #{ collection: #{ name: "nope" } });"#,
+        &posts(&[]),
+    );
+    let errs = errors(&r);
+    // 11ty stops the build here (`undefined.filter`); a name no tag or
+    // config collection has may be one the 11ty config adds, so Brrrty
+    // can't build the collections at all.
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED);
+    assert!(errs[0].message.contains("imports `nope`"), "{:?}", errs[0]);
+    assert_eq!(out(&t, "feed.xml"), None);
+}
+
+#[test]
+fn a_feed_without_a_full_base_is_refused() {
+    let (_t, r) = site(
+        r#"config.add_plugin("rss", #{ collection: #{ name: "posts" }, metadata: #{ base: "/" } });"#,
+        &posts(&[]),
+    );
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert_eq!(errs[0].code, codes::FEED_FAILED);
+    assert!(errs[0].message.contains("`metadata.base`"), "{:?}", errs[0]);
+}
+
+#[test]
+fn a_feed_on_a_files_path_is_refused() {
+    let (t, r) = site(FEED, &posts(&[("eleventy-plugin-feed-t-atom.njk", "x")]));
+    assert!(
+        errors(&r).iter().any(|p| p.code == codes::FEED_UNSUPPORTED),
+        "{:#?}",
+        r.problems
+    );
+    assert_eq!(out(&t, "feed.xml"), None);
+}
+
+/// `dateToRfc3339` and the like are Nunjucks filters: Liquid doesn't have
+/// them in 11ty either. The universal ones work.
+#[test]
+fn only_the_universal_filters_reach_liquid() {
+    let (t, r) = site(
+        FEED,
+        &posts(&[
+            ("a.liquid", "{{ page.date | dateToRfc3339 }}"),
+            (
+                "b.liquid",
+                "{{ '/x/' | htmlBaseUrl: 'https://example.com/s/' }} {{ collections.posts | eleventyFeedHead: -1 | size }}",
+            ),
+        ]),
+    );
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert_eq!(errs[0].code, codes::LIQUID_UNKNOWN_FILTER);
+    assert_eq!(out(&t, "b/index.html").unwrap(), "https://example.com/x/ 1");
 }

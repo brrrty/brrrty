@@ -98,6 +98,11 @@ fn is_open(o: &IndexMap<String, Value>) -> bool {
     OPEN.read().map(|v| v.contains(&id)).unwrap_or(false)
 }
 
+/// Record a trap by name, as a read that hit one does.
+pub fn record(name: String) {
+    hit(name);
+}
+
 fn hit(name: String) {
     HITS.with(|h| {
         h.borrow_mut().insert(name);

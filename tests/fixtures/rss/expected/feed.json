@@ -1,0 +1,32 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Example Blog",
+  "language": "",
+  "home_page_url": "https://example.com/",
+  "feed_url": "https://example.com/feed.json",
+  "description": "The JSON feed",
+  "authors": [
+    {
+      "name": "A. Writer",
+      "url": "mailto:writer@example.com"
+    }
+  ],
+  "items": [
+    {
+      "id": "https://example.com/notes/plain.txt",
+      "url": "https://example.com/notes/plain.txt",
+      "title": "Plain text",
+      "content_html": "<p>A <a href=\"rel/\">relative link</a> that stays as it is: this page isn't HTML.</p>\n",
+      "date_published": "2024-06-01T00:00:00Z"
+    }
+    ,
+    {
+      "id": "https://example.com/posts/2024-07-01-unicode/",
+      "url": "https://example.com/posts/2024-07-01-unicode/",
+      "title": "Ünïcode 🎉",
+      "content_html": "<p>Emoji 🎉, an entity &amp; and a [path](/ünïcode path/) with spaces<br>\nand a backslash \\ in text.</p>\n",
+      "date_published": "2024-07-01T00:00:00Z"
+    }
+    
+  ]
+}
