@@ -1,0 +1,13 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js, which adds @11ty/eleventy-plugin-syntaxhighlight 5.0.2
+# with its default options (installed from site/package-lock.json when the
+# fixture is refreshed).
+#
+# A Markdown fence's front matter is highlighted as YAML only once a page
+# 11ty rendered earlier loaded YAML. 11ty renders 0-front.md, a-yaml.md
+# (which loads YAML) and b-front.md in that order, so b-front.md is written
+# and 0-front.md is refused, with c-before.liquid, which reads its content.
+
+[refused]
+"src/0-front.md" = "0-front/index.html"
+"src/c-before.liquid" = "c-before/index.html"

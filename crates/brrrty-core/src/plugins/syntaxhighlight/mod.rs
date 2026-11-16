@@ -25,6 +25,7 @@
 mod lines;
 pub mod scan;
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -164,6 +165,7 @@ impl SyntaxHighlight {
             asked: &self.asked,
             at: None,
             error_on_invalid: self.options.error_on_invalid_language,
+            fence: None,
             state: State {
                 keys: self.loaded.clone(),
                 added: HashMap::new(),
@@ -308,6 +310,8 @@ pub struct Page<'a> {
     at: Option<(PathBuf, usize)>,
     error_on_invalid: bool,
     state: State,
+    /// The language of the Markdown fence being highlighted.
+    fence: Option<String>,
 }
 
 impl Page<'_> {
@@ -351,6 +355,13 @@ impl Page<'_> {
             self.state.keys.insert(aliased.clone());
             if let Some(keys) = g.keys_after_loading(&aliased) {
                 self.state.keys.extend(keys.iter().cloned());
+            }
+            if self.state.keys.contains("yaml") {
+                RECORD.with(|r| {
+                    if let Some(rec) = r.borrow_mut().as_mut() {
+                        rec.loaded_yaml = true;
+                    }
+                });
             }
         }
         let found = self
@@ -401,9 +412,23 @@ impl Page<'_> {
             ));
         }
         if html.contains("token front-matter") && !self.state.keys.contains("yaml") {
-            return Err(Error::Unsupported(
-                "it has Markdown with front matter, which 11ty highlights as YAML only when a page it rendered earlier loaded YAML".into(),
-            ));
+            self.state
+                .unchanged("yaml")
+                .map_err(|r| Error::Unsupported(r.0))?;
+            let recorded = match &self.fence {
+                Some(fence) => RECORD.with(|r| match r.borrow_mut().as_mut() {
+                    Some(rec) => {
+                        rec.needs_yaml
+                            .get_or_insert_with(|| (self.at.clone(), fence.clone()));
+                        true
+                    }
+                    None => false,
+                }),
+                None => false,
+            };
+            if !recorded {
+                return Err(Error::Unsupported(YAML_ORDER.into()));
+            }
         }
         Ok(html)
     }
@@ -440,7 +465,10 @@ impl Page<'_> {
         let mut split = language.split('/');
         let language = split.next().unwrap_or("");
         let numbers: Vec<&str> = split.collect();
-        let html = self.code(code, language)?;
+        self.fence = Some(language.to_string());
+        let html = self.code(code, language);
+        self.fence = None;
+        let html = html?;
         let wrap = self.options.always_wrap_line_highlights || !numbers.is_empty();
         let group = HighlightLinesGroup::new(&numbers.join("/"), "/")?;
         let mut lines: Vec<&str> = html.split('\n').collect();
@@ -498,6 +526,56 @@ impl Page<'_> {
         self.wrap(&lines, language)
     }
 }
+
+thread_local! {
+    static RECORD: RefCell<Option<Record>> = const { RefCell::new(None) };
+}
+
+/// What one page's content needs from the pages 11ty renders before it,
+/// and gives the pages after it, while [`Recording`] runs.
+///
+/// 11ty renders every page's content one at a time, in an order Brrrty
+/// knows (see `content.rs`), and `Prism.languages` keeps what each loaded.
+/// Markdown's front matter in a Markdown fence is highlighted as YAML only
+/// once YAML is loaded. Recorded, such a fence is written as YAML is
+/// highlighted, and the page is kept only if a page 11ty renders before
+/// it loaded YAML.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Record {
+    /// The first fence that needs YAML loaded by an earlier page: its file
+    /// and line, when known, and its language.
+    pub needs_yaml: Option<(Option<(PathBuf, usize)>, String)>,
+    /// The page loaded YAML.
+    pub loaded_yaml: bool,
+}
+
+/// Records what highlighting needs and loads on this thread until
+/// [`Recording::finish`].
+pub(crate) struct Recording(Option<Record>);
+
+impl Recording {
+    pub fn start() -> Recording {
+        Recording(RECORD.with(|r| r.borrow_mut().replace(Record::default())))
+    }
+
+    pub fn finish(mut self) -> Record {
+        let previous = self.0.take();
+        RECORD
+            .with(|r| std::mem::replace(&mut *r.borrow_mut(), previous))
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for Recording {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        RECORD.with(|r| *r.borrow_mut() = previous);
+    }
+}
+
+/// The problem for a fence whose front matter 11ty highlights as YAML only
+/// when a page it rendered earlier loaded YAML.
+pub(crate) const YAML_ORDER: &str = "it has Markdown with front matter, which 11ty highlights as YAML only when a page it rendered earlier loaded YAML";
 
 /// Whether `key` is an array index, which JavaScript lists before other
 /// keys, in numeric order.

@@ -24,8 +24,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use brrrty_js::Value;
 use brrrty_js::traps::{self, Content, ContentSource, Outcome};
 
+use crate::plugins::syntaxhighlight::{Record, Recording, YAML_ORDER};
 use crate::problem::{Problem, codes};
-use crate::render::{Job, Output, Pipeline};
+use crate::render::{HIGHLIGHT_HELP, Job, Output, Pipeline};
 
 /// One page, as the content renderer sees it.
 pub(crate) struct ContentPage<'a> {
@@ -55,6 +56,9 @@ enum State {
         content: Value,
         /// The pages whose content it read, in the order it read them.
         reads: Vec<usize>,
+        /// What its syntax highlighting needs from the pages 11ty renders
+        /// before it, and loads for the ones after.
+        highlight: Record,
     },
     /// The page's own problem.
     Failed(Problem),
@@ -155,7 +159,9 @@ struct Run<'a, 'p> {
 impl Run<'_, '_> {
     fn render<'s>(&'s self, i: usize, scope: &rayon::Scope<'s>) {
         let guard = traps::install(self.live.clone());
+        let recording = Recording::start();
         let result = self.pipeline.content(&self.pages[i].job);
+        let highlight = recording.finish();
         let reads = traps::take_item_reads();
         drop(guard);
 
@@ -210,6 +216,7 @@ impl Run<'_, '_> {
                 None => State::Done {
                     content: Value::String(html.into()),
                     reads: ready,
+                    highlight,
                 },
             },
         };
@@ -307,13 +314,82 @@ pub(crate) fn render_all(
         settled: vec![false; n],
         late: (0..n).map(|_| None).collect(),
     };
-    contents.replay(pages);
+    // A page whose highlighting needs YAML loaded by an earlier page is
+    // refused when no page 11ty renders before it loads YAML, and so is
+    // every page that read its content; then the passes are replayed again.
+    loop {
+        let order = contents.replay(pages);
+        let unmet = contents.yaml_unmet(&order);
+        if unmet.is_empty() {
+            break;
+        }
+        for (i, p) in unmet {
+            contents.states[i] = State::Failed(p);
+        }
+        contents.refuse_readers();
+        contents.settled = vec![false; n];
+        contents.late = (0..n).map(|_| None).collect();
+    }
     contents
 }
 
 impl Contents {
-    /// 11ty's two passes, replayed from what each page read.
-    fn replay(&mut self, pages: &[ContentPage<'_>]) {
+    /// The pages that need YAML loaded by a page 11ty renders before them
+    /// (in `order`) when none does, with their problems.
+    fn yaml_unmet(&self, order: &[usize]) -> Vec<(usize, Problem)> {
+        let mut loaded = false;
+        let mut unmet = Vec::new();
+        for &i in order {
+            let State::Done { highlight, .. } = &self.states[i] else {
+                continue;
+            };
+            if let Some((at, language)) = &highlight.needs_yaml
+                && !loaded
+            {
+                let p = Problem::error(
+                    codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
+                    format!(
+                        "the fenced code block in `{language}` can't be highlighted the way 11ty highlights it: {YAML_ORDER}, and no page 11ty renders before this one does"
+                    ),
+                )
+                .with_help(HIGHLIGHT_HELP);
+                let p = match at {
+                    Some((file, line)) => p.with_path(file).at(*line, 1),
+                    None => p.with_path(&self.shown[i]),
+                };
+                unmet.push((i, p));
+            }
+            loaded |= highlight.loaded_yaml;
+        }
+        unmet
+    }
+
+    /// A page that read the content of a page that has none reads nothing
+    /// that 11ty gives it either.
+    fn refuse_readers(&mut self) {
+        loop {
+            let mut changed = false;
+            for i in 0..self.states.len() {
+                let State::Done { reads, .. } = &self.states[i] else {
+                    continue;
+                };
+                if let Some(&r) = reads
+                    .iter()
+                    .find(|&&r| !matches!(self.states[r], State::Done { .. }))
+                {
+                    self.states[i] = State::Needs(r);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// 11ty's two passes, replayed from what each page read. Gives the
+    /// pages in the order 11ty first renders their content.
+    fn replay(&mut self, pages: &[ContentPage<'_>]) -> Vec<usize> {
         // Templates in 11ty's order, each with its pages in order.
         let mut order: Vec<usize> = (0..pages.len()).filter(|&i| pages[i].renderable).collect();
         order.sort_by_key(|&i| pages[i].template);
@@ -331,11 +407,13 @@ impl Contents {
         let done = |i: usize, states: &[State]| matches!(states[i], State::Done { .. });
 
         // First pass: a template stops at its first page that can't render.
+        let mut rendered = Vec::new();
         let mut again = Vec::new();
         for (t, template) in templates.iter().enumerate() {
             for &i in template {
                 if done(i, &self.states) && missing(&self.settled, i, &self.states).is_none() {
                     self.settled[i] = true;
+                    rendered.push(i);
                 } else {
                     again.push(t);
                     break;
@@ -350,7 +428,11 @@ impl Contents {
                     continue;
                 }
                 match missing(&self.settled, i, &self.states) {
-                    None => self.settled[i] = true,
+                    None if self.settled[i] => {}
+                    None => {
+                        self.settled[i] = true;
+                        rendered.push(i);
+                    }
                     Some(r) => self.late[i] = Some(Late::Read(r)),
                 }
             }
@@ -360,6 +442,7 @@ impl Contents {
                 self.late[i] = Some(Late::Unreached);
             }
         }
+        rendered
     }
 
     /// The content layouts read: every page that has its content.

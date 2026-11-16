@@ -6,8 +6,8 @@
 # a.md loads `regex` and d.njk `css-extras`, which Brrrty doesn't have.
 # Loading them changes Prism's javascript and css grammars for every page
 # 11ty renders after, so b.md (js) and e.md (css) are refused with them;
-# c.md (bash) is written. Brrrty doesn't render Nunjucks, so d.njk is
-# refused too, but its language still counts.
+# c.md (bash) is written. Brrrty doesn't run the plugin's Nunjucks
+# `{% highlight %}`, so d.njk is refused too, but its language still counts.
 
 [refused]
 "src/a.md" = "a/index.html"
