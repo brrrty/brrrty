@@ -15,6 +15,11 @@
 //!   cycle aborts 11ty. Each result is stored with `lodash.set`.
 //! - Entries read the data as it is when they run, so an entry the order
 //!   puts later still holds its original value.
+//! - `page.url` and `page.outputPath` are the first two entries, each a
+//!   run of the permalink. They depend on a computed `permalink` (11ty finds
+//!   that by running the permalink on marker data), so a plain permalink
+//!   reading a computed key sees the key's original value, and a computed
+//!   `permalink` reading `page.url` is a cycle.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -25,6 +30,7 @@ use brrrty_liquid::{Engine, Loader};
 use indexmap::IndexMap;
 
 use crate::frontmatter::Data;
+use crate::permalink::{Locator, Permalink};
 use crate::problem::{Problem, codes};
 use crate::render::liquid_problem;
 
@@ -39,6 +45,7 @@ const REFUSED_ROOTS: &[&str] = &[
     "pagination",
     "dynamicPermalink",
     "eleventyAllowMissingExtension",
+    "permalinkBypassOutputDir",
     "page",
     "eleventy",
     "pkg",
@@ -57,6 +64,21 @@ pub(crate) struct Plan {
 struct Step {
     path: Vec<String>,
     value: Value,
+    /// An entry 11ty adds itself: it runs the permalink.
+    page: Option<PageEntry>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PageEntry {
+    Url,
+    OutputPath,
+}
+
+/// A page's data with every computed value set, and where the permalink
+/// put the page.
+pub(crate) struct Applied {
+    pub data: IndexMap<String, Value>,
+    pub permalink: Permalink,
 }
 
 fn unsupported(message: String) -> Problem {
@@ -73,12 +95,13 @@ impl Plan {
             return Ok(None);
         };
         for (key, _) in Value::js_entries(computed) {
-            if key == "permalink" {
-                return Err(Problem::error(
-                    codes::PERMALINK_TEMPLATED,
-                    "Computed `permalink` isn't supported yet",
-                )
-                .with_help("Templated permalinks are coming soon."));
+            if key == "permalink"
+                && let Some(Value::Object(map)) = computed.get("permalink")
+                && !map.is_empty()
+            {
+                return Err(unsupported(
+                    "`eleventyComputed` key `permalink` as a map isn't supported yet".to_string(),
+                ));
             }
             if REFUSED_ROOTS.contains(&key.as_str()) {
                 return Err(unsupported(format!(
@@ -88,6 +111,20 @@ impl Plan {
         }
         let mut leaves = Vec::new();
         collect(computed, &mut Vec::new(), &mut leaves)?;
+        let computed_permalink = leaves.iter().any(|l| l.path == ["permalink"]);
+        // 11ty adds `page.url` and `page.outputPath` before the keys.
+        let own = |path: [&str; 2], entry| Leaf {
+            path: path.map(String::from).to_vec(),
+            value: Value::Null,
+            page: Some(entry),
+        };
+        leaves.splice(
+            0..0,
+            [
+                own(["page", "url"], PageEntry::Url),
+                own(["page", "outputPath"], PageEntry::OutputPath),
+            ],
+        );
 
         // Dependency graph, built the way 11ty adds entries.
         let names: Vec<String> = leaves.iter().map(|l| l.path.join(".")).collect();
@@ -99,6 +136,16 @@ impl Plan {
         let mut graph = Graph::default();
         for (leaf, name) in leaves.iter().zip(&names) {
             graph.node(name);
+            if leaf.page.is_some() {
+                // A computed `permalink` is found by running the permalink
+                // on marker data; a plain one isn't there to find.
+                if computed_permalink {
+                    let to = graph.node("permalink");
+                    let from = graph.node(name);
+                    graph.depend(from, to);
+                }
+                continue;
+            }
             let symbols = match &leaf.value {
                 Value::String(s) => symbols(s),
                 Value::Array(items) => items
@@ -120,8 +167,6 @@ impl Plan {
                     )
                     .with_help("Collections are in progress."));
                 }
-                // `page.url` and `page.outputPath` are entries in 11ty too,
-                // but Brrrty already knows them.
                 if symbol != *name && known.contains_key(symbol.as_str()) {
                     used.push(symbol);
                 }
@@ -148,13 +193,15 @@ impl Plan {
             .map(|l| Step {
                 path: l.path,
                 value: l.value,
+                page: l.page,
             })
             .collect();
         Ok(Some(Plan { raw, steps }))
     }
 
-    /// `base` with every computed value set, in order. Reads that nothing
-    /// defines are added to `undefined`, like any other render.
+    /// `base` with every computed value set, in order, and the permalink as
+    /// the `page.outputPath` entry resolved it. Reads that nothing defines
+    /// are added to `undefined`, like any other render.
     pub fn apply(
         &self,
         engine: &Engine,
@@ -162,11 +209,26 @@ impl Plan {
         shown: &Path,
         base: &IndexMap<String, Value>,
         undefined: &mut BTreeSet<String>,
-    ) -> Result<IndexMap<String, Value>, Problem> {
+        locator: &Locator<'_>,
+    ) -> Result<Applied, Problem> {
         let mut data = base.clone();
+        let mut permalink = None;
         for step in &self.steps {
             let key = step.path.join(".");
-            let value = self.render(&step.value, &key, engine, loader, shown, &data, undefined)?;
+            let value = if let Some(entry) = step.page {
+                // 11ty writes the file `page.outputPath` names, so that
+                // run decides where the page goes.
+                let found = locator.locate(&data, undefined)?;
+                match entry {
+                    PageEntry::Url => found.url,
+                    PageEntry::OutputPath => {
+                        permalink = Some(found.permalink);
+                        found.output_path
+                    }
+                }
+            } else {
+                self.render(&step.value, &key, engine, loader, shown, &data, undefined)?
+            };
             if matches!(step.value, Value::Array(_))
                 && let Some(Value::Object(own)) = data.get_mut("eleventyComputed")
             {
@@ -183,7 +245,10 @@ impl Plan {
             .into_iter()
             .map(|(k, v)| (k.clone(), super::js_value(v)))
             .collect();
-        Ok(ordered)
+        Ok(Applied {
+            data: ordered,
+            permalink: permalink.expect("`page.outputPath` is always an entry"),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -242,6 +307,7 @@ impl Plan {
 struct Leaf {
     path: Vec<String>,
     value: Value,
+    page: Option<PageEntry>,
 }
 
 /// The entries under `object`, in JavaScript key order. An object with no
@@ -260,6 +326,7 @@ fn collect(object: &Data, path: &mut Vec<String>, out: &mut Vec<Leaf>) -> Result
             other => out.push(Leaf {
                 path: path.clone(),
                 value: other.clone(),
+                page: None,
             }),
         }
         path.pop();

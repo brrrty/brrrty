@@ -1,11 +1,15 @@
 //! Permalink resolution: where a page is written and what its URL is.
 
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use brrrty_js::Value;
+use brrrty_liquid::{Engine, Loader};
 
 use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
+use crate::render::liquid_problem;
 
 /// The outcome of resolving a page's permalink.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,22 +20,39 @@ pub enum Permalink {
     Skip,
 }
 
-/// Resolve the URL and output path for a page.
+/// Resolve the URL and output path for a page from its `permalink` as
+/// written, with no template rendered. [`Locator`] renders one first.
 ///
 /// `rel_to_input` is the source file path relative to the input directory.
 pub fn resolve_permalink(rel_to_input: &Path, front_matter: &Data) -> Result<Permalink, Problem> {
-    match front_matter.get("permalink") {
-        None => Ok(default_permalink(rel_to_input)),
+    resolve_value(rel_to_input, front_matter.get("permalink"), front_matter)
+}
+
+/// Resolve a rendered `permalink` value. `data` is only read for
+/// `eleventyAllowMissingExtension`.
+fn resolve_value(rel: &Path, permalink: Option<&Value>, data: &Data) -> Result<Permalink, Problem> {
+    match permalink {
+        None => Ok(default_permalink(rel)),
         Some(Value::Bool(false)) => Ok(Permalink::Skip),
         Some(Value::Bool(true)) => Err(Problem::error(
             codes::PERMALINK_INVALID,
             "`permalink: true` is not valid",
         )
-        .with_path(rel_to_input)
+        .with_path(rel)
         .with_help("Did you mean `permalink: false`?")),
-        Some(Value::Null) => Ok(default_permalink(rel_to_input)),
-        Some(Value::String(s)) if s.is_empty() => Ok(default_permalink(rel_to_input)),
-        Some(Value::String(s)) => explicit_permalink(rel_to_input, s, front_matter),
+        Some(Value::Null) => Ok(default_permalink(rel)),
+        Some(Value::String(s)) if s.is_empty() => Ok(default_permalink(rel)),
+        Some(Value::String(s)) => explicit_permalink(rel, s, data),
+        // A map: `build` is the path; with none, nothing is written (probed).
+        Some(Value::Object(o)) if o.is_empty() => Ok(default_permalink(rel)),
+        Some(Value::Object(o)) => match o.get("build") {
+            None => Ok(Permalink::Skip),
+            Some(Value::String(s)) if s.is_empty() => {
+                Err(empty_permalink("`permalink.build`", rel))
+            }
+            Some(Value::String(s)) => explicit_permalink(rel, s, data),
+            Some(_) => Err(map_unsupported(rel)),
+        },
         Some(other) => Err(Problem::error(
             codes::PERMALINK_INVALID,
             format!(
@@ -39,8 +60,27 @@ pub fn resolve_permalink(rel_to_input: &Path, front_matter: &Data) -> Result<Per
                 kind(other)
             ),
         )
-        .with_path(rel_to_input)),
+        .with_path(rel)),
     }
+}
+
+/// 11ty crashes writing a permalink that renders to nothing (probed).
+fn empty_permalink(what: &str, rel: &Path) -> Problem {
+    Problem::error(
+        codes::PERMALINK_INVALID,
+        format!("{what} rendered to an empty string"),
+    )
+    .with_path(rel)
+    .with_help("11ty stops the whole build here. To skip writing a page, use `permalink: false`.")
+}
+
+fn map_unsupported(rel: &Path) -> Problem {
+    Problem::error(
+        codes::PERMALINK_UNSUPPORTED,
+        "This `permalink` map isn't supported: only `build` and other keys set to a string work",
+    )
+    .with_path(rel)
+    .with_help("Write `permalink` as a string, or a map whose values are strings. 11ty itself writes a file named `false` for `build: false`; use `permalink: false` to skip a page.")
 }
 
 fn kind(v: &Value) -> &'static str {
@@ -61,6 +101,14 @@ fn build(segments: &[String], trailing_slash: bool) -> Permalink {
     url.push_str(&segments.join("/"));
     if trailing_slash && !segments.is_empty() {
         url.push('/');
+    }
+    // 11ty's `normalizePathToUrl`: a URL never ends in `index.html` or a
+    // bare `index` (probed: `permalink: /a/index.html` has the URL `/a/`).
+    for tail in ["/index.html", "/index"] {
+        if let Some(stem) = url.strip_suffix(tail) {
+            url = format!("{stem}/");
+            break;
+        }
     }
     let mut output_rel: PathBuf = segments.iter().collect();
     if trailing_slash {
@@ -90,14 +138,6 @@ fn default_permalink(rel: &Path) -> Permalink {
 }
 
 fn explicit_permalink(rel: &Path, raw: &str, front_matter: &Data) -> Result<Permalink, Problem> {
-    if raw.contains("{{") || raw.contains("{%") {
-        return Err(Problem::error(
-            codes::PERMALINK_TEMPLATED,
-            "Templated permalinks aren't supported yet",
-        )
-        .with_path(rel)
-        .with_help("Coming in a future release. Use a plain path for now."));
-    }
     let is_drive = |seg: &str| {
         let b = seg.as_bytes();
         b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
@@ -152,6 +192,167 @@ fn explicit_permalink(rel: &Path, raw: &str, front_matter: &Data) -> Result<Perm
         ));
     }
     Ok(build(&segments, trailing_slash))
+}
+
+/// Where a page is written, and what `page.url` and `page.outputPath` hold.
+#[derive(Debug, Clone)]
+pub(crate) struct Located {
+    pub permalink: Permalink,
+    /// `page.url`: the URL, or `false` when nothing is written.
+    pub url: Value,
+    /// `page.outputPath`: the path as 11ty spells it, or `false`.
+    pub output_path: Value,
+}
+
+/// Renders a page's permalink against its data and resolves it. Built once
+/// per page; pagination calls [`Locator::locate`] again for each page it
+/// generates, with that page's data.
+pub(crate) struct Locator<'a> {
+    pub engine: &'a Engine,
+    pub loader: &'a dyn Loader,
+    /// The source file, relative to the input folder.
+    pub rel: &'a Path,
+    /// The source file as problems show it.
+    pub shown: &'a Path,
+    /// The output folder as 11ty spells it in `page.outputPath`.
+    pub output_shown: &'a str,
+    /// `templateEngineOverride` of `html`, `""` or `false`: the permalink is
+    /// written as it is (probed).
+    pub raw: bool,
+    /// The data file or layout `permalink` comes from, when not the page.
+    pub from: Option<String>,
+    /// The line of `permalink:` in the page's front matter.
+    pub line: Option<usize>,
+}
+
+impl Locator<'_> {
+    /// Render and resolve the permalink in `data`, which is what 11ty's
+    /// template data holds at that point: `permalink` is the template as
+    /// written, and `page.url` and `page.outputPath` are not set yet.
+    /// Variables read but undefined are added to `undefined`.
+    pub fn locate(
+        &self,
+        data: &Data,
+        undefined: &mut BTreeSet<String>,
+    ) -> Result<Located, Problem> {
+        self.locate_inner(data, undefined).map_err(|mut p| {
+            p.path = Some(self.shown.to_path_buf());
+            if p.line.is_none() && self.from.is_none() {
+                p.line = self.line;
+            }
+            p
+        })
+    }
+
+    fn locate_inner(
+        &self,
+        data: &Data,
+        undefined: &mut BTreeSet<String>,
+    ) -> Result<Located, Problem> {
+        if data
+            .get("permalinkBypassOutputDir")
+            .is_some_and(crate::js::js_truthy)
+        {
+            return Err(Problem::error(
+                codes::PERMALINK_UNSUPPORTED,
+                "`permalinkBypassOutputDir` writes outside the output folder",
+            )
+            .with_help("Brrrty only writes inside the output folder. Remove the key."));
+        }
+        // 11ty reads `permalink ?? eleventyComputed.permalink`.
+        let value = match data.get("permalink") {
+            None | Some(Value::Null) => match data.get("eleventyComputed") {
+                Some(Value::Object(c)) => c.get("permalink"),
+                _ => None,
+            },
+            v => v,
+        };
+        // `dynamicPermalink: false` writes the permalink as it is.
+        let render = !self.raw && !matches!(data.get("dynamicPermalink"), Some(Value::Bool(false)));
+        let rendered = match value {
+            Some(Value::String(s)) if render && has_liquid(s) => {
+                let out = self.render(s, data, undefined)?;
+                if out.is_empty() {
+                    return Err(empty_permalink("`permalink`", self.rel));
+                }
+                Some(Value::String(out.into()))
+            }
+            Some(Value::Object(o)) if !o.is_empty() => {
+                let mut out = Data::with_capacity(o.len());
+                for (key, v) in Value::js_entries(o) {
+                    let Value::String(s) = v else {
+                        return Err(map_unsupported(self.rel));
+                    };
+                    let text = if render && has_liquid(s) {
+                        self.render(s, data, undefined)?
+                    } else {
+                        s.to_string()
+                    };
+                    out.insert(key.clone(), Value::String(text.into()));
+                }
+                Some(Value::Object(Arc::new(out)))
+            }
+            other => other.cloned(),
+        };
+        let permalink = resolve_value(self.rel, rendered.as_ref(), data)?;
+        let (url, output_path) = match &permalink {
+            Permalink::Write { url, output_rel } => {
+                let path: Vec<String> = output_rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                (
+                    Value::String(url.clone().into()),
+                    Value::String(format!("{}{}", self.output_shown, path.join("/")).into()),
+                )
+            }
+            Permalink::Skip => (Value::Bool(false), Value::Bool(false)),
+        };
+        Ok(Located {
+            permalink,
+            url,
+            output_path,
+        })
+    }
+
+    fn render(
+        &self,
+        template: &str,
+        data: &Data,
+        undefined: &mut BTreeSet<String>,
+    ) -> Result<String, Problem> {
+        let fail = |e: brrrty_liquid::LiquidError| {
+            let mut p = liquid_problem(&e, self.shown.to_path_buf(), 0, None);
+            // The line is inside the permalink, not the file.
+            p.line = None;
+            p.column = None;
+            p.message = match &self.from {
+                Some(from) => format!("{} in `permalink` from {from}", p.message),
+                None => format!("{} in `permalink`", p.message),
+            };
+            if p.code == codes::LIQUID_UNKNOWN_FILTER {
+                let note = "Filters from your 11ty config aren't available yet: custom filters come with the Rhai config.";
+                p.help = Some(match p.help.take() {
+                    Some(hint) => format!("{hint} {note}"),
+                    None => note.to_string(),
+                });
+            }
+            p
+        };
+        let t = self.engine.parse("permalink", template).map_err(fail)?;
+        let scope = Value::Object(Arc::new(data.clone()));
+        let r = self
+            .engine
+            .render_tracked(&t, &scope, self.loader)
+            .map_err(fail)?;
+        undefined.extend(r.undefined);
+        Ok(r.output)
+    }
+}
+
+/// 11ty only compiles a permalink that has a tag or output delimiter.
+fn has_liquid(s: &str) -> bool {
+    s.contains("{{") || s.contains("{%")
 }
 
 #[cfg(test)]
@@ -242,18 +443,22 @@ mod tests {
         assert_eq!(r(false.into()).unwrap(), Permalink::Skip);
     }
 
+    /// Probed: the URL drops a final `index.html` or `index`; the file stays.
     #[test]
-    fn templated_is_rejected() {
-        let e = r("/{{ page.fileSlug }}/".into()).unwrap_err();
-        assert_eq!(e.code, codes::PERMALINK_TEMPLATED);
-        assert_eq!(e.message, "Templated permalinks aren't supported yet");
+    fn index_files_have_directory_urls() {
+        assert_eq!(r("/a/index.html".into()).unwrap(), w("/a/", "a/index.html"));
+        assert_eq!(r("/index.html".into()).unwrap(), w("/", "index.html"));
         assert_eq!(
-            e.help.as_deref(),
-            Some("Coming in a future release. Use a plain path for now.")
+            r("/a/index/".into()).unwrap(),
+            w("/a/index/", "a/index/index.html")
         );
         assert_eq!(
-            r("/{% x %}/".into()).unwrap_err().code,
-            codes::PERMALINK_TEMPLATED
+            r_flag("/a/index", true.into()).unwrap(),
+            w("/a/", "a/index")
+        );
+        assert_eq!(
+            r("/a/myindex.html".into()).unwrap(),
+            w("/a/myindex.html", "a/myindex.html")
         );
     }
 

@@ -36,6 +36,7 @@ pub(crate) const BUILD_KEYS: &[&str] = &[
     "eleventyExcludeFromCollections",
     "dynamicPermalink",
     "eleventyAllowMissingExtension",
+    "permalinkBypassOutputDir",
     "page",
     "eleventy",
     "pkg",

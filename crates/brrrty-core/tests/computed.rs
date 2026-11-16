@@ -114,16 +114,11 @@ fn a_liquid_error_in_a_computed_value_refuses_the_page() {
     );
 }
 
-/// Probed: 11ty honors computed `permalink`, `layout` and
-/// `templateEngineOverride`; they change how the page is built, so Brrrty
-/// refuses them until it can follow.
+/// Probed: 11ty honors computed `layout` and `templateEngineOverride`; they
+/// change how the page is built, so Brrrty refuses them until it can follow.
+/// (A computed `permalink` is followed: see `tests/permalinks.rs`.)
 #[test]
 fn computed_keys_that_change_the_build_are_refused() {
-    assert_refused(
-        "  permalink: \"/{{ title }}/\"\n",
-        codes::PERMALINK_TEMPLATED,
-        "permalink",
-    );
     assert_refused("  layout: base\n", codes::COMPUTED_UNSUPPORTED, "`layout`");
     assert_refused(
         "  templateEngineOverride: md\n",

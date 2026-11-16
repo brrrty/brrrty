@@ -733,19 +733,19 @@ fn reserved_data_names_are_errors() {
     assert_eq!(read(root, "c/index.html"), "<p>1 c</p>\n");
 }
 
-/// Plan 4 renders templated permalinks; until then they stay refused, as
-/// Plan 1 did, rather than written to the wrong place.
+/// Plan 4 renders templated permalinks.
 #[test]
-fn templated_permalinks_are_still_refused() {
+fn templated_permalinks_render() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(
         root,
         "src/p.md",
-        "---\ntitle: T\npermalink: \"/{{ title | slugify }}/\"\n---\nx\n",
+        "---\ntitle: A Title\npermalink: \"/{{ title | slugify }}/\"\n---\nx\n",
     );
     let r = run(root);
-    assert_eq!(only_error(&r).code, codes::PERMALINK_TEMPLATED);
+    assert_clean(&r);
+    assert_eq!(read(root, "a-title/index.html"), "<p>x</p>\n");
 }
 
 #[test]

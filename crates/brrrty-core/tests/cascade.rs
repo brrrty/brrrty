@@ -433,10 +433,10 @@ fn adding_to_eleventy_or_pkg_outside_global_data_is_an_error() {
     assert_eq!(read(root, "s/a/index.html"), "x={} v=3.1.8");
 }
 
-/// Templated permalinks are refused, wherever they come from, until
-/// Brrrty renders them.
+/// A permalink from a directory data file renders for each page under it
+/// (probed), and a page's own front matter wins.
 #[test]
-fn a_templated_permalink_from_a_data_file_is_refused() {
+fn a_templated_permalink_from_a_data_file_renders() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(
@@ -451,11 +451,8 @@ fn a_templated_permalink_from_a_data_file_is_refused() {
         "---\npermalink: /mine/\n---\n{{ kind }}",
     );
     let r = run(root);
-    let p = only_error(&r);
-    assert_eq!(p.code, codes::PERMALINK_TEMPLATED);
-    assert_eq!(p.path.as_deref(), Some(Path::new("src/posts/one.liquid")));
-    assert!(p.message.contains("src/posts/posts.json"), "{}", p.message);
-    assert!(!exists(root, "posts/one/index.html"));
+    assert!(errors(&r).is_empty(), "{:?}", r.problems);
+    assert_eq!(read(root, "one/index.html"), "post");
     assert_eq!(read(root, "mine/index.html"), "post");
 }
 

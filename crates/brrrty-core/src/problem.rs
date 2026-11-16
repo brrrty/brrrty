@@ -39,7 +39,7 @@ pub mod codes {
     pub const PASSTHROUGH_OVERRIDES_PAGE: &str = "passthrough-overrides-page";
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
-    pub const PERMALINK_TEMPLATED: &str = "permalink-templated";
+    pub const PERMALINK_UNSUPPORTED: &str = "permalink-unsupported";
     pub const TAGS_INVALID: &str = "tags-invalid";
     pub const SYMLINK_BROKEN: &str = "symlink-broken";
     pub const SYMLINK_LOOP: &str = "symlink-loop";

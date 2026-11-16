@@ -12,7 +12,6 @@ use brrrty_liquid::{Engine, ErrorKind, LiquidError, Template};
 use brrrty_markdown::MarkdownRenderer;
 use indexmap::IndexMap;
 
-use crate::data::ComputedPlan;
 use crate::layout::{Kind, LayoutFile};
 use crate::loader::FsLoader;
 use crate::problem::{Problem, codes};
@@ -155,8 +154,6 @@ pub(crate) struct Job<'a> {
     pub engines: Engines,
     pub data: &'a IndexMap<String, Value>,
     pub layouts: &'a [Arc<LayoutFile>],
-    /// `eleventyComputed`, run before anything renders.
-    pub computed: Option<&'a ComputedPlan>,
 }
 
 /// A rendered page and the variables it read that nothing defined.
@@ -174,20 +171,7 @@ pub(crate) struct Pipeline<'a> {
 impl Pipeline<'_> {
     pub fn render(&self, job: &Job<'_>) -> Result<Output, Problem> {
         let mut undefined = BTreeSet::new();
-        let computed;
-        let page_data = match job.computed {
-            Some(plan) => {
-                computed = plan.apply(
-                    self.engine,
-                    self.loader,
-                    job.shown,
-                    job.data,
-                    &mut undefined,
-                )?;
-                &computed
-            }
-            None => job.data,
-        };
+        let page_data = job.data;
         let data = Value::Object(Arc::new(page_data.clone()));
         let page_liquid = |undefined: &mut BTreeSet<String>| -> Result<String, Problem> {
             // 11ty skips the engine when the body has no Liquid in it.

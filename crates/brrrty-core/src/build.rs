@@ -25,7 +25,7 @@ use crate::loader::FsLoader;
 use crate::options::BuildOptions;
 use crate::page::{Page, file_path_stem, file_slug, resolve_date};
 use crate::passthrough::copy_passthrough_avoiding;
-use crate::permalink::{Permalink, resolve_permalink};
+use crate::permalink::{Locator, Permalink};
 use crate::problem::{Problem, Severity, codes};
 use crate::render::{Engines, Job, Pipeline, body_line, engines_for};
 
@@ -73,8 +73,6 @@ struct Prepared {
     layouts: Vec<Arc<LayoutFile>>,
     /// Keys left out of `data` because Brrrty can't supply their value.
     withheld: Vec<(String, Withheld)>,
-    /// `eleventyComputed`, run when the page renders.
-    computed: Option<ComputedPlan>,
 }
 
 /// What loading one template gave.
@@ -92,6 +90,8 @@ enum Loaded {
 
 /// What every page shares while loading.
 struct Shared<'a> {
+    engine: &'a Engine,
+    loader: &'a FsLoader,
     input: &'a Path,
     input_rel: &'a Path,
     layouts: &'a Layouts<'a>,
@@ -410,19 +410,6 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         .and_then(|m| m.created().ok())
         .unwrap_or(modified);
     let date = resolve_date(&data, &shown, created, modified).map_err(|p| p.with_path(&shown))?;
-    let permalink = resolve_permalink(rel, &data).map_err(|p| {
-        let mut p = p.with_path(&shown);
-        if p.code == codes::PERMALINK_TEMPLATED
-            && let Some(from) = source("permalink")
-        {
-            p.message = format!("Templated permalink from {from} isn't supported yet");
-            p.help = Some("Templated permalinks are coming soon.".to_string());
-        }
-        p
-    })?;
-    let Permalink::Write { url, output_rel } = permalink else {
-        return Ok(Loaded::Skip);
-    };
     let ext = rel
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -442,7 +429,6 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     };
     let string = |s: String| Value::String(s.into());
     let input_path = format!("{}{}", dot_dir(shared.input_rel), slash_path(rel));
-    let output_path = format!("{}{}", shared.output_shown, slash_path(&output_rel));
     page.insert("inputPath".into(), string(input_path));
     page.insert("fileSlug".into(), string(file_slug(rel)));
     page.insert("filePathStem".into(), string(file_path_stem(rel)));
@@ -450,11 +436,62 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     page.insert("templateSyntax".into(), string(syntax));
     page.insert("date".into(), Value::Date(date.fixed_offset()));
     page.insert("rawInput".into(), string(body.to_string()));
-    page.insert("url".into(), string(url));
-    page.insert("outputPath".into(), string(output_path));
-    let computed = computed_plan(&data, &shown, &text, engines == Engines::Raw)?;
+    let plan = computed_plan(&data, &shown, &text, engines == Engines::Raw)?;
     let mut values = js_object(&data);
     values.insert("page".into(), Value::Object(Arc::new(page)));
+
+    // The permalink renders with the page's data, before `page.url` and
+    // `page.outputPath` exist. With computed data, 11ty runs it as the
+    // entries that set them, in their place in the order.
+    let locator = Locator {
+        engine: shared.engine,
+        loader: shared.loader,
+        rel,
+        shown: &shown,
+        output_shown: &shared.output_shown,
+        raw: engines == Engines::Raw,
+        from: if data.contains_key("permalink") && !front.contains_key("permalink") {
+            source("permalink")
+        } else {
+            None
+        },
+        line: front
+            .contains_key("permalink")
+            .then(|| key_line(&text, "permalink"))
+            .flatten(),
+    };
+    let mut undefined = BTreeSet::new();
+    let (values, permalink) = match &plan {
+        Some(plan) => {
+            let applied = plan.apply(
+                shared.engine,
+                shared.loader,
+                &shown,
+                &values,
+                &mut undefined,
+                &locator,
+            )?;
+            (applied.data, applied.permalink)
+        }
+        None => {
+            let found = locator.locate(&values, &mut undefined)?;
+            let mut values = values;
+            if let Some(Value::Object(page)) = values.get_mut("page") {
+                let page = Arc::make_mut(page);
+                page.insert("url".into(), found.url);
+                page.insert("outputPath".into(), found.output_path);
+            }
+            (values, found.permalink)
+        }
+    };
+    // A permalink or computed value that read data Brrrty can't supply
+    // would put the page in the wrong place.
+    if let Some(problem) = missing_data_problem(&undefined, &withheld, &shared.data_dir) {
+        return Err(problem.with_path(&shown));
+    }
+    let Permalink::Write { output_rel, .. } = permalink else {
+        return Ok(Loaded::Skip);
+    };
 
     Ok(Loaded::Page(Box::new(Prepared {
         body_line: body_line(&text, body),
@@ -471,7 +508,6 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         data: values,
         layouts,
         withheld,
-        computed,
     })))
 }
 
@@ -841,6 +877,8 @@ fn build_in_pool(
     }
     let dir_data = DirDataIndex::load(&input, &input_rel, &discovery.templates);
     let shared = Shared {
+        engine: &engine,
+        loader: &loader,
         input: &input,
         input_rel: &input_rel,
         layouts: &layouts,
@@ -941,7 +979,6 @@ fn build_in_pool(
                 engines: p.engines,
                 data: &p.data,
                 layouts: &p.layouts,
-                computed: p.computed.as_ref(),
             })?;
             if let Some(problem) = missing_data_problem(&rendered.undefined, &p.withheld, &data_dir)
             {
