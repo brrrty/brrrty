@@ -186,3 +186,62 @@ fn every_regex_is_translated_or_has_a_reason() {
         "unsupported fence languages"
     );
 }
+
+#[test]
+fn no_rest_grammar_has_a_rest_of_its_own() {
+    // So merging `rest` doesn't depend on which grammar Prism tokenizes
+    // first (see `Grammars::tokens`).
+    let g = grammars();
+    for gr in &g.grammars {
+        if let Some(rest) = gr.rest {
+            assert!(g.grammar(rest).rest.is_none());
+        }
+    }
+    // A grammar's `rest` tokens come after its own.
+    let css = g.language("css").unwrap();
+    let atrule = g.tokens(css).iter().find(|t| t.name == "atrule").unwrap();
+    let inside = atrule.patterns[0].inside.unwrap();
+    let names: Vec<_> = g.tokens(inside).iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names.first(), Some(&"rule"));
+    assert!(names.contains(&"url") && names.contains(&"string"));
+}
+
+#[test]
+fn hook_patterns_are_prisms_and_translate() {
+    use brrrty_prism::highlight::{PREFIXES, compile_hook_regex, hook_regex};
+    let json: serde_json::Value =
+        serde_json::from_str(include_str!("../grammars/prism.json")).unwrap();
+    let sources: String = json["hooks"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|v| v.as_array().unwrap())
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    for r in [
+        hook_regex::PHP_OPEN,
+        hook_regex::PHP,
+        hook_regex::LIQUID,
+        hook_regex::LIQUID_TAG,
+        hook_regex::SHARP,
+        hook_regex::PLUS_PLUS,
+        hook_regex::FIRST_WORD,
+        hook_regex::LANGUAGE_CLASS,
+    ] {
+        let literal = format!("/{}/{}", r.1, r.2);
+        assert!(sources.contains(&literal), "{literal} isn't in a hook");
+    }
+    for r in hook_regex::ALL {
+        compile_hook_regex(r).unwrap_or_else(|e| panic!("/{}/{}: {}", r.1, r.2, e.0));
+    }
+    // diff-highlight's prefixes are the diff grammar's tokens, aliased by
+    // their first word.
+    let g = grammars();
+    let diff = g.language("diff").unwrap();
+    for (kind, _, word) in PREFIXES {
+        let t = g.tokens(diff).iter().find(|t| t.name == *kind).unwrap();
+        if kind.contains('-') {
+            assert_eq!(t.patterns[0].alias.first().map(String::as_str), Some(*word));
+        }
+    }
+}

@@ -485,8 +485,46 @@ fn fuzz_one(
     let Ok(re) = g.regex(id) else {
         return;
     };
-    let mut rng = Rng(0x9E37_79B9_7F4A_7C15 ^ ((id.0 as u64 + 1) * 0x1000_0001));
-    let ast = brrrty_jsregex::ast::parse(&e.source, e.flags.contains('s')).unwrap();
+    let seed = 0x9E37_79B9_7F4A_7C15 ^ ((id.0 as u64 + 1) * 0x1000_0001);
+    let p = Pat {
+        source: &e.source,
+        flags: &e.flags,
+        re,
+        spans_only: false,
+    };
+    fuzz_pattern(oracle, &p, seed, sources, tokens, strings, stats);
+}
+
+/// A pattern to fuzz: its JavaScript source and flags, its translation, and
+/// whether only the match's span is compared (a hook pattern translated by
+/// `translate_spans`, which leaves the groups out).
+struct Pat<'a> {
+    source: &'a str,
+    flags: &'a str,
+    re: &'a brrrty_prism::regex::JsRegex,
+    spans_only: bool,
+}
+
+fn fuzz_pattern(
+    oracle: &mut Oracle,
+    p: &Pat<'_>,
+    seed: u64,
+    sources: &[&str],
+    tokens: &[Vec<u16>],
+    strings: usize,
+    stats: &mut Stats,
+) {
+    struct E<'a> {
+        source: &'a str,
+        flags: &'a str,
+    }
+    let e = E {
+        source: p.source,
+        flags: p.flags,
+    };
+    let re = p.re;
+    let mut rng = Rng(seed);
+    let ast = brrrty_jsregex::ast::parse(e.source, e.flags.contains('s')).unwrap();
     let icase = e.flags.contains('i');
     let mut cases = Vec::new();
     for _ in 0..strings {
@@ -518,12 +556,13 @@ fn fuzz_one(
     // Node in chunks, so a line stays a manageable size.
     let mut node = Vec::with_capacity(cases.len());
     for chunk in cases.chunks(2000) {
-        node.extend(oracle.run(&e.source, &e.flags, chunk));
+        node.extend(oracle.run(e.source, e.flags, chunk));
     }
     let mut picked = (0, 0, 0);
     for (case, want) in cases.into_iter().zip(node) {
         let text = JsText::from_units(&case.text);
         let got = match rust_exec(re, &text, case.last) {
+            Ok(got) if p.spans_only => got.map(|g| g[..2].to_vec()),
             Ok(got) => got,
             Err(_) => {
                 stats.refused += 1;
@@ -534,6 +573,11 @@ fn fuzz_one(
         if want.is_some() {
             stats.matched += 1;
         }
+        let want = if p.spans_only {
+            want.map(|w| w[..2].to_vec())
+        } else {
+            want
+        };
         if got != want {
             if stats.diffs.len() < 5 {
                 stats.diffs.push(format!(
@@ -757,4 +801,85 @@ fn every_translated_regex_matches_node() {
         s.push_str("\n ]\n}\n");
         std::fs::write(Path::new(MANIFEST).join("tests/probes/regex.json"), s).unwrap();
     }
+}
+
+/// The hooks' own patterns (php and liquid placeholders, diff-highlight's
+/// lines and tags, markdown's languages and entities), on the same kind of
+/// text plus HTML that Prism wrote (tests/probes/highlight), which is what
+/// diff-highlight and markdown's `textContent` read. Report in
+/// target/prism-fuzz/hooks.txt.
+#[test]
+#[ignore = "needs Node; run with --ignored"]
+fn hook_regexes_match_node() {
+    use brrrty_prism::highlight::{compile_hook_regex, hook_regex, markup_tag_source};
+    let corpus = corpus();
+    let mut texts: Vec<String> = corpus.values().flatten().cloned().collect();
+    let dir = Path::new(MANIFEST).join("tests/probes/highlight");
+    for f in std::fs::read_dir(dir).unwrap() {
+        let v: Value =
+            serde_json::from_str(&std::fs::read_to_string(f.unwrap().path()).unwrap()).unwrap();
+        for c in v["cases"].as_array().unwrap() {
+            texts.push(c["code"].as_str().unwrap().to_string());
+            texts.push(c["html"].as_str().unwrap().to_string());
+        }
+    }
+    let sources: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let strings: usize = std::env::var("BRRRTY_FUZZ_STRINGS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+    let mut oracle = Oracle::new();
+    let mut report = String::new();
+    let (mut compared, mut refused, mut diffs) = (0, 0, 0);
+    for (i, r) in hook_regex::ALL.iter().enumerate() {
+        let source = if r.0 == hook_regex::TAG.0 {
+            markup_tag_source()
+        } else {
+            r.1
+        };
+        let re = compile_hook_regex(*r).unwrap_or_else(|e| panic!("/{source}/{}: {}", r.2, e.0));
+        let p = Pat {
+            source,
+            flags: r.2,
+            re,
+            spans_only: r.3,
+        };
+        // Token pools are the grammars'; the hooks get plain fragments.
+        let mut stats = Stats::default();
+        fuzz_pattern(
+            &mut oracle,
+            &p,
+            0xC0FF_EE00 + i as u64,
+            &sources,
+            &[],
+            strings,
+            &mut stats,
+        );
+        compared += stats.compared;
+        refused += stats.refused;
+        diffs += stats.diffs.len();
+        writeln!(
+            report,
+            "{} /{source}/{}: {} cases, {} matched, {} refused, {} differ",
+            if stats.diffs.is_empty() { "ok" } else { "DIFF" },
+            r.2,
+            stats.compared + stats.refused,
+            stats.matched,
+            stats.refused,
+            stats.diffs.len()
+        )
+        .unwrap();
+        for d in &stats.diffs {
+            writeln!(report, "  {d}").unwrap();
+        }
+    }
+    let out = Path::new(MANIFEST).join("../../target/prism-fuzz");
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(out.join("hooks.txt"), &report).unwrap();
+    println!("{report}");
+    println!(
+        "{} hook patterns, {compared} cases compared, {refused} refused, {diffs} differ",
+        hook_regex::ALL.len()
+    );
+    assert_eq!(diffs, 0);
 }

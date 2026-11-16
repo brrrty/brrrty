@@ -11,7 +11,16 @@ keywords = ["static-site", "ssg", "eleventy", "11ty", "prism"]
 categories = ["command-line-utilities", "web-programming"]
 readme = false
 # The generators and the fuzz need Node; the probes are its output.
-exclude = ["tools/", "tests/fuzz.rs", "tests/fuzz/", "tests/probes.rs", "tests/probes/"]
+exclude = [
+    "tools/",
+    "tests/fuzz.rs",
+    "tests/fuzz/",
+    "tests/probes.rs",
+    "tests/probes/",
+    "tests/highlight.rs",
+    "tests/highlight_node.rs",
+    "tests/backtrack.rs",
+]
 
 [dependencies]
 brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.0.5" }

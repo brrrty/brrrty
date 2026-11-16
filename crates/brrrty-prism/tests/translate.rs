@@ -2,7 +2,7 @@
 //! against what Node's `exec` gives (with the `g` flag and `lastIndex`
 //! set), in UTF-16 units.
 
-use brrrty_prism::regex::{JsText, translate};
+use brrrty_prism::regex::{JsText, translate, translate_spans};
 
 /// `[index, end, group 1 start, group 1 end, ...]`, -1 for an unset group.
 fn exec(source: &str, flags: &str, text: &str, last: usize) -> Option<Vec<i64>> {
@@ -109,8 +109,12 @@ fn backreferences_with_i_compare_as_javascript_does() {
     // only on text without them; otherwise the match is refused.
     let re = translate(r#"<<<"([^"]+)"\1"#, "i").unwrap();
     assert!(re.exec(&JsText::new(r#"<<<"éa"ÉA"#), 0).is_err());
-    assert!(re.exec(&JsText::new(r#"é <<<"ab"AB"#), 0).is_err());
-    // Without the start of a match after lastIndex, it can't differ.
+    assert!(re.exec(&JsText::new("<<<\"k\"\u{212a}"), 0).is_err());
+    // Only units at or after where a match could start matter.
+    assert_eq!(
+        exec(r#"<<<"([^"]+)"\1"#, "i", r#"é <<<"ab"AB"#, 0),
+        Some(vec![2, 11, 6, 8])
+    );
     assert!(re.exec(&JsText::new("é <<<"), 1).unwrap().is_none());
     assert_eq!(
         exec(r#"<<<"([^"]+)"\1"#, "i", r#"— <<<"ab"AB"#, 0),
@@ -128,4 +132,45 @@ fn what_cannot_be_translated_exactly_is_refused() {
     assert!(refused("a", "y").contains("`y`"));
     assert!(refused(r"\1", "").contains("octal"));
     assert!(refused(r"(?i:a)", "").contains("(?"));
+}
+
+#[test]
+fn the_php_heredoc_guard_applies_only_to_quoted_labels() {
+    // Prism's php heredoc: a quoted label (any units, compared without
+    // case) or a bare one (ASCII only, exact in both engines).
+    let re = translate(
+        r#"<<<(?:"([^"]+)"[\r\n](?:.*[\r\n])*?\1;|([a-z_]\w*)[\r\n](?:.*[\r\n])*?\2;)"#,
+        "i",
+    )
+    .unwrap();
+    let ok = |s: &str| re.exec(&JsText::new(s), 0).is_ok();
+    // A bare label with letters outside ASCII anywhere: exact.
+    assert!(ok("$a = <<<EOT\ncafé ſ \u{212a}\nEOT;\n"));
+    assert!(ok("// café\n$a = <<<eot\nx\nEOT;\n"));
+    // A quoted label with such a letter after it: refused.
+    assert!(!ok("$a = <<<\"EOT\"\ncafé\nEOT;\n"));
+    // ... and before it: exact.
+    assert!(ok("// café\n$a = <<<\"EOT\"\nx\nEOT;\n"));
+    // Bare first, quoted later with the letter between them: the quoted
+    // one is still after it, so exact.
+    assert!(ok("<<<A\né\nA;\n<<<\"B\"\nx\nB;\n"));
+}
+
+#[test]
+fn span_only_translation() {
+    // php's placeholder pattern: group 1 sits out some passes, so its value
+    // can differ, but `\1` always follows it in the same pass.
+    let php = r#"<\?(?:[^"'/#]|\/(?![*/])|("|')(?:\\[\s\S]|(?!\1)[^\\])*\1|(?:\/\/|#(?!\[))(?:[^?\n\r]|\?(?!>))*(?=$|\?>|[\r\n])|#\[|\/\*(?:[^*]|\*(?!\/))*(?:\*\/|$))*?(?:\?>|$)"#;
+    assert!(refused(php, "g").contains("repetition"));
+    let re = translate_spans(php, "g").unwrap();
+    let m = re
+        .exec(&JsText::new(r#"a <?php echo "?>" . 'x'; ?> b"#), 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!((m.index, m.end), (2, 27));
+    assert!(m.groups.is_empty());
+    // A backreference after the repetition reads the stale value: refused.
+    assert!(translate_spans("(?:(a)|b)+\\1", "").is_err());
+    // A backreference to a group set before the repetition: refused.
+    assert!(translate_spans("(a)(?:(b)\\1|c)+", "").is_err());
 }

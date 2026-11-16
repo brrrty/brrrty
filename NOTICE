@@ -65,7 +65,8 @@ These projects are released under the MIT License. Their notices:
 
 - Prism 1.30.0, https://prismjs.com/: the language grammars and their
   regular expressions (brrrty-prism's grammars/prism.json is dumped from
-  them) and the highlighting behavior
+  them), the tokenizer, hooks and highlighting behavior, and the code of
+  its test fixtures (in brrrty-prism's tests/probes/highlight)
   Copyright (c) 2012 Lea Verou
 
 Each is provided under these terms:

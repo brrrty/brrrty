@@ -86,6 +86,8 @@ pub struct Grammars {
     pub hooks_by_language: Vec<(String, Vec<(String, u64)>)>,
     pub grammars: Vec<Grammar>,
     pub regexes: Vec<RegexEntry>,
+    /// Each grammar's tokens once `rest` is merged in, made on first use.
+    merged: Vec<OnceLock<Vec<Token>>>,
 }
 
 /// The grammars, read on first use.
@@ -199,6 +201,7 @@ impl Grammars {
                 rest: id(&g["rest"])?.map(GrammarId),
             });
         }
+        let merged = (0..grammars.len()).map(|_| OnceLock::new()).collect();
         let out = Self {
             prism: text(&v, "prism")?,
             plugin: text(&v, "plugin")?,
@@ -209,6 +212,7 @@ impl Grammars {
             hooks_by_language,
             grammars,
             regexes,
+            merged,
         };
         let n = out.grammars.len();
         let in_range = |g: &Option<GrammarId>| g.is_none_or(|g| g.0 < n);
@@ -235,6 +239,28 @@ impl Grammars {
 
     pub fn grammar(&self, id: GrammarId) -> &Grammar {
         &self.grammars[id.0]
+    }
+
+    /// The tokens Prism's `matchGrammar` walks for grammar `id`: `tokenize`
+    /// first copies each token of `rest` into the grammar (`for...in`, so a
+    /// token it already has keeps its place and takes rest's patterns, and a
+    /// new one goes last) and deletes `rest`. No grammar used as a `rest` has
+    /// a `rest` of its own (checked by the tests), so the result doesn't
+    /// depend on which grammar is tokenized first.
+    pub fn tokens(&self, id: GrammarId) -> &[Token] {
+        self.merged[id.0].get_or_init(|| {
+            let g = self.grammar(id);
+            let mut tokens = g.tokens.clone();
+            if let Some(rest) = g.rest {
+                for t in &self.grammar(rest).tokens {
+                    match tokens.iter_mut().find(|x| x.name == t.name) {
+                        Some(x) => x.patterns = t.patterns.clone(),
+                        None => tokens.push(t.clone()),
+                    }
+                }
+            }
+            tokens
+        })
     }
 
     pub fn regex_entry(&self, id: RegexId) -> &RegexEntry {
