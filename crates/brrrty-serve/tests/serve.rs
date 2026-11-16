@@ -159,6 +159,39 @@ fn host_flag_can_widen_the_bind() {
     let f = fixture(true);
     let srv = Server::start(&f.site, "0.0.0.0", 0).unwrap();
     assert!(srv.local_addr().ip().is_unspecified());
+    // Bound for other machines, any name for this one is fine.
+    let mut s = TcpStream::connect(("127.0.0.1", srv.port())).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    s.write_all(b"GET /about HTTP/1.1\r\nHost: my-laptop.lan:8080\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    assert_eq!(read_reply(&mut s, false).text(), "about page");
+}
+
+#[test]
+fn on_loopback_only_requests_naming_this_machine_are_answered() {
+    // A page whose own name was rebound to 127.0.0.1 sends that name as Host; it gets
+    // nothing, neither files nor a socket. The dev server answers it.
+    let f = fixture(true);
+    let srv = start(&f);
+    for host in [
+        "evil.example:8080",
+        "localhost.evil.example",
+        "10.0.0.5:8080",
+    ] {
+        let r = raw(
+            &srv,
+            format!("GET /about HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
+        );
+        assert_eq!(r.status, 403, "{host}");
+        assert!(!r.text().contains("about page"));
+    }
+    for host in ["localhost:1234", "127.0.0.1", "[::1]:8080", "LOCALHOST"] {
+        let r = raw(
+            &srv,
+            format!("GET /about HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes(),
+        );
+        assert_eq!(r.text(), "about page", "{host}");
+    }
 }
 
 #[test]
@@ -741,7 +774,7 @@ fn connections_past_the_cap_get_503_and_a_slot_frees_up() {
     let mut held: Vec<TcpStream> = (0..3).map(|_| connect(&srv)).collect();
     // Make sure all three are counted before the fourth arrives.
     for s in &mut held {
-        s.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\n\r\n")
+        s.write_all(b"GET /about HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .unwrap();
         assert_eq!(read_reply(s, false).status, 200);
     }
@@ -758,7 +791,7 @@ fn connections_past_the_cap_get_503_and_a_slot_frees_up() {
     let mut ok = false;
     for _ in 0..100 {
         let mut s = connect(&srv);
-        s.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        s.write_all(b"GET /about HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
             .unwrap();
         if read_reply(&mut s, false).status == 200 {
             ok = true;
@@ -772,7 +805,7 @@ fn connections_past_the_cap_get_503_and_a_slot_frees_up() {
 /// A request with a large header, so plenty of it sits unread in the server's buffer.
 fn padded_request() -> Vec<u8> {
     format!(
-        "GET /about HTTP/1.1\r\nHost: x\r\nX-Pad: {}\r\n\r\n",
+        "GET /about HTTP/1.1\r\nHost: localhost\r\nX-Pad: {}\r\n\r\n",
         "p".repeat(6000)
     )
     .into_bytes()
@@ -795,14 +828,14 @@ fn early_closes_drain_unread_input_so_the_reply_arrives() {
     // 400: conflicting lengths, then a body the server never reads.
     let r = reply_with_unread_bytes(
         &srv,
-        b"POST /about HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+        b"POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
         20_000,
     );
     assert_eq!(r.status, 400);
     // 200 with Connection: close and an unread body.
     let r = reply_with_unread_bytes(
         &srv,
-        b"POST /about HTTP/1.1\r\nHost: x\r\nContent-Length: 20000\r\nConnection: close\r\n\r\n",
+        b"POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 20000\r\nConnection: close\r\n\r\n",
         20_000,
     );
     assert_eq!(r.status, 200);
@@ -821,7 +854,8 @@ fn a_408_arrives_even_with_unread_input() {
     );
     let mut s = connect(&srv);
     // An unfinished head the server gives up on, then more bytes it never reads.
-    s.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\n").unwrap();
+    s.write_all(b"GET /about HTTP/1.1\r\nHost: localhost\r\n")
+        .unwrap();
     std::thread::sleep(Duration::from_millis(500));
     s.write_all(&vec![b'x'; 20_000]).unwrap();
     std::thread::sleep(Duration::from_millis(100));
@@ -836,9 +870,9 @@ fn conflicting_content_lengths_are_refused_and_the_connection_closes() {
     let srv = start(&f);
     // The reviewer's case: a 0 then a 30, with a pipelined request in the
     // "body". It must not be served as a second request.
-    let smuggled = "GET /about HTTP/1.1\r\nHost: x\r\n\r\n";
+    let smuggled = "GET /about HTTP/1.1\r\nHost: localhost\r\n\r\n";
     let req = format!(
-        "GET /about HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nContent-Length: 30\r\n\r\n{smuggled}"
+        "GET /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nContent-Length: 30\r\n\r\n{smuggled}"
     );
     let mut s = connect(&srv);
     s.write_all(req.as_bytes()).unwrap();
@@ -861,13 +895,13 @@ fn other_ambiguous_framing_is_refused() {
         "Content-Length: 0\r\nTransfer-Encoding: chunked",
         "Transfer-Encoding: chunked\r\nContent-Length: 0",
     ] {
-        let req = format!("POST /about HTTP/1.1\r\nHost: x\r\n{extra}\r\n\r\n");
+        let req = format!("POST /about HTTP/1.1\r\nHost: localhost\r\n{extra}\r\n\r\n");
         assert_eq!(raw(&srv, req.as_bytes()).status, 400, "{extra}");
     }
     // One plain length is fine, and a body is not read as a request.
     let r = raw(
         &srv,
-        b"POST /about HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nConnection: close\r\n\r\nabcd",
+        b"POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\nabcd",
     );
     assert_eq!(r.status, 200);
 }
@@ -1398,7 +1432,7 @@ fn websockets_have_their_own_cap_and_never_starve_file_requests() {
     let mut held = Vec::new();
     for _ in 0..200 {
         let mut c = connect(&srv);
-        c.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\n\r\n")
+        c.write_all(b"GET /about HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .unwrap();
         if read_reply(&mut c, false).status == 200 {
             held.push(c);
@@ -1440,4 +1474,80 @@ fn stopping_the_server_ends_open_websockets() {
     srv.stop();
     assert!(closed_by_peer(&mut s));
     wait_until("the socket to close", || !ws.is_open());
+}
+
+#[test]
+fn a_websocket_from_a_rebound_name_is_refused() {
+    let f = fixture(true);
+    let srv = start(&f);
+    with_handler(&srv);
+    let req = upgrade_request("Origin: http://evil.example:8080\r\n")
+        .replace("Host: localhost", "Host: evil.example:8080");
+    assert_eq!(raw(&srv, req.as_bytes()).status, 403);
+}
+
+/// Send raw frame bytes (already masked or not) and expect a close with `code`.
+fn expect_close(
+    srv: &RunningServer,
+    sockets: &Arc<Mutex<Vec<WebSocket>>>,
+    bytes: &[u8],
+    code: u16,
+) {
+    let before = sockets.lock().unwrap().len();
+    let mut s = open_socket(srv);
+    wait_until("the socket to be kept", || {
+        sockets.lock().unwrap().len() == before + 1
+    });
+    let ws = sockets.lock().unwrap()[before].clone();
+    s.write_all(bytes).unwrap();
+    assert_eq!(
+        read_frame(&mut s),
+        (0x8, code.to_be_bytes().to_vec()),
+        "{bytes:?}"
+    );
+    assert!(closed_by_peer(&mut s));
+    wait_until("the socket to close", || !ws.is_open());
+}
+
+#[test]
+fn frames_the_rfc_says_must_fail_close_the_socket() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let sockets = with_handler(&srv);
+    let masked = |first: u8, payload: &[u8]| {
+        let mut b = vec![first];
+        if payload.len() < 126 {
+            b.push(0x80 | payload.len() as u8);
+        } else {
+            b.push(0x80 | 126);
+            b.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        }
+        b.extend_from_slice(&[0, 0, 0, 0]);
+        b.extend_from_slice(payload);
+        b
+    };
+    // Reserved opcodes.
+    for op in [0x3u8, 0x7, 0xB, 0xF] {
+        expect_close(&srv, &sockets, &masked(0x80 | op, b""), 1002);
+    }
+    // A ping over 125 bytes, and a fragmented ping.
+    expect_close(&srv, &sockets, &masked(0x89, &[0; 126]), 1002);
+    expect_close(&srv, &sockets, &masked(0x09, b"x"), 1002);
+    // A continuation with nothing to continue.
+    expect_close(&srv, &sockets, &masked(0x80, b"x"), 1002);
+    // A new message inside a fragmented one.
+    let mut two = masked(0x01, b"a");
+    two.extend(masked(0x81, b"b"));
+    expect_close(&srv, &sockets, &two, 1002);
+    // Too big.
+    let mut big = vec![0x81, 0x80 | 127];
+    big.extend_from_slice(&(1u64 << 20).to_be_bytes());
+    expect_close(&srv, &sockets, &big, 1009);
+    // A proper fragmented message, with a ping between its parts, is fine.
+    let mut s = open_socket(&srv);
+    let mut ok = masked(0x01, b"a");
+    ok.extend(masked(0x89, b"p"));
+    ok.extend(masked(0x80, b"b"));
+    s.write_all(&ok).unwrap();
+    assert_eq!(read_frame(&mut s), (0xA, b"p".to_vec()));
 }

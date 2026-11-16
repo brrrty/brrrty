@@ -59,6 +59,9 @@ pub(crate) fn check_upgrade(req: &Request) -> Result<&str, u16> {
 
 struct Inner {
     stream: Mutex<TcpStream>,
+    /// Another handle on the connection, for ending it without waiting on a write in
+    /// progress.
+    control: Option<TcpStream>,
     open: AtomicBool,
 }
 
@@ -78,8 +81,10 @@ impl std::fmt::Debug for WebSocket {
 impl WebSocket {
     pub(crate) fn new(stream: TcpStream) -> WebSocket {
         let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+        let control = stream.try_clone().ok();
         WebSocket(Arc::new(Inner {
             stream: Mutex::new(stream),
+            control,
             open: AtomicBool::new(true),
         }))
     }
@@ -94,16 +99,28 @@ impl WebSocket {
         self.0.open.load(Ordering::SeqCst)
     }
 
-    /// Send a close frame and end the connection.
+    /// End the connection, with a close frame when no other send is under way. Never waits on
+    /// a send in progress, so it is safe to call on a peer that stopped reading.
     pub fn close(&self) {
-        let _ = self.send(0x8, &1001u16.to_be_bytes());
+        if self.is_open()
+            && let Ok(mut s) = self.0.stream.try_lock()
+        {
+            let _ = s.write_all(&frame(0x8, &1001u16.to_be_bytes()));
+        }
         self.end();
     }
 
     pub(crate) fn end(&self) {
         self.0.open.store(false, Ordering::SeqCst);
-        if let Ok(s) = self.0.stream.lock() {
-            let _ = s.shutdown(Shutdown::Both);
+        match &self.0.control {
+            Some(c) => {
+                let _ = c.shutdown(Shutdown::Both);
+            }
+            None => {
+                if let Ok(s) = self.0.stream.lock() {
+                    let _ = s.shutdown(Shutdown::Both);
+                }
+            }
         }
     }
 
@@ -155,6 +172,8 @@ pub(crate) fn serve<R: BufRead + Deadline>(
     stopping: &AtomicBool,
 ) {
     let mut awaiting_pong = false;
+    // Inside a fragmented data message, which continuation frames carry on.
+    let mut fragmented = false;
     while ws.is_open() && !stopping.load(Ordering::SeqCst) {
         reader.set_deadline(Some(Instant::now() + ping_every));
         match reader.fill_buf() {
@@ -177,7 +196,18 @@ pub(crate) fn serve<R: BufRead + Deadline>(
         awaiting_pong = false;
         // A frame that has started must arrive whole, soon.
         reader.set_deadline(Some(Instant::now() + Duration::from_secs(10)));
-        match read_frame(reader) {
+        let frame = read_frame(reader).and_then(|(fin, opcode, payload)| {
+            // RFC 6455 5.4: a continuation needs a message to continue, and a new data
+            // message can't start inside another.
+            match opcode {
+                0x0 if !fragmented => return Err(Some(1002)),
+                0x1 | 0x2 if fragmented => return Err(Some(1002)),
+                0x0..=0x2 => fragmented = !fin,
+                _ => {}
+            }
+            Ok((opcode, payload))
+        });
+        match frame {
             Ok((0x8, payload)) => {
                 // Echo the status code, as the closing handshake asks.
                 let code = payload.get(..2).unwrap_or(&[0x03, 0xe8]).to_vec();
@@ -201,12 +231,22 @@ pub(crate) fn serve<R: BufRead + Deadline>(
     ws.end();
 }
 
-/// One frame from the browser: its opcode and unmasked payload. On error, the close code to
-/// send, if the connection is still worth one.
-fn read_frame<R: Read>(r: &mut R) -> Result<(u8, Vec<u8>), Option<u16>> {
+/// One frame from the browser: whether it is final, its opcode and its unmasked payload. On
+/// error, the close code to send, if the connection is still worth one.
+fn read_frame<R: Read>(r: &mut R) -> Result<(bool, u8, Vec<u8>), Option<u16>> {
     let mut head = [0u8; 2];
     r.read_exact(&mut head).map_err(|_| None)?;
+    let fin = head[0] & 0x80 != 0;
     let opcode = head[0] & 0x0f;
+    let control = opcode & 0x8 != 0;
+    // Opcodes 3-7 and B-F are reserved: the connection must fail (RFC 6455 5.2).
+    if !matches!(opcode, 0x0..=0x2 | 0x8..=0xA) {
+        return Err(Some(1002));
+    }
+    // Control frames are never fragmented and carry at most 125 bytes (5.5).
+    if control && (!fin || head[1] & 0x7f > 125) {
+        return Err(Some(1002));
+    }
     if head[0] & 0x70 != 0 {
         // No extensions were agreed, so reserved bits must be clear.
         return Err(Some(1002));
@@ -238,7 +278,7 @@ fn read_frame<R: Read>(r: &mut R) -> Result<(u8, Vec<u8>), Option<u16>> {
     for (i, b) in payload.iter_mut().enumerate() {
         *b ^= mask[i % 4];
     }
-    Ok((opcode, payload))
+    Ok((fin, opcode, payload))
 }
 
 /// SHA-1, for the handshake only (RFC 3174).

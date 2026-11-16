@@ -251,6 +251,10 @@ struct Shared {
     /// Refused connections still draining their input.
     lingering: AtomicUsize,
     limits: Limits,
+    /// Bound to a loopback address: only requests naming this machine are answered.
+    loopback_only: bool,
+    /// The host the server was asked to bind, also accepted as a `Host`.
+    host: String,
 }
 
 /// Removes a connection from the books when its thread ends.
@@ -336,6 +340,8 @@ impl Server {
             sockets: AtomicUsize::new(0),
             lingering: AtomicUsize::new(0),
             limits,
+            loopback_only: addr.ip().is_loopback(),
+            host: host.to_ascii_lowercase(),
         });
         let accept_shared = Arc::clone(&shared);
         let accept = std::thread::Builder::new()
@@ -638,6 +644,15 @@ fn handle_connection(stream: TcpStream, shared: &Shared) {
         reader.get_mut().deadline = None;
         let keep_alive = req.keep_alive();
         let head_only = req.method.eq_ignore_ascii_case("HEAD");
+        if shared.loopback_only && !host_allowed(req.header("host"), &shared.host) {
+            // A page from elsewhere that resolved its own name to this machine (DNS
+            // rebinding) names itself in Host; refuse it, so it can read nothing here.
+            let resp = plain_error(403);
+            if http::write_response(&mut writer, resp, head_only, false).is_ok() {
+                lingering_close(&writer);
+            }
+            return;
+        }
         let handler = shared
             .handler
             .read()
@@ -724,6 +739,31 @@ fn upgrade(
         shared.limits.ping_every,
         &shared.stopping,
     );
+}
+
+/// Whether a `Host` header names this machine: `localhost` (or a name under it), `127.0.0.1`,
+/// `[::1]`, or the host the server was bound to, with any port. A request without one (only
+/// possible over HTTP/1.0 or from a hand-made client, never from a browser) is let through.
+fn host_allowed(header: Option<&str>, bound: &str) -> bool {
+    let Some(value) = header else {
+        return true;
+    };
+    let value = value.trim().to_ascii_lowercase();
+    let name = if value.starts_with('[') {
+        match value.find(']') {
+            Some(end) => &value[..=end],
+            None => return false,
+        }
+    } else {
+        value.split(':').next().unwrap_or("")
+    };
+    let name = name.trim_end_matches('.');
+    name == "localhost"
+        || name.ends_with(".localhost")
+        || name == "127.0.0.1"
+        || name == "[::1]"
+        || name == bound
+        || format!("[{bound}]") == name
 }
 
 fn plain_error(status: u16) -> Response {
@@ -970,6 +1010,36 @@ mod tests {
         assert_eq!(accept_backoff(2), Duration::from_millis(20));
         assert_eq!(accept_backoff(8), Duration::from_millis(1000));
         assert_eq!(accept_backoff(u32::MAX), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn hosts_naming_this_machine_are_allowed() {
+        for ok in [
+            None,
+            Some("localhost"),
+            Some("localhost:8080"),
+            Some("LocalHost:1"),
+            Some("app.localhost:8080"),
+            Some("127.0.0.1:8080"),
+            Some("127.0.0.1"),
+            Some("[::1]:8080"),
+            Some("[::1]"),
+            Some("localhost.:8080"),
+        ] {
+            assert!(host_allowed(ok, "localhost"), "{ok:?}");
+        }
+        for bad in [
+            Some("evil.example:8080"),
+            Some("localhost.evil.example"),
+            Some("127.0.0.2:8080"),
+            Some("[::2]:8080"),
+            Some("[::1"),
+            Some(""),
+        ] {
+            assert!(!host_allowed(bad, "localhost"), "{bad:?}");
+        }
+        assert!(host_allowed(Some("127.0.0.2:80"), "127.0.0.2"));
+        assert!(host_allowed(Some("[::1]:80"), "::1"));
     }
 
     #[test]
