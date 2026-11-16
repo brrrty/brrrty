@@ -126,8 +126,10 @@ pub(crate) fn liquid_problem(
         ErrorKind::UnknownFilter => codes::LIQUID_UNKNOWN_FILTER,
         ErrorKind::Render => codes::LIQUID_RENDER,
         ErrorKind::Limit => codes::LIQUID_LIMIT,
-        // Only the syntax highlighting plugin's `{% highlight %}` refuses.
+        // Only the syntax highlighting plugin's `{% highlight %}` refuses
+        // or fails.
         ErrorKind::Unsupported => codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
+        ErrorKind::TagFailed => codes::SYNTAX_HIGHLIGHT_FAILED,
         ErrorKind::Syntax | ErrorKind::UnknownTag | ErrorKind::Unclosed | ErrorKind::TooDeep => {
             codes::LIQUID_SYNTAX
         }

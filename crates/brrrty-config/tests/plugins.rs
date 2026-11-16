@@ -256,6 +256,19 @@ fn where_the_plugin_throws_the_page_fails() {
         "{:?}",
         errors(&r)[0]
     );
+    // `{% highlight %}` fails the same way.
+    let (_t, r) = site(
+        r#"config.add_plugin("syntaxhighlight", #{ error_on_invalid_language: true });"#,
+        &[("a.liquid", "x\n{% highlight nope %}x{% endhighlight %}")],
+    );
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert_eq!(errs[0].code, codes::SYNTAX_HIGHLIGHT_FAILED);
+    assert_eq!(
+        errs[0].message,
+        "the syntax highlighting plugin fails on this `{% highlight %}`: \"nope\" is not a valid Prism.js language for eleventy-plugin-syntaxhighlight"
+    );
+    assert_eq!(errs[0].line, Some(2));
 }
 
 #[test]

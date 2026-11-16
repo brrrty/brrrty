@@ -1597,8 +1597,8 @@ fn build_in_pool(
                         help: Some(crate::render::HIGHLIGHT_HELP.to_string()),
                     },
                     Error::Thrown(why) => TagError {
-                        kind: ErrorKind::Render,
-                        message: why,
+                        kind: ErrorKind::TagFailed,
+                        message: format!("the syntax highlighting plugin fails on this `{{% highlight %}}`: {why}"),
                         help: Some(crate::render::HIGHLIGHT_THROWN_HELP.to_string()),
                     },
                 })
