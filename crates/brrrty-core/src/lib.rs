@@ -13,7 +13,8 @@ pub mod filters;
 pub mod frontmatter;
 pub mod helpers;
 pub mod ignore_files;
-mod io_threads;
+#[doc(hidden)]
+pub mod io_threads;
 pub mod js;
 mod layout;
 mod loader;

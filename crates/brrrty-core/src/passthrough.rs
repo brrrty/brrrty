@@ -316,14 +316,28 @@ fn copy_planned(c: &mut Copier) {
         }
         jobs.push((source, dest));
     }
-    // Every job has its own destination, so they can run in any order; the
-    // results are folded in walk order to keep the report stable.
+    // Jobs whose destinations touch (one inside another, or the same file to
+    // the file system) depend on which runs first: they run one at a time, in
+    // walk order, as every job once did. The rest run in parallel. Results are
+    // folded in walk order to keep the report stable.
     let (root, out, pages) = (c.root, c.out, c.pages);
-    let outcomes: Vec<Copied> = crate::io_threads::install(|| {
+    let tangled = tangled_jobs(&jobs);
+    let mut outcomes: Vec<Option<Copied>> = jobs
+        .iter()
+        .zip(&tangled)
+        .map(|((source, dest), &t)| t.then(|| copy_file(source, dest, root, out, pages)))
+        .collect();
+    let free: Vec<(usize, Copied)> = crate::io_threads::install(|| {
         jobs.par_iter()
-            .map(|(source, dest)| copy_file(source, dest, root, out, pages))
+            .enumerate()
+            .filter(|&(i, _)| !tangled[i])
+            .map(|(i, (source, dest))| (i, copy_file(source, dest, root, out, pages)))
             .collect()
     });
+    for (i, outcome) in free {
+        outcomes[i] = Some(outcome);
+    }
+    let outcomes = outcomes.into_iter().flatten();
     for outcome in outcomes {
         if outcome.overrides_page {
             c.overridden.insert(outcome.dest);
@@ -341,6 +355,53 @@ fn copy_planned(c: &mut Copier) {
             None => {}
         }
     }
+}
+
+/// For each job, whether its destination is the same file as another job's
+/// (to the file system) or lies inside or around another job's destination.
+fn tangled_jobs(jobs: &[(PathBuf, PathBuf)]) -> Vec<bool> {
+    let keys: Vec<Vec<String>> = jobs.iter().map(|(_, dest)| dest_key(dest)).collect();
+    let mut by_key: HashMap<&[String], Vec<usize>> = HashMap::new();
+    for (i, key) in keys.iter().enumerate() {
+        by_key.entry(key.as_slice()).or_default().push(i);
+    }
+    let mut tangled = vec![false; jobs.len()];
+    for same in by_key.values().filter(|v| v.len() > 1) {
+        for &i in same {
+            tangled[i] = true;
+        }
+    }
+    for (i, key) in keys.iter().enumerate() {
+        for end in 1..key.len() {
+            if let Some(outer) = by_key.get(&key[..end]) {
+                tangled[i] = true;
+                for &j in outer {
+                    tangled[j] = true;
+                }
+            }
+        }
+    }
+    tangled
+}
+
+/// A destination as the file system compares it, one entry per component.
+/// APFS, the macOS default, ignores case and Unicode normalization.
+fn dest_key(dest: &Path) -> Vec<String> {
+    dest.components()
+        .map(|c| fold(&c.as_os_str().to_string_lossy()))
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn fold(name: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    let lower: String = name.nfd().collect::<String>().to_lowercase();
+    lower.nfd().collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn fold(name: &str) -> String {
+    name.to_string()
 }
 
 /// What happened to one passthrough file.
@@ -436,5 +497,51 @@ fn is_up_to_date(source: &fs::Metadata, dest: &Path) -> bool {
     match (source.modified(), d.modified()) {
         (Ok(s), Ok(d_time)) => d.len() == source.len() && d_time >= s,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn jobs(dests: &[&str]) -> Vec<(PathBuf, PathBuf)> {
+        dests
+            .iter()
+            .map(|d| (PathBuf::from("src"), PathBuf::from("/out").join(d)))
+            .collect()
+    }
+
+    #[test]
+    fn a_file_and_what_lies_under_it_are_tangled() {
+        let t = tangled_jobs(&jobs(&["x", "x/a", "x/b/c", "y/a", "xy"]));
+        assert_eq!(t, [true, true, true, false, false]);
+    }
+
+    #[test]
+    fn unrelated_destinations_are_free() {
+        let t = tangled_jobs(&jobs(&["a/1", "a/2", "b/1"]));
+        assert_eq!(t, [false; 3]);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn names_apfs_treats_as_one_are_tangled_on_macos() {
+        let t = tangled_jobs(&jobs(&[
+            "y/Name.bin",
+            "y/name.bin",
+            "caf\u{e9}",
+            "cafe\u{301}",
+            "z",
+        ]));
+        assert_eq!(t, [true, true, true, true, false]);
+        let t = tangled_jobs(&jobs(&["D", "d/f"]));
+        assert_eq!(t, [true, true]);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn names_differing_by_case_are_free_elsewhere() {
+        let t = tangled_jobs(&jobs(&["y/Name.bin", "y/name.bin"]));
+        assert_eq!(t, [false, false]);
     }
 }

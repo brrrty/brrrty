@@ -14,11 +14,24 @@ use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 const MACOS_WRITERS: usize = 4;
 
+/// Set to a thread count to force a writer pool of that size on any system.
+/// For tests: CI machines have too few threads for the macOS pool to start.
+const FORCE_WRITERS_ENV: &str = "BRRRTY_WRITER_THREADS";
+
 /// The pool output is written on, or `None` to use the current pool.
+///
+/// Made once per process, sized from the pool of the first caller, which is
+/// always a build's render pool.
 fn pool() -> Option<&'static rayon::ThreadPool> {
     static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
-        let writers = writers(rayon::current_num_threads())?;
+        let forced = std::env::var(FORCE_WRITERS_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0);
+        let writers = forced.or_else(|| writers(rayon::current_num_threads()))?;
+        // If the threads can't start, output is written on the current pool
+        // instead: slower on APFS, but the same files, so not worth a problem.
         rayon::ThreadPoolBuilder::new()
             .num_threads(writers)
             .thread_name(|i| format!("brrrty-write-{i}"))
@@ -26,6 +39,12 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
             .ok()
     })
     .as_ref()
+}
+
+/// Whether output is written on a pool of its own (for tests).
+#[doc(hidden)]
+pub fn separate_pool_threads() -> Option<usize> {
+    pool().map(rayon::ThreadPool::current_num_threads)
 }
 
 /// How many writer threads to use given `available` threads, or `None` when

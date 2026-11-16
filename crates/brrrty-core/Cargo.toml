@@ -30,6 +30,9 @@ saphyr-parser = "0.3.4"
 url = "2.5.8"
 chrono-tz = { version = "0.10", default-features = false }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+unicode-normalization = "0.1.26"
+
 [dev-dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 tempfile = "3.27.0"
