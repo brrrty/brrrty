@@ -1,5 +1,6 @@
 ---
 title: Lines
+date: 2024-01-02
 ---
 
 ```js/0

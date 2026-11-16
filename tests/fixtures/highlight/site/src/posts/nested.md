@@ -1,5 +1,6 @@
 ---
 title: Nested
+date: 2024-01-03
 ---
 
 Markdown inside Markdown, with nothing whose output depends on the order
