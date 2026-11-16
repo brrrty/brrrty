@@ -132,15 +132,40 @@ fn local_zone_key() -> Option<&'static str> {
     use std::sync::OnceLock;
     static KEY: OnceLock<Option<String>> = OnceLock::new();
     KEY.get_or_init(|| {
-        if let Ok(tz) = std::env::var("TZ") {
-            let tz = tz.strip_prefix(':').unwrap_or(&tz).to_string();
-            return (!tz.is_empty()).then_some(tz);
-        }
-        let link = std::fs::read_link("/etc/localtime").ok()?;
-        let link = link.to_string_lossy();
-        link.split_once("zoneinfo/").map(|(_, z)| z.to_string())
+        zone_key(
+            std::env::var("TZ").ok().as_deref(),
+            std::path::Path::new("/etc/localtime"),
+        )
     })
     .as_deref()
+}
+
+/// The zone named by `tz` (the `TZ` variable) or, when it is unset, by the
+/// `localtime` file, as Node finds it:
+///
+/// - `TZ` set: its value without a leading `:`. An empty `TZ` names no
+///   zone.
+/// - `localtime` missing: `UTC`, as in many container images.
+/// - `localtime` a symlink: the part of its target after `zoneinfo/`.
+/// - Otherwise `None`. Node also finds the zone of a `localtime` that is a
+///   copy of a zone file, by searching the zone directory for the same
+///   bytes. Brrrty does not, so it prints the long name as `GMT+01:00`
+///   and gives no `%Z` id. Offsets and times are still right, because they
+///   come from the file itself. Set `TZ` to name the zone. Node does not
+///   read `/etc/timezone`, so neither does Brrrty.
+fn zone_key(tz: Option<&str>, localtime: &std::path::Path) -> Option<String> {
+    if let Some(tz) = tz {
+        let tz = tz.strip_prefix(':').unwrap_or(tz);
+        return (!tz.is_empty()).then(|| tz.to_string());
+    }
+    match std::fs::read_link(localtime) {
+        Ok(link) => {
+            let link = link.to_string_lossy();
+            link.split_once("zoneinfo/").map(|(_, z)| z.to_string())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some("UTC".to_string()),
+        Err(_) => None,
+    }
 }
 
 /// Whether `name` is a zone in the tz database, ignoring case.
@@ -305,6 +330,39 @@ mod tests {
         assert_eq!(gmt_offset(19_800), "GMT+05:30");
         assert_eq!(gmt_offset(-3_600), "GMT-01:00");
         assert_eq!(gmt_offset(0), "GMT+00:00");
+    }
+
+    /// Node 26 in a Debian container (`node:26-trixie-slim`, `TZ` unset),
+    /// `Intl.DateTimeFormat().resolvedOptions().timeZone`:
+    /// - no `/etc/localtime`: `UTC`, and `toString` ends `(Coordinated
+    ///   Universal Time)`.
+    /// - `/etc/localtime` linked to `Europe/Paris`: `Europe/Paris`.
+    /// - `/etc/localtime` a copy of `Europe/Paris`: `Europe/Paris`, found by
+    ///   content (not done here: `None`, documented on `zone_key`).
+    /// - no `/etc/localtime` and `/etc/timezone` saying `Europe/Paris`:
+    ///   `UTC`, so `/etc/timezone` is not read.
+    #[test]
+    fn the_local_zone_is_found_as_node_finds_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("localtime");
+        assert_eq!(zone_key(None, &missing).as_deref(), Some("UTC"));
+        std::fs::write(dir.path().join("timezone"), "Europe/Paris\n").unwrap();
+        assert_eq!(zone_key(None, &missing).as_deref(), Some("UTC"));
+
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink("/usr/share/zoneinfo/Europe/Paris", &link).unwrap();
+        assert_eq!(zone_key(None, &link).as_deref(), Some("Europe/Paris"));
+
+        let copy = dir.path().join("copy");
+        std::fs::write(&copy, b"TZif").unwrap();
+        assert_eq!(zone_key(None, &copy), None);
+
+        // `TZ` wins, without its leading colon. An empty one names nothing.
+        assert_eq!(
+            zone_key(Some(":Asia/Tokyo"), &link).as_deref(),
+            Some("Asia/Tokyo")
+        );
+        assert_eq!(zone_key(Some(""), &missing), None);
     }
 
     #[test]
