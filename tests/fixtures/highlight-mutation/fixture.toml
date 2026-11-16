@@ -1,0 +1,16 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js, which adds @11ty/eleventy-plugin-syntaxhighlight 5.0.2
+# with its default options (installed from site/package-lock.json when the
+# fixture is refreshed).
+#
+# a.md loads `regex` and d.njk `css-extras`, which Brrrty doesn't have.
+# Loading them changes Prism's javascript and css grammars for every page
+# 11ty renders after, so b.md (js) and e.md (css) are refused with them;
+# c.md (bash) is written. Brrrty doesn't render Nunjucks, so d.njk is
+# refused too, but its language still counts.
+
+[refused]
+"src/a.md" = "a/index.html"
+"src/b.md" = "b/index.html"
+"src/d.njk" = "d/index.html"
+"src/e.md" = "e/index.html"

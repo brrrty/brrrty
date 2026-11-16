@@ -1573,8 +1573,15 @@ fn build_in_pool(
     for f in &opts.config.filters {
         engine.register_args_filter(&f.name, f.run.clone());
     }
+    // The syntax highlighting plugin, refusing the grammars a language some
+    // file names could change for the pages 11ty renders after it.
+    let highlight = opts.config.syntax_highlight.as_ref().map(|p| {
+        p.with_mutations(&crate::plugins::syntaxhighlight::scan::scan(
+            &input, &input_rel, &out,
+        ))
+    });
     // `{% highlight %}`, from the syntax highlighting plugin.
-    if let Some(plugin) = &opts.config.syntax_highlight
+    if let Some(plugin) = &highlight
         && plugin.options.has_format("liquid")
     {
         let plugin = Arc::new(plugin.clone());
@@ -2025,11 +2032,7 @@ fn build_in_pool(
         engine: &engine,
         loader: &loader,
         markdown,
-        highlight: opts
-            .config
-            .syntax_highlight
-            .as_ref()
-            .filter(|p| p.options.has_format("md")),
+        highlight: highlight.as_ref().filter(|p| p.options.has_format("md")),
     };
     let jobs: Vec<ContentPage<'_>> = prepared
         .iter()

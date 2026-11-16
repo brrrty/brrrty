@@ -18,11 +18,15 @@
 //! sees whatever pages rendered first. Brrrty knows what is surely there
 //! (what Prism starts with, the `languages` option, and what this page
 //! loaded so far, with everything each load brings), and refuses output
-//! that would depend on the rest.
+//! that would depend on the rest. A language Brrrty doesn't have can also
+//! change the grammars of ones it has, for every page rendered after; see
+//! [`scan`].
 
 mod lines;
+pub mod scan;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use brrrty_js::Value;
 use brrrty_prism::grammar::{GrammarId, grammars};
@@ -94,6 +98,8 @@ pub struct SyntaxHighlight {
     pub options: Options,
     /// What `Prism.languages` surely has once the plugin is added.
     loaded: HashSet<String>,
+    /// The grammars another page could change ([`scan`]).
+    mutated: Arc<scan::Mutated>,
 }
 
 impl SyntaxHighlight {
@@ -103,6 +109,7 @@ impl SyntaxHighlight {
         let mut plugin = Self {
             options,
             loaded: grammars().base_keys.iter().cloned().collect(),
+            mutated: Arc::default(),
         };
         let mut page = plugin.page();
         // `PrismLoader(language)`, without the options.
@@ -121,6 +128,15 @@ impl SyntaxHighlight {
         Ok(plugin)
     }
 
+    /// The plugin for a build where the files `found` name languages that
+    /// change grammars: highlighting with one of those is refused.
+    pub fn with_mutations(&self, found: &[scan::Found]) -> Self {
+        Self {
+            mutated: Arc::new(scan::by_key(found)),
+            ..self.clone()
+        }
+    }
+
     /// Highlighting for one page: what it loads is known to be loaded for
     /// the rest of it.
     pub fn page(&self) -> Page<'_> {
@@ -130,6 +146,7 @@ impl SyntaxHighlight {
             state: State {
                 keys: self.loaded.clone(),
                 added: HashMap::new(),
+                mutated: self.mutated.clone(),
             },
         }
     }
@@ -209,14 +226,31 @@ struct State {
     keys: HashSet<String>,
     /// Names set to a grammar (`diff-<x>`).
     added: HashMap<String, GrammarId>,
+    /// The grammars another page could change.
+    mutated: Arc<scan::Mutated>,
+}
+
+impl State {
+    /// Refuses `key`'s grammar when a page could change it.
+    fn unchanged(&self, key: &str) -> Result<(), Refusal> {
+        match self.mutated.get(key) {
+            None => Ok(()),
+            Some((path, line, language)) => Err(Refusal(format!(
+                "{}:{line} names the language `{language}`. Loading it changes Prism's `{key}` grammar for every page 11ty renders after that one, and Brrrty doesn't have the changed grammar",
+                path.display()
+            ))),
+        }
+    }
 }
 
 impl Languages for State {
     fn get(&self, name: &str) -> Result<Option<GrammarId>, Refusal> {
         if let Some(&g) = self.added.get(name) {
+            self.unchanged("diff")?;
             return Ok(Some(g));
         }
         if self.keys.contains(name) {
+            self.unchanged(name)?;
             return Ok(grammars().language(name));
         }
         if could_be_loaded(name) {
@@ -277,6 +311,9 @@ impl Page<'_> {
         if diff.is_none() {
             return Ok(found);
         }
+        self.state
+            .unchanged("diff")
+            .map_err(|r| Error::Unsupported(r.0))?;
         let Some(d) = g.language("diff") else {
             return Err(Error::Unsupported(
                 "Brrrty's Prism grammars have no `diff` grammar, which `diff-` languages need"

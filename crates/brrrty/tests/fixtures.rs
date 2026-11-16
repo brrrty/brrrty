@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use brrrty_compat::{AllowList, compare_dirs};
+use brrrty_compat::{AllowList, Outcome, compare_dirs};
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
@@ -58,22 +58,110 @@ fn every_fixture_matches_reference_output() {
         for p in &passthrough {
             cmd.args(["--passthrough", p]);
         }
+        // Pages Brrrty refuses, each with the output 11ty writes for it.
+        let refused: Vec<(String, PathBuf)> = cfg
+            .get("refused")
+            .and_then(|v| v.as_table())
+            .map(|t| {
+                t.iter()
+                    .map(|(page, out)| {
+                        let out = out.as_str().expect("refused output is a path");
+                        (page.clone(), PathBuf::from(out))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let result = cmd.output().expect("run brrrty");
-        assert!(
-            result.status.success(),
-            "brrrty failed on {}: {}\n{}",
-            fixture.display(),
-            result.status,
-            String::from_utf8_lossy(&result.stderr)
-        );
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        if refused.is_empty() {
+            assert!(
+                result.status.success(),
+                "brrrty failed on {}: {}\n{stderr}",
+                fixture.display(),
+                result.status,
+            );
+        } else {
+            assert_eq!(
+                result.status.code(),
+                Some(1),
+                "brrrty should refuse pages of {}:\n{stderr}",
+                fixture.display()
+            );
+            for (page, _) in &refused {
+                assert!(
+                    stderr.contains(&format!("[{page}:")) || stderr.contains(&format!("× {page}:")),
+                    "{}: no problem for {page}:\n{stderr}",
+                    fixture.display()
+                );
+            }
+        }
 
         let report = compare_dirs(&fixture.join("expected"), out.path(), &AllowList::empty())
             .expect("compare");
+        let failing: Vec<_> = report
+            .results
+            .iter()
+            .filter(|r| match r.outcome {
+                Outcome::Identical | Outcome::Equivalent => false,
+                Outcome::Missing => !refused.iter().any(|(_, o)| *o == r.path),
+                _ => true,
+            })
+            .collect();
         assert!(
-            report.is_pass(),
+            failing.is_empty(),
             "fixture {} differs:\n{}",
             fixture.display(),
             report.to_markdown(80)
         );
+        for (page, output) in &refused {
+            assert!(
+                !out.path().join(output).exists(),
+                "{}: {page} is refused but {} was written",
+                fixture.display(),
+                output.display()
+            );
+        }
+    }
+}
+
+/// Without the pages that load `regex` and `css-extras`, Brrrty writes
+/// highlight-mutation's js and css pages, and not the way 11ty writes them
+/// with those pages: that is why it refuses them.
+#[test]
+fn a_page_that_changes_a_grammar_changes_other_pages() {
+    let fixture = fixtures_dir().join("highlight-mutation");
+    let site = tempfile::tempdir().expect("tempdir");
+    fs::create_dir(site.path().join("src")).expect("src");
+    fs::copy(
+        fixture.join("site/brrrty.config.rhai"),
+        site.path().join("brrrty.config.rhai"),
+    )
+    .expect("config");
+    for page in ["b.md", "c.md", "e.md"] {
+        fs::copy(
+            fixture.join("site/src").join(page),
+            site.path().join("src").join(page),
+        )
+        .expect("page");
+    }
+    let out = tempfile::tempdir().expect("tempdir");
+    let result = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .current_dir(site.path())
+        .args(["build", "--output"])
+        .arg(out.path())
+        .output()
+        .expect("run brrrty");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let read = |dir: &Path, page: &str| {
+        fs::read_to_string(dir.join(page).join("index.html")).expect("output")
+    };
+    let expected = fixture.join("expected");
+    assert_eq!(read(out.path(), "c"), read(&expected, "c"));
+    for page in ["b", "e"] {
+        assert_ne!(read(out.path(), page), read(&expected, page), "{page}");
     }
 }
