@@ -1,0 +1,32 @@
+---
+s: str
+n: 5
+z: null
+b: true
+nest: {x: 1}
+ord: {b: 1}
+eleventyComputed:
+  s:
+    k: "{{ n }}"
+  n:
+    k: v
+  z:
+    k: v
+  b:
+    k: v
+  nest:
+    y: "{{ nest.x }}"
+  "2": two
+  "1": one
+  zed: z
+  ord:
+    "9": nine
+    "10": ten
+    a: aa
+  emptyobj: {}
+  emptyarr: []
+  nested:
+    - "{{ n }}"
+    - [ "{{ s | json }}" ]
+---
+{{ s | json }} {{ n | json }} {{ z | json }} {{ b | json }} {{ nest | json }} {{ ord | json }} {{ emptyobj | json }} {{ emptyarr | json }} {{ nested | json }} {{ eleventyComputed | json }}

@@ -360,14 +360,10 @@ fn input_that_is_a_file_is_a_clear_error() {
 }
 
 #[test]
-fn pagination_and_computed_data_are_still_errors() {
+fn pagination_is_still_an_error() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
-    write(
-        root,
-        "src/b.md",
-        "---\npagination:\n  data: x\neleventyComputed:\n  y: 1\n---\nbody\n",
-    );
+    write(root, "src/b.md", "---\npagination:\n  data: x\n---\nbody\n");
     // A layout's front matter is page data too.
     write(
         root,
@@ -383,11 +379,8 @@ fn pagination_and_computed_data_are_still_errors() {
         .find(|p| p.path.as_deref() == Some(Path::new("src/b.md")))
         .unwrap();
     assert_eq!(b.code, codes::FRONT_MATTER_UNSUPPORTED);
-    assert!(b.message.contains("`pagination`") && b.message.contains("`eleventyComputed`"));
-    assert_eq!(
-        b.help.as_deref(),
-        Some("Pagination and computed data are in progress.")
-    );
+    assert!(b.message.contains("`pagination`"), "{}", b.message);
+    assert_eq!(b.help.as_deref(), Some("Pagination is in progress."));
     let d = r
         .problems
         .iter()

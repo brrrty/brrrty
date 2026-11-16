@@ -1,0 +1,13 @@
+---
+title: 7
+eleventyComputed:
+  s: "{{ title }}"
+  n: "{{ title | plus: 1 }}"
+  j: "{{ missing }}"
+  q: '{{ "a" }}  {{ "b" }}'
+  ws: "  {{ title }}  "
+  nl: "{{ title }}\n"
+  html: "<b>{{ title }}</b> & {{ '<' }}"
+  tpl: "{% assign z = 3 %}{{ z }}"
+---
+{{ s | json }} {{ n | json }} {{ j | json }} {{ q | json }} {{ ws | json }} {{ nl | json }} {{ html | json }} {{ tpl | json }} {{ z }}

@@ -10,10 +10,12 @@ use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 
 mod cascade;
+mod computed;
 mod dir;
 mod global;
 mod jskeys;
 pub(crate) use cascade::{clean_tags, frozen_keys, page_data};
+pub(crate) use computed::Plan as ComputedPlan;
 pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
 

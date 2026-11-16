@@ -1,0 +1,54 @@
+---
+title: T
+c: orig
+d: orig
+e: orig
+f: orig
+g: orig
+h: orig
+arr: [orig]
+m: {t: orig}
+eleventyComputed:
+  u_plain: "[{{ c }}]"
+  u_filter: "[{{ d | upcase }}]"
+  u_tight: "[{{-e-}}]"
+  u_tag: "[{% if f %}{{ f | append: '' }}{% endif %}]"
+  u_tagonly: "[{% if g %}in-if{% endif %}{% assign q = g %}{{ q }}]"
+  u_str: "[{{ 'a' | append: h }}]"
+  u_idx: "[{{ arr[0] }}]"
+  u_arrf: "[{{ arr | first }}]"
+  u_mt: "[{{ m.t }}]"
+  u_mobj: "[{{ m | json }}]"
+  u_sp: "[{{  c  }}]"
+  u_nl: "[{{
+    d }}]"
+  u_arr: ["{{ c }}"]
+  u_inarr: ["x", "{{ e }}"]
+  u_obj_in_arr: [{k: "{{ f }}"}]
+  u_raw: "[{% raw %}{{ c }}{% endraw %}]"
+  c: "new-c"
+  d: "new-d"
+  e: "new-e"
+  f: "new-f"
+  g: "new-g"
+  h: "new-h"
+  arr: ["new-arr"]
+  m:
+    t: "new-mt"
+---
+plain={{ u_plain }}
+filter={{ u_filter }}
+tight={{ u_tight }}
+tag={{ u_tag }}
+tagonly={{ u_tagonly }}
+str={{ u_str }}
+idx={{ u_idx }}
+arrf={{ u_arrf }}
+mt={{ u_mt }}
+mobj={{ u_mobj }}
+sp={{ u_sp }}
+nl={{ u_nl }}
+uarr={{ u_arr | json }}
+inarr={{ u_inarr | json }}
+oia={{ u_obj_in_arr | json }}
+raw={{ u_raw }}

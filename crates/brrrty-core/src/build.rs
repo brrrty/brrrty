@@ -14,9 +14,9 @@ use rayon::prelude::*;
 use serde_json::Value as Json;
 
 use crate::data::{
-    BUILD_KEYS, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags, frozen_keys,
-    frozen_problem, js_help, js_object, key_line, load_global, merge, page_data, reserved_keys,
-    reserved_problem,
+    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags,
+    frozen_keys, frozen_problem, js_help, js_object, key_line, load_global, merge, page_data,
+    reserved_keys, reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::{Data, split_front_matter};
@@ -73,6 +73,8 @@ struct Prepared {
     layouts: Vec<Arc<LayoutFile>>,
     /// Keys left out of `data` because Brrrty can't supply their value.
     withheld: Vec<(String, Withheld)>,
+    /// `eleventyComputed`, run when the page renders.
+    computed: Option<ComputedPlan>,
 }
 
 /// What loading one template gave.
@@ -450,6 +452,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     page.insert("rawInput".into(), string(body.to_string()));
     page.insert("url".into(), string(url));
     page.insert("outputPath".into(), string(output_path));
+    let computed = computed_plan(&data, &shown, &text, engines == Engines::Raw)?;
     let mut values = js_object(&data);
     values.insert("page".into(), Value::Object(Arc::new(page)));
 
@@ -468,11 +471,30 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
         data: values,
         layouts,
         withheld,
+        computed,
     })))
 }
 
+/// The page's computed data, if it has any: refused when 11ty would abort,
+/// or when it sets something Brrrty can't follow yet.
+fn computed_plan(
+    data: &Data,
+    shown: &Path,
+    text: &str,
+    raw: bool,
+) -> Result<Option<ComputedPlan>, Problem> {
+    let line = key_line(text, "eleventyComputed");
+    if let Some(Value::Object(computed)) = data.get("eleventyComputed") {
+        let reserved = reserved_keys(computed);
+        if !reserved.is_empty() {
+            return Err(at(reserved_problem(&reserved).with_path(shown), line));
+        }
+    }
+    ComputedPlan::new(data, raw).map_err(|p| at(p.with_path(shown), line))
+}
+
 /// Keys that change a page's output in ways Brrrty can't reproduce yet.
-const UNSUPPORTED_KEYS: &[&str] = &["pagination", "eleventyComputed"];
+const UNSUPPORTED_KEYS: &[&str] = &["pagination"];
 
 /// Refuse pages that 11ty would process further than Brrrty can yet, instead of writing
 /// output that silently differs. `source` says where a key comes from
@@ -510,7 +532,7 @@ fn reject_unsupported_keys(
     };
     Err(Problem::error(codes::FRONT_MATTER_UNSUPPORTED, message)
         .with_path(shown)
-        .with_help("Pagination and computed data are in progress."))
+        .with_help("Pagination is in progress."))
 }
 
 /// The problem for a page that read data Brrrty doesn't supply yet.
@@ -919,6 +941,7 @@ fn build_in_pool(
                 engines: p.engines,
                 data: &p.data,
                 layouts: &p.layouts,
+                computed: p.computed.as_ref(),
             })?;
             if let Some(problem) = missing_data_problem(&rendered.undefined, &p.withheld, &data_dir)
             {

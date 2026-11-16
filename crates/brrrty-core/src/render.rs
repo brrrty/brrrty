@@ -12,6 +12,7 @@ use brrrty_liquid::{Engine, ErrorKind, LiquidError, Template};
 use brrrty_markdown::MarkdownRenderer;
 use indexmap::IndexMap;
 
+use crate::data::ComputedPlan;
 use crate::layout::{Kind, LayoutFile};
 use crate::loader::FsLoader;
 use crate::problem::{Problem, codes};
@@ -154,6 +155,8 @@ pub(crate) struct Job<'a> {
     pub engines: Engines,
     pub data: &'a IndexMap<String, Value>,
     pub layouts: &'a [Arc<LayoutFile>],
+    /// `eleventyComputed`, run before anything renders.
+    pub computed: Option<&'a ComputedPlan>,
 }
 
 /// A rendered page and the variables it read that nothing defined.
@@ -171,7 +174,21 @@ pub(crate) struct Pipeline<'a> {
 impl Pipeline<'_> {
     pub fn render(&self, job: &Job<'_>) -> Result<Output, Problem> {
         let mut undefined = BTreeSet::new();
-        let data = Value::Object(Arc::new(job.data.clone()));
+        let computed;
+        let page_data = match job.computed {
+            Some(plan) => {
+                computed = plan.apply(
+                    self.engine,
+                    self.loader,
+                    job.shown,
+                    job.data,
+                    &mut undefined,
+                )?;
+                &computed
+            }
+            None => job.data,
+        };
+        let data = Value::Object(Arc::new(page_data.clone()));
         let page_liquid = |undefined: &mut BTreeSet<String>| -> Result<String, Problem> {
             // 11ty skips the engine when the body has no Liquid in it.
             if !job.body.contains("{{") && !job.body.contains("{%") {
@@ -194,9 +211,9 @@ impl Pipeline<'_> {
         };
         for layout in job.layouts {
             // 11ty renders a layout with `{ content, ...data }`.
-            let mut with_content = IndexMap::with_capacity(job.data.len() + 1);
+            let mut with_content = IndexMap::with_capacity(page_data.len() + 1);
             with_content.insert("content".to_string(), Value::String(content.into()));
-            for (k, v) in job.data {
+            for (k, v) in page_data {
                 with_content.insert(k.clone(), v.clone());
             }
             let layout_data = Value::Object(Arc::new(with_content));

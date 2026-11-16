@@ -1,0 +1,16 @@
+---
+title: x
+page:
+  mine: 1
+date: 2020-01-02
+tags: [orig]
+eleventyComputed:
+  v: "{{ page.mine }}|{{ page.url }}|{{ page.inputPath }}|{{ page.fileSlug }}|{{ page.filePathStem }}|{{ page.templateSyntax }}|{{ page.rawInput | size }}|{{ pkg | json }}"
+  date: 2021-03-04
+  d2: "{{ date | json }}"
+  tags: ["comp", "{{ page.fileSlug }}"]
+  eleventyExcludeFromCollections: true
+  x: "{{ eleventyExcludeFromCollections }}"
+---
+v={{ v }}
+date={{ date | json }} d2={{ d2 }} tags={{ tags | json }} x={{ x }} {{ page.date | json }}

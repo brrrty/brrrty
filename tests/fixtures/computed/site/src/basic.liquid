@@ -1,0 +1,35 @@
+---
+title: T
+n: 5
+eleventyComputed:
+  b: "B({{ c }})"
+  c: "C({{ title }})"
+  d: "D({{ b }}{{ c }})"
+  title: "over {{ title }}"
+  num: 42
+  arr: ["x{{ n }}", 3, "y"]
+  meta:
+    t: "{{ title }}"
+    deep:
+      z: "{{ n }}"
+  size: "{{ arr | size }}"
+  sz2: "{{ c | size }}"
+  float: 1.50
+  bool: true
+  nul: null
+  empty: ""
+  pu: "{{ page.url }}"
+  pf: "{{ page.fileSlug }}"
+meta:
+  keep: k
+  t: orig
+---
+b={{ b }}
+c={{ c }}
+d={{ d }}
+title={{ title }}
+num={{ num }} arr={{ arr | join: "," }} {{ arr | json }}
+meta={{ meta | json }}
+size={{ size }} sz2={{ sz2 }}
+float={{ float }} bool={{ bool }} nul=[{{ nul }}] empty=[{{ empty }}]
+pu={{ pu }} pf={{ pf }}

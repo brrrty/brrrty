@@ -1,0 +1,1 @@
+{"eleventyComputed": {"d": "dir-{{ title }}", "shared": "dir-{{ title }}", "arr": ["{{ title }}", {"k": "{{ title }}"}], "obj": {"k": "{{ title }}"}}, "layout": "lay"}
