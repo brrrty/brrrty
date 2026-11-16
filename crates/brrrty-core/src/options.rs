@@ -24,6 +24,10 @@ pub struct BuildOptions {
     pub run_mode: RunMode,
 }
 
+/// The folder `brrrty serve` builds into, inside the output folder. Brrrty owns the name:
+/// `brrrty build` removes one a stopped session left behind, so it is never deployed.
+pub const SERVE_STAGING_DIR: &str = ".brrrty-serve";
+
 /// How 11ty was started (`eleventy.env.runMode`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RunMode {

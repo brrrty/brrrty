@@ -36,7 +36,7 @@ use crate::options::{Flags, build_options};
 use crate::report;
 
 /// The folder inside the output folder that holds the builds of a session.
-pub const STAGING_DIR: &str = ".brrrty-serve";
+pub const STAGING_DIR: &str = brrrty_core::SERVE_STAGING_DIR;
 
 /// How long a file must stay unchanged before a rebuild starts. 11ty's watcher waits for a
 /// file to be stable for 150 ms (chokidar's `awaitWriteFinish.stabilityThreshold`) and then
@@ -591,7 +591,7 @@ impl Session {
         self.watcher = None;
         if let Some(cur) = self.current.take() {
             let mut errors = Vec::new();
-            move_tree(&cur, &self.output, &mut errors);
+            move_build(&cur, &self.output, &mut errors);
             finished.output_written = errors.is_empty();
             finished.problems.extend(errors);
         }
@@ -622,6 +622,32 @@ impl Session {
                 self.staging.display()
             ));
         }
+    }
+}
+
+/// Move the build in `from` into the output folder `to` with [`move_tree`], leaving out a
+/// top-level `.brrrty-serve` (which a permalink or passthrough could name): that name in the
+/// output folder is the staging folder, which is removed next and must never be shipped.
+fn move_build(from: &Path, to: &Path, errors: &mut Vec<String>) {
+    let staged = from.join(STAGING_DIR);
+    if fs::symlink_metadata(&staged).is_ok() {
+        errors.push(format!(
+            "the site wrote {STAGING_DIR}, which is Brrrty's staging folder, so it was left out of {}",
+            to.display()
+        ));
+        if let Err(e) = remove_any(&staged) {
+            errors.push(format!("cannot remove {}: {e}", staged.display()));
+            return;
+        }
+    }
+    move_tree(from, to, errors);
+}
+
+fn remove_any(p: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(p)?.is_dir() {
+        fs::remove_dir_all(p)
+    } else {
+        fs::remove_file(p)
     }
 }
 

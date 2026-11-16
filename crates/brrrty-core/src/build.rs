@@ -1372,6 +1372,29 @@ fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport 
     report
 }
 
+/// Remove `<out>/.brrrty-serve`, and nothing else: only that exact name, only directly
+/// inside the output folder. A symlink by that name is removed, never followed.
+fn remove_serve_staging(out: &Path) -> Option<Problem> {
+    let staging = out.join(crate::options::SERVE_STAGING_DIR);
+    let meta = fs::symlink_metadata(&staging).ok()?;
+    let removed = if meta.is_dir() {
+        fs::remove_dir_all(&staging)
+    } else {
+        fs::remove_file(&staging)
+    };
+    let e = removed.err()?;
+    Some(
+        Problem::warning(
+            codes::SERVE_STAGING_LEFT,
+            format!(
+                "could not remove {} that a stopped `brrrty serve` left in the output folder: {e}",
+                staging.display()
+            ),
+        )
+        .with_help("delete it by hand so it isn't deployed with the site"),
+    )
+}
+
 /// Stack for each render thread. Deeply nested Markdown and Liquid recurse
 /// deeply; the default 2 MiB is not enough for 10,000 nested blockquotes.
 const RENDER_STACK: usize = 16 * 1024 * 1024;
@@ -1487,6 +1510,13 @@ fn build_once(
             return finish(report, strict, start);
         }
     };
+    // A plain build owns the whole output folder, so a serve session's staging folder left
+    // there (by a session that was killed) goes. A serve build writes elsewhere and leaves it.
+    if opts.write_to.is_none()
+        && let Some(p) = remove_serve_staging(&out)
+    {
+        report.problems.push(p);
+    }
     // Pages are tracked relative to the input folder; problems report them relative to the
     // root, through the input folder as spelled (11ty finds path dates in that spelling too).
     let input_rel = match opts.input_rel() {

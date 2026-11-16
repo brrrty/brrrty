@@ -36,7 +36,7 @@ pub use js::js_truthy;
 pub use options::{
     BuildOptions, CollectionError, CollectionFn, CollectionInput, CollectionPage, ConfigCollection,
     ConfigFilter, ConfigOptions, DataFn, DataRequest, DataRunner, PassthroughEntry, RunMode,
-    TemplateEngines, TemplateLanguage, UndatedPage,
+    SERVE_STAGING_DIR, TemplateEngines, TemplateLanguage, UndatedPage,
 };
 pub use page::{Page, file_path_stem, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;

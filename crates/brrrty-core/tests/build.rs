@@ -969,3 +969,41 @@ fn write_to_writes_elsewhere_but_keeps_the_output_spelling() {
     assert!(!stage.join("_site").exists());
     assert!(!root.join("_site/index.html").exists());
 }
+
+#[test]
+fn a_build_removes_a_stale_serve_staging_folder_and_nothing_else() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi");
+    write(root, "_site/.brrrty-serve/build-3/index.html", "stale");
+    // Look-alikes that are not Brrrty's: other names, other depths, outside the output.
+    write(root, "_site/.brrrty-serve-other/x.html", "keep");
+    write(root, "_site/sub/.brrrty-serve/y.html", "keep");
+    write(root, ".brrrty-serve/z.html", "keep");
+    let r = build(&opts(root), &MarkdownIt::new());
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert!(!root.join("_site/.brrrty-serve").exists());
+    for kept in [
+        "_site/.brrrty-serve-other/x.html",
+        "_site/sub/.brrrty-serve/y.html",
+        ".brrrty-serve/z.html",
+    ] {
+        assert_eq!(read(root.join(kept)), "keep", "{kept}");
+    }
+    assert_eq!(read(root.join("_site/index.html")), "<p>hi</p>\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stale_serve_staging_symlink_is_removed_not_followed() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi");
+    write(root, "elsewhere/keep.txt", "keep");
+    fs::create_dir_all(root.join("_site")).unwrap();
+    std::os::unix::fs::symlink(root.join("elsewhere"), root.join("_site/.brrrty-serve")).unwrap();
+    let r = build(&opts(root), &MarkdownIt::new());
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert!(fs::symlink_metadata(root.join("_site/.brrrty-serve")).is_err());
+    assert_eq!(read(root.join("elsewhere/keep.txt")), "keep");
+}

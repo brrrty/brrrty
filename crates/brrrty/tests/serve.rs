@@ -428,3 +428,27 @@ fn edits_while_a_build_runs_make_exactly_one_more_build() {
         assert_eq!(live.page(), "<main><p>A2</p>\n</main>");
     });
 }
+
+#[test]
+fn a_page_named_like_staging_never_reaches_the_output() {
+    let t = site();
+    write(
+        t.path(),
+        "src/sneaky.md",
+        "---\npermalink: /.brrrty-serve/x.html\n---\nsneaky\n",
+    );
+    let finished = with_session(t.path(), |live| {
+        assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
+    });
+    let out = t.path().join("_site");
+    assert!(!out.join(STAGING_DIR).exists());
+    assert_eq!(
+        fs::read_to_string(out.join("index.html")).unwrap(),
+        "<main><p>v0</p>\n</main>"
+    );
+    assert!(
+        finished.problems.iter().any(|p| p.contains(STAGING_DIR)),
+        "{:?}",
+        finished.problems
+    );
+}

@@ -62,6 +62,7 @@ pub mod codes {
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
     pub const PERMALINK_UNSUPPORTED: &str = "permalink-unsupported";
+    pub const SERVE_STAGING_LEFT: &str = "serve-staging-left";
     pub const SOURCE_DATE_EPOCH_INVALID: &str = "source-date-epoch-invalid";
     pub const TAGS_INVALID: &str = "tags-invalid";
     pub const SYMLINK_BROKEN: &str = "symlink-broken";
