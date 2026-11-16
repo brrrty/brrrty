@@ -48,6 +48,7 @@ pub(crate) fn load(text: &str) -> Result<Value, YamlError> {
             }
             builder.anchors.clear();
             builder.merged = 0;
+            builder.size = 0;
             if let Some(Ok((next, _))) = events.peek()
                 && matches!(next, Event::DocumentEnd)
             {
@@ -69,10 +70,13 @@ fn error(span: Span, message: impl Into<String>) -> YamlError {
 
 #[derive(Default)]
 struct Builder {
-    /// Anchored values with their nesting height.
-    anchors: HashMap<usize, (Value, usize)>,
+    /// Anchored values with their nesting height and expanded size.
+    anchors: HashMap<usize, (Value, usize, usize)>,
     /// Nesting height of the value `node` returned last (0 for a scalar).
     height: usize,
+    /// Nodes in the value `node` returned last, counting what aliases
+    /// repeat in full: the size of the tree every walk of it visits.
+    size: usize,
     /// Entries copied by `<<` merges so far.
     merged: usize,
 }
@@ -80,6 +84,29 @@ struct Builder {
 /// The most entries `<<` merges may copy in one document. Chained merges copy
 /// quadratically, and real front matter needs a handful.
 const MAX_MERGED: usize = 100_000;
+
+/// The most nodes a document may expand to, counting each alias as the
+/// whole value it repeats. Aliases share their value, so parsing stays
+/// cheap, but everything that walks the data (copying it into a page,
+/// merging, `json`, comparing) visits the expanded tree: nested aliases
+/// ("billion laughs") would never finish. Real front matter has hundreds.
+pub(crate) const MAX_NODES: usize = 1_000_000;
+
+fn too_big(span: Span) -> YamlError {
+    error(
+        span,
+        format!("this YAML expands to more than {MAX_NODES} values through aliases (`*name`)"),
+    )
+}
+
+/// Adds `n` nodes to `total`, refusing past the budget at `span`.
+fn grow(total: &mut usize, n: usize, span: Span) -> Result<(), YamlError> {
+    *total = total.saturating_add(n);
+    if *total > MAX_NODES {
+        return Err(too_big(span));
+    }
+    Ok(())
+}
 
 impl Builder {
     fn next<'a>(&self, events: &mut Events<'a>) -> Result<(Event<'a>, Span), YamlError> {
@@ -102,7 +129,7 @@ impl Builder {
         let (event, span) = self.next(events)?;
         let (value, anchor) = match event {
             Event::Alias(id) => {
-                let (value, height) = self
+                let (value, height, size) = self
                     .anchors
                     .get(&id)
                     .cloned()
@@ -110,10 +137,12 @@ impl Builder {
                 // An alias is the anchored value at this depth, so it counts in full.
                 check_depth(depth + height, span)?;
                 self.height = height;
+                self.size = size;
                 return Ok(value);
             }
             Event::Scalar(text, style, anchor, tag) => {
                 self.height = 0;
+                self.size = 1;
                 (scalar(&text, style, tag.as_deref(), span)?, anchor)
             }
             Event::SequenceStart(anchor, tag) => {
@@ -121,12 +150,16 @@ impl Builder {
                 check_depth(depth + 1, span)?;
                 let mut items = Vec::new();
                 let mut deepest = 0;
+                let mut total = 1;
                 while !matches!(events.peek(), Some(Ok((Event::SequenceEnd, _)))) {
+                    let at = peek_span(events);
                     items.push(self.node(events, depth + 1)?);
                     deepest = deepest.max(self.height);
+                    grow(&mut total, self.size, at)?;
                 }
                 self.next(events)?;
                 self.height = deepest + 1;
+                self.size = total;
                 (Value::Array(Arc::new(items)), anchor)
             }
             Event::MappingStart(anchor, tag) => {
@@ -137,7 +170,8 @@ impl Builder {
             _ => return Err(error(span, "unexpected YAML structure")),
         };
         if anchor != 0 {
-            self.anchors.insert(anchor, (value.clone(), self.height));
+            self.anchors
+                .insert(anchor, (value.clone(), self.height, self.size));
         }
         Ok(value)
     }
@@ -147,23 +181,25 @@ impl Builder {
         // Keys that came from a `<<` merge; an explicit key may replace those.
         let mut overridable: HashSet<String> = HashSet::new();
         let mut deepest = 0;
+        let mut total = 1;
         while !matches!(events.peek(), Some(Ok((Event::MappingEnd, _)))) {
             let is_merge = matches!(
                 events.peek(),
                 Some(Ok((Event::Scalar(t, ScalarStyle::Plain, _, None), _))) if t == "<<"
             );
-            let key_span = match events.peek() {
-                Some(Ok((_, span))) => *span,
-                _ => Span::empty(saphyr_parser::Marker::new(0, 1, 0)),
-            };
+            let key_span = peek_span(events);
             if matches!(events.peek(), Some(Ok((Event::Alias(_), _)))) {
                 // js-yaml hangs on these, so 11ty never finishes.
                 return Err(error(key_span, "an alias can't be used as a mapping key"));
             }
             let key = self.node(events, depth)?;
             deepest = deepest.max(self.height);
+            let value_span = peek_span(events);
             let value = self.node(events, depth)?;
             deepest = deepest.max(self.height);
+            // A merge copies the source's entries, so it adds at most the
+            // source's size.
+            grow(&mut total, self.size.saturating_add(1), value_span)?;
             if is_merge {
                 let sources: Vec<Value> = match &value {
                     Value::Array(items) => items.iter().cloned().collect(),
@@ -198,7 +234,16 @@ impl Builder {
         }
         self.next(events)?;
         self.height = deepest + 1;
+        self.size = total;
         Ok(Value::Object(Arc::new(map)))
+    }
+}
+
+/// Where the next event starts.
+fn peek_span(events: &mut Events<'_>) -> Span {
+    match events.peek() {
+        Some(Ok((_, span))) => *span,
+        _ => Span::empty(saphyr_parser::Marker::new(0, 1, 0)),
     }
 }
 

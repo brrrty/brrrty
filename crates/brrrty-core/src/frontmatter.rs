@@ -452,9 +452,19 @@ mod tests {
         }
         laughs.push_str("---\n");
         let start = std::time::Instant::now();
-        let (m, _) = split_front_matter(&laughs).unwrap();
-        assert_eq!(m.len(), 10);
+        // `l6` is 9^7 values: refused at its second `*l5`, which goes over.
+        let p = split_front_matter(&laughs).unwrap_err();
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(p.code, codes::FRONT_MATTER_INVALID);
+        assert_eq!(
+            p.message,
+            "invalid YAML front matter: this YAML expands to more than 1000000 values through aliases (`*name`)"
+        );
+        assert_eq!((p.line, p.column), (Some(8), Some(15)));
+        // Up to `l5` (597871 values with the lists) is fine.
+        let six: String = laughs.lines().take(7).map(|l| format!("{l}\n")).collect();
+        let (m, _) = split_front_matter(&format!("{six}---\n")).unwrap();
+        assert_eq!(m.len(), 6);
         // A few merges are normal.
         let (m, _) = split_front_matter("---\nb: &b {x: 1}\nc:\n  <<: *b\n---\n").unwrap();
         assert_eq!(m.len(), 2);

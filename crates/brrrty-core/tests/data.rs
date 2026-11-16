@@ -253,3 +253,70 @@ fn counters_from_javascript_data_are_refused() {
     assert!(!root.join("_site/a/index.html").exists());
     assert_eq!(read(root, "b/index.html"), "plain");
 }
+
+/// Runs a build on another thread, failing the test if it takes longer
+/// than `secs` instead of hanging.
+fn run_within(root: &Path, secs: u64) -> BuildReport {
+    let root = root.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(run(&root));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(secs))
+        .unwrap_or_else(|_| panic!("the build took longer than {secs} s"))
+}
+
+/// Front matter whose `l{n}` repeats `l{n-1}` ten times through aliases.
+fn laughs(levels: usize) -> String {
+    let mut t = String::from("---\nl0: &l0 [x, x, x, x, x, x, x, x, x, x]\n");
+    for i in 1..levels {
+        let p = format!("*l{}", i - 1);
+        t.push_str(&format!("l{i}: &l{i} [{}]\n", vec![p; 10].join(", ")));
+    }
+    t.push_str("---\n");
+    t
+}
+
+/// 11ty builds a page whose aliases expand to 10^9 values (it only walks
+/// what the page prints). Brrrty copies the data into each page, so it
+/// refuses front matter that expands past a million values, at the alias
+/// that goes over, and builds the rest of the site at once. Below that the
+/// page builds.
+#[test]
+fn nested_yaml_aliases_are_refused_without_hanging() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/laughs.liquid",
+        &format!("{}{{{{ l8 | size }}}}", laughs(9)),
+    );
+    write(
+        root,
+        "src/fine.liquid",
+        &format!(
+            "{}{{{{ l4 | size }}}}{{{{ l4[9][9][9][9][9] }}}}{{{{ l4 | json | size }}}}",
+            laughs(5)
+        ),
+    );
+    write(root, "src/other.md", "other\n");
+    let r = run_within(root, 30);
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{:#?}", r.problems);
+    assert_eq!(errs[0].code, codes::FRONT_MATTER_INVALID);
+    assert_eq!(
+        errs[0].path.as_deref(),
+        Some(Path::new("src/laughs.liquid"))
+    );
+    assert!(
+        errs[0]
+            .message
+            .contains("expands to more than 1000000 values"),
+        "{}",
+        errs[0].message
+    );
+    // `l5: &l5 [*l4, ...` on line 7; the tenth `*l4` goes over.
+    assert_eq!((errs[0].line, errs[0].column), (Some(7), Some(55)));
+    assert_eq!(read(root, "fine/index.html"), "10x422221");
+    assert_eq!(read(root, "other/index.html"), "<p>other</p>\n");
+}
