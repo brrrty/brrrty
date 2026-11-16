@@ -32,29 +32,12 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const FENCES = [
-  'shell', 'php', 'javascript', 'sql', 'bash', 'conf', 'yaml', 'typescript',
-  'json', 'ruby', 'python', 'markdown', 'jql', 'ini', 'html', 'css',
-  'console', 'vim', 'liquid', 'c', 'xml', 'nginx', 'config', 'text', 'perl',
-  'less', 'jsx', 'go', 'zsh', 'toml', 'terraform', 'rust', 'r', 'lua', 'js',
-  'fstab', 'sh',
-];
+const { PRISM, PLUGIN, FENCES, load: loadPrism } = require('./pins.cjs');
 
 function load(nm) {
-  const plugin = path.join(nm, '@11ty/eleventy-plugin-syntaxhighlight');
-  const prismDir = path.dirname(require.resolve('prismjs/package.json', { paths: [plugin] }));
-  const versions = {
-    prism: require(path.join(prismDir, 'package.json')).version,
-    plugin: require(path.join(plugin, 'package.json')).version,
-  };
-  if (versions.prism !== '1.30.0' || versions.plugin !== '5.0.2') {
-    throw new Error(`need prismjs 1.30.0 and the plugin 5.0.2, found ${JSON.stringify(versions)}`);
-  }
-  const Prism = require(require.resolve('prismjs', { paths: [plugin] }));
-  const PrismLoader = require(path.join(plugin, 'src/PrismLoader.js'));
-  const normalize = require(path.join(plugin, 'src/PrismNormalizeAlias.js'));
-  for (const f of FENCES) PrismLoader(f);
-  return { Prism, PrismLoader, normalize, plugin };
+  const env = loadPrism(nm);
+  for (const f of FENCES) env.PrismLoader(f);
+  return env;
 }
 
 // The text as 11ty writes it: lone surrogates become U+FFFD.
@@ -182,7 +165,7 @@ function fixtures(env, testsDir, outDir) {
     }
   }
   for (const [name, cases] of Object.entries(byName)) {
-    const body = { prism: '1.30.0', plugin: '5.0.2', language: name, cases };
+    const body = { prism: PRISM, plugin: PLUGIN, language: name, cases };
     fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify(body, null, 0) + '\n');
   }
 }

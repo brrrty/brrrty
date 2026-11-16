@@ -1,12 +1,12 @@
-// Regenerates grammars/prism.json: the Prism 1.30.0 grammars that
-// @11ty/eleventy-plugin-syntaxhighlight 5.0.2 highlights with, for the fence
-// languages below and everything they load.
+// Regenerates grammars/prism.json: the Prism grammars that
+// @11ty/eleventy-plugin-syntaxhighlight highlights with (the versions in
+// pins.cjs), for the fence languages there and everything they load.
 //
-//   node tools/gen-grammars.cjs <node_modules> > grammars/prism.json
+//   node tools/gen-grammars.cjs <node_modules> grammars/prism.json
 //
-// <node_modules> is a directory with prismjs 1.30.0 and
-// @11ty/eleventy-plugin-syntaxhighlight 5.0.2 installed. Run from
-// crates/brrrty-prism with Node 20 or later (the file was made with v26.2.0).
+// <node_modules> is a directory with the pinned prismjs and plugin
+// installed. Run from crates/brrrty-prism with Node 20 or later. The file is
+// written only once every check below passes.
 //
 // The languages are loaded the way the plugin loads them: `require("prismjs")`
 // (core, markup, css, clike, javascript), then the plugin's own PrismLoader.js,
@@ -44,33 +44,10 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
-// Every fence language on the test sites, as written in the info strings.
-const FENCES = [
-  'shell', 'php', 'javascript', 'sql', 'bash', 'conf', 'yaml', 'typescript',
-  'json', 'ruby', 'python', 'markdown', 'jql', 'ini', 'html', 'css',
-  'console', 'vim', 'liquid', 'c', 'xml', 'nginx', 'config', 'text', 'perl',
-  'less', 'jsx', 'go', 'zsh', 'toml', 'terraform', 'rust', 'r', 'lua', 'js',
-  'fstab', 'sh',
-];
-
-function load(nm) {
-  const plugin = path.join(nm, '@11ty/eleventy-plugin-syntaxhighlight');
-  const prismDir = path.dirname(require.resolve('prismjs/package.json', { paths: [plugin] }));
-  const versions = {
-    prism: require(path.join(prismDir, 'package.json')).version,
-    plugin: require(path.join(plugin, 'package.json')).version,
-  };
-  if (versions.prism !== '1.30.0' || versions.plugin !== '5.0.2') {
-    throw new Error(`need prismjs 1.30.0 and the plugin 5.0.2, found ${JSON.stringify(versions)}`);
-  }
-  const Prism = require(require.resolve('prismjs', { paths: [plugin] }));
-  const PrismLoader = require(path.join(plugin, 'src/PrismLoader.js'));
-  const normalize = require(path.join(plugin, 'src/PrismNormalizeAlias.js'));
-  const components = require(path.join(prismDir, 'components.json'));
-  return { Prism, PrismLoader, normalize, components, versions };
-}
+const { FENCES, load } = require('./pins.cjs');
 
 function isGrammar(v) {
   return v !== null && typeof v === 'object' && !(v instanceof RegExp) && !Array.isArray(v);
@@ -229,7 +206,7 @@ function pretty(v, indent) {
   return '{\n' + entries.join(',\n') + '\n' + indent + '}';
 }
 
-function main(nm) {
+function main(nm, outFile) {
   const state = run(nm, FENCES);
   const others = [run(nm, FENCES.slice().reverse()), run(nm, shuffled(FENCES, 7)), run(nm, shuffled(FENCES, 11))];
   const langs = state.languages.map(([k]) => k);
@@ -274,7 +251,6 @@ function main(nm) {
   }
   const out = {
     generator: 'tools/gen-grammars.cjs',
-    node: process.version,
     prism: state.versions.prism,
     plugin: state.versions.plugin,
     fences: state.fences.map(([name, normalized, grammar]) => ({ name, normalized, known: grammar !== null })),
@@ -287,10 +263,10 @@ function main(nm) {
     components: state.components,
     grammars: state.grammars,
   };
-  process.stdout.write(pretty(out, '') + '\n');
   // A pattern whose `inside` is there in one order and not in another (a
   // language that embeds an optional one) is recorded: the tokenizer can
-  // refuse code where that pattern matches. Any other difference fails.
+  // refuse code where that pattern matches. Any other difference fails,
+  // and nothing is written.
   for (const [lang, ds] of Object.entries(orderDependent)) {
     for (const d of ds) {
       if (!d.endsWith(': inside')) {
@@ -299,13 +275,16 @@ function main(nm) {
       }
     }
   }
+  const tmp = outFile + '.tmp';
+  fs.writeFileSync(tmp, pretty(out, '') + '\n');
+  fs.renameSync(tmp, outFile);
 }
 
 if (process.argv[2] === '--child') {
   process.stdout.write(JSON.stringify(child(process.argv[3], JSON.parse(process.argv[4]))));
-} else if (process.argv.length === 3) {
-  main(path.resolve(process.argv[2]));
+} else if (process.argv.length === 4) {
+  main(path.resolve(process.argv[2]), process.argv[3]);
 } else {
-  console.error('usage: node tools/gen-grammars.cjs <node_modules>');
+  console.error('usage: node tools/gen-grammars.cjs <node_modules> <out-file>');
   process.exit(2);
 }

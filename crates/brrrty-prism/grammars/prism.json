@@ -1,6 +1,5 @@
 {
  "generator": "tools/gen-grammars.cjs",
- "node": "v26.2.0",
  "prism": "1.30.0",
  "plugin": "5.0.2",
  "fences": [

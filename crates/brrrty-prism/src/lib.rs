@@ -6,6 +6,10 @@
 //! translated exactly is unsupported. [`tokenize`] ports Prism's tokenizer,
 //! and [`highlight`] its `Prism.highlight` with the hooks the plugin's
 //! components add ([`stringify`] writes the HTML).
+//!
+//! The grammars and the test probes are made by the Node scripts in the
+//! repository's `crates/brrrty-prism/tools`; its README says how to move
+//! to a new Prism.
 
 pub mod grammar;
 pub mod highlight;
