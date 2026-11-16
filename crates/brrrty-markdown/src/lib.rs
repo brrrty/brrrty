@@ -36,8 +36,7 @@ fn first_fence(ast: &markdown_it::Node, source: &str) -> Option<HighlightedFence
         let Some(fence) = n.cast::<CodeFence>() else {
             return;
         };
-        let blank = |c: char| c.is_whitespace() || c == '\u{feff}';
-        if fence.info.trim_matches(blank).is_empty() {
+        if fence.info.trim_matches(js_space).is_empty() {
             return;
         }
         let start = n.srcmap.map_or(0, |m| m.get_byte_offsets().0);
@@ -48,6 +47,22 @@ fn first_fence(ast: &markdown_it::Node, source: &str) -> Option<HighlightedFence
         });
     });
     found
+}
+
+/// JavaScript's whitespace, as `String.prototype.trim` and regex `\s` see it. Unlike Rust's
+/// `char::is_whitespace` it includes U+FEFF and leaves out U+0085.
+fn js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
 }
 
 /// markdown-it's table rule needs a `|` in the header row too, so `a\n|--` is a paragraph. The
@@ -407,6 +422,21 @@ mod tests {
             f("- a\n\n  ```php\n  x\n  ```\n").map(|h| h.info),
             Some("php".into())
         );
+    }
+
+    /// markdown-it calls `highlight` with `unescapeAll(info).trim()`, and JavaScript's `trim`
+    /// keeps U+0085 and removes U+FEFF. Node printed the code points `highlight` got for each info
+    /// string: `85` for "\u{85}" and " \u{85} ", none for "\u{feff}", " \u{a0}\u{3000}" and
+    /// "\u{2028}", and `180e` and `200b` for those (whitespace in neither language).
+    #[test]
+    fn info_strings_are_trimmed_as_javascript_trims() {
+        let f = |info: &str| md().highlighted_fence(&format!("```{info}\ncode\n```\n"));
+        for named in ["\u{85}", " \u{85} ", "\u{85}x", "\u{180e}", "\u{200b}"] {
+            assert!(f(named).is_some(), "{named:?}");
+        }
+        for blank in ["\u{feff}", " \u{a0}\u{3000}", "\u{2028}"] {
+            assert_eq!(f(blank), None, "{blank:?}");
+        }
     }
 
     /// 11ty disables markdown-it's `code` rule, so indented lines are paragraph text.

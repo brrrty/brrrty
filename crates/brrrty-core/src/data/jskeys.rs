@@ -48,7 +48,7 @@ fn tokens(src: &str) -> Option<Vec<Tok>> {
     while i < chars.len() {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
-        if c.is_whitespace() {
+        if brrrty_js::is_js_whitespace(c) {
             i += 1;
         } else if c == '/' && next == Some('/') {
             while i < chars.len() && chars[i] != '\n' {
