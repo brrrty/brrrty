@@ -108,7 +108,7 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `new URL(u).hostname` | | `url_hostname(u)`, or `()` when `u` isn't an absolute URL |
 | `d.toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'})` | | `to_locale_date_string(d)` |
 | `Date.now()` | | `get_time(now())` (follows `SOURCE_DATE_EPOCH`) |
-| `execSync('git rev-parse HEAD')` | Scripts can't run commands | `git_head()`: the same commit, read from the repository's files (`HEAD`, loose refs, `packed-refs`, and a linked worktree's `.git` file and `commondir`) found from the project folder up. An error when the project isn't in a repository or `HEAD` has no commit yet |
+| `execSync('git rev-parse HEAD')` | Scripts can't run commands | `git_head()`: the same commit, read from the repository's files (`HEAD`, loose refs, `packed-refs`, and a linked worktree's `.git` file and `commondir`) found from the project folder up, as git finds and reads them. An error when the project isn't in a repository, a `.git` file names no repository, or `HEAD` has no commit yet. Unlike `execSync`, it starts from the project folder and not the current one, ignores `GIT_DIR` and git's other environment variables, and doesn't apply git's `safe.directory` ownership check |
 | `obj.x` on a missing key | | `()`, as `undefined` |
 | `arr[i]` with a float index | an error | `arr[n.to_int()]` |
 | `str[0]` | a `char` | `str.sub_string(0, 1)` (Rhai counts characters, JS counts UTF-16 units) |
@@ -377,7 +377,10 @@ the way 11ty does:
   Markdown code is highlighted as YAML only once YAML is loaded: Brrrty
   replays the order 11ty renders pages' content in (one at a time), and
   writes the page when a page 11ty renders before it loaded YAML (or the
-  same page did, earlier), and refuses it otherwise;
+  same page did, earlier), and refuses it otherwise. That order is 11ty's
+  default, one page at a time; `eleventyConfig.setConcurrency(n)` with `n`
+  above 1 renders several at once and can't be ported, so a site whose
+  11ty config sets it may get different front matter from Brrrty;
 - code where Prism's patterns would take too long (on hostile input,
   reaching the limit can take a few seconds), or where a Prism hook
   would run out of stack in Node;
