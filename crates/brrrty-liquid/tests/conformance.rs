@@ -176,6 +176,7 @@ fn every_conformance_template_parses_like_liquidjs() {
 /// The case files that must render exactly like LiquidJS. Each task that
 /// adds engine features extends this list.
 const GATED_FILES: &[&str] = &[
+    "filters.toml",
     "tags.toml",
     "operators.toml",
     "truthiness.toml",
@@ -184,18 +185,7 @@ const GATED_FILES: &[&str] = &[
 
 /// Cases in gated files that need a feature a later task adds. Each entry
 /// names the task that removes it.
-const DEFERRED: &[(&str, &str)] = &[
-    ("assign_filter", "Task 5: upcase"),
-    ("assign_number", "Task 5: plus"),
-    ("assign_array_filter", "Task 5: split"),
-    ("capture_filter", "Task 5: split, last"),
-    ("echo_tag", "Task 5: upcase"),
-    ("range_in_condition", "Task 5: join"),
-    ("default_filter_falsy", "Task 5: default"),
-    ("default_allow_false", "Task 5: default"),
-    ("undefined_plus_filter", "Task 5: append"),
-    ("ws_dash_inside_expr", "Task 5: minus"),
-];
+const DEFERRED: &[(&str, &str)] = &[];
 
 /// Serves a case's `includes`.
 struct MapLoader<'a>(&'a BTreeMap<String, String>);
