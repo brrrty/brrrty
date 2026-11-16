@@ -14,6 +14,7 @@ pub mod js;
 mod layout;
 mod loader;
 pub mod options;
+mod order;
 pub mod page;
 mod paginate;
 pub mod passthrough;

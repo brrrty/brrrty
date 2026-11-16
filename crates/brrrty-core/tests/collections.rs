@@ -519,3 +519,33 @@ fn add_all_pages_to_collections_stays_linear() {
         assert!(start.elapsed().as_secs_f64() < 5.0, "{:?}", start.elapsed());
     }
 }
+
+/// 11ty loads a JavaScript data file with `import()`, from the disk, while
+/// it decides the order of templates; Brrrty can't know when that finishes,
+/// so the order of the collections is unknown and reads of them are
+/// refused. Pages that don't read collections still build.
+#[test]
+fn a_javascript_data_file_refuses_collections() {
+    let t = site("{{ collections.all | size }}");
+    write(
+        t.path(),
+        "src/js/js.11tydata.js",
+        "module.exports = { k: 1 };",
+    );
+    write(t.path(), "src/js/p.md", "---\ndate: 2020-01-03\n---\np\n");
+    let r = run(t.path());
+    let report = r
+        .problems
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("src/report.liquid")))
+        .unwrap_or_else(|| panic!("{:#?}", r.problems));
+    assert!(
+        report
+            .message
+            .contains("1 template uses a JavaScript data file"),
+        "{}",
+        report.message
+    );
+    assert_eq!(read(t.path(), "a/index.html"), "<p>a</p>\n");
+    assert_eq!(read(t.path(), "js/p/index.html"), "<p>p</p>\n");
+}

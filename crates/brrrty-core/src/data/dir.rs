@@ -74,6 +74,12 @@ impl DirDataIndex {
         index
     }
 
+    /// The template and directory data files of the template at `rel`,
+    /// lowest priority first.
+    pub fn files(&self, rel: &Path) -> &[PathBuf] {
+        self.pages.get(rel).map_or(&[], Vec::as_slice)
+    }
+
     /// The merged data files of the template at `rel`, or the problem of
     /// the first file that keeps it from being built.
     pub fn local(&self, rel: &Path) -> Result<Local, &Problem> {

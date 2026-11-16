@@ -25,6 +25,7 @@ use crate::frontmatter::{Data, split_front_matter};
 use crate::layout::{ChainError, LayoutFile, Layouts};
 use crate::loader::FsLoader;
 use crate::options::BuildOptions;
+use crate::order::{OrderLayout, OrderTemplate};
 use crate::page::{file_path_stem, file_slug, resolve_date};
 use crate::paginate::{Links, Spec};
 use crate::passthrough::copy_passthrough_avoiding;
@@ -121,9 +122,13 @@ struct Templ {
     /// Computed data sets `tags` or `eleventyExcludeFromCollections`, which
     /// Brrrty can't follow into the collections yet.
     computed_membership: bool,
-    /// The real path of the layout the data names, which 11ty waits for
-    /// while it loads the template (see [`collections::entry_order`]).
-    data_layout: Option<PathBuf>,
+    /// What decides when 11ty adds the template to its map (see
+    /// [`crate::order`]).
+    order: OrderTemplate,
+    /// The layouts its data names, by the names they are named with.
+    order_layouts: Vec<(String, OrderLayout)>,
+    /// A JavaScript data file applies to it.
+    js_data: bool,
     pages: Pages,
 }
 
@@ -238,6 +243,26 @@ fn slash_path(p: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// 11ty reads a page's date from the file system (its creation or change
+/// time, or git) unless the data has a date of its own.
+fn reads_no_file_date(date: Option<&Value>) -> bool {
+    match date {
+        Some(Value::String(s)) => {
+            let s = s.to_lowercase();
+            !s.is_empty()
+                && ![
+                    "last modified",
+                    "created",
+                    "git last modified",
+                    "git created",
+                ]
+                .contains(&s.as_str())
+        }
+        Some(v) => v.js_truthy(),
+        None => false,
+    }
 }
 
 /// The data 11ty gives every page: `eleventy`, then `pkg` (the project's
@@ -548,12 +573,56 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     let spec = Spec::new(&values).map_err(|p| {
         pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
     })?;
+    let order_files = shared.dir_data.files(rel);
+    let js_data = order_files.iter().any(|f| {
+        let name = f.to_string_lossy();
+        [".js", ".cjs", ".mjs"].iter().any(|e| name.ends_with(e))
+    });
+    let includes = shared.input_rel.join("_includes");
+    let mut order_layouts: Vec<(String, OrderLayout)> = Vec::new();
+    let mut name = match data_layout {
+        Some(Value::String(s)) => Some(s.to_string()),
+        _ => None,
+    };
+    for layout in &data_layouts {
+        let Some(spelled) = name.take() else { break };
+        let parent = match layout.data.get("layout") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.to_string()),
+            _ => None,
+        };
+        order_layouts.push((
+            spelled,
+            OrderLayout {
+                normalized: slash_path(
+                    layout
+                        .shown
+                        .strip_prefix(&includes)
+                        .unwrap_or(&layout.shown),
+                ),
+                language: layout
+                    .real
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default(),
+                parent: parent.clone(),
+            },
+        ));
+        name = parent;
+    }
+    let order_template = OrderTemplate {
+        rel: rel.to_path_buf(),
+        data_files: order_files.len(),
+        layout: order_layouts.first().map(|(n, _)| n.clone()),
+        dated: reads_no_file_date(data.get("date")),
+    };
     let templ = |pages| {
         Ok(Loaded::Template(Box::new(Templ {
             rel: rel.to_path_buf(),
             membership: membership.clone(),
             computed_membership,
-            data_layout: data_layouts.first().map(|l| l.real.clone()),
+            order: order_template.clone(),
+            order_layouts: order_layouts.clone(),
+            js_data,
             pages,
         })))
     };
@@ -1351,19 +1420,27 @@ fn build_in_pool(
 
     // Collections: every page of every template, in the order 11ty adds
     // templates to its map.
-    let keys: Vec<(PathBuf, Option<PathBuf>)> = templates
-        .iter()
-        .map(|t| (t.rel.clone(), t.data_layout.clone()))
-        .collect();
-    let mut slots_by_index: Vec<Option<Templ>> = templates.into_iter().map(Some).collect();
-    let templates: Vec<Templ> = collections::entry_order(&keys)
-        .into_iter()
-        .filter_map(|i| slots_by_index[i].take())
-        .collect();
+    let mut order_layouts: HashMap<String, OrderLayout> = HashMap::new();
+    for t in &templates {
+        for (name, layout) in &t.order_layouts {
+            order_layouts
+                .entry(name.clone())
+                .or_insert_with(|| layout.clone());
+        }
+    }
+    let order_inputs: Vec<OrderTemplate> = templates.iter().map(|t| t.order.clone()).collect();
+    let js_data = templates.iter().filter(|t| t.js_data).count();
+    let mut by_index: Vec<Option<Templ>> = templates.into_iter().map(Some).collect();
+    let templates: Vec<Templ> =
+        crate::order::entry_order(&order_inputs, &order_layouts, &slash_path(&input_rel))
+            .into_iter()
+            .filter_map(|i| by_index[i].take())
+            .collect();
     let mut gap = collections_gap(
         unbuilt,
         discovery.unsupported.len(),
         templates.iter().any(|t| t.computed_membership),
+        js_data,
     );
     let input_dot = dot_dir(&input_rel);
     let mut slots: Vec<Slot> = Vec::new();
@@ -1689,7 +1766,12 @@ enum Slot {
 
 /// Why the collections can't be built, when they can't. A collection built
 /// without a page would be wrong, so every read of `collections` is refused.
-fn collections_gap(unbuilt: usize, unsupported: usize, computed: bool) -> Option<String> {
+fn collections_gap(
+    unbuilt: usize,
+    unsupported: usize,
+    computed: bool,
+    js_data: usize,
+) -> Option<String> {
     let plural = |n: usize, one: &str, many: &str| {
         if n == 1 {
             one.to_string()
@@ -1709,6 +1791,12 @@ fn collections_gap(unbuilt: usize, unsupported: usize, computed: bool) -> Option
             "{unsupported} {} a template language Brrrty doesn't support yet, so the collections would be missing {}",
             plural(unsupported, "template uses", "templates use"),
             plural(unsupported, "its page", "their pages")
+        ));
+    }
+    if js_data > 0 {
+        return Some(format!(
+            "{js_data} {} a JavaScript data file, which 11ty loads from the disk while it decides the order of templates, so Brrrty can't tell the order of the collections",
+            plural(js_data, "template uses", "templates use")
         ));
     }
     computed.then(|| {
