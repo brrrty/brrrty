@@ -73,28 +73,11 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         let entry = match entry {
             Err(e) => {
                 if let Some(link) = loop_child(&e) {
-                    found.warnings.push(
-                        Problem::warning(
-                            codes::SYMLINK_LOOP,
-                            "this link points back into a folder that contains it, so it was skipped",
-                        )
-                        .with_path(shown(link))
-                        .with_help("Remove the link or point it outside its own folder."),
-                    );
+                    found.warnings.push(loop_warning(&shown(link)));
                     continue;
                 }
                 if let Some(link) = broken_link(&e) {
-                    let target = std::fs::read_link(link)
-                        .map(|t| t.display().to_string())
-                        .unwrap_or_else(|_| "a missing file".to_string());
-                    found.warnings.push(
-                        Problem::warning(
-                            codes::SYMLINK_BROKEN,
-                            format!("this link points to `{target}`, which does not exist"),
-                        )
-                        .with_path(shown(link))
-                        .with_help("remove the link or point it at an existing file"),
-                    );
+                    found.warnings.push(broken_link_warning(link, &shown(link)));
                     continue;
                 }
                 Err(e)
@@ -211,4 +194,28 @@ fn broken_link(e: &ignore::Error) -> Option<&std::path::Path> {
         ignore::Error::Partial(errs) => errs.iter().find_map(broken_link),
         _ => None,
     }
+}
+
+/// The warning for a link that points back into a folder containing it.
+pub(crate) fn loop_warning(shown: &std::path::Path) -> Problem {
+    Problem::warning(
+        codes::SYMLINK_LOOP,
+        "this link points back into a folder that contains it, so it was skipped",
+    )
+    .with_path(shown)
+    .with_help("Remove the link or point it outside its own folder.")
+}
+
+/// The warning for a link whose target is missing; `link` is where to read
+/// the target, `shown` the path to report.
+pub(crate) fn broken_link_warning(link: &std::path::Path, shown: &std::path::Path) -> Problem {
+    let target = std::fs::read_link(link)
+        .map(|t| t.display().to_string())
+        .unwrap_or_else(|_| "a missing file".to_string());
+    Problem::warning(
+        codes::SYMLINK_BROKEN,
+        format!("this link points to `{target}`, which does not exist"),
+    )
+    .with_path(shown)
+    .with_help("remove the link or point it at an existing file")
 }

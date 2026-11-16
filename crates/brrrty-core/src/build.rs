@@ -317,8 +317,18 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     let mut own = layout_data.clone();
     own.extend(front.iter().map(|(k, v)| (k.clone(), v.clone())));
     shared.check_withheld(&own, &shown)?;
-    let mut data = shared.globals.clone();
+    // 11ty merges its `eleventy` data over `_data` (deeply), then replaces
+    // `pkg` outright with the project's package.json.
+    let mut data = Data::new();
     merge(&mut data, &shared.user_data);
+    let mut eleventy = Data::new();
+    if let Some(v) = shared.globals.get("eleventy") {
+        eleventy.insert("eleventy".to_string(), v.clone());
+    }
+    merge(&mut data, &eleventy);
+    if let Some(v) = shared.globals.get("pkg") {
+        data.insert("pkg".to_string(), v.clone());
+    }
     merge(&mut data, &layout_data);
     merge(&mut data, &front);
 

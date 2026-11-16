@@ -152,3 +152,72 @@ fn reserved_names_in_global_data_are_reported_once() {
     assert_eq!(errs[0].code, codes::DATA_RESERVED);
     assert_eq!(read(root, "a/index.html"), "a");
 }
+
+/// Probed: `size`, `first` and `last` from `_data` print their values, and
+/// from a JavaScript data file they are refused like any other key.
+#[test]
+fn size_first_and_last_are_ordinary_data_keys() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/_data/size.json", "[5, 6, 7]");
+    write(root, "src/_data/first.json", "\"F\"");
+    write(root, "src/_data/last.json", "\"L\"");
+    write(root, "src/a.liquid", "{{ size }} {{ first }} {{ last }}");
+    write(root, "src/b.liquid", "{{ size | json }} [{{ nope }}]");
+    let r = run(root);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(read(root, "a/index.html"), "567 F L");
+    assert_eq!(read(root, "b/index.html"), "[5,6,7] []");
+}
+
+#[test]
+fn size_first_and_last_from_javascript_are_refused() {
+    for key in ["size", "first", "last"] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        write(root, &format!("src/_data/{key}.js"), "module.exports = 7;");
+        write(root, "src/a.liquid", &format!("{{{{ {key} }}}}"));
+        write(root, "src/b.liquid", "plain");
+        let r = run(root);
+        let errs = errors(&r);
+        assert_eq!(errs.len(), 1, "{key}: {:#?}", r.problems);
+        assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED, "{key}");
+        assert_eq!(errs[0].path.as_deref(), Some(Path::new("src/a.liquid")));
+        assert!(!root.join("_site/a/index.html").exists(), "{key}");
+        assert_eq!(read(root, "b/index.html"), "plain");
+    }
+}
+
+/// Probed: `eleventy` is deep-merged over `_data/eleventy.json`, and `pkg`
+/// replaces `_data/pkg.json` outright.
+#[test]
+fn eleventy_and_pkg_win_over_data_files() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "package.json",
+        r#"{"name": "real", "version": "1.0.0"}"#,
+    );
+    write(
+        root,
+        "src/_data/pkg.json",
+        r#"{"version": "fake", "extra": 1}"#,
+    );
+    write(
+        root,
+        "src/_data/eleventy.json",
+        r#"{"version": "fake", "extra": 2}"#,
+    );
+    write(
+        root,
+        "src/a.liquid",
+        "{{ pkg | json }} {{ eleventy.version }} {{ eleventy.extra }} {{ eleventy.generator }}",
+    );
+    let r = run(root);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        read(root, "a/index.html"),
+        r#"{"name":"real","version":"1.0.0"} 3.1.8 2 Eleventy v3.1.8"#
+    );
+}

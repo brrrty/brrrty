@@ -292,5 +292,7 @@ fn tracked_renders_list_undefined_variables() {
         .unwrap();
     let r = e.render_tracked(&t, &data(), &f).unwrap();
     assert_eq!(r.output, "D1012");
-    assert_eq!(r.undefined, ["collections", "from_inc", "site"]);
+    // `size` reads 0 from the empty globals, and is still recorded so a data
+    // key of that name can't be shadowed unnoticed.
+    assert_eq!(r.undefined, ["collections", "from_inc", "site", "size"]);
 }

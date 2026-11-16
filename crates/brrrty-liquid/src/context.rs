@@ -275,10 +275,13 @@ impl<'a> Context<'a> {
         if let Some(v) = self.data_get(&k) {
             return Val::V(v);
         }
-        if matches!(key, Value::String(s) if &**s == "size") {
+        // Recorded even for `size`, so a data key of that name can't be
+        // shadowed without the caller knowing.
+        let is_size = matches!(key, Value::String(s) if &**s == "size");
+        self.undefined.borrow_mut().insert(k);
+        if is_size {
             return Val::number(0.0);
         }
-        self.undefined.borrow_mut().insert(k);
         Val::undefined()
     }
 

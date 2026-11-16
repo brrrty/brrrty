@@ -7,6 +7,7 @@ use std::sync::Arc;
 use brrrty_js::Value;
 
 use super::{js_object, reserved_keys, reserved_problem};
+use crate::discover::{broken_link_warning, loop_warning};
 use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 
@@ -47,7 +48,14 @@ pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
     };
     let data_dir = input.join("_data");
     let mut files = Vec::new();
-    collect(&data_dir, &mut files);
+    let start = data_dir.canonicalize().unwrap_or_else(|_| data_dir.clone());
+    collect(
+        &data_dir,
+        root,
+        &mut vec![start],
+        &mut files,
+        &mut out.problems,
+    );
     // `Vec::sort_by_key` is stable, like the sort 11ty does.
     files.sort_by_key(|f| priority(f));
 
@@ -146,28 +154,47 @@ pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
 
 /// Data files under `dir`: each folder's files by name, then its folders by
 /// name, which is the order the glob walk gave on the probed systems.
-fn collect(dir: &Path, found: &mut Vec<PathBuf>) {
+/// Symbolic links are followed, as 11ty's glob does; a link that loops back
+/// into its own folder or points nowhere is skipped with a warning, as
+/// discovery does.
+fn collect(
+    dir: &Path,
+    root: &Path,
+    ancestors: &mut Vec<PathBuf>,
+    found: &mut Vec<PathBuf>,
+    warnings: &mut Vec<Problem>,
+) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
     let mut entries: Vec<_> = read.flatten().collect();
     entries.sort_by_key(|e| e.file_name());
+    let shown = |p: &Path| p.strip_prefix(root).unwrap_or(p).to_path_buf();
     let mut dirs = Vec::new();
     for entry in entries {
         let path = entry.path();
-        let Ok(kind) = entry.file_type() else {
+        // `metadata` looks through links; a link whose target is gone fails.
+        let Ok(meta) = std::fs::metadata(&path) else {
+            if entry.file_type().is_ok_and(|t| t.is_symlink()) {
+                warnings.push(broken_link_warning(&path, &shown(&path)));
+            }
             continue;
         };
-        if kind.is_dir() {
+        if meta.is_dir() {
             dirs.push(path);
-        } else if (kind.is_file() || (kind.is_symlink() && path.is_file()))
-            && matches_glob(&entry.file_name().to_string_lossy())
-        {
+        } else if meta.is_file() && matches_glob(&entry.file_name().to_string_lossy()) {
             found.push(path);
         }
     }
     for d in dirs {
-        collect(&d, found);
+        let canonical = d.canonicalize().unwrap_or_else(|_| d.clone());
+        if ancestors.contains(&canonical) {
+            warnings.push(loop_warning(&shown(&d)));
+            continue;
+        }
+        ancestors.push(canonical);
+        collect(&d, root, ancestors, found, warnings);
+        ancestors.pop();
     }
 }
 
@@ -459,5 +486,48 @@ mod tests {
         assert_eq!(g.problems.len(), 1, "{:?}", g.problems);
         assert_eq!(g.problems[0].code, codes::DATA_RESERVED);
         assert_eq!(g.value, j(json!({"ok": 1})));
+    }
+
+    /// Probed: 11ty's glob follows symlinked folders and files in `_data`.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_folders_and_files_are_followed() {
+        use std::os::unix::fs::symlink;
+        let t = site(&[("real/x.json", r#"{"v": 1}"#)]);
+        let data = t.path().join("src/_data");
+        fs::create_dir_all(t.path().join("ext")).unwrap();
+        fs::write(t.path().join("ext/y.json"), r#"{"v": 2}"#).unwrap();
+        symlink("../../ext", data.join("linked")).unwrap();
+        symlink("real/x.json", data.join("file.json")).unwrap();
+        symlink("missing.json", data.join("gone.json")).unwrap();
+        symlink(".", data.join("real/back")).unwrap();
+        let g = load(&t);
+        assert_eq!(
+            g.value,
+            j(json!({
+                "file": {"v": 1},
+                "linked": {"y": {"v": 2}},
+                "real": {"x": {"v": 1}},
+            }))
+        );
+        let mut codes: Vec<_> = g
+            .problems
+            .iter()
+            .map(|p| (p.code, p.path.clone()))
+            .collect();
+        codes.sort();
+        assert_eq!(
+            codes,
+            vec![
+                (
+                    crate::problem::codes::SYMLINK_BROKEN,
+                    Some(PathBuf::from("src/_data/gone.json"))
+                ),
+                (
+                    crate::problem::codes::SYMLINK_LOOP,
+                    Some(PathBuf::from("src/_data/real/back"))
+                ),
+            ]
+        );
     }
 }
