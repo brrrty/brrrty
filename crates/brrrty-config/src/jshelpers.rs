@@ -20,6 +20,22 @@ fn js_string(v: &Dynamic) -> Res<String> {
     Ok(val(v, "js_string")?.to_js_string_in(Tz::Local))
 }
 
+/// JavaScript's `JSON.stringify(v)`: a string, or `()` for undefined.
+fn json_stringify(v: &Dynamic) -> Res<Dynamic> {
+    let value = val(v, "json_stringify")?;
+    if value == Value::Undefined {
+        return Ok(Dynamic::UNIT);
+    }
+    brrrty_liquid::json_stringify(&value)
+        .map(Dynamic::from)
+        .ok_or_else(|| {
+            invalid(
+                "json_stringify: a collection item can't be turned into JSON whole; pick the fields you need".into(),
+                rhai::Position::NONE,
+            )
+        })
+}
+
 /// JavaScript's `a + b`: a string when either side is a string, array,
 /// object or date, else the sum of the two as numbers.
 fn js_concat(a: &Dynamic, b: &Dynamic) -> Res<Dynamic> {
@@ -170,6 +186,7 @@ fn js_round(x: FLOAT) -> FLOAT {
 
 pub fn register(e: &mut Engine) {
     e.register_fn("js_string", |v: Dynamic| js_string(&v));
+    e.register_fn("json_stringify", |v: Dynamic| json_stringify(&v));
     e.register_fn("js_concat", |a: Dynamic, b: Dynamic| js_concat(&a, &b));
     e.register_fn("js_sort", js_sort);
     e.register_fn("js_sort_by", js_sort_by);

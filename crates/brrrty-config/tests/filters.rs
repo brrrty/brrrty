@@ -1051,6 +1051,33 @@ fn text(expr: &str) -> String {
 }
 
 #[test]
+fn json_stringify_is_javascripts() {
+    // Node: JSON.stringify(x).
+    let j = |expr: &str| eval(&format!("json_stringify({expr})"));
+    assert_eq!(j("#{ b: 1 }"), s(r#"{"b":1}"#));
+    let o = r#"{
+        let o = object();
+        o.b = 1;
+        o.a = [1, "x", null_value(), (), true, -0.0, 1e21, 0.1 + 0.2, 0.0 / 0.0];
+        o.c = "< \"\\\n\u0001é\U0001F600";
+        o
+    }"#;
+    assert_eq!(
+        j(o),
+        s(
+            "{\"b\":1,\"a\":[1,\"x\",null,null,true,0,1e+21,0.30000000000000004,null],\"c\":\"< \\\"\\\\\\n\\u0001\u{e9}\u{1F600}\"}"
+        )
+    );
+    assert_eq!(j(r#""s""#), s(r#""s""#));
+    assert_eq!(j("null_value()"), s("null"));
+    assert_eq!(j("1.5"), s("1.5"));
+    assert_eq!(j("[]"), s("[]"));
+    assert_eq!(j("{ let o = object(); o.u = (); o }"), s("{}"));
+    assert_eq!(j("()"), Value::Undefined);
+    assert_eq!(j("date(0)"), s(r#""1970-01-01T00:00:00.000Z""#));
+}
+
+#[test]
 fn js_string_is_javascripts_string() {
     // Node: String(x).
     assert_eq!(text("[1, null_value(), (), \"a\", [2, 3]]"), "1,,,a,2,3");

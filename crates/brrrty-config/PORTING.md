@@ -76,6 +76,7 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `String(v)`, `` `${v}` `` | `to_string()` is Rhai's for arrays and maps | `js_string(v)` (`[1,null]` is `1,`, objects are `[object Object]`) |
 | `arr.sort()` | Brrrty replaces Rhai's `sort()` with JavaScript's | `arr.sort()`: by `String(item)` in UTF-16 order (`[3, 10, 2]` gives `[10, 2, 3]`), `undefined` last, in place, and returns the array. `js_sort(arr)` gives the same as a new array |
 | `arr.sort((a, b) => ...)` | Brrrty replaces Rhai's `sort(fn)` with JavaScript's | `arr.sort(\|a, b\| ...)` or `js_sort_by(arr, \|a, b\| ...)`: any number (fractions, `NaN` is 0) or a bool; same result as V8, including for short arrays with sloppy comparators. A comparator that throws or calls a missing function is an error, as in JS |
+| `JSON.stringify(v)` | | `json_stringify(v)`: no spacing, keys in `object()` order, `undefined` and `NaN` as JS gives them; `()` for `undefined` itself |
 | `Math.round(x)` | `round()` rounds halves away from zero | `js_round(x)`: halves round up (`-4.5` is `-4`), `-0` stays `-0` |
 | `if (x)` | Only `bool` is allowed | `if truthy(x)` |
 | `x \|\| y` | `\|\|` needs bools | `if truthy(x) { x } else { y }` |

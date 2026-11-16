@@ -19,6 +19,7 @@ mod render;
 mod tags;
 
 pub use ast::Template;
+pub use context::json as json_stringify;
 pub use engine::{
     ArgsFilterFn, Engine, EngineOptions, FilterCtx, FilterFn, LoadError, Loader, Rendered, Tz,
 };

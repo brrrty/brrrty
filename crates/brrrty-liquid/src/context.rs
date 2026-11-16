@@ -193,8 +193,9 @@ fn json_str(s: &str) -> String {
     json_string(&s.encode_utf16().collect::<Vec<_>>())
 }
 
-/// `JSON.stringify(v)` without spacing. `None` for undefined.
-pub(crate) fn json(v: &Value) -> Option<String> {
+/// `JSON.stringify(v)` without spacing. `None` for undefined, and for a
+/// value holding a collection item, which can't be read whole.
+pub fn json(v: &Value) -> Option<String> {
     Some(match v {
         Value::Undefined => return None,
         Value::Null => "null".into(),

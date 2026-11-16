@@ -79,8 +79,9 @@
 //! at that line.
 //!
 //! Rhai's operators aren't changed. Where they differ from JavaScript's,
-//! `js_string`, `js_concat`, `js_sort`, `js_sort_by`, `js_div` and
-//! `js_round` do what JavaScript does; see `PORTING.md`.
+//! `js_string`, `js_concat`, `js_sort`, `js_sort_by`, `js_div`,
+//! `js_round` and `json_stringify` do what JavaScript does; see
+//! `PORTING.md`.
 //!
 //! ## Key order
 //!
