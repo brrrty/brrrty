@@ -9,8 +9,8 @@ use brrrty_liquid::{Engine, EngineOptions, ErrorKind, FilterFn, LiquidError, Loa
 struct NoPartials;
 
 impl Loader for NoPartials {
-    fn load(&self, _: &str) -> Option<(String, String)> {
-        None
+    fn load(&self, _: &str) -> Result<(String, String), brrrty_liquid::LoadError> {
+        Err(Default::default())
     }
 }
 

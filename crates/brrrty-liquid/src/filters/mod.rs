@@ -248,8 +248,8 @@ mod tests {
     struct NoPartials;
 
     impl Loader for NoPartials {
-        fn load(&self, _: &str) -> Option<(String, String)> {
-            None
+        fn load(&self, _: &str) -> Result<(String, String), crate::LoadError> {
+            Err(Default::default())
         }
     }
 

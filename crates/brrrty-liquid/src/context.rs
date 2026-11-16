@@ -1,7 +1,7 @@
 //! Render-time values and state: LiquidJS's drops, scopes and registers.
 
-use std::cell::Cell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -243,6 +243,8 @@ pub(crate) struct Context<'a> {
     pub continue_called: bool,
     /// Bytes written so far, captures included.
     pub written: usize,
+    /// Variables looked up that no scope and no data has.
+    pub undefined: RefCell<BTreeSet<String>>,
 }
 
 impl<'a> Context<'a> {
@@ -256,6 +258,7 @@ impl<'a> Context<'a> {
             break_called: false,
             continue_called: false,
             written: 0,
+            undefined: RefCell::new(BTreeSet::new()),
         }
     }
 
@@ -275,6 +278,7 @@ impl<'a> Context<'a> {
         if matches!(key, Value::String(s) if &**s == "size") {
             return Val::number(0.0);
         }
+        self.undefined.borrow_mut().insert(k);
         Val::undefined()
     }
 

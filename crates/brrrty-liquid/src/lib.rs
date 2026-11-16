@@ -21,7 +21,7 @@ mod tz;
 mod zones;
 
 pub use ast::Template;
-pub use engine::{Engine, EngineOptions, FilterCtx, FilterFn, Loader, Tz};
+pub use engine::{Engine, EngineOptions, FilterCtx, FilterFn, LoadError, Loader, Rendered, Tz};
 pub use error::{ErrorKind, LiquidError};
 
 /// Parses `source`. `template_name` names the template in errors.

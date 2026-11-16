@@ -28,6 +28,7 @@ use brrrty_js::Value;
 
 use crate::ast::{FilePath, Include, Render, Template};
 use crate::context::{Context, LoopDrop, Val};
+use crate::engine::LoadError;
 use crate::error::ErrorKind;
 use crate::ops;
 use crate::render::{MAX_ITEMS, R, RenderErr, Renderer, too_many};
@@ -97,26 +98,34 @@ fn with_extension(name: &str) -> String {
 /// parsed template, which is kept for the next use.
 fn load(r: &mut Renderer<'_>, name: &str, tag: &str) -> R<(String, Rc<Template>)> {
     let file = with_extension(name);
-    let Some((path, source)) = r.loader.load(&file) else {
-        let mut help = Vec::new();
-        let tried = r.loader.search_paths(&file);
-        if !tried.is_empty() {
-            help.push(format!("tried: {}", tried.join(", ")));
-        }
-        if file != name {
-            help.push(format!(
-                "\".liquid\" was added because \"{name}\" has no extension; write the whole file name to {tag} another kind of file"
+    let (path, source) = match r.loader.load(&file) {
+        Ok(found) => found,
+        Err(LoadError { io: Some(io), .. }) => {
+            return Err(RenderErr::new(
+                ErrorKind::Render,
+                format!("cannot read {tag} file \"{file}\": {io}"),
             ));
         }
-        let err = RenderErr::new(
-            ErrorKind::Render,
-            format!("{tag} file not found: \"{file}\""),
-        );
-        return Err(if help.is_empty() {
-            err
-        } else {
-            err.with_help(help.join("; "))
-        });
+        Err(LoadError { tried, io: None }) => {
+            let mut help = Vec::new();
+            if !tried.is_empty() {
+                help.push(format!("tried: {}", tried.join(", ")));
+            }
+            if file != name {
+                help.push(format!(
+                    "\".liquid\" was added because \"{name}\" has no extension; write the whole file name to {tag} another kind of file"
+                ));
+            }
+            let err = RenderErr::new(
+                ErrorKind::Render,
+                format!("{tag} file not found: \"{file}\""),
+            );
+            return Err(if help.is_empty() {
+                err
+            } else {
+                err.with_help(help.join("; "))
+            });
+        }
     };
     if let Some(t) = r.partials.get(&path) {
         return Ok((path, t.clone()));

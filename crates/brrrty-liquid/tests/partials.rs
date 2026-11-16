@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use brrrty_js::Value;
-use brrrty_liquid::{Engine, EngineOptions, ErrorKind, Loader, Tz};
+use brrrty_liquid::{Engine, EngineOptions, ErrorKind, LoadError, Loader, Tz};
 
 #[derive(Default)]
 struct Files(BTreeMap<String, String>);
@@ -22,13 +22,14 @@ impl Files {
 }
 
 impl Loader for Files {
-    fn load(&self, name: &str) -> Option<(String, String)> {
+    fn load(&self, name: &str) -> Result<(String, String), LoadError> {
         self.0
             .get(name)
             .map(|s| (format!("_includes/{name}"), s.clone()))
-    }
-    fn search_paths(&self, name: &str) -> Vec<String> {
-        vec![format!("_includes/{name}"), format!("./{name}")]
+            .ok_or_else(|| LoadError {
+                tried: vec![format!("_includes/{name}"), format!("./{name}")],
+                io: None,
+            })
     }
 }
 
@@ -130,9 +131,9 @@ fn partials_match_liquidjs() {
 fn names_get_liquid_when_they_have_no_extension() {
     struct Spy(Mutex<Vec<String>>);
     impl Loader for Spy {
-        fn load(&self, name: &str) -> Option<(String, String)> {
+        fn load(&self, name: &str) -> Result<(String, String), LoadError> {
             self.0.lock().unwrap().push(name.to_string());
-            Some((name.to_string(), String::new()))
+            Ok((name.to_string(), String::new()))
         }
     }
     let spy = Spy(Mutex::new(Vec::new()));
@@ -218,18 +219,18 @@ fn cycles_are_named() {
 fn nesting_is_limited_to_64_levels() {
     struct Chain(usize);
     impl Loader for Chain {
-        fn load(&self, name: &str) -> Option<(String, String)> {
+        fn load(&self, name: &str) -> Result<(String, String), LoadError> {
             let n: usize = name
-                .strip_prefix('d')?
-                .strip_suffix(".liquid")?
-                .parse()
-                .ok()?;
+                .strip_prefix('d')
+                .and_then(|n| n.strip_suffix(".liquid"))
+                .and_then(|n| n.parse().ok())
+                .ok_or_else(LoadError::default)?;
             let body = if n < self.0 {
                 format!("{{% include 'd{}' %}}", n + 1)
             } else {
                 "END".to_string()
             };
-            Some((name.to_string(), body))
+            Ok((name.to_string(), body))
         }
     }
     let e = engine();
@@ -246,4 +247,50 @@ fn errors_inside_a_partial_name_the_partial() {
     assert_eq!(e.message, "undefined filter: nosuchfilter");
     assert_eq!(e.template, "_includes/bad.liquid");
     assert_eq!((e.line, e.column), (2, 3));
+}
+
+/// A file the loader found but could not use is not reported as missing.
+#[test]
+fn an_unreadable_partial_says_why() {
+    struct Broken;
+    impl Loader for Broken {
+        fn load(&self, _: &str) -> Result<(String, String), LoadError> {
+            Err(LoadError {
+                tried: vec!["_includes/x.liquid".into()],
+                io: Some(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "stream did not contain valid UTF-8",
+                )),
+            })
+        }
+    }
+    let e = engine();
+    let t = e.parse("page", "{% include 'x' %}").unwrap();
+    let err = e.render(&t, &data(), &Broken).unwrap_err();
+    assert_eq!(
+        err.message,
+        "cannot read include file \"x.liquid\": stream did not contain valid UTF-8"
+    );
+    assert_eq!(err.help, None);
+}
+
+/// `render_tracked` lists the variables nothing defined, including those an
+/// `include` reads, but not those a `render` partial reads: it never sees
+/// the data.
+#[test]
+fn tracked_renders_list_undefined_variables() {
+    let f = Files::new(&[
+        ("inc.liquid", "{{ from_inc }}"),
+        ("r.liquid", "{{ hidden }}"),
+    ]);
+    let e = engine();
+    let t = e
+        .parse(
+            "page",
+            "{{ d }}{{ site.title }}{% assign z = 1 %}{{ z }}{{ size }}{% for i in xs %}{{ i }}{% endfor %}{% include 'inc' %}{% render 'r' %}{% if collections %}{% endif %}",
+        )
+        .unwrap();
+    let r = e.render_tracked(&t, &data(), &f).unwrap();
+    assert_eq!(r.output, "D1012");
+    assert_eq!(r.undefined, ["collections", "from_inc", "site"]);
 }

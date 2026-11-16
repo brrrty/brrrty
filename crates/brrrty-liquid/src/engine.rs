@@ -56,6 +56,18 @@ pub type FilterFn = Arc<
     dyn Fn(&Value, &[Value], &[(String, Value)], &FilterCtx) -> Result<Value, String> + Send + Sync,
 >;
 
+/// Why a [`Loader`] could not supply a partial.
+///
+/// `io` is `None` when no root has the file: the partial is missing, and
+/// `tried` lists every path looked at. `io` is `Some` when a file was found
+/// but could not be used: it can't be read, isn't UTF-8, or resolves
+/// outside the loader's roots.
+#[derive(Debug, Default)]
+pub struct LoadError {
+    pub tried: Vec<String>,
+    pub io: Option<std::io::Error>,
+}
+
 /// Finds partials by name. Returns the resolved name and the source.
 ///
 /// The engine does the name handling LiquidJS does: it appends `.liquid`
@@ -64,15 +76,18 @@ pub type FilterFn = Arc<
 /// `./x.liquid`). The loader only maps a file name to a file: it tries each
 /// of its roots in order (11ty's are the includes folder, then the input
 /// folder), refuses names that leave a root, and returns the path it found
-/// and the source.
+/// and the source. Partials are told apart by that path, so it should be
+/// canonical: a cycle is then found however the name is spelled.
 pub trait Loader: Send + Sync {
-    fn load(&self, name: &str) -> Option<(String, String)>;
+    fn load(&self, name: &str) -> Result<(String, String), LoadError>;
+}
 
-    /// Every path `load` tries for `name`, in order. It is shown when the
-    /// file is missing.
-    fn search_paths(&self, _name: &str) -> Vec<String> {
-        Vec::new()
-    }
+/// A render's output, and the variables it read that were not defined, in
+/// sorted order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rendered {
+    pub output: String,
+    pub undefined: Vec<String>,
 }
 
 /// A registered filter: one the embedder added, or one of the standard set.
@@ -168,6 +183,19 @@ impl Engine {
         loader: &dyn Loader,
     ) -> Result<String, LiquidError> {
         Renderer::new(self, &t.name, data, loader).render(&t.nodes)
+    }
+
+    /// Renders `t` like [`Engine::render`], and also reports the variables
+    /// it looked up that neither the template nor `data` defines. Lookups
+    /// inside `{% render %}` partials are not counted: those partials never
+    /// see the data.
+    pub fn render_tracked(
+        &self,
+        t: &Template,
+        data: &Value,
+        loader: &dyn Loader,
+    ) -> Result<Rendered, LiquidError> {
+        Renderer::new(self, &t.name, data, loader).render_tracked(&t.nodes)
     }
 
     /// LiquidJS's message for an unknown filter, and a hint naming the

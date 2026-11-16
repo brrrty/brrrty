@@ -11,7 +11,7 @@ use crate::ast::{
     BinaryOp, Expr, FilterArg, FilteredValue, HashArg, Literal, Node, Segment, Span, Template,
 };
 use crate::context::{Context, Val};
-use crate::engine::{Engine, Filter, FilterCtx, Loader, Tz};
+use crate::engine::{Engine, Filter, FilterCtx, Loader, Rendered, Tz};
 use crate::error::{ErrorKind, LiquidError};
 use crate::lexer::grow;
 use crate::ops::{self, Cmp};
@@ -106,10 +106,17 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    pub fn render(mut self, nodes: &[Node]) -> Result<String, LiquidError> {
+    pub fn render(self, nodes: &[Node]) -> Result<String, LiquidError> {
+        self.render_tracked(nodes).map(|r| r.output)
+    }
+
+    pub fn render_tracked(mut self, nodes: &[Node]) -> Result<Rendered, LiquidError> {
         let mut out = String::new();
         match self.render_nodes(nodes, &mut out) {
-            Ok(()) => Ok(out),
+            Ok(()) => Ok(Rendered {
+                output: out,
+                undefined: self.ctx.undefined.into_inner().into_iter().collect(),
+            }),
             Err(RenderErr::Located(e)) => Err(*e),
             Err(RenderErr::Plain { .. }) => unreachable!("render_nodes locates every error"),
         }
@@ -396,8 +403,8 @@ mod tests {
     struct NoPartials;
 
     impl Loader for NoPartials {
-        fn load(&self, _: &str) -> Option<(String, String)> {
-            None
+        fn load(&self, _: &str) -> Result<(String, String), crate::LoadError> {
+            Err(Default::default())
         }
     }
 

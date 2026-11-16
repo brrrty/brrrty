@@ -30,8 +30,11 @@ impl Default for BrrrtyLiquid {
 struct Includes<'a>(&'a BTreeMap<String, String>);
 
 impl Loader for Includes<'_> {
-    fn load(&self, name: &str) -> Option<(String, String)> {
-        self.0.get(name).map(|s| (name.to_string(), s.clone()))
+    fn load(&self, name: &str) -> Result<(String, String), brrrty_liquid::LoadError> {
+        self.0
+            .get(name)
+            .map(|s| (name.to_string(), s.clone()))
+            .ok_or_else(Default::default)
     }
 }
 

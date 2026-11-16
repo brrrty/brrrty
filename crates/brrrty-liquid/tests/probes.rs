@@ -154,8 +154,8 @@ fn split_position(text: &str) -> (&str, Option<(usize, usize)>) {
 struct NoPartials;
 
 impl brrrty_liquid::Loader for NoPartials {
-    fn load(&self, _: &str) -> Option<(String, String)> {
-        None
+    fn load(&self, _: &str) -> Result<(String, String), brrrty_liquid::LoadError> {
+        Err(Default::default())
     }
 }
 

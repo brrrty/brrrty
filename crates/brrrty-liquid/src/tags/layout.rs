@@ -7,14 +7,18 @@ use crate::context::Val;
 use crate::error::ErrorKind;
 use crate::render::{R, RenderErr, Renderer};
 
-/// `{% layout none %}` renders what follows it. A layout file needs the
-/// partial loader.
+/// `{% layout none %}` renders what follows it. LiquidJS's layout files
+/// (`{% layout "name" %}` with `{% block %}`s) are not supported: 11ty sites
+/// use the front matter `layout` key instead.
 pub(super) fn layout(r: &mut Renderer<'_>, l: &Layout, out: &mut String) -> R<()> {
     match l.file {
         FilePath::None => r.render_nodes(&l.body, out),
         _ => Err(RenderErr::new(
             ErrorKind::Render,
-            "`{% layout %}` with a file is not supported yet",
+            "the `{% layout %}` tag with a file isn't supported",
+        )
+        .with_help(
+            "use 11ty's front matter instead: put `layout: name` between the `---` lines and print `{{ content }}` in the layout",
         )),
     }
 }
