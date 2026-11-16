@@ -1,0 +1,20 @@
+[package]
+name = "brrrty-serve"
+version = "0.0.7"
+description = "Local static file server for Brrrty, an Eleventy-compatible static site generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["static-site", "ssg", "eleventy", "11ty", "dev-server"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
+# Regenerates src/mime_table.rs; it needs Node and the mime package.
+exclude = ["tools/"]
+
+[dependencies]
+thiserror = "2.0.21"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,0 +1,909 @@
+//! Behavior pinned against `@11ty/eleventy-dev-server` 2.1.2 (probed with
+//! Node 26 on a temp output folder), plus the path traversal suite.
+//!
+//! Where the dev server is stricter or looser than Brrrty on purpose, the
+//! test says so.
+
+use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use brrrty_serve::{
+    DEFAULT_HOST, DEFAULT_PORT, HtmlRewrite, PORT_RETRIES, RunningServer, ServeError, Server,
+};
+
+struct Reply {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl Reply {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+}
+
+/// Send `raw` bytes and read one response, using the content length for the
+/// body so a kept-alive connection works too.
+fn read_reply(stream: &mut TcpStream, head_only: bool) -> Reply {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while !buf.ends_with(b"\r\n\r\n") {
+        let n = stream.read(&mut byte).expect("read head");
+        assert!(n == 1, "connection closed inside the head: {buf:?}");
+        buf.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&buf).into_owned();
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().unwrap();
+    let status: u16 = status_line.split(' ').nth(1).unwrap().parse().unwrap();
+    let headers: Vec<(String, String)> = lines
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let (n, v) = l.split_once(':').unwrap();
+            (n.to_string(), v.trim().to_string())
+        })
+        .collect();
+    let len: usize = headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case("content-length"))
+        .map(|(_, v)| v.parse().unwrap())
+        .unwrap_or(0);
+    let mut body = vec![0u8; if head_only { 0 } else { len }];
+    stream.read_exact(&mut body).expect("read body");
+    Reply {
+        status,
+        headers,
+        body,
+    }
+}
+
+fn raw(srv: &RunningServer, request: &[u8]) -> Reply {
+    let mut s = TcpStream::connect(srv.local_addr()).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    s.write_all(request).unwrap();
+    read_reply(&mut s, request.starts_with(b"HEAD "))
+}
+
+fn request(srv: &RunningServer, method: &str, target: &str, extra: &[(&str, &str)]) -> Reply {
+    let mut req = format!("{method} {target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+    for (n, v) in extra {
+        req.push_str(&format!("{n}: {v}\r\n"));
+    }
+    req.push_str("\r\n");
+    raw(srv, req.as_bytes())
+}
+
+fn get(srv: &RunningServer, target: &str) -> Reply {
+    request(srv, "GET", target, &[])
+}
+
+fn write(dir: &Path, rel: &str, content: &str) {
+    let p = dir.join(rel);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, content).unwrap();
+}
+
+/// A site folder inside a parent that also holds a secret and a sibling folder
+/// whose name starts with the site folder's name.
+struct Fixture {
+    _tmp: tempfile::TempDir,
+    site: std::path::PathBuf,
+    parent: std::path::PathBuf,
+}
+
+fn fixture(with_404: bool) -> Fixture {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().canonicalize().unwrap();
+    let site = parent.join("site");
+    write(&site, "index.html", "<html><body>home</body></html>");
+    write(&site, "docs/index.html", "docs index");
+    write(&site, "about.html", "about page");
+    write(&site, "blog.html", "blog page");
+    write(&site, "blog/index.html", "blog index");
+    write(&site, "both.html", "both file");
+    write(&site, "both/index.html", "both index");
+    write(&site, "caf\u{e9}/index.html", "cafe index");
+    write(&site, "caf\u{e9}/\u{f1} \u{e9}.html", "cafe page");
+    write(&site, "sp ace.txt", "spaced");
+    write(&site, "a%b.txt", "percent");
+    write(&site, ".hidden", "hidden");
+    write(&site, "style.css", "body{}");
+    write(&site, "empty/placeholder.txt", "p");
+    if with_404 {
+        write(&site, "404.html", "<html><body>custom 404</body></html>");
+    }
+    write(&parent, "secret.txt", "TOP SECRET");
+    write(&parent, "site2/x.txt", "SIBLING");
+    Fixture {
+        _tmp: tmp,
+        site,
+        parent,
+    }
+}
+
+fn start(f: &Fixture) -> RunningServer {
+    Server::start(&f.site, DEFAULT_HOST, 0).unwrap()
+}
+
+// ---- ports and hosts -------------------------------------------------
+
+#[test]
+fn defaults_match_the_dev_server() {
+    assert_eq!(DEFAULT_PORT, 8080);
+    assert_eq!(PORT_RETRIES, 10);
+    assert_eq!(DEFAULT_HOST, "localhost");
+}
+
+#[test]
+fn binds_to_loopback_by_default() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert!(srv.local_addr().ip().is_loopback());
+    assert!(srv.url().starts_with("http://localhost:"));
+}
+
+#[test]
+fn host_flag_can_widen_the_bind() {
+    let f = fixture(true);
+    let srv = Server::start(&f.site, "0.0.0.0", 0).unwrap();
+    assert!(srv.local_addr().ip().is_unspecified());
+}
+
+#[test]
+fn an_unresolvable_host_is_an_error() {
+    let f = fixture(true);
+    let err = Server::start(&f.site, "no-such-host.invalid", 0)
+        .err()
+        .unwrap();
+    assert!(matches!(err, ServeError::Host { .. }), "{err}");
+}
+
+#[test]
+fn a_missing_output_folder_is_an_error() {
+    let f = fixture(true);
+    let err = Server::start(&f.site.join("nope"), DEFAULT_HOST, 0)
+        .err()
+        .unwrap();
+    assert!(matches!(err, ServeError::Root { .. }), "{err}");
+}
+
+/// The first port of a run of `n` free ports on loopback, with the run held
+/// by the listeners returned.
+fn free_run(n: u16) -> (u16, Vec<TcpListener>) {
+    for _ in 0..200 {
+        let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = probe.local_addr().unwrap().port();
+        if base > 65_000 {
+            continue;
+        }
+        drop(probe);
+        let held: Vec<_> = (0..n)
+            .map_while(|i| TcpListener::bind(("127.0.0.1", base + i)).ok())
+            .collect();
+        if held.len() == n as usize {
+            return (base, held);
+        }
+    }
+    panic!("no free run of ports");
+}
+
+#[test]
+fn a_busy_port_moves_to_the_next_free_one() {
+    let f = fixture(true);
+    let (base, held) = free_run(2);
+    let srv = Server::start(&f.site, DEFAULT_HOST, base).unwrap();
+    // The next port up, or a little higher if another test holds it.
+    assert!(
+        (base + 2..=base + 10).contains(&srv.port()),
+        "{}",
+        srv.port()
+    );
+    assert!(srv.port_changed());
+    assert_eq!(get(&srv, "/about").status, 200);
+    drop(held);
+}
+
+#[test]
+fn the_requested_port_is_used_when_free() {
+    let f = fixture(true);
+    let (base, mut held) = free_run(1);
+    held.clear();
+    let srv = Server::start(&f.site, DEFAULT_HOST, base).unwrap();
+    assert_eq!(srv.port(), base);
+    assert!(!srv.port_changed());
+}
+
+#[test]
+fn gives_up_after_ten_retries() {
+    let f = fixture(true);
+    // Eleven busy ports: the first and ten retries, as the dev server tries.
+    let (base, held) = free_run(PORT_RETRIES + 1);
+    let err = Server::start(&f.site, DEFAULT_HOST, base).err().unwrap();
+    assert!(
+        matches!(err, ServeError::PortsInUse { first, tried } if first == base && tried == 11),
+        "{err}"
+    );
+    drop(held);
+}
+
+#[test]
+fn the_eleventh_retry_is_not_attempted() {
+    let f = fixture(true);
+    // Ports base..base+10 busy, base+11 free: still gives up.
+    let (base, held) = free_run(PORT_RETRIES + 2);
+    let mut held = held;
+    held.pop();
+    let err = Server::start(&f.site, DEFAULT_HOST, base).err().unwrap();
+    assert!(matches!(err, ServeError::PortsInUse { .. }), "{err}");
+}
+
+#[test]
+fn stopping_releases_the_port() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let port = srv.port();
+    // An idle keep-alive connection must not hold the port.
+    let _idle = TcpStream::connect(srv.local_addr()).unwrap();
+    srv.stop();
+    TcpListener::bind(("127.0.0.1", port)).expect("port released after stop");
+}
+
+#[test]
+fn dropping_stops_the_server() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let addr = srv.local_addr();
+    drop(srv);
+    assert!(TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_err());
+}
+
+// ---- index, extensions, redirects ------------------------------------
+
+#[test]
+fn root_serves_index_html() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/");
+    assert_eq!(r.status, 200);
+    assert_eq!(r.text(), "<html><body>home</body></html>");
+    assert_eq!(r.header("content-type"), Some("text/html; charset=utf-8"));
+}
+
+#[test]
+fn dir_without_slash_redirects_with_301() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/docs");
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/docs/"));
+    assert!(r.body.is_empty());
+}
+
+#[test]
+fn dir_with_slash_serves_its_index() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/docs/");
+    assert_eq!(r.status, 200);
+    assert_eq!(r.text(), "docs index");
+}
+
+#[test]
+fn page_serves_its_html_file_without_the_extension() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/about").text(), "about page");
+    assert_eq!(get(&srv, "/about.html").text(), "about page");
+}
+
+#[test]
+fn page_with_trailing_slash_redirects_to_no_slash() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/about/");
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/about"));
+}
+
+#[test]
+fn file_and_dir_with_the_same_name_each_win_their_own_url() {
+    let f = fixture(true);
+    let srv = start(&f);
+    // /both matches both.html, /both/ matches both/index.html.
+    assert_eq!(get(&srv, "/both").text(), "both file");
+    assert_eq!(get(&srv, "/both/").text(), "both index");
+    // blog.html and blog/index.html as well.
+    assert_eq!(get(&srv, "/blog").text(), "blog page");
+    assert_eq!(get(&srv, "/blog/").text(), "blog index");
+}
+
+#[test]
+fn a_file_with_a_trailing_slash_is_not_found() {
+    let f = fixture(true);
+    assert_eq!(get(&start(&f), "/about.html/").status, 404);
+}
+
+#[test]
+fn a_dir_with_no_index_is_not_found_not_listed() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/empty/").status, 404);
+    assert_eq!(get(&srv, "/empty").status, 404);
+}
+
+#[test]
+fn query_strings_are_ignored_and_dropped_from_redirects() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/about?x=1").text(), "about page");
+    assert_eq!(get(&srv, "/style.css?v=2").text(), "body{}");
+    let r = get(&srv, "/docs?x=1");
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/docs/"));
+    assert_eq!(get(&srv, "/docs/?x=1").text(), "docs index");
+    assert_eq!(get(&srv, "/?x=1").status, 200);
+}
+
+#[test]
+fn a_fragment_is_ignored() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/docs#frag");
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/docs/"));
+}
+
+#[test]
+fn doubled_slashes_collapse() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/docs//").text(), "docs index");
+    assert_eq!(get(&srv, "//docs/").text(), "docs index");
+}
+
+#[test]
+fn encoded_paths_decode_once() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/sp%20ace.txt").text(), "spaced");
+    assert_eq!(get(&srv, "/a%25b.txt").text(), "percent");
+    assert_eq!(get(&srv, "/%61bout").text(), "about page");
+}
+
+#[test]
+fn non_ascii_names_work_encoded_or_raw() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/caf%C3%A9/").text(), "cafe index");
+    assert_eq!(get(&srv, "/caf\u{e9}/").text(), "cafe index");
+    assert_eq!(
+        get(&srv, "/caf%C3%A9/%C3%B1%20%C3%A9.html").text(),
+        "cafe page"
+    );
+    assert_eq!(get(&srv, "/caf%C3%A9/%C3%B1%20%C3%A9").text(), "cafe page");
+}
+
+#[test]
+fn redirect_locations_are_percent_encoded() {
+    let f = fixture(true);
+    let srv = start(&f);
+    // The dev server answers "/caf%C3%A9/" for both spellings.
+    let r = get(&srv, "/caf%C3%A9");
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/caf%C3%A9/"));
+    let r = get(&srv, "/caf\u{e9}");
+    assert_eq!(r.header("location"), Some("/caf%C3%A9/"));
+}
+
+#[test]
+fn dot_files_are_served() {
+    let f = fixture(true);
+    assert_eq!(get(&start(&f), "/.hidden").text(), "hidden");
+}
+
+// ---- 404 -------------------------------------------------------------
+
+#[test]
+fn a_missing_page_shows_404_html_with_status_404() {
+    let f = fixture(true);
+    let srv = start(&f);
+    for target in ["/nope", "/nope/", "/a%20b", "/deep/nope/x"] {
+        let r = get(&srv, target);
+        assert_eq!(r.status, 404, "{target}");
+        assert_eq!(r.text(), "<html><body>custom 404</body></html>");
+        assert_eq!(r.header("content-type"), Some("text/html; charset=utf-8"));
+    }
+}
+
+#[test]
+fn a_missing_non_html_file_also_shows_404_html() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/missing.css");
+    assert_eq!(r.status, 404);
+    assert_eq!(r.text(), "<html><body>custom 404</body></html>");
+}
+
+#[test]
+fn the_404_page_is_also_served_directly_with_200() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/404.html");
+    assert_eq!(r.status, 200);
+}
+
+#[test]
+fn without_404_html_the_builtin_page_is_sent() {
+    let f = fixture(false);
+    let r = get(&start(&f), "/nope");
+    assert_eq!(r.status, 404);
+    assert_eq!(
+        r.text(),
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /nope</pre>\n</body>\n</html>\n"
+    );
+    assert_eq!(r.header("content-type"), Some("text/html; charset=utf-8"));
+    assert_eq!(
+        r.header("content-security-policy"),
+        Some("default-src 'none'")
+    );
+    assert_eq!(r.header("x-content-type-options"), Some("nosniff"));
+}
+
+#[test]
+fn the_builtin_page_names_the_method_and_escapes_the_path() {
+    let f = fixture(false);
+    let srv = start(&f);
+    let r = request(&srv, "HEAD", "/nope?q=1", &[]);
+    assert_eq!(r.status, 404);
+    // The length is that of the "HEAD" page, one more than "GET".
+    assert_eq!(r.header("content-length"), Some("144"));
+    assert!(r.body.is_empty());
+    let r = get(&srv, "/%3Cb%3E");
+    assert!(r.text().contains("Cannot GET /%3Cb%3E"), "{}", r.text());
+    let r = get(&srv, "/\u{e9}<b>");
+    assert!(
+        r.text().contains("Cannot GET /%C3%A9&lt;b&gt;"),
+        "{}",
+        r.text()
+    );
+}
+
+// ---- content types, headers, methods ---------------------------------
+
+#[test]
+fn content_types_follow_the_mime_package() {
+    let f = fixture(true);
+    let cases: &[(&str, Option<&str>)] = &[
+        ("a.html", Some("text/html; charset=utf-8")),
+        ("a.htm", Some("text/html; charset=utf-8")),
+        ("a.css", Some("text/css")),
+        ("a.js", Some("application/javascript")),
+        ("a.mjs", Some("application/javascript")),
+        ("a.json", Some("application/json")),
+        ("a.map", Some("application/json")),
+        ("a.svg", Some("image/svg+xml")),
+        ("a.xml", Some("application/xml")),
+        ("a.atom", Some("application/atom+xml")),
+        ("a.rss", Some("application/rss+xml")),
+        ("a.txt", Some("text/plain")),
+        ("a.md", Some("text/markdown")),
+        ("a.csv", Some("text/csv")),
+        ("a.png", Some("image/png")),
+        ("a.jpg", Some("image/jpeg")),
+        ("a.gif", Some("image/gif")),
+        ("a.webp", Some("image/webp")),
+        ("a.avif", Some("image/avif")),
+        ("a.ico", Some("image/vnd.microsoft.icon")),
+        ("a.woff2", Some("font/woff2")),
+        ("a.pdf", Some("application/pdf")),
+        ("a.mp4", Some("video/mp4")),
+        ("a.wasm", Some("application/wasm")),
+        ("a.webmanifest", Some("application/manifest+json")),
+        ("A.CSS", Some("text/css")),
+        ("noext", None),
+        ("a.unknownext", None),
+        (".hidden", None),
+    ];
+    for (name, _) in cases {
+        write(&f.site, &format!("types/{name}"), "x");
+    }
+    let srv = start(&f);
+    for (name, want) in cases {
+        let r = get(&srv, &format!("/types/{name}"));
+        assert_eq!(r.status, 200, "{name}");
+        assert_eq!(r.header("content-type"), *want, "{name}");
+    }
+}
+
+#[test]
+fn the_type_comes_from_the_request_name_not_the_symlink_target() {
+    #[cfg(unix)]
+    {
+        let f = fixture(true);
+        std::os::unix::fs::symlink("about.html", f.site.join("link.css")).unwrap();
+        let r = get(&start(&f), "/link.css");
+        assert_eq!(r.text(), "about page");
+        assert_eq!(r.header("content-type"), Some("text/css"));
+    }
+}
+
+#[test]
+fn responses_carry_no_caching_headers() {
+    let f = fixture(true);
+    let srv = start(&f);
+    for target in ["/about", "/style.css", "/docs", "/nope"] {
+        let r = get(&srv, target);
+        for h in ["cache-control", "etag", "last-modified", "expires"] {
+            assert_eq!(r.header(h), None, "{target} {h}");
+        }
+    }
+}
+
+#[test]
+fn head_has_the_headers_and_no_body() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let r = request(&srv, "HEAD", "/about", &[]);
+    assert_eq!(r.status, 200);
+    assert_eq!(r.header("content-length"), Some("10"));
+    assert_eq!(r.header("content-type"), Some("text/html; charset=utf-8"));
+    let r = request(&srv, "HEAD", "/style.css", &[]);
+    assert_eq!(r.header("content-type"), Some("text/css"));
+    assert_eq!(r.header("content-length"), Some("6"));
+    let r = request(&srv, "HEAD", "/docs", &[]);
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/docs/"));
+    let r = request(&srv, "HEAD", "/nope", &[]);
+    assert_eq!(r.status, 404);
+    assert_eq!(r.header("content-length"), Some("36"));
+}
+
+#[test]
+fn other_methods_are_served_like_get() {
+    // The dev server does not look at the method.
+    let f = fixture(true);
+    let srv = start(&f);
+    for m in ["POST", "PUT", "OPTIONS", "DELETE"] {
+        let r = request(&srv, m, "/about", &[]);
+        assert_eq!(r.status, 200, "{m}");
+        assert_eq!(r.text(), "about page", "{m}");
+    }
+}
+
+#[test]
+fn a_connection_can_carry_several_requests() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let mut s = TcpStream::connect(srv.local_addr()).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    for _ in 0..3 {
+        s.write_all(b"GET /about HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let r = read_reply(&mut s, false);
+        assert_eq!(r.text(), "about page");
+        assert_eq!(r.header("connection"), Some("keep-alive"));
+    }
+}
+
+#[test]
+fn connection_close_is_honored() {
+    let f = fixture(true);
+    let r = get(&start(&f), "/about");
+    assert_eq!(r.header("connection"), Some("close"));
+}
+
+#[test]
+fn byte_ranges_get_206_with_validators() {
+    let f = fixture(true);
+    write(&f.site, "t.txt", "hello world");
+    let srv = start(&f);
+    let r = request(&srv, "GET", "/t.txt", &[("Range", "bytes=0-4")]);
+    assert_eq!(r.status, 206);
+    assert_eq!(r.text(), "hello");
+    assert_eq!(r.header("content-range"), Some("bytes 0-4/11"));
+    assert_eq!(r.header("accept-ranges"), Some("bytes"));
+    assert_eq!(r.header("cache-control"), Some("public, max-age=0"));
+    assert_eq!(r.header("content-type"), Some("text/plain; charset=utf-8"));
+    assert!(r.header("etag").unwrap().starts_with("W/\"b-"));
+    assert!(r.header("last-modified").unwrap().ends_with(" GMT"));
+    let r = request(&srv, "GET", "/t.txt", &[("Range", "bytes=6-")]);
+    assert_eq!(r.text(), "world");
+    let r = request(&srv, "GET", "/t.txt", &[("Range", "bytes=-3")]);
+    assert_eq!(r.text(), "rld");
+    let r = request(&srv, "GET", "/t.txt", &[("Range", "bytes=50-60")]);
+    assert_eq!(r.status, 416);
+    assert_eq!(r.header("content-range"), Some("bytes */11"));
+    let r = request(&srv, "GET", "/t.txt", &[("Range", "bytes=0-1,3-4")]);
+    assert_eq!(r.status, 200);
+    assert_eq!(r.text(), "hello world");
+}
+
+#[test]
+fn malformed_requests_are_rejected() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(raw(&srv, b"NONSENSE\r\n\r\n").status, 400);
+    assert_eq!(raw(&srv, b"GET /a HTTP/9.9\r\n\r\n").status, 505);
+    assert_eq!(raw(&srv, b"GET about HTTP/1.1\r\n\r\n").status, 400);
+    let mut big = b"GET /".to_vec();
+    big.extend(std::iter::repeat_n(b'a', 20_000));
+    big.extend_from_slice(b" HTTP/1.1\r\n\r\n");
+    assert_eq!(raw(&srv, &big).status, 431);
+    // A bad percent escape and bytes that are not UTF-8 are 400s.
+    assert_eq!(get(&srv, "/a%zz").status, 400);
+    assert_eq!(get(&srv, "/%c3%28").status, 400);
+    assert_eq!(get(&srv, "/a%").status, 400);
+}
+
+// ---- swapping the folder and the HTML hook ----------------------------
+
+#[test]
+fn set_root_switches_the_served_folder() {
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/about").status, 200);
+    let other = f.parent.join("other");
+    write(&other, "index.html", "other home");
+    srv.set_root(&other).unwrap();
+    assert_eq!(get(&srv, "/").text(), "other home");
+    assert_eq!(get(&srv, "/about").status, 404);
+    // A bad folder leaves the current one in place.
+    assert!(srv.set_root(&f.parent.join("missing")).is_err());
+    assert_eq!(get(&srv, "/").text(), "other home");
+}
+
+#[test]
+fn set_root_follows_a_folder_replaced_in_place() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let staged = f.parent.join("staged");
+    write(&staged, "index.html", "new build");
+    let old = f.parent.join("old");
+    fs::rename(&f.site, &old).unwrap();
+    fs::rename(&staged, &f.site).unwrap();
+    srv.set_root(&f.site).unwrap();
+    assert_eq!(get(&srv, "/").text(), "new build");
+}
+
+#[test]
+fn the_hook_rewrites_html_only() {
+    let f = fixture(true);
+    let srv = start(&f);
+    srv.set_html_hook(Some(Arc::new(|page| HtmlRewrite {
+        body: format!("{}<!--hooked {}-->", page.body, page.status),
+        headers: vec![("X-Hooked".into(), "1".into())],
+    })));
+    let r = get(&srv, "/about");
+    assert_eq!(r.text(), "about page<!--hooked 200-->");
+    assert_eq!(r.header("content-length"), Some("27"));
+    assert_eq!(r.header("x-hooked"), Some("1"));
+    // The 404 page is HTML too.
+    assert!(get(&srv, "/nope").text().ends_with("<!--hooked 404-->"));
+    // Other types, redirects and ranges are untouched.
+    assert_eq!(get(&srv, "/style.css").text(), "body{}");
+    assert_eq!(get(&srv, "/docs").status, 301);
+    let r = request(&srv, "GET", "/about.html", &[("Range", "bytes=0-4")]);
+    assert_eq!(r.text(), "about");
+    // HEAD reports the rewritten length.
+    let r = request(&srv, "HEAD", "/about", &[]);
+    assert_eq!(r.header("content-length"), Some("27"));
+    srv.set_html_hook(None);
+    assert_eq!(get(&srv, "/about").text(), "about page");
+}
+
+#[test]
+fn the_hook_sees_builtin_pages_and_sub_requests() {
+    let f = fixture(false);
+    let srv = start(&f);
+    srv.set_html_hook(Some(Arc::new(|page| HtmlRewrite {
+        body: format!(
+            "builtin={} nav={}",
+            page.is_builtin_error, page.is_navigation
+        ),
+        headers: vec![(
+            "Content-Security-Policy".into(),
+            "script-src 'sha256-x'".into(),
+        )],
+    })));
+    let r = get(&srv, "/nope");
+    assert_eq!(r.text(), "builtin=true nav=true");
+    // The hook's header replaces the server's.
+    assert_eq!(
+        r.header("content-security-policy"),
+        Some("script-src 'sha256-x'")
+    );
+    let r = request(&srv, "GET", "/about", &[("Sec-Fetch-Mode", "cors")]);
+    assert_eq!(r.text(), "builtin=false nav=false");
+    let r = request(&srv, "GET", "/about", &[("Sec-Fetch-Mode", "navigate")]);
+    assert_eq!(r.text(), "builtin=false nav=true");
+}
+
+// ---- path traversal ---------------------------------------------------
+
+fn assert_contained(srv: &RunningServer, r: &Reply, what: &str) {
+    let body = r.text();
+    assert!(
+        !body.contains("TOP SECRET") && !body.contains("SIBLING") && !body.contains("root:"),
+        "{what} leaked: {body}"
+    );
+    assert!(
+        r.status == 404 || r.status == 400,
+        "{what} gave {}",
+        r.status
+    );
+    let _ = srv;
+}
+
+#[test]
+fn traversal_paths_never_leave_the_folder() {
+    let f = fixture(true);
+    let srv = start(&f);
+    let targets = [
+        "/../secret.txt",
+        "/..%2fsecret.txt",
+        "/..%2Fsecret.txt",
+        "/%2e%2e/secret.txt",
+        "/%2E%2E/secret.txt",
+        "/%2e%2e%2fsecret.txt",
+        "/.%2e/secret.txt",
+        "/%2e./secret.txt",
+        "/docs/../../secret.txt",
+        "/docs/..%2f..%2fsecret.txt",
+        "/docs/%2e%2e/%2e%2e/secret.txt",
+        "/a/b/c/../../../../secret.txt",
+        "/..\\secret.txt",
+        "/..%5csecret.txt",
+        "/..%5Csecret.txt",
+        "/docs\\..\\..\\secret.txt",
+        "/%252e%252e/secret.txt",
+        "/%252e%252e%252fsecret.txt",
+        "/..%252fsecret.txt",
+        "/%2e%2e%5csecret.txt",
+        "/../site2/x.txt",
+        "/..%2fsite2/x.txt",
+        "/%2e%2e/site2/x.txt",
+        "/../",
+        "/..",
+        "/%2e%2e",
+        "/%2e%2e/",
+        "/secret.txt%00.html",
+        "/about%00",
+        "/%00",
+        "/about.html%00.png",
+        "/..%00/secret.txt",
+        "/%c0%ae%c0%ae/secret.txt",
+        "/%e0%80%ae%e0%80%ae/secret.txt",
+        "/..;/secret.txt",
+        "http://example.test/../secret.txt",
+        "http://example.test/%2e%2e/secret.txt",
+        "/../../../../../../../../etc/passwd",
+        "/..%2f..%2f..%2f..%2f..%2f..%2f..%2f..%2fetc%2fpasswd",
+    ];
+    for t in targets {
+        let r = get(&srv, t);
+        assert_contained(&srv, &r, t);
+    }
+}
+
+#[test]
+fn dot_segments_are_refused_even_when_they_stay_inside() {
+    // The dev server normalizes "/docs/../about" to "/about". Brrrty refuses
+    // any ".." segment, since browsers never send one.
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_eq!(get(&srv, "/docs/../about.html").status, 404);
+    assert_eq!(get(&srv, "/docs/%2e%2e/about.html").status, 404);
+    // A single dot is harmless and dropped.
+    assert_eq!(get(&srv, "/./about.html").text(), "about page");
+}
+
+#[test]
+fn double_encoding_decodes_only_once() {
+    let f = fixture(true);
+    write(&f.site, "%2e%2e/inner.txt", "literal folder");
+    let srv = start(&f);
+    // %252e%252e is the literal folder name "%2e%2e", not "..".
+    assert_eq!(get(&srv, "/%252e%252e/inner.txt").text(), "literal folder");
+    assert_eq!(get(&srv, "/%252e%252e/secret.txt").status, 404);
+}
+
+#[test]
+fn a_sibling_folder_sharing_the_name_prefix_is_not_served() {
+    // The dev server compares paths as strings, so "site2" passes for "site".
+    let f = fixture(true);
+    let srv = start(&f);
+    assert_contained(&srv, &get(&srv, "/../site2/x.txt"), "sibling");
+}
+
+#[test]
+fn a_redirect_never_points_off_site() {
+    let f = fixture(true);
+    write(&f.site, "evil.example/index.html", "x");
+    let srv = start(&f);
+    let r = get(&srv, "//evil.example");
+    assert_eq!(r.status, 301);
+    assert_eq!(r.header("location"), Some("/evil.example/"));
+    let r = get(&srv, "/%2Fevil.example");
+    assert_eq!(r.header("location"), Some("/evil.example/"));
+}
+
+#[cfg(unix)]
+mod symlinks {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_file_symlink_out_of_the_folder_is_not_served() {
+        let f = fixture(true);
+        symlink(f.parent.join("secret.txt"), f.site.join("leak.txt")).unwrap();
+        let srv = start(&f);
+        let r = get(&srv, "/leak.txt");
+        assert_contained(&srv, &r, "file symlink");
+    }
+
+    #[test]
+    fn a_dir_symlink_out_of_the_folder_is_not_served() {
+        let f = fixture(true);
+        symlink(&f.parent, f.site.join("up")).unwrap();
+        let srv = start(&f);
+        for t in ["/up/secret.txt", "/up/site2/x.txt", "/up/"] {
+            assert_contained(&srv, &get(&srv, t), t);
+        }
+    }
+
+    #[test]
+    fn a_symlinked_html_or_index_out_of_the_folder_is_not_served() {
+        let f = fixture(true);
+        symlink(f.parent.join("secret.txt"), f.site.join("page.html")).unwrap();
+        fs::create_dir(f.site.join("d")).unwrap();
+        symlink(f.parent.join("secret.txt"), f.site.join("d/index.html")).unwrap();
+        let srv = start(&f);
+        for t in ["/page", "/page.html", "/d/", "/d"] {
+            assert_contained(&srv, &get(&srv, t), t);
+        }
+    }
+
+    #[test]
+    fn a_symlinked_404_page_out_of_the_folder_is_not_used() {
+        let f = fixture(false);
+        symlink(f.parent.join("secret.txt"), f.site.join("404.html")).unwrap();
+        let srv = start(&f);
+        let r = get(&srv, "/nope");
+        assert_contained(&srv, &r, "404 symlink");
+        assert!(r.text().contains("Cannot GET /nope"));
+    }
+
+    #[test]
+    fn a_symlink_that_stays_inside_the_folder_works() {
+        let f = fixture(true);
+        symlink("about.html", f.site.join("alias.html")).unwrap();
+        symlink("docs", f.site.join("docs-link")).unwrap();
+        let srv = start(&f);
+        assert_eq!(get(&srv, "/alias").text(), "about page");
+        assert_eq!(get(&srv, "/docs-link/").text(), "docs index");
+    }
+
+    #[test]
+    fn a_symlink_through_a_dir_that_leaves_and_returns_is_refused_only_if_outside() {
+        let f = fixture(true);
+        // A link out and back in again still resolves inside the folder.
+        symlink(f.site.join("docs"), f.parent.join("back")).unwrap();
+        symlink("../back", f.site.join("round")).unwrap();
+        let srv = start(&f);
+        assert_eq!(get(&srv, "/round/").text(), "docs index");
+    }
+
+    #[test]
+    fn the_output_folder_itself_may_be_a_symlink() {
+        let f = fixture(true);
+        let link = f.parent.join("linked-site");
+        symlink(&f.site, &link).unwrap();
+        let srv = Server::start(&link, DEFAULT_HOST, 0).unwrap();
+        assert_eq!(get(&srv, "/about").text(), "about page");
+        let _ = &srv;
+    }
+}

@@ -328,6 +328,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "brrrty-serve"
+version = "0.0.7"
+dependencies = [
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "brrrty-spike"
 version = "0.0.0"
 dependencies = [

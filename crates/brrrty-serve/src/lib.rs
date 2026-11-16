@@ -1,0 +1,594 @@
+//! A local static file server for the output folder, for `brrrty serve`.
+//!
+//! It behaves the way `@11ty/eleventy-dev-server` 2.1.2 does for the plain
+//! file-serving part:
+//!
+//! - `/dir/` serves `dir/index.html`, and `/page` serves `page.html`;
+//! - `/dir` redirects to `/dir/` when only `dir/index.html` exists, and
+//!   `/page/` redirects to `/page` when only `page.html` exists (301, and the
+//!   query string is dropped);
+//! - a missing path is a 404 that shows the folder's `404.html` when it has
+//!   one, and the dev server's plain "Cannot GET" page when it does not;
+//! - content types come from the same table the dev server uses, with no
+//!   caching headers.
+//!
+//! Where it differs, it is stricter about paths: it never leaves the output
+//! folder, whether by `..`, an encoded `..`, a backslash, a NUL, or a symlink.
+//! It binds to `localhost` unless asked for another host.
+//!
+//! The served folder can be swapped while the server runs
+//! ([`RunningServer::set_root`]), and HTML responses can be rewritten
+//! ([`RunningServer::set_html_hook`]); the rebuild and live-reload layers are
+//! built on those two.
+
+mod http;
+mod mime;
+mod mime_table;
+mod path;
+
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread::JoinHandle;
+use std::time::{Duration, UNIX_EPOCH};
+
+use http::{Body, ParseError, Request, Response};
+use path::{Found, Resolved, Root};
+
+/// The port the dev server starts from.
+pub const DEFAULT_PORT: u16 = 8080;
+/// The host the server binds to unless told otherwise.
+pub const DEFAULT_HOST: &str = "localhost";
+/// How many higher ports are tried when the first one is in use. The dev
+/// server's `portReassignmentRetryCount`.
+pub const PORT_RETRIES: u16 = 10;
+
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Why the server could not start or change folders.
+#[derive(Debug, thiserror::Error)]
+pub enum ServeError {
+    #[error("cannot serve {path}: {source}")]
+    Root {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("cannot resolve host {host:?}: {reason}")]
+    Host { host: String, reason: String },
+    #[error(
+        "tried {tried} ports from {first} but they were all in use; pass a different port to start from"
+    )]
+    PortsInUse { first: u16, tried: u16 },
+    #[error("cannot listen on {addr}: {source}")]
+    Bind {
+        addr: SocketAddr,
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// A page about to be sent, given to the HTML hook.
+#[derive(Debug)]
+pub struct HtmlPage<'a> {
+    pub body: &'a str,
+    pub status: u16,
+    /// The server's own "Cannot GET" page, as opposed to a file from the
+    /// output folder (which includes its `404.html`).
+    pub is_builtin_error: bool,
+    /// False for a `fetch` or other sub-request (`Sec-Fetch-Mode` is present
+    /// and not `navigate`); the dev server leaves those alone.
+    pub is_navigation: bool,
+}
+
+/// What the HTML hook returns: the body to send, and headers that replace any
+/// header of the same name.
+#[derive(Debug, Clone)]
+pub struct HtmlRewrite {
+    pub body: String,
+    pub headers: Vec<(String, String)>,
+}
+
+/// Rewrites HTML responses. Called only for responses whose content type is
+/// `text/html`, never for ranged responses.
+pub type HtmlHook = dyn for<'a> Fn(&HtmlPage<'a>) -> HtmlRewrite + Send + Sync;
+
+struct Shared {
+    root: RwLock<Arc<Root>>,
+    hook: RwLock<Option<Arc<HtmlHook>>>,
+    stopping: AtomicBool,
+    conns: Mutex<HashMap<u64, TcpStream>>,
+    next_conn: AtomicU64,
+}
+
+/// Entry point: [`Server::start`].
+pub struct Server;
+
+impl Server {
+    /// Serve `output` on `host`, starting from `port`. When `port` is in use
+    /// the next ones are tried, up to [`PORT_RETRIES`] more, as the dev server
+    /// does; port 0 asks the OS for any free port.
+    ///
+    /// `host` is `localhost` (the loopback address) by default; pass an
+    /// address such as `0.0.0.0` to let other machines connect.
+    pub fn start(output: &Path, host: &str, port: u16) -> Result<RunningServer, ServeError> {
+        let root = Root::new(output).map_err(|source| ServeError::Root {
+            path: output.display().to_string(),
+            source,
+        })?;
+        let ip = resolve_host(host, port)?;
+        let (listener, addr) = bind(ip, port)?;
+        let shared = Arc::new(Shared {
+            root: RwLock::new(Arc::new(root)),
+            hook: RwLock::new(None),
+            stopping: AtomicBool::new(false),
+            conns: Mutex::new(HashMap::new()),
+            next_conn: AtomicU64::new(0),
+        });
+        let accept_shared = Arc::clone(&shared);
+        let accept = std::thread::Builder::new()
+            .name("brrrty-serve-accept".into())
+            .spawn(move || accept_loop(listener, accept_shared))
+            .map_err(|source| ServeError::Bind { addr, source })?;
+        Ok(RunningServer {
+            shared,
+            addr,
+            requested_port: port,
+            host: host.to_string(),
+            accept: Some(accept),
+        })
+    }
+}
+
+fn resolve_host(host: &str, port: u16) -> Result<std::net::IpAddr, ServeError> {
+    if host.eq_ignore_ascii_case("localhost") {
+        return Ok(std::net::Ipv4Addr::LOCALHOST.into());
+    }
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse() {
+        return Ok(ip);
+    }
+    (bare, port)
+        .to_socket_addrs()
+        .map_err(|e| ServeError::Host {
+            host: host.to_string(),
+            reason: e.to_string(),
+        })?
+        .next()
+        .map(|a| a.ip())
+        .ok_or_else(|| ServeError::Host {
+            host: host.to_string(),
+            reason: "no addresses".into(),
+        })
+}
+
+fn bind(ip: std::net::IpAddr, port: u16) -> Result<(TcpListener, SocketAddr), ServeError> {
+    let retries = if port == 0 { 0 } else { PORT_RETRIES };
+    let mut tried = 0u16;
+    loop {
+        let Some(p) = port.checked_add(tried).filter(|_| tried <= retries) else {
+            return Err(ServeError::PortsInUse { first: port, tried });
+        };
+        let addr = SocketAddr::new(ip, p);
+        match TcpListener::bind(addr) {
+            Ok(l) => {
+                let local = l.local_addr().unwrap_or(addr);
+                return Ok((l, local));
+            }
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+                if retries == 0 {
+                    return Err(ServeError::PortsInUse {
+                        first: port,
+                        tried: 1,
+                    });
+                }
+                tried += 1;
+            }
+            Err(source) => return Err(ServeError::Bind { addr, source }),
+        }
+    }
+}
+
+/// A running server. Dropping it stops it and releases the port.
+pub struct RunningServer {
+    shared: Arc<Shared>,
+    addr: SocketAddr,
+    requested_port: u16,
+    host: String,
+    accept: Option<JoinHandle<()>>,
+}
+
+impl RunningServer {
+    /// The address the server is listening on.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// The port actually bound, which differs from the one asked for when
+    /// that was in use.
+    pub fn port(&self) -> u16 {
+        self.addr.port()
+    }
+
+    /// Whether the server had to move to another port.
+    pub fn port_changed(&self) -> bool {
+        self.requested_port != 0 && self.requested_port != self.addr.port()
+    }
+
+    /// The base URL, such as `http://localhost:8080/`, using the host name
+    /// that was asked for.
+    pub fn url(&self) -> String {
+        let host = if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        format!("http://{host}:{}/", self.addr.port())
+    }
+
+    /// Serve a different folder from now on. Requests already running finish
+    /// against the folder they started with. On error the old folder stays.
+    pub fn set_root(&self, output: &Path) -> Result<(), ServeError> {
+        let root = Root::new(output).map_err(|source| ServeError::Root {
+            path: output.display().to_string(),
+            source,
+        })?;
+        *self.shared.root.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(root);
+        Ok(())
+    }
+
+    /// Rewrite HTML responses with `hook`, or stop doing so with `None`.
+    pub fn set_html_hook(&self, hook: Option<Arc<HtmlHook>>) {
+        *self.shared.hook.write().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    /// Stop accepting, close open connections, and release the port.
+    pub fn stop(mut self) {
+        self.shutdown();
+    }
+
+    fn shutdown(&mut self) {
+        self.shared.stopping.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.accept.take() {
+            // Wake the accept loop so it sees the flag.
+            let wake = if self.addr.ip().is_unspecified() {
+                SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), self.addr.port())
+            } else {
+                self.addr
+            };
+            let _ = TcpStream::connect_timeout(&wake, Duration::from_secs(1));
+            let _ = handle.join();
+        }
+        let conns =
+            std::mem::take(&mut *self.shared.conns.lock().unwrap_or_else(|e| e.into_inner()));
+        for (_, c) in conns {
+            let _ = c.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+impl Drop for RunningServer {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
+    for stream in listener.incoming() {
+        if shared.stopping.load(Ordering::SeqCst) {
+            break;
+        }
+        let Ok(stream) = stream else { continue };
+        let id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
+        if let Ok(clone) = stream.try_clone() {
+            shared
+                .conns
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id, clone);
+        }
+        let conn_shared = Arc::clone(&shared);
+        let spawned = std::thread::Builder::new()
+            .name("brrrty-serve-conn".into())
+            .spawn(move || {
+                handle_connection(stream, &conn_shared);
+                conn_shared
+                    .conns
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+            });
+        if spawned.is_err() {
+            shared
+                .conns
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
+        }
+    }
+}
+
+fn handle_connection(stream: TcpStream, shared: &Shared) {
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
+    let Ok(mut writer) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = BufReader::new(stream);
+    loop {
+        if shared.stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        // Wait for the first byte of the next request briefly, then allow a
+        // slow client more time to finish sending it.
+        let _ = reader.get_ref().set_read_timeout(Some(IDLE_TIMEOUT));
+        match std::io::BufRead::fill_buf(&mut reader) {
+            Ok([]) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let _ = reader.get_ref().set_read_timeout(Some(REQUEST_TIMEOUT));
+        let req = match http::read_request(&mut reader) {
+            Ok(r) => r,
+            Err(ParseError::Closed) => return,
+            Err(ParseError::Reject(status)) => {
+                let resp = plain_error(status);
+                let _ = http::write_response(&mut writer, resp, false, false);
+                return;
+            }
+        };
+        let keep_alive = req.keep_alive();
+        let head_only = req.method.eq_ignore_ascii_case("HEAD");
+        let resp = route(&req, shared);
+        if http::write_response(&mut writer, resp, head_only, keep_alive).is_err() || !keep_alive {
+            return;
+        }
+    }
+}
+
+fn plain_error(status: u16) -> Response {
+    Response::new(status)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body(format!("{status}\n").into_bytes())
+}
+
+fn route(req: &Request, shared: &Shared) -> Response {
+    let Some(path) = req.path() else {
+        return plain_error(400);
+    };
+    let root = Arc::clone(&shared.root.read().unwrap_or_else(|e| e.into_inner()));
+    match path::resolve(&root, path) {
+        Resolved::File(found) => file_response(req, shared, &found, 200),
+        Resolved::Redirect(location) => Response::new(301).header("Location", location),
+        Resolved::BadRequest => plain_error(400),
+        Resolved::NotFound => match path::not_found_page(&root) {
+            Some(found) => file_response(req, shared, &found, 404),
+            None => builtin_error_page(req, shared, path),
+        },
+    }
+}
+
+fn is_navigation(req: &Request) -> bool {
+    req.header("sec-fetch-mode").is_none_or(|m| m == "navigate")
+}
+
+fn current_hook(shared: &Shared) -> Option<Arc<HtmlHook>> {
+    shared
+        .hook
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+fn file_response(req: &Request, shared: &Shared, found: &Found, status: u16) -> Response {
+    let content_type = mime::content_type(&found.name);
+    let open = || File::open(&found.real).and_then(|f| f.metadata().map(|m| (f, m)));
+    let Ok((mut file, meta)) = open() else {
+        return plain_error(500);
+    };
+    let size = meta.len();
+
+    if status == 200
+        && let Some(range) = req.header("range")
+    {
+        match parse_range(range, size) {
+            RangeOutcome::Full => {}
+            RangeOutcome::Unsatisfiable => {
+                return Response::new(416)
+                    .header("Content-Range", format!("bytes */{size}"))
+                    .header("Content-Type", "text/plain; charset=utf-8")
+                    .body(b"Range Not Satisfiable".to_vec());
+            }
+            RangeOutcome::Bytes(start, end) => {
+                if file.seek(SeekFrom::Start(start)).is_err() {
+                    return plain_error(500);
+                }
+                let mut resp = Response::new(206)
+                    .header("Accept-Ranges", "bytes")
+                    .header("Cache-Control", "public, max-age=0");
+                if let Ok(m) = meta.modified() {
+                    resp.set_header("Last-Modified", http::http_date(m));
+                    let ms = m.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+                    resp.set_header("ETag", format!("W/\"{size:x}-{ms:x}\""));
+                }
+                if let Some(ct) = &content_type {
+                    let text = ct.starts_with("text/")
+                        || ct == "application/javascript"
+                        || ct == "application/json";
+                    let ct = if text && !ct.contains("charset") {
+                        format!("{ct}; charset=utf-8")
+                    } else {
+                        ct.clone()
+                    };
+                    resp.set_header("Content-Type", ct);
+                }
+                resp.set_header("Content-Range", format!("bytes {start}-{end}/{size}"));
+                resp.body = Body::Stream(Box::new(file), end - start + 1);
+                return resp;
+            }
+        }
+    }
+
+    let mut resp = Response::new(status);
+    if let Some(ct) = &content_type {
+        resp.set_header("Content-Type", ct.clone());
+    }
+    if content_type.as_deref().is_some_and(mime::is_html) {
+        let mut bytes = Vec::with_capacity(size as usize);
+        if file.read_to_end(&mut bytes).is_err() {
+            return plain_error(500);
+        }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        return html_response(req, shared, resp, text, false);
+    }
+    resp.body = Body::Stream(Box::new(file), size);
+    resp
+}
+
+/// Finish an HTML response, running the hook if there is one.
+fn html_response(
+    req: &Request,
+    shared: &Shared,
+    mut resp: Response,
+    text: String,
+    is_builtin_error: bool,
+) -> Response {
+    let body = match current_hook(shared) {
+        Some(hook) => {
+            let page = HtmlPage {
+                body: &text,
+                status: resp.status,
+                is_builtin_error,
+                is_navigation: is_navigation(req),
+            };
+            let rewrite = hook(&page);
+            for (n, v) in rewrite.headers {
+                resp.set_header(&n, v);
+            }
+            rewrite.body
+        }
+        None => text,
+    };
+    resp.body = Body::Bytes(body.into_bytes());
+    resp
+}
+
+/// The page the dev server's request handler (`finalhandler`) shows when
+/// nothing matched and there is no `404.html`.
+fn builtin_error_page(req: &Request, shared: &Shared, path: &str) -> Response {
+    let resource = escape_for_page(path);
+    let text = format!(
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot {} {}</pre>\n</body>\n</html>\n",
+        escape_for_page(&req.method),
+        resource
+    );
+    let resp = Response::new(404)
+        .header("Content-Security-Policy", "default-src 'none'")
+        .header("X-Content-Type-Options", "nosniff")
+        .header("Content-Type", "text/html; charset=utf-8");
+    html_response(req, shared, resp, text, true)
+}
+
+/// HTML-escape, then percent-encode what a URL cannot carry (non-ASCII,
+/// spaces, controls), leaving existing `%XX` escapes alone.
+fn escape_for_page(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c if c.is_ascii() && !c.is_ascii_control() && c != ' ' => out.push(c),
+            c => {
+                let mut buf = [0u8; 4];
+                for b in c.encode_utf8(&mut buf).bytes() {
+                    out.push_str(&format!("%{b:02X}"));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RangeOutcome {
+    /// Not a single satisfiable `bytes` range; send the whole file.
+    Full,
+    Unsatisfiable,
+    /// Inclusive start and end.
+    Bytes(u64, u64),
+}
+
+fn parse_range(header: &str, size: u64) -> RangeOutcome {
+    let Some(spec) = header.trim().strip_prefix("bytes=") else {
+        return RangeOutcome::Full;
+    };
+    if spec.contains(',') {
+        return RangeOutcome::Full;
+    }
+    let Some((a, b)) = spec.trim().split_once('-') else {
+        return RangeOutcome::Full;
+    };
+    let (a, b) = (a.trim(), b.trim());
+    let parsed = match (a.is_empty(), b.is_empty()) {
+        (true, true) => return RangeOutcome::Full,
+        (true, false) => {
+            let Ok(n) = b.parse::<u64>() else {
+                return RangeOutcome::Full;
+            };
+            if n == 0 || size == 0 {
+                return RangeOutcome::Unsatisfiable;
+            }
+            (size.saturating_sub(n), size - 1)
+        }
+        (false, empty_end) => {
+            let Ok(start) = a.parse::<u64>() else {
+                return RangeOutcome::Full;
+            };
+            let end = if empty_end {
+                u64::MAX
+            } else {
+                let Ok(e) = b.parse::<u64>() else {
+                    return RangeOutcome::Full;
+                };
+                e
+            };
+            if end < start {
+                return RangeOutcome::Full;
+            }
+            if start >= size {
+                return RangeOutcome::Unsatisfiable;
+            }
+            (start, end.min(size - 1))
+        }
+    };
+    RangeOutcome::Bytes(parsed.0, parsed.1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ranges() {
+        assert_eq!(parse_range("bytes=0-2", 10), RangeOutcome::Bytes(0, 2));
+        assert_eq!(parse_range("bytes=5-", 10), RangeOutcome::Bytes(5, 9));
+        assert_eq!(parse_range("bytes=-3", 10), RangeOutcome::Bytes(7, 9));
+        assert_eq!(parse_range("bytes=5-500", 10), RangeOutcome::Bytes(5, 9));
+        assert_eq!(parse_range("bytes=10-12", 10), RangeOutcome::Unsatisfiable);
+        assert_eq!(parse_range("bytes=0-1,4-5", 10), RangeOutcome::Full);
+        assert_eq!(parse_range("items=0-1", 10), RangeOutcome::Full);
+        assert_eq!(parse_range("bytes=4-2", 10), RangeOutcome::Full);
+    }
+
+    #[test]
+    fn error_page_text_is_escaped() {
+        assert_eq!(escape_for_page("/<a>&\"é"), "/&lt;a&gt;&amp;&quot;%C3%A9");
+    }
+}
