@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use brrrty_js::Value;
 
+use super::rhai;
 use super::{js_object, reserved_keys, reserved_problem};
 use crate::discover::{broken_link_warning, loop_warning};
 use crate::frontmatter::Data;
+use crate::options::DataRunner;
 use crate::problem::{Problem, codes};
 
 /// A JavaScript data file. Brrrty can't run it yet, so it only records which
@@ -24,6 +26,8 @@ pub(crate) struct GlobalData {
     /// An object of everything loaded from JSON files.
     pub value: Value,
     pub js_keys: Vec<JsDataRef>,
+    /// Notes, such as a JavaScript file a `.rhai` port stands in for.
+    pub notes: Vec<Problem>,
     pub problems: Vec<Problem>,
     /// Top-level keys Brrrty can't give a correct value for: a JavaScript
     /// data file or a failed file sets something under them.
@@ -31,18 +35,29 @@ pub(crate) struct GlobalData {
 }
 
 /// The extensions 11ty reads from `_data`, in its priority order: a later
-/// extension overrides an earlier one at the same key.
-const EXTENSIONS: [&str; 4] = ["json", "mjs", "cjs", "js"];
+/// extension overrides an earlier one at the same key. `rhai` is Brrrty's
+/// own, and comes last: a port wins over the file it ports.
+const EXTENSIONS: [&str; 5] = ["json", "mjs", "cjs", "js", "rhai"];
 
 /// Load every data file under `<input>/_data`, as 11ty's `getAllGlobalData`
 /// does: the files are found with a case-insensitive glob that includes
 /// dot files and folders, ordered by extension priority, and each is set at
 /// the path of its folders plus its name without the last extension. Names
 /// keep their dots (`a.b.json` is the key `a.b`).
-pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
+///
+/// `.rhai` files are run by `runner`, given `initial` (what 11ty hands an
+/// exported function). A `.js` file is ignored, with a note, when a `.rhai`
+/// file has the same key.
+pub(crate) fn load_global(
+    input: &Path,
+    root: &Path,
+    runner: Option<&DataRunner>,
+    initial: &Data,
+) -> GlobalData {
     let mut out = GlobalData {
         value: Value::Object(Default::default()),
         js_keys: Vec::new(),
+        notes: Vec::new(),
         problems: Vec::new(),
         unavailable: BTreeSet::new(),
     };
@@ -59,10 +74,8 @@ pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
     // `Vec::sort_by_key` is stable, like the sort 11ty does.
     files.sort_by_key(|f| priority(f));
 
-    let mut data = Data::new();
-    for file in files {
-        let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
-        let rel = file.strip_prefix(&data_dir).unwrap_or(&file);
+    let key_path = |file: &Path| -> Vec<String> {
+        let rel = file.strip_prefix(&data_dir).unwrap_or(file);
         let mut path: Vec<String> = rel
             .parent()
             .into_iter()
@@ -74,48 +87,47 @@ pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         );
+        path
+    };
+    let ext_of = |file: &Path| file.extension().map(|e| e.to_string_lossy().into_owned());
+    // The keys `.rhai` files set: a JavaScript file for one of them is
+    // ported, and not read.
+    let ported: Vec<Vec<String>> = files
+        .iter()
+        .filter(|f| ext_of(f).as_deref() == Some("rhai"))
+        .map(|f| key_path(f))
+        .collect();
+
+    let mut data = Data::new();
+    for file in files {
+        let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
+        let path = key_path(&file);
         let root_key = path[0].clone();
-        let ext = file.extension().map(|e| e.to_string_lossy().into_owned());
-        match ext.as_deref() {
-            Some("json") => match read_json(&file) {
-                Ok(v) => {
-                    if set_path(&mut data, &path, v).is_err() {
-                        out.problems.push(
-                            Problem::error(
-                                codes::DATA_FILE_INVALID,
-                                format!(
-                                    "{} can't be set: its key passes through a list, or is a list position",
-                                    shown.display()
-                                ),
-                            )
-                            .with_path(&shown)
-                            .with_help("Brrrty doesn't build lists from data folders yet. Give the file and its folders names that aren't list positions like `0`, or put the list in one file."),
-                        );
-                        out.unavailable.insert(root_key);
-                    }
+        let loaded = match ext_of(&file).as_deref() {
+            Some("json") => read_json(&file).map_err(|(message, at)| {
+                let p = Problem::error(
+                    codes::DATA_FILE_INVALID,
+                    format!("invalid JSON in {}: {message}", shown.display()),
+                )
+                .with_path(&shown)
+                .with_help("11ty stops the whole build on this file. Fix the file or remove it.");
+                match at {
+                    Some((line, col)) => p.at(line, col),
+                    None => p,
                 }
-                Err((message, at)) => {
-                    let p = Problem::error(
-                        codes::DATA_FILE_INVALID,
-                        format!("invalid JSON in {}: {message}", shown.display()),
-                    )
-                    .with_path(&shown)
-                    .with_help(
-                        "11ty stops the whole build on this file. Fix the file or remove it.",
-                    );
-                    out.problems.push(match at {
-                        Some((line, col)) => p.at(line, col),
-                        None => p,
+            }),
+            Some("rhai") => rhai::run(runner, &file, &shown, initial),
+            Some("js" | "cjs" | "mjs") => {
+                if ported.contains(&path) {
+                    out.notes.push(rhai::shadowed(&shown));
+                } else {
+                    out.js_keys.push(JsDataRef {
+                        key_path: path,
+                        file: shown,
                     });
                     out.unavailable.insert(root_key);
                 }
-            },
-            Some("js" | "cjs" | "mjs") => {
-                out.js_keys.push(JsDataRef {
-                    key_path: path,
-                    file: shown,
-                });
-                out.unavailable.insert(root_key);
+                continue;
             }
             _ => {
                 // The glob matches names like `Up.JSON` and `.json`, and 11ty
@@ -126,8 +138,31 @@ pub(crate) fn load_global(input: &Path, root: &Path) -> GlobalData {
                         format!("no data parser for {}", shown.display()),
                     )
                     .with_path(&shown)
-                    .with_help("11ty stops the whole build on this file. Use a lowercase `.json`, `.js`, `.cjs` or `.mjs` extension."),
+                    .with_help("11ty stops the whole build on this file. Use a lowercase `.json`, `.js`, `.cjs`, `.mjs` or `.rhai` extension."),
                 );
+                out.unavailable.insert(root_key);
+                continue;
+            }
+        };
+        match loaded {
+            Ok(v) => {
+                if set_path(&mut data, &path, v).is_err() {
+                    out.problems.push(
+                        Problem::error(
+                            codes::DATA_FILE_INVALID,
+                            format!(
+                                "{} can't be set: its key passes through a list, or is a list position",
+                                shown.display()
+                            ),
+                        )
+                        .with_path(&shown)
+                        .with_help("Brrrty doesn't build lists from data folders yet. Give the file and its folders names that aren't list positions like `0`, or put the list in one file."),
+                    );
+                    out.unavailable.insert(root_key);
+                }
+            }
+            Err(p) => {
+                out.problems.push(p);
                 out.unavailable.insert(root_key);
             }
         }
@@ -284,7 +319,7 @@ mod tests {
     }
 
     fn load(t: &tempfile::TempDir) -> GlobalData {
-        load_global(&t.path().join("src"), t.path())
+        load_global(&t.path().join("src"), t.path(), None, &Data::new())
     }
 
     fn j(v: serde_json::Value) -> Value {

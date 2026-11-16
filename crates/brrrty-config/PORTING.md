@@ -200,6 +200,40 @@ A name your JS config adds that the port doesn't is refused where a page
 reads it, so a missing collection shows up as a refusal, never as an empty
 list.
 
+## Data files
+
+`_data/site.js` becomes `_data/site.rhai`, and `x.11tydata.js` becomes
+`x.11tydata.rhai`. Folders nest the key the way `.json` does (`_data/a/b.rhai`
+is `a.b`). The script's last expression is the value:
+
+```rhai
+// _data/site.rhai, from `module.exports = () => ({ name, url })`
+#{ name: "Mine", url: "https://example.com" }
+```
+
+A map's keys come out sorted; use `object()` where order shows. If the
+script defines `fn data()` (or `fn data(global)`), Brrrty calls it the way
+11ty calls a function a data file exports, with the config's
+`add_global_data` values and 11ty's `eleventy` data as the argument, and
+the script's own statements don't run.
+
+- Each file runs once per build on a fresh engine: nothing carries from one
+  file to the next, and a script can't see `config`.
+- `now()` follows `SOURCE_DATE_EPOCH`. `new Date().getFullYear()` is
+  `year(now())`.
+- The Rhai limits apply. An error is a problem with the file, line and
+  column, and only the pages that read the key are refused.
+- Precedence: a `.rhai` file wins over a `.json` or `.js` of the same key.
+  In directory and template data it holds the slot `.11tydata.js` holds.
+  When a `.js` file has a `.rhai` port beside it, Brrrty ignores the `.js`
+  and prints one note.
+- Template and directory data must give a map or `object()`. A value with
+  functions in it (a JavaScript `eleventyComputed` of functions) can't be
+  data; port the computation into the template or a filter.
+- Not portable yet: data that reads files (`readFileSync`, `import` of a
+  JSON or CSV file), calls `git`, or imports other modules. There is no
+  `import` or file access in a data script.
+
 ## Regular expressions
 
 `regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`

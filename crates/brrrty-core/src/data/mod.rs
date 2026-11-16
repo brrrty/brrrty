@@ -14,10 +14,12 @@ mod computed;
 mod dir;
 mod global;
 mod jskeys;
+mod rhai;
 pub(crate) use cascade::{clean_tags, frozen_keys, page_data};
 pub(crate) use computed::{Plan as ComputedPlan, set_path};
 pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
+pub(crate) use rhai::{is_js, port_of};
 
 pub(crate) const OVERRIDE_PREFIX: &str = "override:";
 
@@ -225,7 +227,7 @@ pub(crate) fn key_line(text: &str, key: &str) -> Option<usize> {
 
 /// Template and directory data files that apply to the template at `rel`
 /// (relative to the input folder), as 11ty's `getLocalDataPaths` lists
-/// them: `<name>.11tydata.{js,cjs,mjs,json}` and `<name>.json` for the
+/// them: `<name>.11tydata.{rhai,js,cjs,mjs,json}` and `<name>.json` for the
 /// template itself, each folder above it inside the input folder, and the
 /// input folder itself unless it is the project root.
 pub(crate) fn local_data_files(input: &Path, input_rel: &Path, rel: &Path) -> Vec<PathBuf> {
@@ -245,6 +247,7 @@ pub(crate) fn local_data_files(input: &Path, input_rel: &Path, rel: &Path) -> Ve
     let in_root = input_rel.file_name().map(|last| (input_rel, last));
     let mut check = |base_full: PathBuf, shown: PathBuf| {
         for suffix in [
+            ".11tydata.rhai",
             ".11tydata.js",
             ".11tydata.cjs",
             ".11tydata.mjs",

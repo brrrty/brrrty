@@ -16,6 +16,10 @@ pub mod codes {
     pub const CWD_UNAVAILABLE: &str = "cwd-unavailable";
     pub const DATA_FILE_INVALID: &str = "data-file-invalid";
     pub const DATA_JS_UNSUPPORTED: &str = "data-js-unsupported";
+    pub const DATA_RHAI_ERROR: &str = "data-rhai-error";
+    pub const DATA_RHAI_LIMIT: &str = "data-rhai-limit";
+    pub const DATA_RHAI_SHADOWS_JS: &str = "data-rhai-shadows-js";
+    pub const DATA_RHAI_SYNTAX: &str = "data-rhai-syntax";
     pub const DATA_RESERVED: &str = "data-reserved";
     pub const DATA_UNSUPPORTED: &str = "data-unsupported";
     pub const DATE_INVALID: &str = "date-invalid";
@@ -70,6 +74,8 @@ pub mod codes {
 pub enum Severity {
     Error,
     Warning,
+    /// Something Brrrty did on purpose that the user may want to know.
+    Info,
 }
 
 /// A diagnostic produced anywhere in the build. Plain data; the CLI renders it.
@@ -104,6 +110,10 @@ impl Problem {
 
     pub fn warning(code: &'static str, message: impl Into<String>) -> Self {
         Self::new(Severity::Warning, code, message)
+    }
+
+    pub fn info(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(Severity::Info, code, message)
     }
 
     pub fn with_path(mut self, path: impl Into<PathBuf>) -> Self {

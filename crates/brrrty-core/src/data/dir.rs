@@ -9,11 +9,13 @@ use brrrty_js::Value;
 use super::cascade::{clean_tags, frozen_keys};
 use super::global::read_json;
 use super::jskeys::{export_keys, module_kind};
+use super::rhai;
 use super::{
-    BUILD_KEYS, OVERRIDE_PREFIX, RESERVED, json_text, local_data_files, merge, reserved_keys,
-    reserved_problem,
+    BUILD_KEYS, OVERRIDE_PREFIX, RESERVED, json_text, local_data_files, merge, port_of,
+    reserved_keys, reserved_problem,
 };
 use crate::frontmatter::Data;
+use crate::options::DataRunner;
 use crate::problem::{Problem, codes};
 
 /// One data file, read.
@@ -45,12 +47,25 @@ pub(crate) struct DirDataIndex {
     files: HashMap<PathBuf, LocalFile>,
     /// Each template's data files, lowest priority first.
     pages: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Notes, such as a JavaScript file a `.rhai` port stands in for.
+    pub notes: Vec<Problem>,
+    noted: Vec<PathBuf>,
 }
 
 impl DirDataIndex {
     /// Read the data files that apply to `templates` (relative to the
     /// input folder).
-    pub fn load(input: &Path, input_rel: &Path, templates: &[PathBuf]) -> DirDataIndex {
+    ///
+    /// `.rhai` files run once each, on `runner`, with `global` as the data
+    /// 11ty hands an exported function. A JavaScript file with a `.rhai`
+    /// port beside it is dropped, with a note.
+    pub fn load(
+        input: &Path,
+        input_rel: &Path,
+        templates: &[PathBuf],
+        runner: Option<&DataRunner>,
+        global: &Data,
+    ) -> DirDataIndex {
         let mut index = DirDataIndex::default();
         for rel in templates {
             // 11ty lists the paths highest priority first, drops repeats
@@ -63,10 +78,24 @@ impl DirDataIndex {
                 }
             }
             paths.reverse();
+            let ported: Vec<PathBuf> = paths
+                .iter()
+                .filter(|p| rhai::is_js(&p.to_string_lossy()) && paths.contains(&port_of(p)))
+                .cloned()
+                .collect();
+            for js in &ported {
+                if !index.noted.contains(js) {
+                    index.noted.push(js.clone());
+                    index.notes.push(rhai::shadowed(js));
+                }
+            }
+            paths.retain(|p| !ported.contains(p));
             for shown in &paths {
                 if !index.files.contains_key(shown) {
                     let full = input.join(shown.strip_prefix(input_rel).unwrap_or(shown));
-                    index.files.insert(shown.clone(), read_local(&full, shown));
+                    index
+                        .files
+                        .insert(shown.clone(), read_local(&full, shown, runner, global));
                 }
             }
             index.pages.insert(rel.clone(), paths);
@@ -111,38 +140,52 @@ impl DirDataIndex {
     }
 }
 
-/// The help for a JavaScript data file Brrrty can't run.
+/// The help for a JavaScript data file Brrrty can't run: the exact name
+/// of the port that would stand in for it.
 pub(crate) fn js_help(file: &Path) -> String {
-    let name = file
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let stem = name
-        .rsplit_once('.')
-        .map_or(name.as_str(), |(stem, _)| stem);
     format!(
-        "Brrrty doesn't run JavaScript data files. They need a Rhai port ({name} becomes {stem}.rhai), coming in a later release."
+        "Brrrty doesn't run JavaScript data files; port {} to {}, a Rhai script whose last expression is the data (see PORTING.md).",
+        file.display(),
+        port_of(file).display()
     )
 }
 
-fn read_local(full: &Path, shown: &Path) -> LocalFile {
+fn read_local(full: &Path, shown: &Path, runner: Option<&DataRunner>, global: &Data) -> LocalFile {
     let name = shown.to_string_lossy();
-    if [".js", ".cjs", ".mjs"].iter().any(|e| name.ends_with(e)) {
+    if rhai::is_js(&name) {
         return read_js(full, shown);
     }
-    let value = match read_json(full) {
-        Ok(v) => v,
-        Err((message, at)) => {
-            let p = Problem::error(
-                codes::DATA_FILE_INVALID,
-                format!("invalid JSON in {}: {message}", shown.display()),
-            )
-            .with_path(shown)
-            .with_help("11ty stops the whole build on this file. Fix the file or remove it.");
-            return LocalFile::Failed(match at {
-                Some((line, col)) => p.at(line, col),
-                None => p,
-            });
+    let value = if name.ends_with(".rhai") {
+        match rhai::run(runner, full, shown, global) {
+            Ok(Value::Undefined) => return LocalFile::Json(None),
+            Ok(v @ Value::Object(_)) => v,
+            Ok(_) => {
+                return LocalFile::Failed(
+                    Problem::error(
+                        codes::DATA_RHAI_ERROR,
+                        "a template or directory data file must give a map or object()",
+                    )
+                    .with_path(shown)
+                    .with_help("end the script with #{ ... } or an object()"),
+                );
+            }
+            Err(p) => return LocalFile::Failed(p),
+        }
+    } else {
+        match read_json(full) {
+            Ok(v) => v,
+            Err((message, at)) => {
+                let p = Problem::error(
+                    codes::DATA_FILE_INVALID,
+                    format!("invalid JSON in {}: {message}", shown.display()),
+                )
+                .with_path(shown)
+                .with_help("11ty stops the whole build on this file. Fix the file or remove it.");
+                return LocalFile::Failed(match at {
+                    Some((line, col)) => p.at(line, col),
+                    None => p,
+                });
+            }
         }
     };
     let Value::Object(o) = value else {
@@ -248,7 +291,13 @@ mod tests {
 
     fn local(t: &tempfile::TempDir, rel: &str) -> Local {
         let input = t.path().join("src");
-        let index = DirDataIndex::load(&input, Path::new("src"), &[PathBuf::from(rel)]);
+        let index = DirDataIndex::load(
+            &input,
+            Path::new("src"),
+            &[PathBuf::from(rel)],
+            None,
+            &Data::new(),
+        );
         index.local(Path::new(rel)).unwrap()
     }
 
@@ -311,15 +360,20 @@ mod tests {
         ]);
         let input = t.path().join("src");
         let rels = [PathBuf::from("a/p.md"), PathBuf::from("b/p.md")];
-        let index = DirDataIndex::load(&input, Path::new("src"), &rels);
+        let index = DirDataIndex::load(&input, Path::new("src"), &rels, None, &Data::new());
         let a = index.local(&rels[0]).unwrap_err();
         assert_eq!(a.code, codes::DATA_JS_UNSUPPORTED);
         assert!(a.message.contains("`layout`"), "{}", a.message);
         assert_eq!(
             a.help.as_deref(),
-            Some(js_help(Path::new("a.11tydata.js")).as_str())
+            Some(js_help(Path::new("src/a/a.11tydata.js")).as_str())
         );
-        assert!(a.help.as_deref().unwrap().contains("a.11tydata.rhai"));
+        assert!(
+            a.help
+                .as_deref()
+                .unwrap()
+                .contains("port src/a/a.11tydata.js to src/a/a.11tydata.rhai")
+        );
         assert_eq!(
             index.local(&rels[1]).unwrap_err().code,
             codes::DATA_JS_UNSUPPORTED

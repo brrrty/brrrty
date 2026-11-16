@@ -72,6 +72,11 @@ fn run_build(args: BuildArgs) -> ExitCode {
         }
     };
     let dir = site.as_ref().map(|s| s.dir.clone()).unwrap_or_default();
+    let mut config = site.map(|s| s.build_options()).unwrap_or_default();
+    // `.rhai` data files work with or without a config file.
+    config.data = Some(brrrty_config::data_runner(
+        brrrty_config::Clock::from_env().unwrap_or(brrrty_config::Clock::System),
+    ));
     let opts = BuildOptions {
         input: args
             .input
@@ -84,7 +89,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
         root,
         passthrough: args.passthrough,
         strict: args.strict,
-        config: site.map(|s| s.build_options()).unwrap_or_default(),
+        config,
     };
     let report = build(&opts, &MarkdownIt::new());
     if !args.quiet {

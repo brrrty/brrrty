@@ -37,6 +37,7 @@ impl Diagnostic for Rendered {
         Some(match self.severity {
             Severity::Error => miette::Severity::Error,
             Severity::Warning => miette::Severity::Warning,
+            Severity::Info => miette::Severity::Advice,
         })
     }
     fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
@@ -177,9 +178,18 @@ pub fn print_problems(problems: &[Problem], root: &Path, color: bool) {
         .iter()
         .filter(|p| matches!(p.severity, Severity::Error))
         .count();
-    let warnings = problems.len() - errors;
+    let notes = problems
+        .iter()
+        .filter(|p| matches!(p.severity, Severity::Info))
+        .count();
+    let warnings = problems.len() - errors - notes;
+    let notes = match notes {
+        0 => String::new(),
+        1 => ", 1 note".to_string(),
+        n => format!(", {n} notes"),
+    };
     eprintln!(
-        "{errors} {}, {warnings} {}",
+        "{errors} {}, {warnings} {}{notes}",
         if errors == 1 { "error" } else { "errors" },
         if warnings == 1 { "warning" } else { "warnings" }
     );

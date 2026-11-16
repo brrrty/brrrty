@@ -36,6 +36,35 @@ pub struct ConfigOptions {
     pub filters: Vec<ConfigFilter>,
     /// `add_collection` collections, in the order they were added.
     pub collections: Vec<ConfigCollection>,
+    /// Runs `.rhai` data files. A site needs no config file to have them,
+    /// so the command line sets this whether or not there is a config.
+    pub data: Option<DataRunner>,
+}
+
+/// One `.rhai` data file to run.
+#[derive(Debug, Clone, Copy)]
+pub struct DataRequest<'a> {
+    /// The file, as a path that can be read.
+    pub file: &'a Path,
+    /// The data 11ty hands an exported function: the config's
+    /// `add_global_data` values and 11ty's own `eleventy` data.
+    pub global: &'a Data,
+}
+
+/// Runs a `.rhai` data file and gives its value. Every file gets a fresh
+/// engine, so nothing carries over from one to the next. A problem has the
+/// file's line and column and no path; the build adds the path.
+pub type DataFn =
+    std::sync::Arc<dyn Fn(&DataRequest) -> Result<brrrty_js::Value, Problem> + Send + Sync>;
+
+/// A [`DataFn`] that can be shown in a `Debug` print.
+#[derive(Clone)]
+pub struct DataRunner(pub DataFn);
+
+impl std::fmt::Debug for DataRunner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DataRunner")
+    }
 }
 
 /// A filter the config added.

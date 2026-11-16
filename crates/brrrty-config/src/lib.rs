@@ -99,6 +99,7 @@ mod api;
 mod builtins;
 mod collections;
 mod convert;
+mod data;
 mod filters;
 mod glob;
 mod jshelpers;
@@ -116,6 +117,7 @@ pub use brrrty_core::PassthroughEntry;
 use brrrty_core::frontmatter::Data;
 use brrrty_core::{ConfigOptions, Problem, codes};
 pub use convert::{date_value, deep_copy, to_dynamic, to_value};
+pub use data::data_runner;
 use rhai::{Dynamic, EvalAltResult, Map, ParseError, Position};
 
 /// The config file's name, at the project root.
@@ -169,6 +171,7 @@ impl SiteConfig {
             problems: self.problems.clone(),
             filters: self.filters.clone(),
             collections: self.collections.clone(),
+            data: None,
         }
     }
 }

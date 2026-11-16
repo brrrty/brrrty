@@ -346,3 +346,30 @@ fn a_bad_source_date_epoch_is_an_error() {
         stderr(&o)
     );
 }
+
+#[test]
+fn rhai_data_files_work_without_a_config_and_follow_source_date_epoch() {
+    // 2023-11-14T12:00:00Z
+    let d = site(&[
+        ("src/_data/ms.rhai", "get_time(now())"),
+        ("src/_data/site.rhai", "#{ name: \"Mine\" }"),
+        ("src/_data/site.js", "module.exports = () => ({});"),
+        ("src/index.liquid", "{{ site.name }} {{ ms }}"),
+    ]);
+    let out = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .args(["--input", "src"])
+        .env("SOURCE_DATE_EPOCH", "1699963200")
+        .current_dir(d.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let html = std::fs::read_to_string(d.path().join("_site/index.html")).unwrap();
+    assert_eq!(html, "Mine 1699963200000");
+    // The shadowed JavaScript file is a note, not a warning or an error.
+    assert!(stderr(&out).contains("site.rhai supplies this key"));
+    assert!(
+        stderr(&out).contains("0 errors, 0 warnings, 1 note"),
+        "{}",
+        stderr(&out)
+    );
+}

@@ -17,8 +17,8 @@ use crate::collections::{self, Entry, Membership, Page};
 use crate::content::{self, ContentPage};
 use crate::data::{
     BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags,
-    config_global, frozen_keys, frozen_problem, js_help, js_object, key_line, load_global, merge,
-    page_data, reserved_keys, reserved_problem,
+    config_global, frozen_keys, frozen_problem, is_js, js_help, js_object, key_line, load_global,
+    merge, page_data, reserved_keys, reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::{Data, split_front_matter};
@@ -698,10 +698,7 @@ fn load_page_inner(
         pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
     })?;
     let order_files = shared.dir_data.files(rel);
-    let js_data = order_files.iter().any(|f| {
-        let name = f.to_string_lossy();
-        [".js", ".cjs", ".mjs"].iter().any(|e| name.ends_with(e))
-    });
+    let js_data = order_files.iter().any(|f| is_js(&f.to_string_lossy()));
     let includes = shared.input_rel.join("_includes");
     let mut order_layouts: Vec<(String, OrderLayout)> = Vec::new();
     let mut name = match data_layout {
@@ -1558,28 +1555,6 @@ fn build_in_pool(
     );
     let layouts = Layouts::new(&engine, input.clone(), input_rel.clone());
     let data_dir = input_rel.join("_data");
-    let GlobalData {
-        value: user_value,
-        js_keys,
-        problems: data_problems,
-        unavailable,
-    } = load_global(&input, &root);
-    report.problems.extend(data_problems);
-    let user_data = match user_value {
-        Value::Object(o) => Arc::unwrap_or_clone(o),
-        _ => Data::new(),
-    };
-    let withheld: BTreeMap<String, Withheld> = unavailable
-        .into_iter()
-        .map(|key| {
-            let js = js_keys.iter().find(|r| r.key_path.first() == Some(&key));
-            let why = match js {
-                Some(r) => Withheld::Js(r.file.clone()),
-                None => Withheld::Failed,
-            };
-            (key, why)
-        })
-        .collect();
     let (globals, output_shown) = globals(opts, &root, &input_rel);
     // 11ty sets the config's `addGlobalData` values, adds its `eleventy`
     // data, and merges that over `_data` (deeply); then it replaces `pkg`
@@ -1605,9 +1580,34 @@ fn build_in_pool(
     if let Some(v) = globals.get("eleventy") {
         initial.insert("eleventy".to_string(), v.clone());
     }
+    let initial = js_object(&initial);
+    let GlobalData {
+        value: user_value,
+        js_keys,
+        notes: data_notes,
+        problems: data_problems,
+        unavailable,
+    } = load_global(&input, &root, opts.config.data.as_ref(), &initial);
+    report.problems.extend(data_notes);
+    report.problems.extend(data_problems);
+    let user_data = match user_value {
+        Value::Object(o) => Arc::unwrap_or_clone(o),
+        _ => Data::new(),
+    };
+    let withheld: BTreeMap<String, Withheld> = unavailable
+        .into_iter()
+        .map(|key| {
+            let js = js_keys.iter().find(|r| r.key_path.first() == Some(&key));
+            let why = match js {
+                Some(r) => Withheld::Js(r.file.clone()),
+                None => Withheld::Failed,
+            };
+            (key, why)
+        })
+        .collect();
     let mut global = Data::new();
     merge(&mut global, &user_data);
-    merge(&mut global, &js_object(&initial));
+    merge(&mut global, &initial);
     if let Some(v) = globals.get("pkg") {
         global.insert("pkg".to_string(), v.clone());
     }
@@ -1624,7 +1624,14 @@ fn build_in_pool(
         .cloned()
         .chain(nunjucks)
         .collect();
-    let dir_data = DirDataIndex::load(&input, &input_rel, &loadable);
+    let dir_data = DirDataIndex::load(
+        &input,
+        &input_rel,
+        &loadable,
+        opts.config.data.as_ref(),
+        &initial,
+    );
+    report.problems.extend(dir_data.notes.iter().cloned());
     let shared = Shared {
         engine: &engine,
         loader: &loader,
