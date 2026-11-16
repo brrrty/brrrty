@@ -256,9 +256,7 @@ fn a_broken_template_keeps_the_last_good_build_until_it_is_fixed() {
         assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
         // Old builds are still removed.
         let staging = live.root.join("_site").join(STAGING_DIR);
-        wait_for("the old build to go", || {
-            fs::read_dir(&staging).unwrap().count() == 1
-        });
+        wait_for("the old build to go", || builds_in(&staging) == 1);
 
         write(
             live.root,
@@ -437,9 +435,7 @@ fn old_builds_are_removed_once_unused() {
             assert!(live.next_rebuild().ok);
         }
         let staging = live.root.join("_site").join(STAGING_DIR);
-        wait_for("old builds to be removed", || {
-            fs::read_dir(&staging).unwrap().count() == 1
-        });
+        wait_for("old builds to be removed", || builds_in(&staging) == 1);
     });
 }
 
@@ -502,6 +498,20 @@ fn a_page_named_like_staging_never_reaches_the_output() {
         "{:?}",
         finished.problems
     );
+}
+
+/// How many builds the staging folder holds (it also holds the session's lock).
+fn builds_in(staging: &Path) -> usize {
+    fs::read_dir(staging)
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("build-")
+        })
+        .count()
 }
 
 fn read(root: &Path, rel: &str) -> Option<String> {
