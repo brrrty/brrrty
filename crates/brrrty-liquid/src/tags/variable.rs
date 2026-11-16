@@ -27,7 +27,13 @@ pub(super) fn capture(r: &mut Renderer<'_>, name: &str, body: &[Node]) -> R<()> 
 /// LiquidJS, so `assign` shadows them and they start from a number already
 /// in the data.
 pub(super) fn increment(r: &mut Renderer<'_>, name: &str, step: f64, out: &mut String) -> R<()> {
-    let n = match r.ctx.data_get(name) {
+    let found = r.ctx.data_get(name);
+    if found.is_none() {
+        // The counter starts from a number in the data, so a missing one is
+        // a lookup the caller must hear about, as for any other variable.
+        r.ctx.undefined.borrow_mut().insert(name.to_string());
+    }
+    let n = match found {
         Some(Value::Number(n)) => n,
         _ => 0.0,
     };

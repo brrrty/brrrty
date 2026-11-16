@@ -221,3 +221,35 @@ fn eleventy_and_pkg_win_over_data_files() {
         r#"{"name":"real","version":"1.0.0"} 3.1.8 2 Eleventy v3.1.8"#
     );
 }
+
+const COUNTERS: &str = "{% increment counter %}|{% increment counter %}|{% decrement size %}";
+
+/// Probed: counters start from numbers in the data, so JSON `counter: 5` and
+/// `size: 7` give `5|6|6`.
+#[test]
+fn counters_start_from_json_data() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/_data/counter.json", "5");
+    write(root, "src/_data/size.json", "7");
+    write(root, "src/a.liquid", COUNTERS);
+    let r = run(root);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(read(root, "a/index.html"), "5|6|6");
+}
+
+#[test]
+fn counters_from_javascript_data_are_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/_data/counter.js", "module.exports = 5;");
+    write(root, "src/_data/size.js", "module.exports = 7;");
+    write(root, "src/a.liquid", COUNTERS);
+    write(root, "src/b.liquid", "plain");
+    let r = run(root);
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 1, "{:#?}", r.problems);
+    assert_eq!(errs[0].code, codes::DATA_UNSUPPORTED);
+    assert!(!root.join("_site/a/index.html").exists());
+    assert_eq!(read(root, "b/index.html"), "plain");
+}
