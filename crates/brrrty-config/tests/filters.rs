@@ -1403,3 +1403,46 @@ fn a_filter_filling_an_object_is_stopped_by_size() {
     assert_eq!(render(&cfg, "{{ 7 | fill }}", "{}").unwrap(), "7");
     assert_eq!(render(&cfg, "{{ 7 | fill }}", "{}").unwrap(), "7");
 }
+
+/// 11ty gives a JavaScript filter LiquidJS's drop objects for `nil`, `null`, `empty`, `blank`
+/// and `forloop`, assigned or not. Node printed, for a filter echoing its input:
+/// `nil` and `null` are a NullDrop (`typeof` "object", `JSON.stringify` `{}`, `String`
+/// `[object Object]`, `v + ""` "null", truthy), `empty` and `blank` the same but `v + ""` is
+/// "", and `forloop` stringifies as `{"i":0,"length":1,"name":"i-(1..1)"}`. No value a script
+/// can get acts like that, so each refuses the page. `null` from data, and an undefined
+/// variable, are plain values and pass.
+#[test]
+fn liquid_drops_given_to_a_filter_refuse_the_page() {
+    let cfg =
+        load("config.add_filter(\"f\", |v, a| json_stringify(v) + \":\" + json_stringify(a));");
+    for (tpl, drop, what) in [
+        ("{{ nil | f }}", "NullDrop", "its input"),
+        ("{{ null | f }}", "NullDrop", "its input"),
+        ("{{ empty | f }}", "EmptyDrop", "its input"),
+        ("{{ blank | f }}", "BlankDrop", "its input"),
+        ("{{ 1 | f: nil }}", "NullDrop", "an argument"),
+        ("{{ 1 | f: empty }}", "EmptyDrop", "an argument"),
+        ("{{ 1 | f: k: blank }}", "BlankDrop", "its `k` argument"),
+        ("{% assign a = nil %}{{ a | f }}", "NullDrop", "its input"),
+        (
+            "{% assign b = empty %}{{ 1 | f: b }}",
+            "EmptyDrop",
+            "an argument",
+        ),
+        (
+            "{% for i in (1..1) %}{{ forloop | f }}{% endfor %}",
+            "ForloopDrop",
+            "its input",
+        ),
+    ] {
+        let why = render(&cfg, tpl, "{}").unwrap_err();
+        assert!(
+            why.contains(&format!("LiquidJS's {drop}, as {what}")),
+            "{tpl}: {why}"
+        );
+    }
+    assert_eq!(
+        render(&cfg, "{{ x | f: y }}|{{ n | f: n }}", "{\"n\": null}").unwrap(),
+        ":|null:null"
+    );
+}

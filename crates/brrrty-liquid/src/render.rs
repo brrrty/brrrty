@@ -247,17 +247,27 @@ impl<'a> Renderer<'a> {
                     out
                 }
                 Some(Filter::Args(run)) => {
+                    let name = &f.name;
+                    drop_arg(name, "its input", &v)?;
                     let mut argv = Vec::new();
                     for arg in &f.args {
                         argv.push(match arg {
-                            FilterArg::Positional(e) => self.eval(e)?.to_value(),
-                            FilterArg::Keyword { name, value } => {
+                            FilterArg::Positional(e) => {
+                                let a = self.eval(e)?;
+                                drop_arg(name, "an argument", &a)?;
+                                a.to_value()
+                            }
+                            FilterArg::Keyword { name: key, value } => {
                                 let value = match value {
-                                    Some(e) => self.eval(e)?.to_value(),
+                                    Some(e) => {
+                                        let a = self.eval(e)?;
+                                        drop_arg(name, &format!("its `{key}` argument"), &a)?;
+                                        a.to_value()
+                                    }
                                     None => Value::Undefined,
                                 };
                                 Value::Array(Arc::new(vec![
-                                    Value::String(name.as_str().into()),
+                                    Value::String(key.as_str().into()),
                                     value,
                                 ]))
                             }
@@ -425,6 +435,29 @@ fn range(low: f64, high: f64) -> R<Val> {
         i += 1.0;
     }
     Ok(Val::V(Value::Array(std::sync::Arc::new(items))))
+}
+
+/// 11ty hands a JavaScript filter LiquidJS's drop objects as they are: `nil` and `null` are a
+/// `NullDrop`, `empty` an `EmptyDrop`, `blank` a `BlankDrop`, and `forloop` and `block` their
+/// own drops, also when they were assigned to a variable first. A drop is an object
+/// (`JSON.stringify` gives `{}`, `String` gives `[object Object]`, and it is truthy), but `+`
+/// gives `"null"` or `""` and a `forloop` stringifies its fields, so no Brrrty value acts the
+/// same. A filter written in Rhai (or one of the RSS plugin's) given one refuses the page.
+fn drop_arg(filter: &str, what: &str, v: &Val) -> R<()> {
+    let drop = match v {
+        Val::V(_) => return Ok(()),
+        Val::Nil => "`nil` or `null`, LiquidJS's NullDrop",
+        Val::Empty => "`empty`, LiquidJS's EmptyDrop",
+        Val::Blank => "`blank`, LiquidJS's BlankDrop",
+        Val::Loop(_) => "`forloop`, LiquidJS's ForloopDrop",
+        Val::Block => "`block`, LiquidJS's BlockDrop",
+    };
+    Err(RenderErr::new(
+        ErrorKind::Render,
+        format!(
+            "filter `{filter}` would get {drop}, as {what}. 11ty passes a filter that object as it is, and Brrrty can't give a script the same value; pass a string, number or variable that holds one instead"
+        ),
+    ))
 }
 
 #[cfg(test)]
