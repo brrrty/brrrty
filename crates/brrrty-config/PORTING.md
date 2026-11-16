@@ -92,6 +92,32 @@ Rhai's closures are `|a, b| ...` and can't capture variables (see above; use a l
 missing argument is `()`, so `|s, n| { let n = n ?? 40; ... }` is
 `(s, n = 40) =>`. A thrown error (`throw "msg"`) refuses the page.
 
+## Built-in helpers for Luxon and markdown-it
+
+A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
+3.7.2) or `markdownIt().render()` has a helper to port it to:
+
+| JavaScript | In Rhai |
+|---|---|
+| `DateTime.fromJSDate(d, { zone: 'utc' }).toFormat(fmt)` | `luxon_format(d, fmt, "utc")` |
+| `md.render(s \|\| '')` | `markdown(s)` |
+| `md.renderInline(s \|\| '')` | `markdown_inline(s)` |
+
+- `luxon_format` supports every Luxon token for `en-US`: the field tokens and
+  the macro tokens (`D`, `DD`, `t`, `T`, `f`, `F` and their longer forms).
+  Zones are `"utc"`, fixed offsets (`"UTC+5"`, `"utc-3:30"`) and IANA names.
+  A value that isn't a `date`, or a zone Luxon doesn't know, gives `"Invalid
+  DateTime"`, as Luxon does. `luxon_format(d, fmt, zone, locale)` takes a
+  locale, and any but `en-US` is an error. So are the machine-dependent zones
+  (`"local"`, `"system"`, `"default"`), and a zone *name* (`ZZZZ`, `ZZZZZ`,
+  `ttt`, `tttt`, `fff`, ...) for an IANA zone before 1970 or at an instant
+  where ICU's name can't be told from the table. JavaScript's
+  `format = 'dd-LLL-yyyy'` default is `format ?? "dd-LLL-yyyy"`.
+- `markdown` and `markdown_inline` are `markdown-it` with no options, so HTML
+  is **off** (11ty's own instance has it on) and the indented code rule is
+  **on**. `null`, `()`, `""`, `0` and `false` give `""`, as `s || ''` does;
+  any other value that isn't a string is an error, as in markdown-it.
+
 ## `object()` and key order
 
 A JavaScript object keeps its keys in insertion order, integer-like keys

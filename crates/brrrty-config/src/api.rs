@@ -204,6 +204,7 @@ pub fn engine(clock: Clock) -> Engine {
     crate::object::register(&mut e);
     crate::jshelpers::register(&mut e);
     register_text(&mut e);
+    crate::builtins::register(&mut e);
     e.register_get("ignores", |c: &mut Config| Ignores(c.0.clone()));
     e.register_fn("add", |i: &mut Ignores, glob: ImmutableString| {
         lock(&i.0).ignores.insert(glob.to_string());

@@ -9,6 +9,7 @@ mod content;
 mod data;
 pub mod discover;
 pub mod frontmatter;
+pub mod helpers;
 pub mod ignore_files;
 pub mod js;
 mod layout;

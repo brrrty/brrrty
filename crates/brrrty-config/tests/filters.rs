@@ -550,14 +550,102 @@ fn excerpt_words_matches_javascript() {
     assert!(e.contains("Cannot read properties of undefined"), "{e}");
 }
 
+/// The three filters a site written for markdown-it and Luxon needs. The expected values are
+/// what Node 26 printed for `markdownIt()` (no options, so HTML is off) and Luxon 3.7.2.
+const BUILTIN_FILTERS: &str = r#"
+config.add_filter("markdown", |s| markdown(s));
+config.add_filter("markdownify", |s| markdown_inline(s));
+config.add_filter("utcDate", |d, format| luxon_format(d, format ?? "dd-LLL-yyyy", "utc"));
+"#;
+
 #[test]
-#[ignore = "needs the markdown helper from Task 3"]
-fn markdown_filter_is_a_stub_until_the_helper_exists() {
-    let cfg = load(r#"config.add_filter("markdown", |s| markdown(s ?? ""));"#);
+fn markdown_filter_renders_with_html_off() {
+    let cfg = load(BUILTIN_FILTERS);
+    let r = |tpl: &str, json: &str| render(&cfg, tpl, json).unwrap();
+    assert_eq!(r("{{ '*a*' | markdown }}", "{}"), "<p><em>a</em></p>\n");
     assert_eq!(
-        render(&cfg, "{{ '*a*' | markdown }}", "{}").unwrap(),
-        "<p><em>a</em></p>\n"
+        r("{{ s | markdown }}", r#"{"s":"<b>x</b>"}"#),
+        "<p>&lt;b&gt;x&lt;/b&gt;</p>\n"
     );
+    // The indented code rule is on here (11ty's own instance turns it off).
+    assert_eq!(
+        r("{{ s | markdown }}", r#"{"s":"    code"}"#),
+        "<pre><code>code\n</code></pre>\n"
+    );
+    assert_eq!(
+        r("{{ s | markdown }}", r#"{"s":"a\n\n- x\n- y\n"}"#),
+        "<p>a</p>\n<ul>\n<li>x</li>\n<li>y</li>\n</ul>\n"
+    );
+    assert_eq!(
+        r("{{ s | markdown }}", r#"{"s":"~~s~~"}"#),
+        "<p><s>s</s></p>\n"
+    );
+}
+
+#[test]
+fn markdownify_renders_inline_only() {
+    let cfg = load(BUILTIN_FILTERS);
+    let r = |json: &str| render(&cfg, "{{ s | markdownify }}", json).unwrap();
+    assert_eq!(r(r#"{"s":"*a*"}"#), "<em>a</em>");
+    assert_eq!(r(r#"{"s":"<b>x</b>"}"#), "&lt;b&gt;x&lt;/b&gt;");
+    assert_eq!(r(r#"{"s":"    code"}"#), "    code");
+    assert_eq!(r(r#"{"s":"a\n\n- x\n- y\n"}"#), "a\n\n- x\n- y\n");
+    assert_eq!(r(r#"{"s":"x & y"}"#), "x &amp; y");
+}
+
+#[test]
+fn markdown_of_a_falsy_value_is_empty_and_of_a_non_string_is_an_error() {
+    let cfg = load(BUILTIN_FILTERS);
+    for tpl in [
+        "{{ nope | markdown }}",
+        "{{ n | markdown }}",
+        "{{ e | markdownify }}",
+        "{{ f | markdownify }}",
+    ] {
+        let out = render(&cfg, tpl, r#"{"n":null,"e":"","f":false}"#).unwrap();
+        assert_eq!(out, "", "{tpl}");
+    }
+    let err = render(&cfg, "{{ n | markdown }}", r#"{"n":5}"#).unwrap_err();
+    assert!(err.contains("Input data should be a String"), "{err}");
+}
+
+fn render_date(cfg: &SiteConfig, tpl: &str, d: Value) -> Result<String, String> {
+    let e = engine(cfg);
+    let t = e.parse("t.liquid", tpl).map_err(|e| e.to_string())?;
+    let mut m = indexmap::IndexMap::new();
+    m.insert("d".to_string(), d);
+    m.insert("txt".into(), s("2023-11-14"));
+    e.render(&t, &Value::Object(Arc::new(m)), &NoPartials)
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn utc_date_formats_like_luxon() {
+    let cfg = load(BUILTIN_FILTERS);
+    let d = brrrty_config::date_value(NOON_MS as f64).unwrap();
+    let r = |tpl: &str| render_date(&cfg, tpl, d.clone()).unwrap();
+    assert_eq!(r("{{ d | utcDate }}"), "14-Nov-2023");
+    assert_eq!(r("{{ d | utcDate: 'yyyy-MM-dd' }}"), "2023-11-14");
+    assert_eq!(r("{{ d | utcDate: 'DDDD' }}"), "Tuesday, November 14, 2023");
+    assert_eq!(r("{{ d | utcDate: '' }}"), "");
+    // A string is not a JS Date, so Luxon has no date to format.
+    assert_eq!(r("{{ txt | utcDate }}"), "Invalid DateTime");
+}
+
+#[test]
+fn luxon_format_refuses_other_locales_and_null_formats() {
+    let cfg = load(
+        r#"config.add_filter("fr", |d| luxon_format(d, "yyyy", "utc", "fr-FR"));
+           config.add_filter("nul", |d| luxon_format(d, null_value(), "utc"));
+           config.add_filter("local", |d| luxon_format(d, "yyyy", "local"));"#,
+    );
+    let d = brrrty_config::date_value(NOON_MS as f64).unwrap();
+    let err = render_date(&cfg, "{{ d | fr }}", d.clone()).unwrap_err();
+    assert!(err.contains("fr-FR") && err.contains("en-US"), "{err}");
+    let err = render_date(&cfg, "{{ d | nul }}", d.clone()).unwrap_err();
+    assert!(err.contains("reading 'length'"), "{err}");
+    let err = render_date(&cfg, "{{ d | local }}", d).unwrap_err();
+    assert!(err.contains("depends on the machine"), "{err}");
 }
 
 const COLLECTION_FILTERS: &str = r#"

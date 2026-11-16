@@ -76,6 +76,7 @@
 #![allow(clippy::result_large_err)]
 
 mod api;
+mod builtins;
 mod convert;
 mod filters;
 mod jshelpers;
