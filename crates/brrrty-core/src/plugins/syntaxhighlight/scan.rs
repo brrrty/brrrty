@@ -96,7 +96,7 @@ fn is_same(a: &Path, b: &Path) -> bool {
 /// The keys loading `language` (as a fence or a tag names it) changes.
 /// A name a template writes could be any language: it changes every key
 /// any language changes.
-fn changes(language: &str) -> Option<Vec<String>> {
+pub(crate) fn changes(language: &str) -> Option<Vec<String>> {
     let g = grammars();
     if language.contains("{{") || language.contains("{%") || language.contains('&') {
         let mut all: Vec<String> = Vec::new();

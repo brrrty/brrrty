@@ -1451,10 +1451,35 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
     }
 }
 
+/// [`build_once`] until no page meets a language that changes a grammar
+/// the build didn't know would change. Each pass knows of more changed
+/// grammars, and there are finitely many, so this ends.
 fn build_in_pool(
     opts: &BuildOptions,
     markdown: &dyn MarkdownRenderer,
     start: Instant,
+) -> BuildReport {
+    let mut found = Vec::new();
+    loop {
+        let mut again = Vec::new();
+        let report = build_once(opts, markdown, start, &found, &mut again);
+        if again.is_empty() {
+            return report;
+        }
+        found.extend(again);
+    }
+}
+
+/// Builds with the plugin refusing what `found` changes, besides what the
+/// scan finds. When rendering meets a language that changes grammars and
+/// neither knew of, nothing is written: `again` gets the languages, and
+/// the build has to be redone with them.
+fn build_once(
+    opts: &BuildOptions,
+    markdown: &dyn MarkdownRenderer,
+    start: Instant,
+    found: &[crate::plugins::syntaxhighlight::scan::Found],
+    again: &mut Vec<crate::plugins::syntaxhighlight::scan::Found>,
 ) -> BuildReport {
     let mut report = BuildReport {
         written: 0,
@@ -1576,9 +1601,9 @@ fn build_in_pool(
     // The syntax highlighting plugin, refusing the grammars a language some
     // file names could change for the pages 11ty renders after it.
     let highlight = opts.config.syntax_highlight.as_ref().map(|p| {
-        p.with_mutations(&crate::plugins::syntaxhighlight::scan::scan(
-            &input, &input_rel, &out,
-        ))
+        let mut all = crate::plugins::syntaxhighlight::scan::scan(&input, &input_rel, &out);
+        all.extend(found.iter().cloned());
+        p.with_mutations(&all)
     });
     // `{% highlight %}`, from the syntax highlighting plugin.
     if let Some(plugin) = &highlight
@@ -2081,10 +2106,14 @@ fn build_in_pool(
         }
     }
     type Written = Result<(), Refused>;
-    let results: Vec<Written> = (0..prepared.len())
+    // Every page is rendered before any is written: highlighting may only
+    // now have met a language that changes grammars, which the scan didn't
+    // see, and then the build is redone instead.
+    type Ready<'p> = Result<(PathBuf, String, &'p Path), Refused>;
+    let ready: Vec<Ready<'_>> = (0..prepared.len())
         .into_par_iter()
         .filter(|&i| writes(&prepared[i]))
-        .map(|i| -> Written {
+        .map(|i| -> Ready<'_> {
             let p = &prepared[i];
             if let Some(problem) = unsupported_layout(p) {
                 return Err(Refused::Layout(problem));
@@ -2123,6 +2152,20 @@ fn build_in_pool(
             {
                 return Err(Refused::Page(problem.with_path(shown), None));
             }
+            Ok((dest, rendered.html, shown.as_path()))
+        })
+        .collect();
+    if let Some(plugin) = &highlight {
+        let unforeseen = plugin.unforeseen();
+        if !unforeseen.is_empty() {
+            *again = unforeseen;
+            return report;
+        }
+    }
+    let results: Vec<Written> = ready
+        .into_par_iter()
+        .map(|r| -> Written {
+            let (dest, html, shown) = r?;
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
                     (
@@ -2132,7 +2175,7 @@ fn build_in_pool(
                     )
                 })?;
             }
-            fs::write(&dest, rendered.html).map_err(|e| {
+            fs::write(&dest, html).map_err(|e| {
                 (
                     Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
                         .with_path(shown),

@@ -26,7 +26,8 @@ mod lines;
 pub mod scan;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use brrrty_js::Value;
 use brrrty_prism::grammar::{GrammarId, grammars};
@@ -100,6 +101,9 @@ pub struct SyntaxHighlight {
     loaded: HashSet<String>,
     /// The grammars another page could change ([`scan`]).
     mutated: Arc<scan::Mutated>,
+    /// Every language highlighted with that changes grammars, as the
+    /// build asked for it: a check on the scan.
+    asked: Arc<Mutex<Vec<scan::Found>>>,
 }
 
 impl SyntaxHighlight {
@@ -110,6 +114,7 @@ impl SyntaxHighlight {
             options,
             loaded: grammars().base_keys.iter().cloned().collect(),
             mutated: Arc::default(),
+            asked: Arc::default(),
         };
         let mut page = plugin.page();
         // `PrismLoader(language)`, without the options.
@@ -133,8 +138,22 @@ impl SyntaxHighlight {
     pub fn with_mutations(&self, found: &[scan::Found]) -> Self {
         Self {
             mutated: Arc::new(scan::by_key(found)),
+            asked: Arc::default(),
             ..self.clone()
         }
+    }
+
+    /// The languages pages asked to highlight in that change a grammar the
+    /// scan didn't know would change: a language from data or a template,
+    /// which no file names. Output written with this plugin would be
+    /// wrong; the build is redone with them.
+    pub fn unforeseen(&self) -> Vec<scan::Found> {
+        let asked = self.asked.lock().unwrap_or_else(|e| e.into_inner());
+        asked
+            .iter()
+            .filter(|f| f.keys.iter().any(|k| !self.mutated.contains_key(k)))
+            .cloned()
+            .collect()
     }
 
     /// Highlighting for one page: what it loads is known to be loaded for
@@ -142,6 +161,8 @@ impl SyntaxHighlight {
     pub fn page(&self) -> Page<'_> {
         Page {
             options: &self.options,
+            asked: &self.asked,
+            at: None,
             error_on_invalid: self.options.error_on_invalid_language,
             state: State {
                 keys: self.loaded.clone(),
@@ -238,10 +259,20 @@ impl State {
     fn unchanged(&self, key: &str) -> Result<(), Refusal> {
         match self.mutated.get(key) {
             None => Ok(()),
-            Some((path, line, language)) => Err(Refusal(format!(
-                "{}:{line} names the language `{language}`. Loading it changes Prism's `{key}` grammar for every page 11ty renders after that one, and Brrrty doesn't have the changed grammar",
-                path.display()
-            ))),
+            Some((path, line, language)) => {
+                // A language the scan found has its line; one found only
+                // as pages rendered has its file, when a fence asked.
+                let at = if path.as_os_str().is_empty() {
+                    "a `{% highlight %}` tag highlights code in the language".to_string()
+                } else if *line == 0 {
+                    format!("{} highlights code in the language", path.display())
+                } else {
+                    format!("{}:{line} names the language", path.display())
+                };
+                Err(Refusal(format!(
+                    "{at} `{language}`. Loading it changes Prism's `{key}` grammar for every page 11ty renders after that one, and Brrrty doesn't have the changed grammar"
+                )))
+            }
         }
     }
 }
@@ -272,6 +303,9 @@ impl Languages for State {
 /// Highlighting on one page.
 pub struct Page<'a> {
     options: &'a Options,
+    asked: &'a Mutex<Vec<scan::Found>>,
+    /// The file and line being highlighted, when known.
+    at: Option<(PathBuf, usize)>,
     error_on_invalid: bool,
     state: State,
 }
@@ -279,7 +313,24 @@ pub struct Page<'a> {
 impl Page<'_> {
     /// `PrismLoader(language, options)`: the grammar to highlight with,
     /// loading the language first; `None` when Prism has none.
+    /// Says which file and line the next code is in, for problems.
+    pub fn at(&mut self, file: &Path, line: usize) {
+        self.at = Some((file.to_path_buf(), line));
+    }
+
     fn loader(&mut self, language: &str) -> Result<Option<GrammarId>, Error> {
+        if let Some(keys) = scan::changes(language) {
+            let (path, line) = self.at.clone().unwrap_or_default();
+            self.asked
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(scan::Found {
+                    path,
+                    line,
+                    language: language.to_string(),
+                    keys,
+                });
+        }
         let diff = language.strip_prefix("diff-");
         // Aliasing ignores `diff-`.
         let aliased = normalize(diff.unwrap_or(language));

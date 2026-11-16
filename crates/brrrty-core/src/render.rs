@@ -302,6 +302,7 @@ impl Pipeline<'_> {
                 if failed.is_some() {
                     return None;
                 }
+                page.at(file, line.map_or(0, |l| l + fence.line));
                 match page.markdown(fence.content, fence.language) {
                     Ok(html) => Some(html),
                     Err(e) => {

@@ -518,3 +518,78 @@ fn only_the_universal_filters_reach_liquid() {
     assert_eq!(errs[0].code, codes::LIQUID_UNKNOWN_FILTER);
     assert_eq!(out(&t, "b/index.html").unwrap(), "https://example.com/x/ 1");
 }
+
+/// A language that reaches the highlighter only as pages render (here a
+/// fence built by a Rhai data file, which no file names) still refuses the
+/// pages whose grammar it changes, and nothing is written with the
+/// unchanged grammar.
+#[test]
+fn a_language_from_data_that_changes_a_grammar_refuses_pages() {
+    let (t, r) = site(
+        MARKER,
+        &[
+            (
+                "_data/snippet.json",
+                r#""\u0060\u0060\u0060regex\n^a+$\n\u0060\u0060\u0060""#,
+            ),
+            ("a.md", "---\ntitle: a\n---\n{{ snippet }}\n"),
+            ("b.md", "```js\nconst r = /a+[b-c]/g;\n```\n"),
+            ("c.md", "```bash\necho a\n```\n"),
+        ],
+    );
+    let errs = errors(&r);
+    assert!(out(&t, "b/index.html").is_none(), "{errs:#?}");
+    assert!(out(&t, "a/index.html").is_none());
+    assert!(out(&t, "c/index.html").is_some());
+    let b = errs
+        .iter()
+        .find(|p| p.path.as_deref() == Some(Path::new("src/b.md")))
+        .expect("b is refused");
+    assert_eq!(b.code, codes::SYNTAX_HIGHLIGHT_UNSUPPORTED);
+    assert!(
+        b.message.contains(
+            "src/a.md highlights code in the language `regex`. Loading it changes Prism's `javascript` grammar"
+        ),
+        "{}",
+        b.message
+    );
+}
+
+/// LiquidJS hands `{% highlight %}` its arguments as written, so
+/// `{{ lang }}` there is the language `{{` (and `lang }}` marks lines),
+/// as 11ty 3.1.8 writes it; `regex` is never loaded. The scan doesn't know
+/// which engine reads a file, and in Nunjucks the shortcode's arguments
+/// are expressions, so it counts `{{ lang }}` as any language: the js page
+/// and bash pages are refused, never written wrong.
+#[test]
+fn a_highlight_tag_with_a_variable_language_counts_as_any_language() {
+    let (t, r) = site(
+        MARKER,
+        &[
+            (
+                "a.liquid",
+                "{% assign lang = 'regex' %}{% highlight {{ lang }} %}^a+${% endhighlight %}",
+            ),
+            ("b.md", "```js\nlet a = 1;\n```\n"),
+            ("c.md", "```bash\necho a\n```\n"),
+        ],
+    );
+    assert_eq!(
+        out(&t, "a/index.html").as_deref(),
+        Some(
+            r#"<pre class="language-{{"><code class="language-{{"><span class="highlight-line">^a+$</span></code></pre>"#
+        )
+    );
+    assert!(out(&t, "b/index.html").is_none(), "{:#?}", errors(&r));
+    // Any language includes `naniscript`, whose hook acts on every grammar.
+    assert!(out(&t, "c/index.html").is_none());
+    let errs = errors(&r);
+    assert_eq!(errs.len(), 2, "{errs:#?}");
+    assert!(
+        errs[0]
+            .message
+            .contains("src/a.liquid:1 names the language `{{`"),
+        "{}",
+        errs[0].message
+    );
+}
