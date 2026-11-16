@@ -238,10 +238,16 @@ fn a_broken_template_keeps_the_last_good_build_until_it_is_fixed() {
             "{:?}",
             r.problems
         );
+        // The rest of the build is served; the refused page keeps its last file.
+        assert!(r.served);
+        assert_eq!(r.refused, [PathBuf::from("src/index.md")]);
+        assert_eq!(r.kept, 1);
         assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
-        // The failed build left nothing behind in staging.
+        // Old builds are still removed.
         let staging = live.root.join("_site").join(STAGING_DIR);
-        assert_eq!(fs::read_dir(&staging).unwrap().count(), 1);
+        wait_for("the old build to go", || {
+            fs::read_dir(&staging).unwrap().count() == 1
+        });
 
         write(
             live.root,
@@ -675,4 +681,149 @@ fn a_dangling_staging_symlink_is_replaced_at_start() {
         assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
     });
     assert!(!t.path().join("nowhere").exists());
+}
+
+#[test]
+fn a_new_page_that_never_built_is_a_404_and_the_rest_is_served() {
+    let t = site();
+    with_session(t.path(), |live| {
+        live.settle();
+        write(live.root, "src/new.md", "{% if %}\n");
+        let r = live.next_rebuild();
+        assert!(!r.ok && r.served, "{r:?}");
+        assert_eq!(r.kept, 0);
+        assert_eq!(get(live.server, "/new/").0, 404);
+        write(
+            live.root,
+            "src/index.md",
+            "---\nlayout: base.liquid\n---\nv1\n",
+        );
+        let r = live.next_rebuild();
+        assert!(!r.ok && r.served, "{r:?}");
+        assert_eq!(live.page(), "<main><p>v1</p>\n</main>");
+    });
+}
+
+#[test]
+fn kept_pages_never_reach_the_output_folder() {
+    let t = site();
+    write(t.path(), "src/about.md", "about v0");
+    with_session(t.path(), |live| {
+        live.settle();
+        let about = live.root.join("_site/about/index.html");
+        assert!(about.is_file());
+        // `brrrty build` with a broken about.md writes no about page, so neither does the
+        // mirror, though the server keeps the last one.
+        fs::remove_file(&about).unwrap();
+        write(live.root, "src/about.md", "{% if %}");
+        let r = live.next_rebuild();
+        assert_eq!(r.kept, 1, "{r:?}");
+        assert_eq!(
+            get(live.server, "/about/"),
+            (200, "<p>about v0</p>\n".to_string())
+        );
+        assert!(!about.exists());
+        // A refused page goes on being kept by the builds after it.
+        write(
+            live.root,
+            "src/index.md",
+            "---\nlayout: base.liquid\n---\nv1\n",
+        );
+        let r = live.next_rebuild();
+        assert_eq!(r.kept, 1, "{r:?}");
+        assert_eq!(get(live.server, "/about/").0, 200);
+        write(live.root, "src/about.md", "about v1");
+        assert!(live.next_rebuild().ok);
+        assert_eq!(get(live.server, "/about/").1, "<p>about v1</p>\n");
+        assert_eq!(fs::read_to_string(&about).unwrap(), "<p>about v1</p>\n");
+    });
+}
+
+#[test]
+fn a_build_that_stops_before_writing_pages_keeps_the_last_one() {
+    let t = site();
+    let settings = Settings {
+        flags: Flags {
+            input: Some(PathBuf::from("src")),
+            strict: true,
+            ..Flags::default()
+        },
+        quiet: true,
+        ..Settings::default()
+    };
+    write(t.path(), "_site/old.html", "old");
+    write(t.path(), "src/index.md", "{% if %}");
+    let session = Session::start(t.path(), settings).unwrap();
+    // `--strict` stops at the first error, before any page is written.
+    assert!(!session.first_ok() && !session.first_served());
+    assert_eq!(session.serving(), session.output());
+    let finished = session.close();
+    assert!(finished.problems.is_empty(), "{:?}", finished.problems);
+    assert!(!t.path().join("_site").join(STAGING_DIR).exists());
+    assert!(t.path().join("_site/old.html").is_file());
+}
+
+#[test]
+fn the_output_folder_follows_the_build_and_repairs_what_else_changed_there() {
+    let t = site();
+    write(t.path(), "src/about.md", "about");
+    let settings = Settings {
+        flags: Flags {
+            input: Some(PathBuf::from("src")),
+            passthrough: vec![PathBuf::from("src/style.css")],
+            ..Flags::default()
+        },
+        quiet: true,
+        ..Settings::default()
+    };
+    let mut session = Session::start(t.path(), settings).unwrap();
+    let (tx, rx) = mpsc::channel();
+    session.on_rebuild(Arc::new(move |r: &Rebuild| {
+        let _ = tx.send(r.clone());
+    }));
+    let server = Server::start(session.serving(), "localhost", 0).unwrap();
+    let stop = session.stop_handle();
+    let root = t.path();
+    std::thread::scope(|s| {
+        let running = s.spawn(|| session.run(&server));
+        let live = Live {
+            root,
+            server: &server,
+            stop: stop.clone(),
+            rebuilds: rx,
+        };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            live.settle();
+            let out = root.join("_site");
+            assert_eq!(read(root, "_site/style.css").as_deref(), Some("body{}"));
+            // Something else rewrites a page and a copy in the output folder, and removes one.
+            write(root, "_site/about/index.html", "tampered");
+            write(root, "_site/style.css", "x");
+            fs::remove_file(out.join("index.html")).unwrap();
+            // A rebuild that changes none of them still puts them right.
+            write(root, "src/other.md", "other");
+            assert!(live.next_rebuild().ok);
+            assert_eq!(
+                read(root, "_site/about/index.html").as_deref(),
+                Some("<p>about</p>\n")
+            );
+            assert_eq!(read(root, "_site/style.css").as_deref(), Some("body{}"));
+            assert_eq!(
+                read(root, "_site/index.html").as_deref(),
+                Some("<main><p>v0</p>\n</main>")
+            );
+            // A passthrough edit is copied.
+            write(root, "src/style.css", "body{color:red}");
+            assert!(live.next_rebuild().ok);
+            assert_eq!(
+                read(root, "_site/style.css").as_deref(),
+                Some("body{color:red}")
+            );
+        }));
+        live.stop.stop();
+        running.join().unwrap();
+        if let Err(p) = outcome {
+            std::panic::resume_unwind(p);
+        }
+    });
 }

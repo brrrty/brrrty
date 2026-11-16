@@ -1068,3 +1068,44 @@ fn the_report_lists_written_pages_and_passthrough_files() {
     assert_eq!(again.unchanged, 2);
     assert_eq!(again.passthrough.len(), 2);
 }
+
+#[test]
+fn the_report_lists_refused_templates_and_hashes_what_it_wrote() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi");
+    write(root, "src/broken.liquid", "{% if %}\n");
+    write(root, "src/bad-front.md", "---\n: [\n---\nx");
+    write(
+        root,
+        "src/missing-layout.md",
+        "---\nlayout: nope.liquid\n---\nx",
+    );
+    write(
+        root,
+        "src/draft.liquid",
+        "---\npermalink: false\n---\n{% if %}",
+    );
+    let r = build(&opts(root), &MarkdownIt::new());
+    assert!(r.complete);
+    assert!(r.has_errors());
+    let mut refused: Vec<String> = r.refused.iter().map(|p| p.display().to_string()).collect();
+    refused.sort();
+    assert_eq!(
+        refused,
+        [
+            "src/bad-front.md",
+            "src/broken.liquid",
+            "src/missing-layout.md"
+        ]
+    );
+    assert_eq!(r.pages.len(), 1);
+    let written = fs::read(root.join("_site/index.html")).unwrap();
+    assert_eq!(r.pages[0].hash, brrrty_core::content_hash(&written));
+
+    // Stopping before any page is written is not a complete build.
+    let mut strict = opts(root);
+    strict.strict = true;
+    write(root, "src/x.njk", "x");
+    assert!(!build(&strict, &MarkdownIt::new()).complete);
+}

@@ -178,7 +178,12 @@ impl LiveReload {
     /// Tell the open pages about a rebuild. Never waits on a page.
     pub fn rebuilt(&self, r: &Rebuild) {
         // Built before taking the lock: a reload can carry whole pages.
-        let reload: Option<Arc<str>> = r.ok.then(|| reload_message(r).into());
+        // Nothing new to show when every changed template was refused: its page keeps the
+        // file it had, as 11ty leaves a page whose edit broke the build.
+        let only_refused =
+            !r.changed_paths.is_empty() && r.changed_paths.iter().all(|c| r.refused.contains(c));
+        let reload: Option<Arc<str>> =
+            (r.served && !only_refused).then(|| reload_message(r).into());
         let error: Option<Arc<str>> = if !r.ok {
             Some(error_message(&r.problems).into())
         } else if !r.output_problems.is_empty() {
@@ -434,6 +439,9 @@ mod tests {
     fn messages_are_json() {
         let r = Rebuild {
             ok: true,
+            served: true,
+            refused: Vec::new(),
+            kept: 0,
             changed_paths: Vec::new(),
             css_only: false,
             problems: Vec::new(),

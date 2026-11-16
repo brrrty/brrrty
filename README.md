@@ -12,13 +12,13 @@ Status: early development. Not ready for real sites yet.
 brrrty serve [--port 8080] [--host localhost] [--input DIR] [--output DIR] [--passthrough PATH] [--quiet] [--strict]
 ```
 
-Builds the site, serves it at `http://localhost:8080/`, and rebuilds whenever a source file changes, as `eleventy --serve` does. Open pages update by themselves: an edit to the page's own template is patched in without a reload, a stylesheet edit swaps the stylesheet, and anything else reloads the page. Build errors print in the terminal and in the browser console, and the last good build stays up until an edit fixes them.
+Builds the site, serves it at `http://localhost:8080/`, and rebuilds whenever a source file changes, as `eleventy --serve` does. Open pages update by themselves: an edit to the page's own template is patched in without a reload, a stylesheet edit swaps the stylesheet, and anything else reloads the page. Build errors print in the terminal and in the browser console. A page whose template has an error keeps the version last served, so a typo never turns the page you're editing into a 404, while the rest of the site goes on updating. A page that has never built is a 404 until it does.
 
 - `--port`: when it is taken, the next free port up to 10 above it is used, and the startup line says so.
 - `--host`: the address to listen on. The default only answers this machine; `--host 0.0.0.0` lets other devices on your network in.
-- `--output` is kept up to date after every good build, so it holds the site while you work and after you stop. As with `brrrty build`, nothing is ever deleted from it.
+- `--output` is kept up to date after every build, so it holds the site while you work and after you stop. It gets exactly what `brrrty build` would write: the pages that built, never the older copies kept for pages with errors. As with `brrrty build`, nothing is ever deleted from it.
 - `--quiet` prints only errors and warnings.
-- `--strict` stops each build at its first error, and exits with status 1 if the first build fails, as `eleventy --serve` does. Without it, a failed first build keeps serving whatever the output folder held, and the first edit that builds takes over.
+- `--strict` stops each build at its first error, and exits with status 1 if the first build has errors, as `eleventy --serve` does. With it, a build with an error is never served; the last one stays up.
 
 Ctrl-C stops cleanly: a build already running finishes, the output folder holds the last good build, the port is released, and the exit status is 0. A second Ctrl-C quits at once. SIGTERM stops the same way and then ends by the signal.
 
@@ -30,7 +30,7 @@ Where it differs from `eleventy --serve`:
 
 - It listens on `localhost` only, unless you pass `--host`, and on that address answers only requests that name this machine (`localhost`, `127.0.0.1`, `[::1]`), so another website can't reach it through a DNS trick.
 - It never serves a file outside the output folder: `..` and its encoded forms get a 404, and so does a symlink that points outside. A malformed URL gets a 400.
-- A first build that fails keeps the server running (see `--strict`).
+- A build with errors in some pages still serves the rest, and its pages that built are written to the output folder, as `brrrty build` writes them. `eleventy --serve` writes nothing from a build with an error, and exits when the first build has one (see `--strict`).
 - Any file under the input folder starts a rebuild, not only template, data and include files, and so does deleting one, so a deleted page disappears from what is served.
 
 Three Rs, like "go brrr".

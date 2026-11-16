@@ -853,3 +853,72 @@ fn headless_chrome_follows_edits_without_a_manual_reload() {
         drop(chrome);
     });
 }
+
+#[test]
+fn a_broken_edit_keeps_its_page_and_logs_the_error_then_the_fix_patches_in() {
+    let t = site();
+    with_live(t.path(), |live| {
+        live.settle();
+        let mut ws = live.socket();
+        assert_eq!(json(&ws.recv().unwrap())["type"], "connected");
+        wait_for("the page to be counted", || live.live.clients() == 1);
+
+        write(live.root, "src/index.md", page("{% if %}"));
+        let r = live.next_rebuild();
+        assert!(r.served && r.kept == 1, "{r:?}");
+        // No reload: nothing new to show, only the error.
+        let m = json(&ws.recv().unwrap());
+        assert_eq!(m["type"], "error", "{m}");
+        assert!(m["message"].as_str().unwrap().starts_with("src/index.md:"));
+        assert!(
+            get(live.server, "/", "")
+                .text()
+                .contains("<p id=\"msg\">one</p>")
+        );
+
+        write(live.root, "src/index.md", page("two"));
+        let m = json(&ws.recv().unwrap());
+        assert_eq!(m["type"], "reload", "{m}");
+        assert_eq!(m["pages"][0]["url"], "/");
+        assert!(
+            get(live.server, "/", "")
+                .text()
+                .contains("<p id=\"msg\">two</p>")
+        );
+    });
+}
+
+#[test]
+fn an_error_elsewhere_does_not_hold_up_other_pages() {
+    let t = site();
+    write(t.path(), "src/broken.md", "{% if %}");
+    with_live(t.path(), |live| {
+        live.settle();
+        let mut ws = live.socket();
+        assert_eq!(json(&ws.recv().unwrap())["type"], "connected");
+        // Told about the standing error first.
+        assert_eq!(json(&ws.recv().unwrap())["type"], "error");
+        wait_for("the page to be counted", || live.live.clients() == 1);
+
+        write(live.root, "src/index.md", page("two"));
+        let r = live.next_rebuild();
+        assert!(!r.ok && r.served, "{r:?}");
+        let m = json(&ws.recv().unwrap());
+        assert_eq!(m["type"], "reload", "{m}");
+        assert!(
+            m["pages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains(">two</p>")
+        );
+        // Then the error, which still stands.
+        let m = json(&ws.recv().unwrap());
+        assert_eq!(m["type"], "error", "{m}");
+        assert!(m["message"].as_str().unwrap().starts_with("src/broken.md:"));
+        assert!(
+            get(live.server, "/", "")
+                .text()
+                .contains("<p id=\"msg\">two</p>")
+        );
+    });
+}

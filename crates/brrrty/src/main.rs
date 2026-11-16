@@ -188,9 +188,9 @@ fn run_serve(args: ServeArgs) -> ExitCode {
         }));
         println!("Watching…");
         println!("Server at {}", shown_url(&server, args.port));
-        if !session.first_ok() {
+        if !session.first_served() {
             println!(
-                "The first build failed: serving what {} held before, until an edit fixes it.",
+                "The first build stopped before writing any page: serving what {} held before, until a build gets that far.",
                 session.output().display()
             );
         }

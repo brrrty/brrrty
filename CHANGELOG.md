@@ -6,7 +6,7 @@
 
 - `brrrty serve` builds the site, serves it, and rebuilds on every change, as `eleventy --serve` does. It takes `--port` (8080, moving up to 10 ports on when it is taken), `--host` (`localhost`), `--input`, `--output`, `--passthrough`, `--quiet` and `--strict`. It prints `Server at <url>`, `File changed: <path>` and `Watching…` as 11ty does.
 - Live reload: pages get a script that patches in an edit to the page's own template, swaps an edited stylesheet, and reloads for anything else, and logs build errors in the browser console, as 11ty's dev server does.
-- The output folder is kept up to date after every good build. Builds are made in `<output>/.brrrty-serve/`, which is removed on exit; `brrrty build` removes one a killed session left behind.
+- The output folder is kept up to date after every build, from the build's own list of what it wrote, so an unchanged file is never read again. Builds are made in `<output>/.brrrty-serve/`, which is removed on exit; `brrrty build` removes one a killed session left behind.
 - Ctrl-C stops cleanly and exits 0, with the last good build in the output folder and the port released. A second Ctrl-C quits at once. SIGTERM stops the same way and then ends by the signal.
 - `eleventy.env.runMode` is `"serve"` while serving.
 
@@ -14,7 +14,7 @@ Where `brrrty serve` differs from `eleventy --serve`:
 
 - It listens on `localhost` only, unless `--host` says otherwise, and on that address answers only requests whose `Host` names this machine.
 - It never serves a file outside the output folder: `..` in any encoding and symlinks that point outside get a 404, and malformed URLs a 400.
-- A first build that fails keeps the server running and serves the output folder as it was; the first edit that builds takes over. `--strict` exits with status 1 instead, as 11ty does.
+- A build with errors in some pages is still served, and its pages that built are written to the output folder, as `brrrty build` writes them. A page whose template has an error keeps the version last served (the rebuild says how many were kept), and the error shows in the browser console; a page that never built is a 404. A first build with errors keeps the server running. `--strict` serves no build with an error and exits with status 1 when the first build has one, as 11ty does.
 - Any change under the input folder, a deleted file included, starts a rebuild.
 - The live-reload socket refuses pages from other sites.
 - Paths under `/.brrrty/` (`reload-client.js`, `morphdom.js`, `live`) are reserved while serving, as `/.11ty/` is in 11ty.

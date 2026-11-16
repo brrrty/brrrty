@@ -497,8 +497,13 @@ The pages it writes are the same as `brrrty build` writes, and
   another device, where 11ty listens on every address.
 - It refuses `..` (encoded or not) and symlinks that point outside the output
   folder.
-- A first build with errors leaves the server running instead of exiting;
-  use `--strict` for 11ty's exit.
+- A build with an error in a page still serves and writes the pages that
+  built, as `brrrty build` does; 11ty's writes none of that build. A page
+  whose template has the error keeps serving its last version, and the
+  output folder keeps its last file for it, so both stay as they were, as
+  in 11ty. A page that never built is a 404. A first build with errors
+  leaves the server running instead of exiting; use `--strict` for 11ty's
+  exit, and to serve no build with an error.
 - Every file under the input folder is watched, and deleting one rebuilds.
   So are passthrough sources outside it and the config and ignore files.
   `addWatchTarget` has no equivalent yet: a file outside those isn't watched,

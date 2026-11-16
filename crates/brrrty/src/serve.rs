@@ -1,15 +1,19 @@
 //! Watch the site's sources, rebuild on change, and point the server at each new build.
 //!
 //! Every build goes into a fresh folder under `<output>/.brrrty-serve/`, and the server is
-//! switched to it only once the build has finished without errors, so a page is never served
-//! half written and a broken edit leaves the last good build in place. An old build folder is
-//! removed once no request is still using it.
+//! switched to it once the build has finished, so a page is never served half written. A
+//! build whose errors are only refused pages is served, as `brrrty build` writes it, and each
+//! refused page whose last build was served keeps that file, so a typo in the page being
+//! edited never turns it into a 404. A build that stopped before writing any page leaves the
+//! last one in place. An old build folder is removed once no request is still using it.
 //!
-//! After every good build the output folder is brought up to date too, as 11ty's `--serve`
-//! writes it on every build: each file whose bytes changed is copied in and renamed into place,
-//! so `_site` is current while the session runs and after it is killed. Like `brrrty build`,
-//! this never deletes a file from the output folder. When the session stops, the server is
-//! pointed at the output folder and the staging folder is removed.
+//! After every build served, the output folder is brought up to date too, as 11ty's `--serve`
+//! writes it on every build: each file the build wrote whose bytes changed is copied in and
+//! renamed into place, so `_site` is current while the session runs and after it is killed.
+//! It gets exactly what `brrrty build` would write, so the pages kept from an earlier build
+//! never go there. Like `brrrty build`, this never deletes a file from the output folder. When
+//! the session stops, the server is pointed at the output folder and the staging folder is
+//! removed.
 //!
 //! Pages served get a live-reload script ([`Session::live_reload`], see [`live`]).
 //!
@@ -104,6 +108,12 @@ impl Default for Settings {
 pub struct Rebuild {
     /// The build had no errors and is now being served.
     pub ok: bool,
+    /// The build is now being served, errors or not: it got as far as writing pages.
+    pub served: bool,
+    /// The templates, relative to the project folder, with a page this build refused.
+    pub refused: Vec<PathBuf>,
+    /// How many refused pages are served from an earlier build.
+    pub kept: usize,
     /// The files whose change started it, relative to the project folder.
     pub changed_paths: Vec<PathBuf>,
     /// Every changed file is a stylesheet outside `_includes`, which 11ty's dev server
@@ -131,12 +141,43 @@ pub struct ChangedPage {
 
 /// What one build gave.
 struct Built {
+    /// No errors.
     ok: bool,
     problems: Vec<Problem>,
-    /// The build's folder, when it had no errors.
+    /// The build's folder, when it got as far as writing pages and is to be served.
     dir: Option<PathBuf>,
     pages: Vec<brrrty_core::WrittenPage>,
     passthrough: Vec<(PathBuf, PathBuf)>,
+    refused: Vec<PathBuf>,
+    /// What the output folder should get from it.
+    entries: Vec<Entry>,
+}
+
+/// What a file in a build holds, as far as bringing the output folder up to date goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Version {
+    /// A page, by the hash of the bytes the build wrote.
+    Page(u64),
+    /// A passthrough copy, by its source as it was just before the build; `None` when that
+    /// could not be read, which matches nothing.
+    Copy(Option<Stamp>),
+}
+
+/// A file a build wrote, relative to the build folder.
+#[derive(Debug, Clone)]
+struct Entry {
+    rel: PathBuf,
+    version: Version,
+}
+
+/// A file the session put in the output folder (or found there already the same), and how
+/// the output folder's file looked just after, so a change made there by anything else is
+/// noticed without reading it.
+#[derive(Debug, Clone)]
+struct Record {
+    version: Version,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
 }
 
 /// Called after every rebuild, on the session's thread.
@@ -216,7 +257,14 @@ pub struct Session {
     /// What the server should start on.
     serving: PathBuf,
     first_ok: bool,
+    first_served: bool,
     first_problems: Vec<Problem>,
+    /// The pages of the build being served, those kept from earlier builds included.
+    served_pages: Vec<brrrty_core::WrittenPage>,
+    /// What the session knows the output folder holds, by path relative to it.
+    mirrored: HashMap<PathBuf, Record>,
+    /// The files of the last build served, for another try at a copy that failed.
+    last_entries: Vec<Entry>,
     retired: Vec<Retired>,
     passthrough: Vec<PathBuf>,
     rules: Option<IgnoreRules>,
@@ -255,9 +303,10 @@ pub struct Session {
 
 impl Session {
     /// Resolve the folders, start watching, and run the first build. A first build with
-    /// errors does not stop the session: its problems are printed, the output folder is served
-    /// as it is (or an empty folder when there is none), and the next good build replaces it.
-    /// [`Session::first_ok`] says which happened.
+    /// errors does not stop the session: its problems are printed, and it is served when it got
+    /// as far as writing pages; otherwise the output folder is served as it is (or an empty
+    /// folder when there is none) until a build does. [`Session::first_ok`] and
+    /// [`Session::first_served`] say which happened.
     pub fn start(root: &Path, settings: Settings) -> Result<Session, StartError> {
         let opts = build_options(root, &settings.flags).map_err(StartError::Problems)?;
         opts.validate().map_err(|p| StartError::Problems(vec![p]))?;
@@ -298,7 +347,11 @@ impl Session {
             current: None,
             serving: output,
             first_ok: false,
+            first_served: false,
             first_problems: Vec::new(),
+            served_pages: Vec::new(),
+            mirrored: HashMap::new(),
+            last_entries: Vec::new(),
             retired: Vec::new(),
             passthrough: Vec::new(),
             rules: None,
@@ -321,13 +374,20 @@ impl Session {
         session.watch_all().map_err(StartError::Watch)?;
 
         let Built {
-            ok, problems, dir, ..
+            ok,
+            problems,
+            dir,
+            pages,
+            entries,
+            ..
         } = session.build();
         session.first_ok = ok;
+        session.first_served = dir.is_some();
         session.first_problems = problems;
         match dir {
             Some(dir) => {
-                session.mirror(&dir);
+                session.mirror(&dir, entries);
+                session.served_pages = pages;
                 session.serving = dir.clone();
                 session.current = Some(dir);
             }
@@ -349,6 +409,12 @@ impl Session {
     /// Whether the first build had no errors.
     pub fn first_ok(&self) -> bool {
         self.first_ok
+    }
+
+    /// Whether the first build is being served: it got as far as writing pages, though it may
+    /// have refused some.
+    pub fn first_served(&self) -> bool {
+        self.first_served
     }
 
     /// What the first build reported.
@@ -474,11 +540,28 @@ impl Session {
         let tabs_open = self.live.as_ref().is_some_and(|l| l.clients() > 0);
         let mut pages = Vec::new();
         let mut output_problems = Vec::new();
+        let mut served = false;
+        let mut kept = 0;
         if let Some(dir) = built.dir {
+            let kept_pages = if ok {
+                Vec::new()
+            } else {
+                self.keep_refused(&dir, &built.refused, &built.pages)
+            };
             match server.swap_root(&dir) {
                 Ok(old) => {
+                    served = true;
+                    kept = kept_pages.len();
+                    if kept > 0 && !self.settings.quiet {
+                        let (noun, clause) = if kept == 1 {
+                            ("page", "its template has")
+                        } else {
+                            ("pages", "their templates have")
+                        };
+                        println!("Kept {kept} {noun} from the last build, as {clause} errors");
+                    }
                     self.retire(old);
-                    self.mirror(&dir);
+                    self.mirror(&dir, built.entries);
                     output_problems = self.mirror_problems.clone();
                     // The changed templates' pages, for a page showing one to patch itself.
                     for p in built.pages.iter().filter(|_| tabs_open) {
@@ -491,6 +574,9 @@ impl Session {
                             });
                         }
                     }
+                    let mut all = built.pages.clone();
+                    all.extend(kept_pages);
+                    self.served_pages = all;
                     self.current = Some(dir);
                 }
                 Err(e) => {
@@ -505,7 +591,7 @@ impl Session {
                 p.extension().is_some_and(|e| e == "css")
                     && !self.root.join(p).starts_with(self.input.join("_includes"))
             });
-        let stylesheets = if ok {
+        let stylesheets = if served {
             built
                 .passthrough
                 .iter()
@@ -519,6 +605,9 @@ impl Session {
         };
         let rebuild = Rebuild {
             ok,
+            served,
+            refused: built.refused,
+            kept,
             changed_paths: changed.to_vec(),
             css_only,
             problems,
@@ -546,6 +635,8 @@ impl Session {
             dir: None,
             pages: Vec::new(),
             passthrough: Vec::new(),
+            refused: Vec::new(),
+            entries: Vec::new(),
         };
         let mut opts = match build_options(&self.root, &self.flags) {
             Ok(o) => o,
@@ -575,15 +666,36 @@ impl Session {
         let report = brrrty_core::build(&opts, &MarkdownIt::new());
         report::print_build(&report, &self.root, self.settings.quiet, color);
         let ok = !report.has_errors();
-        if !ok {
+        // A build that stopped before writing pages is never served, nor under `--strict` one
+        // with any error.
+        let served = report.complete && (ok || !self.flags.strict);
+        if !served {
             let _ = fs::remove_dir_all(&dir);
         }
+        let entries = report
+            .pages
+            .iter()
+            .map(|p| Entry {
+                rel: p.output.clone(),
+                version: Version::Page(p.hash),
+            })
+            .chain(report.passthrough.iter().map(|(src, dest)| {
+                let src = self.root.join(src);
+                let stamp = self.copied.get(&src).cloned();
+                Entry {
+                    rel: dest.clone(),
+                    version: Version::Copy(stamp),
+                }
+            }))
+            .collect();
         Built {
             ok,
             problems: report.problems,
-            dir: ok.then_some(dir),
+            dir: served.then_some(dir),
             pages: report.pages,
             passthrough: report.passthrough,
+            refused: report.refused,
+            entries,
         }
     }
 
@@ -876,7 +988,8 @@ impl Session {
             // The output folder is brought up to date after every build; only a copy that
             // failed needs another try.
             if !self.mirror_problems.is_empty() {
-                self.mirror(&cur);
+                let entries = std::mem::take(&mut self.last_entries);
+                self.mirror(&cur, entries);
             }
             finished.output_written = self.mirror_problems.is_empty();
             finished.problems.append(&mut self.mirror_problems);
@@ -915,26 +1028,123 @@ impl Session {
         }
     }
 
-    /// Bring the output folder up to date with the build in `build`, printing what went wrong.
-    fn mirror(&mut self, build: &Path) {
-        let mut m = Mirror {
-            staging: &self.staging,
-            next_tmp: &mut self.next_tmp,
-            problems: Vec::new(),
+    /// Give each refused page that the build being served had the file it had there, in the
+    /// new build `dir`, unless the new build wrote something at that path. Gives the pages
+    /// kept.
+    fn keep_refused(
+        &mut self,
+        dir: &Path,
+        refused: &[PathBuf],
+        written: &[brrrty_core::WrittenPage],
+    ) -> Vec<brrrty_core::WrittenPage> {
+        let Some(cur) = &self.current else {
+            return Vec::new();
         };
-        let staged = build.join(STAGING_DIR);
-        if fs::symlink_metadata(&staged).is_ok() {
+        let mut kept = Vec::new();
+        for page in &self.served_pages {
+            if !refused.contains(&page.source) || written.iter().any(|w| w.output == page.output) {
+                continue;
+            }
+            let to = dir.join(&page.output);
+            if fs::symlink_metadata(&to).is_ok() {
+                // A passthrough file took the path.
+                continue;
+            }
+            let from = cur.join(&page.output);
+            let copied = (|| {
+                if let Some(parent) = to.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                // Build folders are never written to once made, so a link is as good as a copy.
+                fs::hard_link(&from, &to).or_else(|_| fs::copy(&from, &to).map(drop))
+            })();
+            if copied.is_ok() {
+                kept.push(page.clone());
+            }
+        }
+        kept
+    }
+
+    /// Bring the output folder up to date with the files `entries` lists in the build in
+    /// `build`, printing what went wrong. A file the session put there itself, still as it
+    /// left it, and of the same version, is not looked at again.
+    fn mirror(&mut self, build: &Path, entries: Vec<Entry>) {
+        let mut problems = Vec::new();
+        let mut problem = |message: String| {
+            problems.push(Problem::warning(brrrty_core::codes::WRITE_FAILED, message));
+        };
+        if entries.iter().any(|e| {
+            e.rel.components().next() == Some(std::path::Component::Normal(STAGING_DIR.as_ref()))
+        }) {
             // `<output>/.brrrty-serve` is the staging folder: the site's own file by that
             // name is left out, and must never be shipped.
-            m.problem(format!(
+            problem(format!(
                 "the site wrote {STAGING_DIR}, which is Brrrty's staging folder, so it was left out of {}",
                 self.output.display()
             ));
         }
-        m.tree(build, &self.output, true);
-        self.mirror_problems = m.problems;
+        for e in &entries {
+            if e.rel.components().next() == Some(std::path::Component::Normal(STAGING_DIR.as_ref()))
+            {
+                continue;
+            }
+            let src = build.join(&e.rel);
+            let dst = self.output.join(&e.rel);
+            let existing = fs::symlink_metadata(&dst).ok();
+            let as_left = |r: &Record, m: &fs::Metadata| {
+                m.is_file() && r.len == m.len() && r.modified == m.modified().ok()
+            };
+            match (self.mirrored.get(&e.rel), &existing) {
+                (Some(r), Some(m)) if as_left(r, m) && r.version == e.version => continue,
+                (Some(r), Some(m)) if as_left(r, m) => {}
+                // Not known: compare once, so unchanged files keep their times.
+                (_, Some(m)) if m.is_file() && same_bytes(&src, &dst) => {
+                    self.record(e, &dst);
+                    continue;
+                }
+                _ => {}
+            }
+            self.next_tmp += 1;
+            let tmp = self.staging.join(format!("copy-{}", self.next_tmp));
+            let copied = (|| {
+                make_parents(&self.output, &e.rel)?;
+                fs::copy(&src, &tmp)?;
+                if existing.as_ref().is_some_and(|m| m.is_dir()) {
+                    fs::remove_dir_all(&dst)?;
+                }
+                fs::rename(&tmp, &dst)
+            })();
+            match copied {
+                Ok(()) => self.record(e, &dst),
+                Err(err) => {
+                    let _ = fs::remove_file(&tmp);
+                    self.mirrored.remove(&e.rel);
+                    problem(format!("cannot write {}: {err}", dst.display()));
+                }
+            }
+        }
+        self.last_entries = entries;
+        self.mirror_problems = problems;
         if !self.mirror_problems.is_empty() {
             report::print_problems(&self.mirror_problems, &self.root, self.settings.color);
+        }
+    }
+
+    fn record(&mut self, e: &Entry, dst: &Path) {
+        match fs::symlink_metadata(dst) {
+            Ok(m) => {
+                self.mirrored.insert(
+                    e.rel.clone(),
+                    Record {
+                        version: e.version.clone(),
+                        len: m.len(),
+                        modified: m.modified().ok(),
+                    },
+                );
+            }
+            Err(_) => {
+                self.mirrored.remove(&e.rel);
+            }
         }
     }
 }
@@ -1038,69 +1248,26 @@ fn remove_any(p: &Path) -> io::Result<()> {
     }
 }
 
-/// Copies a build into the output folder.
-struct Mirror<'a> {
-    staging: &'a Path,
-    next_tmp: &'a mut u64,
-    problems: Vec<Problem>,
-}
-
-impl Mirror<'_> {
-    fn problem(&mut self, message: String) {
-        self.problems
-            .push(Problem::warning(brrrty_core::codes::WRITE_FAILED, message));
-    }
-
-    /// Copy every file of `from` into `to` at the same path, unless `to` already has the
-    /// same bytes there. Files in `to` that `from` doesn't have are kept, as `brrrty build`
-    /// keeps them. A file is copied into staging first and then renamed into place, so it is
-    /// never seen half written. A symlink in `to` is replaced, never followed, so nothing
-    /// lands outside `to`. At the top, the staging folder's own name is skipped.
-    fn tree(&mut self, from: &Path, to: &Path, top: bool) {
-        let entries = match fs::read_dir(from) {
-            Ok(e) => e,
-            Err(e) => return self.problem(format!("cannot read {}: {e}", from.display())),
-        };
-        for entry in entries.flatten() {
-            if top && entry.file_name() == STAGING_DIR {
-                continue;
+/// Make the folders `rel` goes in, under `output`. A file or symlink where a folder belongs
+/// is replaced, never followed, so nothing lands outside `output`.
+fn make_parents(output: &Path, rel: &Path) -> io::Result<()> {
+    let mut at = output.to_path_buf();
+    let Some(parent) = rel.parent() else {
+        return Ok(());
+    };
+    for c in parent.components() {
+        at.push(c);
+        match fs::symlink_metadata(&at) {
+            Ok(m) if m.is_dir() => continue,
+            Ok(_) => {
+                fs::remove_file(&at)?;
+                fs::create_dir(&at)?;
             }
-            let src = entry.path();
-            let dst = to.join(entry.file_name());
-            let existing = fs::symlink_metadata(&dst).ok();
-            if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                let made = (|| {
-                    match &existing {
-                        Some(m) if m.is_dir() => {}
-                        Some(_) => fs::remove_file(&dst)?,
-                        None => {}
-                    }
-                    fs::create_dir_all(&dst)
-                })();
-                match made {
-                    Ok(()) => self.tree(&src, &dst, false),
-                    Err(e) => self.problem(format!("cannot make {}: {e}", dst.display())),
-                }
-                continue;
-            }
-            if existing.as_ref().is_some_and(|m| m.is_file()) && same_bytes(&src, &dst) {
-                continue;
-            }
-            *self.next_tmp += 1;
-            let tmp = self.staging.join(format!("copy-{}", self.next_tmp));
-            let copied = (|| {
-                fs::copy(&src, &tmp)?;
-                if existing.as_ref().is_some_and(|m| m.is_dir()) {
-                    fs::remove_dir_all(&dst)?;
-                }
-                fs::rename(&tmp, &dst)
-            })();
-            if let Err(e) = copied {
-                let _ = fs::remove_file(&tmp);
-                self.problem(format!("cannot write {}: {e}", dst.display()));
-            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir(&at)?,
+            Err(e) => return Err(e),
         }
     }
+    Ok(())
 }
 
 /// Whether two regular files hold the same bytes.

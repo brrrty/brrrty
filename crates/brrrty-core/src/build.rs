@@ -50,6 +50,13 @@ pub struct BuildReport {
     /// Each passthrough file now in place: its source relative to the project folder, and
     /// its destination relative to the folder written to.
     pub passthrough: Vec<(PathBuf, PathBuf)>,
+    /// The build got as far as writing pages. False when it stopped before any page could
+    /// be written: the folders or the settings are wrong, discovery failed, or `strict` met
+    /// an error early.
+    pub complete: bool,
+    /// The templates, relative to the project folder, that had a page left unwritten because
+    /// of a problem, in no particular order.
+    pub refused: Vec<PathBuf>,
 }
 
 /// A page a build wrote.
@@ -61,6 +68,17 @@ pub struct WrittenPage {
     pub url: String,
     /// Where it was written, relative to the folder written to.
     pub output: PathBuf,
+    /// A hash of the bytes written, to tell whether another copy holds the same bytes
+    /// without reading it. Only meaningful within one run of the program.
+    pub hash: u64,
+}
+
+/// The hash [`WrittenPage::hash`] holds for `bytes`.
+pub fn content_hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
 }
 
 impl BuildReport {
@@ -1435,6 +1453,8 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                 elapsed: Duration::ZERO,
                 pages: Vec::new(),
                 passthrough: Vec::new(),
+                complete: false,
+                refused: Vec::new(),
             };
             finish(report, opts.strict, start)
         }
@@ -1479,6 +1499,8 @@ fn build_once(
         elapsed: Duration::ZERO,
         pages: Vec::new(),
         passthrough: Vec::new(),
+        complete: false,
+        refused: Vec::new(),
     };
     let strict = opts.strict;
     let has_error = |r: &BuildReport| r.has_errors();
@@ -1786,19 +1808,22 @@ fn build_once(
     let mut from_layouts = Vec::new();
     let mut from_data = Vec::new();
     let mut unbuilt = 0usize;
-    for item in loaded {
+    for (rel, item) in loadable.iter().zip(loaded) {
         match item {
             Loaded::Template(t) => templates.push(*t),
             Loaded::Failed(p) => {
                 unbuilt += 1;
+                report.refused.push(input_rel.join(rel));
                 report.problems.push(p);
             }
             Loaded::LayoutFailed(p) => {
                 unbuilt += 1;
+                report.refused.push(input_rel.join(rel));
                 from_layouts.push(p);
             }
             Loaded::DataFailed(p) => {
                 unbuilt += 1;
+                report.refused.push(input_rel.join(rel));
                 from_data.push(p);
             }
         }
@@ -2115,7 +2140,7 @@ fn build_once(
             Refused::Page(p, other)
         }
     }
-    type Written = Result<usize, Refused>;
+    type Written = Result<(usize, u64), Refused>;
     // Every page is rendered before any is written: highlighting may only
     // now have met a language that changes grammars, which the scan didn't
     // see, and then the build is redone instead.
@@ -2185,6 +2210,7 @@ fn build_once(
                     )
                 })?;
             }
+            let hash = content_hash(html.as_bytes());
             fs::write(&dest, html).map_err(|e| {
                 (
                     Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
@@ -2192,7 +2218,7 @@ fn build_once(
                     None,
                 )
             })?;
-            Ok(i)
+            Ok((i, hash))
         })
         .collect();
     // The pages of one template often fail the same way: say it once. A page
@@ -2210,9 +2236,11 @@ fn build_once(
     };
     let mut pointed: Vec<usize> = Vec::new();
     let mut from_layouts = layout_refusals;
+    let mut written_pages: HashSet<usize> = HashSet::new();
     for r in results {
         match r {
-            Ok(i) => {
+            Ok((i, hash)) => {
+                written_pages.insert(i);
                 report.written += 1;
                 let p = &prepared[i];
                 let url = match p.data.get("page") {
@@ -2226,6 +2254,7 @@ fn build_once(
                     source: p.source.shown.clone(),
                     url,
                     output: p.output_rel.clone().unwrap_or_default(),
+                    hash,
                 });
             }
             Err(Refused::Page(p, other)) => {
@@ -2252,6 +2281,17 @@ fn build_once(
         return finish(report, strict, start);
     }
 
+    // Every page with somewhere to go that didn't get there was refused.
+    let mut refused: BTreeSet<&Path> = prepared
+        .iter()
+        .enumerate()
+        .filter(|(i, p)| p.output_rel.is_some() && !written_pages.contains(i))
+        .map(|(_, p)| p.source.shown.as_path())
+        .collect();
+    refused.extend(report.refused.iter().map(PathBuf::as_path));
+    let refused: Vec<PathBuf> = refused.into_iter().map(Path::to_path_buf).collect();
+    report.refused = refused;
+
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
         .filter(|p| writes(p) && unsupported_layout(p).is_none())
@@ -2271,6 +2311,7 @@ fn build_once(
     report.copied = pt.copied;
     report.unchanged = pt.unchanged;
     report.problems.extend(pt.problems);
+    report.complete = true;
     finish(report, strict, start)
 }
 

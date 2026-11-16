@@ -31,9 +31,14 @@ struct Serve {
 
 impl Serve {
     fn start(root: &Path, args: &[&str]) -> Serve {
+        Serve::start_with_env(root, args, &[])
+    }
+
+    fn start_with_env(root: &Path, args: &[&str], env: &[(&str, &str)]) -> Serve {
         let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
             .arg("serve")
             .args(args)
+            .envs(env.iter().copied())
             .current_dir(root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -130,12 +135,14 @@ fn get(port: u16, path: &str) -> String {
     out
 }
 
+/// A free port outside the ephemeral range, where the ports other tests' servers and
+/// clients get from the system land, so nothing takes it before `brrrty serve` binds it.
 fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    let seed = std::process::id() as u16 % 4000;
+    (0..4000u16)
+        .map(|i| 33000 + (seed + i) % 4000)
+        .find(|&p| TcpListener::bind(("127.0.0.1", p)).is_ok())
+        .expect("a free port")
 }
 
 fn assert_released(port: u16) {
@@ -231,23 +238,30 @@ fn get_ok(port: u16) -> bool {
 }
 
 #[test]
-fn a_failed_first_build_keeps_serving_and_says_so() {
-    let dir = site(&[("src/index.liquid", "{% if %}\n")]);
+fn a_first_build_with_a_broken_page_serves_the_rest() {
+    let dir = site(&[
+        ("src/index.liquid", "{% if %}\n"),
+        ("src/about.md", "# About\n"),
+    ]);
     let mut serve = Serve::start(dir.path(), &["--input", "src", "--port", "0"]);
     let port = serve.port();
-    serve.line_starting("The first build failed: serving what ");
+    // The page that never built has nothing to serve; the rest is up.
     assert!(get(port, "/").starts_with("HTTP/1.1 404"));
+    assert!(get(port, "/about/").contains("<h1>About</h1>"));
     std::fs::write(dir.path().join("src/index.liquid"), "fixed\n").unwrap();
-    serve.line_starting("Wrote 1 files");
     let until = Instant::now() + WAIT;
     while !get(port, "/").contains("fixed") {
         assert!(Instant::now() < until, "the fix was never served");
         std::thread::sleep(Duration::from_millis(50));
     }
     serve.signal(libc::SIGINT);
-    let (status, _, err) = serve.wait();
+    let (status, out, err) = serve.wait();
     assert_eq!(status.code(), Some(0), "{err}");
     assert!(err.contains("src/index.liquid"), "{err}");
+    assert!(
+        !out.iter().any(|l| l.starts_with("The first build")),
+        "{out:?}"
+    );
     assert!(!dir.path().join("_site/.brrrty-serve").exists());
 }
 
