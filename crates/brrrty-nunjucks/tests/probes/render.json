@@ -2170,5 +2170,65 @@
   },
   "includes": {},
   "out": "f-o-o"
+ },
+ {
+  "template": "[{{ r/ab/ | length }}]|{{ r/ab/ | string }}|{{ r/ab/ | upper }}|{{ r/ab/ | default(\"d\") }}|{{ r/a<b/ | escape }}|{{ r/a<b/ | safe }}|{{ r/a/ | trim }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: str.toUpperCase is not a function"
+ },
+ {
+  "template": "{{ r/ab/ | first }}",
+  "data": {},
+  "includes": {},
+  "out": ""
+ },
+ {
+  "template": "{{ r/ab/ | list }}",
+  "data": {},
+  "includes": {},
+  "err": "Template render error: list filter: type not iterable"
+ },
+ {
+  "template": "{{ r/ab/ | join(\",\") }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: arr.join is not a function"
+ },
+ {
+  "template": "{{ r/ab/ | int }}|{{ r/ab/ | float }}|{{ r/ab/ | abs }}|{{ r/ab/ | wordcount }}|{{ r/ab/ | urlencode }}",
+  "data": {},
+  "includes": {},
+  "err": "TypeError: str.match is not a function"
+ },
+ {
+  "template": "{{ r/ab/ | replace(\"a\", \"x\") }}",
+  "data": {},
+  "includes": {},
+  "out": "/ab/"
+ },
+ {
+  "template": "{{ [r/b/, r/a/] | sort | join(\",\") }}",
+  "data": {},
+  "includes": {},
+  "out": "/a/,/b/"
+ },
+ {
+  "template": "{{ r/x/ is defined }}|{{ r/x/ is string }}|{{ r/x/ is mapping }}|{{ r/x/ is callable }}|{{ r/x/ is iterable }}|{{ r/x/ is truthy }}",
+  "data": {},
+  "includes": {},
+  "out": "true|false|true|false|false|true"
+ },
+ {
+  "template": "{{ r/x/.toString() }}|{{ r/x/.valueOf() == r/x/ }}|{{ r/x/.hasOwnProperty(\"lastIndex\") }}|{{ r/x/.hasOwnProperty(\"source\") }}|{{ r/x/[\"source\"] }}|{{ r/x/.foo }}",
+  "data": {},
+  "includes": {},
+  "out": "/x/|false|true|false|x|"
+ },
+ {
+  "template": "{{ \"a,b\".split(r/,/, 0) | length }}|{{ \"aXbxc\".split(r/x/i) }}|{{ \"a1b2\".split(r/(\\d)/) | join(\"|\") }}",
+  "data": {},
+  "includes": {},
+  "out": "0|a,b,c|a|1|b|2|"
  }
 ]

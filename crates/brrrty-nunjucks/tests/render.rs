@@ -79,6 +79,10 @@ const REFUSED: &[(&str, &str)] = &[
     ),
     ("{{ \"abc\".match(r/b/) }}", "match is not emulated"),
     (
+        "{{ [r/b/, r/a/] | sort | join(\",\") }}",
+        "sort of values that aren't all numbers or all strings",
+    ),
+    (
         "{{ s.replace(r/(?=o)/g, \"-\") }}",
         "the regex crate has no lookaround",
     ),
