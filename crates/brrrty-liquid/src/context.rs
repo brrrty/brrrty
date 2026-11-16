@@ -218,11 +218,21 @@ pub fn json(v: &Value) -> Option<String> {
                 .collect();
             format!("{{{}}}", items.join(","))
         }
-        Value::Date(d) => format!(
-            "\"{}\"",
-            d.with_timezone(&chrono::Utc)
-                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-        ),
+        Value::Date(d) => {
+            // `toISOString`: a year outside 0-9999 has a sign and six digits.
+            let utc = d.with_timezone(&chrono::Utc);
+            let year = chrono::Datelike::year(&utc);
+            let year = if (0..=9999).contains(&year) {
+                format!("{year:04}")
+            } else {
+                format!(
+                    "{}{:06}",
+                    if year < 0 { '-' } else { '+' },
+                    year.unsigned_abs()
+                )
+            };
+            format!("\"{year}-{}\"", utc.format("%m-%dT%H:%M:%S%.3fZ"))
+        }
     })
 }
 

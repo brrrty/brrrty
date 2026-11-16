@@ -9,7 +9,8 @@
 // Output is JSON: { "node": version, "patterns": [{ "p", "f", "astral" }],
 // "cases": [{ "i": pattern index, "op", "s", "r"?, "out", "why"? }] }. "astral" is
 // whether Brrrty accepts the pattern on text outside the BMP; when it is
-// false, Brrrty must refuse such text. A case with "out" null is one
+// false, Brrrty must refuse such text. "refuse" is set for a pattern Brrrty
+// refuses outright. A case with "out" null is one
 // Brrrty refuses, with "why" in the message. The text is made by a seeded generator,
 // so the output is the same on every run.
 
@@ -131,13 +132,62 @@ while (PATTERNS.length < SHAPES + 300) {
   PATTERNS.push([p, f, null]);
 }
 
+// Groups that capture inside a repeated group. JavaScript clears them at
+// the start of each repetition and Rust keeps the last value, so Brrrty
+// refuses one that can sit out a repetition ("refuse"), and accepts one
+// that every repetition sets.
+const CAPTURES = [
+  ['(\\w)+', 'g'],
+  ['([a-z])+', 'g'],
+  ['(?:(a)b)+', 'g'],
+  ['(?:<(\\w+)>)+', 'g'],
+  ['(\\d+,)+', 'g'],
+  ['(?:(\\w)\\s)+', 'g'],
+  ['(?:(\\w)(\\s))*x', 'g'],
+  ['(?:(a)|(b))+', 'g', 'every repetition'],
+  ['(?:(a)|b)+', 'g', 'every repetition'],
+  ['(?:(a)|b)+', '', 'every repetition'],
+  ['(?:(a)?b)+', 'g', 'every repetition'],
+  ['(?:b(a)?)*', 'g', 'every repetition'],
+  ['(?:(<)|(>)|x)+', 'g', 'every repetition'],
+  ['(?:(\\w)|\\s){2,}', 'g', 'every repetition'],
+  ['(?:x(?:(a)|b))+', 'g', 'every repetition'],
+];
+for (const [p, f, refuse] of CAPTURES) {
+  if (!seen.has(p + '/' + f)) {
+    seen.add(p + '/' + f);
+    PATTERNS.push([p, f, refuse ? null : true, refuse]);
+  }
+}
+// Random repeated groups with captures. Their bodies have no quantifiers,
+// so JavaScript's backtracking stays fast.
+const SIMPLE = ['a', 'b', 'x', '<', '>', ' ', '\\s', '\\w', '[a-z]', '[<>]'];
+const item = () => (rand() < 0.5 ? `(${pick(SIMPLE)})` : pick(SIMPLE)) + (rand() < 0.2 ? '?' : '');
+const groupPattern = () => {
+  const alts = [];
+  for (let k = 1 + Math.floor(rand() * 3); k > 0; k--) alts.push(item() + (rand() < 0.5 ? item() : ''));
+  return pick(['', 'a', '<']) + `(?:${alts.join('|')})` + pick(['+', '*', '{1,3}', '{2,}', '+?']) + pick(['', 'x', '>', '$']);
+};
+const CAPTURE_START = PATTERNS.length;
+while (PATTERNS.length < CAPTURE_START + 200) {
+  const p = groupPattern();
+  const f = rand() < 0.7 ? 'g' : '';
+  if (seen.has(p + '/' + f)) continue;
+  seen.add(p + '/' + f);
+  PATTERNS.push([p, f, null]);
+}
+
 // JavaScript's answer has half a surrogate pair in it.
 const broken = (x) => (Array.isArray(x) ? x.some(broken) : typeof x === 'string' && !x.isWellFormed());
 
 const cases = [];
 const ASTRAL = /[\u{10000}-\u{10FFFF}]/u;
-PATTERNS.forEach(([p, f, astral], i) => {
+PATTERNS.forEach(([p, f, astral, refuse], i) => {
   for (const s of i < SHAPES ? texts : texts.slice(0, 30)) {
+    if (refuse) {
+      cases.push({ i, op: 'test', s, out: null, why: refuse });
+      continue;
+    }
     // Brrrty refuses this text for this pattern, and JavaScript's answer
     // may have half a surrogate pair in it, so there's nothing to compare.
     if (astral === false && ASTRAL.test(s)) {
@@ -152,7 +202,7 @@ PATTERNS.forEach(([p, f, astral], i) => {
     }
     const re = () => new RegExp(p, f);
     const outs = [
-      { op: 'replace', r: '[$&]', out: s.replace(re(), '[$&]') },
+      { op: 'replace', r: '[$&|$1|$2]', out: s.replace(re(), '[$&|$1|$2]') },
       { op: 'split', out: s.split(re()).map((x) => (x === undefined ? null : x)) },
       { op: 'test', out: re().test(s) },
     ];
@@ -165,6 +215,6 @@ PATTERNS.forEach(([p, f, astral], i) => {
 
 process.stdout.write(JSON.stringify({
   node: process.version,
-  patterns: PATTERNS.map(([p, f, astral]) => ({ p, f, astral })),
+  patterns: PATTERNS.map(([p, f, astral, refuse]) => ({ p, f, astral, refuse: refuse || null })),
   cases,
 }, null, 0) + '\n');

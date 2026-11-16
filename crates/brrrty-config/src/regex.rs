@@ -139,6 +139,9 @@ fn build(pattern: &str, flags: &str) -> Result<JsRegex, String> {
     if repeats_nothing(&hir) {
         return Err("a repeated or optional group that can match nothing, such as `(a*)?` or `(?:x|)*`, isn't supported: JavaScript skips a repetition that matches nothing and Rust doesn't, so the match or its groups can differ; make the inside match at least one character".into());
     }
+    if !captures_reset_alike(&hir) {
+        return Err("a group that captures inside a repeated group, and can sit out a repetition, such as `(?:(a)|b)+` or `(?:(a)?b)*`, isn't supported: JavaScript clears it at the start of every repetition and Rust keeps its last value, so `$1` and `split` would differ; capture the repeated group as a whole, or make the inner group take part in every repetition".into());
+    }
     let astral_safe = !info.surrogate_range && !re.is_match("") && astral_safe(&hir);
     Ok(JsRegex {
         re,
@@ -556,6 +559,67 @@ fn repeats_nothing(hir: &regex_syntax::hir::Hir) -> bool {
         }
         HirKind::Capture(c) => repeats_nothing(&c.sub),
         HirKind::Concat(xs) | HirKind::Alternation(xs) => xs.iter().any(repeats_nothing),
+    }
+}
+
+/// Whether every group that captures inside a repetition of more than one
+/// pass (`+`, `*`, `{2,}`) is set by each pass. JavaScript clears such a
+/// group at the start of every pass and Rust keeps the value from the last
+/// pass that set it, so on `ab`, `(?:(a)|b)+` leaves `$1` undefined in
+/// JavaScript and `a` in Rust. When each pass sets the group, the last pass
+/// gives both the same value.
+fn captures_reset_alike(hir: &regex_syntax::hir::Hir) -> bool {
+    use regex_syntax::hir::HirKind;
+    match hir.kind() {
+        HirKind::Empty | HirKind::Look(_) | HirKind::Literal(_) | HirKind::Class(_) => true,
+        HirKind::Repetition(r) => {
+            let mut inside = Vec::new();
+            capture_indexes(&r.sub, &mut inside);
+            let set = always_set(&r.sub);
+            (r.max == Some(1) || inside.iter().all(|i| set.contains(i)))
+                && captures_reset_alike(&r.sub)
+        }
+        HirKind::Capture(c) => captures_reset_alike(&c.sub),
+        HirKind::Concat(xs) | HirKind::Alternation(xs) => xs.iter().all(captures_reset_alike),
+    }
+}
+
+/// Every capture group index inside `hir`.
+fn capture_indexes(hir: &regex_syntax::hir::Hir, out: &mut Vec<u32>) {
+    use regex_syntax::hir::HirKind;
+    match hir.kind() {
+        HirKind::Empty | HirKind::Look(_) | HirKind::Literal(_) | HirKind::Class(_) => {}
+        HirKind::Repetition(r) => capture_indexes(&r.sub, out),
+        HirKind::Capture(c) => {
+            out.push(c.index);
+            capture_indexes(&c.sub, out);
+        }
+        HirKind::Concat(xs) | HirKind::Alternation(xs) => {
+            xs.iter().for_each(|x| capture_indexes(x, out))
+        }
+    }
+}
+
+/// The capture groups every match of `hir` sets.
+fn always_set(hir: &regex_syntax::hir::Hir) -> Vec<u32> {
+    use regex_syntax::hir::HirKind;
+    match hir.kind() {
+        HirKind::Empty | HirKind::Look(_) | HirKind::Literal(_) | HirKind::Class(_) => Vec::new(),
+        HirKind::Repetition(r) if r.min >= 1 => always_set(&r.sub),
+        HirKind::Repetition(_) => Vec::new(),
+        HirKind::Capture(c) => {
+            let mut out = always_set(&c.sub);
+            out.push(c.index);
+            out
+        }
+        HirKind::Concat(xs) => xs.iter().flat_map(always_set).collect(),
+        HirKind::Alternation(xs) => {
+            let mut sets = xs.iter().map(always_set);
+            let first = sets.next().unwrap_or_default();
+            sets.fold(first, |acc, s| {
+                acc.into_iter().filter(|i| s.contains(i)).collect()
+            })
+        }
     }
 }
 

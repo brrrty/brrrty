@@ -60,7 +60,11 @@ fn regex_calls_match_node_on_text_outside_ascii() {
             match got {
                 Err(e) if e.contains(why) => refused += 1,
                 // A random pattern may be refused outright.
-                Err(e) if pat["astral"].is_null() && e.contains("can match nothing") => {}
+                Err(e)
+                    if pat["astral"].is_null()
+                        && ["can match nothing", "every repetition"]
+                            .iter()
+                            .any(|w| e.contains(w)) => {}
                 other => failures.push(format!("/{p}/{f} {op} {s:?}: not refused: {other:?}")),
             }
             continue;
@@ -83,7 +87,7 @@ fn regex_calls_match_node_on_text_outside_ascii() {
         };
         if pat["astral"].is_null() {
             // A random pattern: refusing is fine, a wrong answer isn't.
-            if matches!(&got, Err(e) if e.contains("outside the BMP") || e.contains("can match nothing"))
+            if matches!(&got, Err(e) if ["outside the BMP", "can match nothing", "every repetition"].iter().any(|w| e.contains(w)))
             {
                 continue;
             }

@@ -979,6 +979,10 @@ fn regex_patterns_that_would_match_differently_are_refused() {
         ("(?:b?|a)?", ""),
         ("(?:x|)*", ""),
         ("(\\s*)+", ""),
+        // JavaScript clears a group inside a repetition on every pass.
+        ("(?:(a)|b)+", "g"),
+        ("(?:(a)?b)*", ""),
+        ("(?:x(?:(a)|b)){2,}", ""),
     ] {
         let p = load_err(&format!(
             "regex_test(\"a\", {}, {});",
@@ -987,6 +991,15 @@ fn regex_patterns_that_would_match_differently_are_refused() {
         ));
         assert_eq!(p.code, codes::CONFIG_INVALID, "{pat} {flags}: {p:?}");
     }
+}
+
+#[test]
+fn a_group_set_by_every_repetition_keeps_the_last_value() {
+    // Node: "a1b2".replace(/(?:([a-z])\d)+/, "[$1]").
+    assert_eq!(
+        eval(r#"regex_replace("a1b2", "(?:([a-z])\\d)+", "[$1]", "")"#),
+        s("[b]")
+    );
 }
 
 #[test]
@@ -1075,6 +1088,16 @@ fn json_stringify_is_javascripts() {
     assert_eq!(j("{ let o = object(); o.u = (); o }"), s("{}"));
     assert_eq!(j("()"), Value::Undefined);
     assert_eq!(j("date(0)"), s(r#""1970-01-01T00:00:00.000Z""#));
+    // Years outside 0-9999 get six digits and a sign, as in toISOString.
+    for (ms, want) in [
+        ("-62198755200000", r#""-000001-01-01T00:00:00.000Z""#),
+        ("-62167219200001", r#""-000001-12-31T23:59:59.999Z""#),
+        ("253402300800000", r#""+010000-01-01T00:00:00.000Z""#),
+        ("-8000000000000000", r#""-251540-02-03T09:46:40.000Z""#),
+        ("-62135596800000", r#""0001-01-01T00:00:00.000Z""#),
+    ] {
+        assert_eq!(j(&format!("date({ms})")), s(want), "{ms}");
+    }
 }
 
 #[test]

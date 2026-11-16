@@ -340,7 +340,11 @@ else is an error naming the pattern, with the script's line:
   class; no flags other than `g i m s u`;
 - no repeated or optional group that can match nothing, such as `(a*)?`
   or `(?:x|)*`: JavaScript skips a repetition that matches nothing and
-  Rust takes it, so the match or its groups would differ.
+  Rust takes it, so the match or its groups would differ;
+- no capturing group inside a repeated group that can sit out a pass, such
+  as `(?:(a)|b)+` or `(?:(a)?b)*`: JavaScript clears it at the start of each
+  pass and Rust keeps its last value. A group every pass sets, such as
+  `(\w)+` or `(?:([a-z])\d)+`, is fine.
 
 Some text is refused, since the answer would differ:
 
