@@ -26,6 +26,7 @@
 //! ```
 
 pub mod live;
+pub mod signals;
 
 use std::collections::HashMap;
 use std::fs;
@@ -447,10 +448,24 @@ impl Session {
         finished
     }
 
+    /// End a session without serving it, such as when the server could not start or the
+    /// first build failed and the caller won't go on: stop watching and remove the staging
+    /// folder. The output folder holds the first build when it was good.
+    pub fn close(mut self) -> Finished {
+        let mut finished = Finished::default();
+        self.watcher = None;
+        if self.current.take().is_some() {
+            finished.output_written = self.mirror_problems.is_empty();
+            finished.problems.append(&mut self.mirror_problems);
+        }
+        self.cleanup(&mut finished);
+        finished
+    }
+
     fn rebuild(&mut self, server: &RunningServer, changed: &[PathBuf]) {
         if !self.settings.quiet {
             for p in changed {
-                println!("File changed: {}", p.display());
+                println!("File changed: {}", shown(p));
             }
         }
         self.last_changed = changed.to_vec();
@@ -995,6 +1010,17 @@ fn stamps(paths: &[PathBuf]) -> HashMap<PathBuf, Stamp> {
     out
 }
 
+/// A path relative to the project folder, for printing as 11ty does (`./src/index.md`). The
+/// project folder itself is `.` (the watcher lost track of an input folder that is the
+/// project folder).
+fn shown(rel: &Path) -> String {
+    if rel.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        format!("./{}", rel.display())
+    }
+}
+
 /// The URL of a file at `rel` in the output folder.
 fn url_of(rel: &Path) -> String {
     let parts: Vec<String> = rel
@@ -1099,6 +1125,13 @@ mod echo_tests {
             #[cfg(unix)]
             changed: (0, 0, 0),
         }
+    }
+
+    #[test]
+    fn changed_paths_print_as_11ty_prints_them() {
+        assert_eq!(shown(Path::new("src/index.md")), "./src/index.md");
+        // The input folder is the project folder and the watcher lost track of it.
+        assert_eq!(shown(Path::new("")), ".");
     }
 
     #[test]
