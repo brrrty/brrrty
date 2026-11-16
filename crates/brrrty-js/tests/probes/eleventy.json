@@ -1,0 +1,1664 @@
+{
+ "slug": [
+  {
+   "in": "Hello World! Foo_Bar",
+   "args": [],
+   "out": "hello-world!-foo_bar"
+  },
+  {
+   "in": "Café Über",
+   "args": [],
+   "out": "cafe-uber"
+  },
+  {
+   "in": "C++ & Rust: 100% fun?",
+   "args": [],
+   "out": "c++-and-rust:-100percent-fun"
+  },
+  {
+   "in": "Price $5 and 10%",
+   "args": [],
+   "out": "price-dollar5-and-10percent"
+  },
+  {
+   "in": "  leading and trailing  ",
+   "args": [],
+   "out": "leading-and-trailing"
+  },
+  {
+   "in": "--dashes--and___underscores--",
+   "args": [],
+   "out": "dashes-and___underscores"
+  },
+  {
+   "in": "a---b",
+   "args": [],
+   "out": "a-b"
+  },
+  {
+   "in": "a - b",
+   "args": [],
+   "out": "a-b"
+  },
+  {
+   "in": "a_b_c",
+   "args": [],
+   "out": "a_b_c"
+  },
+  {
+   "in": "ÀÁÂÃÄÅ àáâãäå",
+   "args": [],
+   "out": "aaaaaa-aaaaaa"
+  },
+  {
+   "in": "straße Größe",
+   "args": [],
+   "out": "strasse-grosse"
+  },
+  {
+   "in": "Œuvre æther ø Ł",
+   "args": [],
+   "out": "oeuvre-aether-o-l"
+  },
+  {
+   "in": "Ñandú niño",
+   "args": [],
+   "out": "nandu-nino"
+  },
+  {
+   "in": "Zażółć gęślą jaźń",
+   "args": [],
+   "out": "zazolc-gesla-jazn"
+  },
+  {
+   "in": "日本語のタイトル",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "中文 title 标题",
+   "args": [],
+   "out": "title"
+  },
+  {
+   "in": "Привет мир",
+   "args": [],
+   "out": "privet-mir"
+  },
+  {
+   "in": "Ελληνικά",
+   "args": [],
+   "out": "ellhnika"
+  },
+  {
+   "in": "العربية",
+   "args": [],
+   "out": "alarbyh"
+  },
+  {
+   "in": "हिन्दी",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "🦄 unicorn",
+   "args": [],
+   "out": "unicorn"
+  },
+  {
+   "in": "♥ love ♥",
+   "args": [],
+   "out": "love-love-love"
+  },
+  {
+   "in": "emoji 😀 test 🎉",
+   "args": [],
+   "out": "emoji-test"
+  },
+  {
+   "in": "family 👨‍👩‍👧",
+   "args": [],
+   "out": "family"
+  },
+  {
+   "in": "flag 🇺🇸 here",
+   "args": [],
+   "out": "flag-here"
+  },
+  {
+   "in": "It's Bob's and isn't won't don't",
+   "args": [],
+   "out": "it's-bob's-and-isn't-won't-don't"
+  },
+  {
+   "in": "rock 'n' roll",
+   "args": [],
+   "out": "rock-'n'-roll"
+  },
+  {
+   "in": "'quoted'",
+   "args": [],
+   "out": "'quoted'"
+  },
+  {
+   "in": "\"double\" quotes",
+   "args": [],
+   "out": "\"double\"-quotes"
+  },
+  {
+   "in": "thing’s curly",
+   "args": [],
+   "out": "thing's-curly"
+  },
+  {
+   "in": "camelCaseString",
+   "args": [],
+   "out": "camelcasestring"
+  },
+  {
+   "in": "HTTPServer",
+   "args": [],
+   "out": "httpserver"
+  },
+  {
+   "in": "APIs and URLs",
+   "args": [],
+   "out": "apis-and-urls"
+  },
+  {
+   "in": "version 2.0.1",
+   "args": [],
+   "out": "version-2.0.1"
+  },
+  {
+   "in": "foo.bar/baz?qux=1#hash",
+   "args": [],
+   "out": "foo.barbazqux1hash"
+  },
+  {
+   "in": "a\\b",
+   "args": [],
+   "out": "ab"
+  },
+  {
+   "in": "tab\tseparated\nnewline",
+   "args": [],
+   "out": "tab-separated-newline"
+  },
+  {
+   "in": "nbsp here",
+   "args": [],
+   "out": "nbsp-here"
+  },
+  {
+   "in": "ideographic　space",
+   "args": [],
+   "out": "ideographic-space"
+  },
+  {
+   "in": "",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": " ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "-",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "_",
+   "args": [],
+   "out": "_"
+  },
+  {
+   "in": "___",
+   "args": [],
+   "out": "___"
+  },
+  {
+   "in": "2024",
+   "args": [],
+   "out": "2024"
+  },
+  {
+   "in": "0",
+   "args": [],
+   "out": "0"
+  },
+  {
+   "in": "ABC123def",
+   "args": [],
+   "out": "abc123def"
+  },
+  {
+   "in": "x@y.com",
+   "args": [],
+   "out": "x@y.com"
+  },
+  {
+   "in": "a/b/c",
+   "args": [],
+   "out": "abc"
+  },
+  {
+   "in": "(parens) [brackets] {braces}",
+   "args": [],
+   "out": "(parens)-brackets-braces"
+  },
+  {
+   "in": "tilde~star*plus+",
+   "args": [],
+   "out": "tilde~star*plus+"
+  },
+  {
+   "in": "!bang!",
+   "args": [],
+   "out": "!bang!"
+  },
+  {
+   "in": "colon: semi; comma,",
+   "args": [],
+   "out": "colon:-semi-comma"
+  },
+  {
+   "in": "ǅ ǆ Ǉ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "İstanbul",
+   "args": [],
+   "out": "istanbul"
+  },
+  {
+   "in": "K Kelvin",
+   "args": [],
+   "out": "k-kelvin"
+  },
+  {
+   "in": "ﬁ ligature",
+   "args": [],
+   "out": "ligature"
+  },
+  {
+   "in": "Ａｂｃ fullwidth",
+   "args": [],
+   "out": "fullwidth"
+  },
+  {
+   "in": "ñ̃ combining",
+   "args": [],
+   "out": "n-combining"
+  },
+  {
+   "in": "é decomposed",
+   "args": [],
+   "out": "e-decomposed"
+  },
+  {
+   "in": "Ṩ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "ß",
+   "args": [],
+   "out": "ss"
+  },
+  {
+   "in": "ẞ",
+   "args": [],
+   "out": "ss"
+  },
+  {
+   "in": "&",
+   "args": [],
+   "out": "and"
+  },
+  {
+   "in": "& & &",
+   "args": [],
+   "out": "and-and-and"
+  },
+  {
+   "in": "a & b",
+   "args": [],
+   "out": "a-and-b"
+  },
+  {
+   "in": "Ä",
+   "args": [],
+   "out": "a"
+  },
+  {
+   "in": "ä",
+   "args": [],
+   "out": "a"
+  },
+  {
+   "in": "Ö ö Ü ü",
+   "args": [],
+   "out": "o-o-u-u"
+  },
+  {
+   "in": "Ç ç",
+   "args": [],
+   "out": "c-c"
+  },
+  {
+   "in": "Ğ ğ İ ı Ş ş",
+   "args": [],
+   "out": "g-g-i-i-s-s"
+  },
+  {
+   "in": "©2024 ® ™",
+   "args": [],
+   "out": "(c)2024-(r)-tm"
+  },
+  {
+   "in": "€ £ ¥ ¢",
+   "args": [],
+   "out": "euro-pound-yen-cent"
+  },
+  {
+   "in": "½ ¼ ¾",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "x² y³",
+   "args": [],
+   "out": "x-y"
+  },
+  {
+   "in": "→ ← ↑",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "​zero​width",
+   "args": [],
+   "out": "zerowidth"
+  },
+  {
+   "in": "ǈ",
+   "args": [],
+   "out": "lj"
+  },
+  {
+   "in": "𝒜 math",
+   "args": [],
+   "out": "math"
+  },
+  {
+   "in": "a\u0000b",
+   "args": [],
+   "out": "ab"
+  },
+  {
+   "in": "Ünï cödé",
+   "args": [],
+   "out": "uni-code"
+  },
+  {
+   "in": "ﾊﾟﾝ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "hello­",
+   "args": [],
+   "out": "hello"
+  },
+  {
+   "in": "don’t",
+   "args": [],
+   "out": "don't"
+  },
+  {
+   "in": {
+    "$undefined": true
+   },
+   "args": [],
+   "out": "undefined"
+  },
+  {
+   "in": null,
+   "args": [],
+   "out": "null"
+  },
+  {
+   "in": 0,
+   "args": [],
+   "out": "0"
+  },
+  {
+   "in": 1,
+   "args": [],
+   "out": "1"
+  },
+  {
+   "in": -1,
+   "args": [],
+   "out": "1"
+  },
+  {
+   "in": 3.14,
+   "args": [],
+   "out": "3.14"
+  },
+  {
+   "in": 1e+21,
+   "args": [],
+   "out": "1e+21"
+  },
+  {
+   "in": true,
+   "args": [],
+   "out": "true"
+  },
+  {
+   "in": false,
+   "args": [],
+   "out": "false"
+  },
+  {
+   "in": [],
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": [
+    1,
+    2
+   ],
+   "args": [],
+   "out": "12"
+  },
+  {
+   "in": [
+    "a b",
+    "C d"
+   ],
+   "args": [],
+   "out": "a-bc-d"
+  },
+  {
+   "in": {},
+   "args": [],
+   "out": "object-object"
+  },
+  {
+   "in": {
+    "a": 1
+   },
+   "args": [],
+   "out": "object-object"
+  },
+  {
+   "in": [
+    null,
+    null,
+    "x"
+   ],
+   "args": [],
+   "out": "x"
+  }
+ ],
+ "slugify": [
+  {
+   "in": "Hello World! Foo_Bar",
+   "args": [],
+   "out": "hello-world-foo-bar"
+  },
+  {
+   "in": "Café Über",
+   "args": [],
+   "out": "cafe-ueber"
+  },
+  {
+   "in": "C++ & Rust: 100% fun?",
+   "args": [],
+   "out": "c-and-rust-100-fun"
+  },
+  {
+   "in": "Price $5 and 10%",
+   "args": [],
+   "out": "price-5-and-10"
+  },
+  {
+   "in": "  leading and trailing  ",
+   "args": [],
+   "out": "leading-and-trailing"
+  },
+  {
+   "in": "--dashes--and___underscores--",
+   "args": [],
+   "out": "dashes-and-underscores"
+  },
+  {
+   "in": "a---b",
+   "args": [],
+   "out": "a-b"
+  },
+  {
+   "in": "a - b",
+   "args": [],
+   "out": "a-b"
+  },
+  {
+   "in": "a_b_c",
+   "args": [],
+   "out": "a-b-c"
+  },
+  {
+   "in": "ÀÁÂÃÄÅ àáâãäå",
+   "args": [],
+   "out": "aaaaaea-aaaaaea"
+  },
+  {
+   "in": "straße Größe",
+   "args": [],
+   "out": "strasse-groesse"
+  },
+  {
+   "in": "Œuvre æther ø Ł",
+   "args": [],
+   "out": "uvre-aether-o-l"
+  },
+  {
+   "in": "Ñandú niño",
+   "args": [],
+   "out": "nandu-nino"
+  },
+  {
+   "in": "Zażółć gęślą jaźń",
+   "args": [],
+   "out": "zazolc-gesla-jazn"
+  },
+  {
+   "in": "日本語のタイトル",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "中文 title 标题",
+   "args": [],
+   "out": "title"
+  },
+  {
+   "in": "Привет мир",
+   "args": [],
+   "out": "privet-mir"
+  },
+  {
+   "in": "Ελληνικά",
+   "args": [],
+   "out": "ellinika"
+  },
+  {
+   "in": "العربية",
+   "args": [],
+   "out": "alerbyt"
+  },
+  {
+   "in": "हिन्दी",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "🦄 unicorn",
+   "args": [],
+   "out": "unicorn-unicorn"
+  },
+  {
+   "in": "♥ love ♥",
+   "args": [],
+   "out": "love-love-love"
+  },
+  {
+   "in": "emoji 😀 test 🎉",
+   "args": [],
+   "out": "emoji-test"
+  },
+  {
+   "in": "family 👨‍👩‍👧",
+   "args": [],
+   "out": "family"
+  },
+  {
+   "in": "flag 🇺🇸 here",
+   "args": [],
+   "out": "flag-here"
+  },
+  {
+   "in": "It's Bob's and isn't won't don't",
+   "args": [],
+   "out": "its-bobs-and-isnt-wont-dont"
+  },
+  {
+   "in": "rock 'n' roll",
+   "args": [],
+   "out": "rock-n-roll"
+  },
+  {
+   "in": "'quoted'",
+   "args": [],
+   "out": "quoted"
+  },
+  {
+   "in": "\"double\" quotes",
+   "args": [],
+   "out": "double-quotes"
+  },
+  {
+   "in": "thing’s curly",
+   "args": [],
+   "out": "thing-s-curly"
+  },
+  {
+   "in": "camelCaseString",
+   "args": [],
+   "out": "camelcasestring"
+  },
+  {
+   "in": "HTTPServer",
+   "args": [],
+   "out": "httpserver"
+  },
+  {
+   "in": "APIs and URLs",
+   "args": [],
+   "out": "apis-and-urls"
+  },
+  {
+   "in": "version 2.0.1",
+   "args": [],
+   "out": "version-2-0-1"
+  },
+  {
+   "in": "foo.bar/baz?qux=1#hash",
+   "args": [],
+   "out": "foo-bar-baz-qux-1-hash"
+  },
+  {
+   "in": "a\\b",
+   "args": [],
+   "out": "a-b"
+  },
+  {
+   "in": "tab\tseparated\nnewline",
+   "args": [],
+   "out": "tab-separated-newline"
+  },
+  {
+   "in": "nbsp here",
+   "args": [],
+   "out": "nbsp-here"
+  },
+  {
+   "in": "ideographic　space",
+   "args": [],
+   "out": "ideographic-space"
+  },
+  {
+   "in": "",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": " ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "-",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "_",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "___",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "2024",
+   "args": [],
+   "out": "2024"
+  },
+  {
+   "in": "0",
+   "args": [],
+   "out": "0"
+  },
+  {
+   "in": "ABC123def",
+   "args": [],
+   "out": "abc123def"
+  },
+  {
+   "in": "x@y.com",
+   "args": [],
+   "out": "x-y-com"
+  },
+  {
+   "in": "a/b/c",
+   "args": [],
+   "out": "a-b-c"
+  },
+  {
+   "in": "(parens) [brackets] {braces}",
+   "args": [],
+   "out": "parens-brackets-braces"
+  },
+  {
+   "in": "tilde~star*plus+",
+   "args": [],
+   "out": "tilde-star-plus"
+  },
+  {
+   "in": "!bang!",
+   "args": [],
+   "out": "bang"
+  },
+  {
+   "in": "colon: semi; comma,",
+   "args": [],
+   "out": "colon-semi-comma"
+  },
+  {
+   "in": "ǅ ǆ Ǉ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "İstanbul",
+   "args": [],
+   "out": "istanbul"
+  },
+  {
+   "in": "K Kelvin",
+   "args": [],
+   "out": "k-kelvin"
+  },
+  {
+   "in": "ﬁ ligature",
+   "args": [],
+   "out": "ligature"
+  },
+  {
+   "in": "Ａｂｃ fullwidth",
+   "args": [],
+   "out": "fullwidth"
+  },
+  {
+   "in": "ñ̃ combining",
+   "args": [],
+   "out": "n-combining"
+  },
+  {
+   "in": "é decomposed",
+   "args": [],
+   "out": "e-decomposed"
+  },
+  {
+   "in": "Ṩ",
+   "args": [],
+   "out": "s"
+  },
+  {
+   "in": "ß",
+   "args": [],
+   "out": "ss"
+  },
+  {
+   "in": "ẞ",
+   "args": [],
+   "out": "ss"
+  },
+  {
+   "in": "&",
+   "args": [],
+   "out": "and"
+  },
+  {
+   "in": "& & &",
+   "args": [],
+   "out": "and-and-and"
+  },
+  {
+   "in": "a & b",
+   "args": [],
+   "out": "a-and-b"
+  },
+  {
+   "in": "Ä",
+   "args": [],
+   "out": "ae"
+  },
+  {
+   "in": "ä",
+   "args": [],
+   "out": "ae"
+  },
+  {
+   "in": "Ö ö Ü ü",
+   "args": [],
+   "out": "oe-oe-ue-ue"
+  },
+  {
+   "in": "Ç ç",
+   "args": [],
+   "out": "c-c"
+  },
+  {
+   "in": "Ğ ğ İ ı Ş ş",
+   "args": [],
+   "out": "g-g-i-i-s-s"
+  },
+  {
+   "in": "©2024 ® ™",
+   "args": [],
+   "out": "2024"
+  },
+  {
+   "in": "€ £ ¥ ¢",
+   "args": [],
+   "out": "e-y-c"
+  },
+  {
+   "in": "½ ¼ ¾",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "x² y³",
+   "args": [],
+   "out": "x-y"
+  },
+  {
+   "in": "→ ← ↑",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "​zero​width",
+   "args": [],
+   "out": "zero-width"
+  },
+  {
+   "in": "ǈ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "𝒜 math",
+   "args": [],
+   "out": "a-math"
+  },
+  {
+   "in": "a\u0000b",
+   "args": [],
+   "out": "a-b"
+  },
+  {
+   "in": "Ünï cödé",
+   "args": [],
+   "out": "ueni-coede"
+  },
+  {
+   "in": "ﾊﾟﾝ",
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": "hello­",
+   "args": [],
+   "out": "hello"
+  },
+  {
+   "in": "don’t",
+   "args": [],
+   "out": "don-t"
+  },
+  {
+   "in": {
+    "$undefined": true
+   },
+   "args": [],
+   "out": "undefined"
+  },
+  {
+   "in": null,
+   "args": [],
+   "out": "null"
+  },
+  {
+   "in": 0,
+   "args": [],
+   "out": "0"
+  },
+  {
+   "in": 1,
+   "args": [],
+   "out": "1"
+  },
+  {
+   "in": -1,
+   "args": [],
+   "out": "1"
+  },
+  {
+   "in": 3.14,
+   "args": [],
+   "out": "3-14"
+  },
+  {
+   "in": 1e+21,
+   "args": [],
+   "out": "1e-21"
+  },
+  {
+   "in": true,
+   "args": [],
+   "out": "true"
+  },
+  {
+   "in": false,
+   "args": [],
+   "out": "false"
+  },
+  {
+   "in": [],
+   "args": [],
+   "out": ""
+  },
+  {
+   "in": [
+    1,
+    2
+   ],
+   "args": [],
+   "out": "1-2"
+  },
+  {
+   "in": [
+    "a b",
+    "C d"
+   ],
+   "args": [],
+   "out": "a-b-c-d"
+  },
+  {
+   "in": {},
+   "args": [],
+   "out": "object-object"
+  },
+  {
+   "in": {
+    "a": 1
+   },
+   "args": [],
+   "out": "object-object"
+  },
+  {
+   "in": [
+    null,
+    null,
+    "x"
+   ],
+   "args": [],
+   "out": "x"
+  }
+ ],
+ "url": [
+  {
+   "in": "/blog/post/",
+   "args": [],
+   "out": "/blog/post/"
+  },
+  {
+   "in": "img/a.png",
+   "args": [],
+   "out": "img/a.png"
+  },
+  {
+   "in": "https://example.com/x",
+   "args": [],
+   "out": "https://example.com/x"
+  },
+  {
+   "in": "http://example.com",
+   "args": [],
+   "out": "http://example.com"
+  },
+  {
+   "in": "HTTP://EXAMPLE.COM/A",
+   "args": [],
+   "out": "HTTP://EXAMPLE.COM/A"
+  },
+  {
+   "in": "",
+   "args": [],
+   "out": "."
+  },
+  {
+   "in": "#top",
+   "args": [],
+   "out": "#top"
+  },
+  {
+   "in": "?q=1",
+   "args": [],
+   "out": "?q=1"
+  },
+  {
+   "in": "/a?q=1#f",
+   "args": [],
+   "out": "/a?q=1#f"
+  },
+  {
+   "in": "a/b/../c",
+   "args": [],
+   "out": "a/c"
+  },
+  {
+   "in": "./a",
+   "args": [],
+   "out": "a"
+  },
+  {
+   "in": "../a",
+   "args": [],
+   "out": "../a"
+  },
+  {
+   "in": "/a/../../b",
+   "args": [],
+   "out": "/b"
+  },
+  {
+   "in": "//cdn.example.com/x.js",
+   "args": [],
+   "out": "//cdn.example.com/x.js"
+  },
+  {
+   "in": "//",
+   "args": [],
+   "out": "/"
+  },
+  {
+   "in": "/",
+   "args": [],
+   "out": "/"
+  },
+  {
+   "in": "///",
+   "args": [],
+   "out": "///"
+  },
+  {
+   "in": "/a//b",
+   "args": [],
+   "out": "/a/b"
+  },
+  {
+   "in": "a//b///",
+   "args": [],
+   "out": "a/b/"
+  },
+  {
+   "in": "/a/./b/",
+   "args": [],
+   "out": "/a/b/"
+  },
+  {
+   "in": "mailto:me@example.com",
+   "args": [],
+   "out": "mailto:me@example.com"
+  },
+  {
+   "in": "tel:+1555",
+   "args": [],
+   "out": "tel:+1555"
+  },
+  {
+   "in": "javascript:void(0)",
+   "args": [],
+   "out": "javascript:void(0)"
+  },
+  {
+   "in": "data:text/plain,hi",
+   "args": [],
+   "out": "data:text/plain,hi"
+  },
+  {
+   "in": "foo:bar",
+   "args": [],
+   "out": "foo:bar"
+  },
+  {
+   "in": "c:/windows",
+   "args": [],
+   "out": "c:/windows"
+  },
+  {
+   "in": "file:///etc/hosts",
+   "args": [],
+   "out": "file:///etc/hosts"
+  },
+  {
+   "in": "http://",
+   "args": [],
+   "out": "http:/"
+  },
+  {
+   "in": "http:",
+   "args": [],
+   "out": "http:"
+  },
+  {
+   "in": "http:/x",
+   "args": [],
+   "out": "http:/x"
+  },
+  {
+   "in": "https:example.com",
+   "args": [],
+   "out": "https:example.com"
+  },
+  {
+   "in": "ftp://x",
+   "args": [],
+   "out": "ftp://x"
+  },
+  {
+   "in": "ws://x",
+   "args": [],
+   "out": "ws://x"
+  },
+  {
+   "in": "a b:c",
+   "args": [],
+   "out": "a b:c"
+  },
+  {
+   "in": "a:b c",
+   "args": [],
+   "out": "a:b c"
+  },
+  {
+   "in": "1a:b",
+   "args": [],
+   "out": "1a:b"
+  },
+  {
+   "in": "a+b.c-d:e",
+   "args": [],
+   "out": "a+b.c-d:e"
+  },
+  {
+   "in": ":x",
+   "args": [],
+   "out": ":x"
+  },
+  {
+   "in": "x:",
+   "args": [],
+   "out": "x:"
+  },
+  {
+   "in": "http://exa mple.com",
+   "args": [],
+   "out": "http:/exa mple.com"
+  },
+  {
+   "in": "http://[::1]/",
+   "args": [],
+   "out": "http://[::1]/"
+  },
+  {
+   "in": "http://a:99999/",
+   "args": [],
+   "out": "http:/a:99999/"
+  },
+  {
+   "in": "http://user:pw@host/",
+   "args": [],
+   "out": "http://user:pw@host/"
+  },
+  {
+   "in": " /padded",
+   "args": [],
+   "out": " /padded"
+  },
+  {
+   "in": "/pad ded/",
+   "args": [],
+   "out": "/pad ded/"
+  },
+  {
+   "in": "/ü/é",
+   "args": [],
+   "out": "/ü/é"
+  },
+  {
+   "in": "/%20x",
+   "args": [],
+   "out": "/%20x"
+  },
+  {
+   "in": ".",
+   "args": [],
+   "out": "."
+  },
+  {
+   "in": "..",
+   "args": [],
+   "out": ".."
+  },
+  {
+   "in": "./",
+   "args": [],
+   "out": "./"
+  },
+  {
+   "in": "a",
+   "args": [],
+   "out": "a"
+  },
+  {
+   "in": "a/",
+   "args": [],
+   "out": "a/"
+  },
+  {
+   "in": "/a/",
+   "args": [],
+   "out": "/a/"
+  },
+  {
+   "in": "a/b",
+   "args": [],
+   "out": "a/b"
+  },
+  {
+   "in": "/a/b/c/../..",
+   "args": [],
+   "out": "/a"
+  },
+  {
+   "in": "a/../..",
+   "args": [],
+   "out": ".."
+  },
+  {
+   "in": "~/x",
+   "args": [],
+   "out": "~/x"
+  },
+  {
+   "in": "\\\\x",
+   "args": [],
+   "out": "\\\\x"
+  },
+  {
+   "in": "http://xn--nxasmq6b.com",
+   "args": [],
+   "out": "http://xn--nxasmq6b.com"
+  },
+  {
+   "in": "http://日本.jp/",
+   "args": [],
+   "out": "http://日本.jp/"
+  },
+  {
+   "in": {
+    "$undefined": true
+   },
+   "args": [],
+   "out": "."
+  },
+  {
+   "in": null,
+   "args": [],
+   "out": "."
+  },
+  {
+   "in": 0,
+   "args": [],
+   "out": "."
+  },
+  {
+   "in": false,
+   "args": [],
+   "out": "."
+  },
+  {
+   "in": 5,
+   "args": [],
+   "err": "url.startsWith is not a function"
+  },
+  {
+   "in": true,
+   "args": [],
+   "err": "url.startsWith is not a function"
+  },
+  {
+   "in": [],
+   "args": [],
+   "err": "url.startsWith is not a function"
+  },
+  {
+   "in": [
+    "a"
+   ],
+   "args": [],
+   "err": "url.startsWith is not a function"
+  },
+  {
+   "in": {},
+   "args": [],
+   "err": "url.startsWith is not a function"
+  },
+  {
+   "in": "/a",
+   "args": [
+    "/pre/"
+   ],
+   "out": "/pre/a"
+  },
+  {
+   "in": "a",
+   "args": [
+    "/pre/"
+   ],
+   "out": "a"
+  },
+  {
+   "in": "",
+   "args": [
+    "/pre/"
+   ],
+   "out": "."
+  },
+  {
+   "in": "/",
+   "args": [
+    "/pre/"
+   ],
+   "out": "/pre/"
+  },
+  {
+   "in": "a/b",
+   "args": [
+    "/pre/"
+   ],
+   "out": "a/b"
+  },
+  {
+   "in": "/a",
+   "args": [
+    "/pre"
+   ],
+   "out": "/pre/a"
+  },
+  {
+   "in": "a",
+   "args": [
+    "/pre"
+   ],
+   "out": "a"
+  },
+  {
+   "in": "/",
+   "args": [
+    "/pre"
+   ],
+   "out": "/pre/"
+  },
+  {
+   "in": "",
+   "args": [
+    "/pre"
+   ],
+   "out": "."
+  },
+  {
+   "in": "a",
+   "args": [
+    {
+     "$undefined": true
+    }
+   ],
+   "out": "a"
+  },
+  {
+   "in": "a",
+   "args": [
+    5
+   ],
+   "out": "a"
+  },
+  {
+   "in": "a",
+   "args": [
+    ""
+   ],
+   "out": "a"
+  },
+  {
+   "in": "/",
+   "args": [
+    ""
+   ],
+   "out": "/"
+  },
+  {
+   "in": [
+    "http://x.com/"
+   ],
+   "args": [],
+   "out": [
+    "http://x.com/"
+   ]
+  },
+  {
+   "in": [
+    "a",
+    "b"
+   ],
+   "args": [],
+   "err": "url.startsWith is not a function"
+  },
+  {
+   "in": [
+    "/a"
+   ],
+   "args": [],
+   "err": "url.startsWith is not a function"
+  }
+ ],
+ "log": [
+  {
+   "args": [
+    "hi"
+   ],
+   "out": "hi"
+  },
+  {
+   "args": [
+    "hi",
+    "there"
+   ],
+   "out": "hi there"
+  },
+  {
+   "args": [
+    1
+   ],
+   "out": "1"
+  },
+  {
+   "args": [
+    1,
+    2,
+    3
+   ],
+   "out": "1 2 3"
+  },
+  {
+   "args": [
+    null
+   ],
+   "out": "null"
+  },
+  {
+   "args": [
+    {
+     "$undefined": true
+    }
+   ],
+   "out": "undefined"
+  },
+  {
+   "args": [
+    true
+   ],
+   "out": "true"
+  },
+  {
+   "args": [
+    [
+     "a",
+     1
+    ]
+   ],
+   "out": "[ 'a', 1 ]"
+  },
+  {
+   "args": [
+    {
+     "a": 1,
+     "b": "x"
+    }
+   ],
+   "out": "{ a: 1, b: 'x' }"
+  },
+  {
+   "args": [
+    []
+   ],
+   "out": "[]"
+  },
+  {
+   "args": [
+    {}
+   ],
+   "out": "{}"
+  },
+  {
+   "args": [
+    "a",
+    1,
+    null
+   ],
+   "out": "a 1 null"
+  },
+  {
+   "args": [
+    3.5,
+    "x"
+   ],
+   "out": "3.5 x"
+  },
+  {
+   "args": [
+    1e+21
+   ],
+   "out": "1e+21"
+  },
+  {
+   "args": [
+    [
+     1,
+     [
+      2,
+      [
+       3
+      ]
+     ]
+    ]
+   ],
+   "out": "[ 1, [ 2, [ 3 ] ] ]"
+  },
+  {
+   "args": [
+    {
+     "a": {
+      "b": {
+       "c": 1
+      }
+     }
+    }
+   ],
+   "out": "{ a: { b: { c: 1 } } }"
+  },
+  {
+   "args": [
+    "x",
+    [
+     "y"
+    ]
+   ],
+   "out": "x [ 'y' ]"
+  },
+  {
+   "args": [
+    [
+     "it's"
+    ]
+   ],
+   "out": "[ \"it's\" ]"
+  },
+  {
+   "args": [
+    {
+     "a-b": 1
+    }
+   ],
+   "out": "{ 'a-b': 1 }"
+  },
+  {
+   "args": [
+    [
+     1,
+     2,
+     3
+    ]
+   ],
+   "out": "[ 1, 2, 3 ]"
+  },
+  {
+   "args": [
+    "n",
+    42,
+    false,
+    {
+     "$undefined": true
+    }
+   ],
+   "out": "n 42 false undefined"
+  }
+ ]
+}

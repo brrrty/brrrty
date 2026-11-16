@@ -119,6 +119,24 @@ impl Engine {
         self.filters.insert(name.to_string(), Filter::User(f));
     }
 
+    /// Adds an engine-neutral filter, such as one of Eleventy's. Keyword
+    /// arguments are not passed to it.
+    pub fn register_filter_impl(&mut self, name: &str, f: brrrty_js::FilterImpl) {
+        self.register_filter(
+            name,
+            Arc::new(move |input, args, _kwargs, _ctx| f(input, args)),
+        );
+    }
+
+    /// Adds Eleventy's own filters: `slug`, `slugify`, `url` and `log`.
+    /// `slugify` replaces the standard Liquid filter of that name, as it
+    /// does in Eleventy.
+    pub fn register_eleventy_filters(&mut self) {
+        for (name, f) in brrrty_js::eleventy_filters() {
+            self.register_filter_impl(name, f);
+        }
+    }
+
     /// Parses `source` and, with `strict_filters`, rejects any filter that
     /// is not registered. The check runs where LiquidJS runs it, so errors
     /// come in source order with LiquidJS's message and position.

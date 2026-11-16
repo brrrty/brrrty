@@ -15,3 +15,5 @@ readme = false
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
 indexmap = "2"
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+unicode-normalization = "0.1.26"
+url = "2.5.8"

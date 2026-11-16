@@ -177,6 +177,7 @@ fn every_conformance_template_parses_like_liquidjs() {
 /// adds engine features extends this list.
 const GATED_FILES: &[&str] = &[
     "errors.toml",
+    "eleventy.toml",
     "filters.toml",
     "includes.toml",
     "tags.toml",
@@ -207,12 +208,33 @@ fn run_case(case: &Case) -> Outcome {
     use brrrty_liquid::{Engine, EngineOptions, Tz};
     let expected = cases_dir().join("expected");
     let want_out = fs::read_to_string(expected.join(format!("{}.out", case.name))).ok();
-    let engine = Engine::new(EngineOptions {
+    let mut engine = Engine::new(EngineOptions {
         strict_filters: true,
         timezone: Tz::Utc,
     });
-    let data: serde_json::Value =
+    engine.register_eleventy_filters();
+    let mut data: serde_json::Value =
         serde_json::from_str(case.data.as_deref().unwrap_or("{}")).unwrap();
+    if case.group == "eleventy" {
+        // What Eleventy adds to every template's data. The references were
+        // made with each case as `liquid/<name>.liquid`, output as `.txt`.
+        let page = serde_json::json!({
+            "url": format!("/liquid/{}.txt", case.name),
+            "fileSlug": case.name,
+            "filePathStem": format!("/liquid/{}", case.name),
+        });
+        let provided = serde_json::json!({
+            "page": page,
+            "eleventy": {"generator": "Eleventy v3.1.8", "version": "3.1.8"},
+            "collections": {"all": [{"page": page, "data": {}}]},
+        });
+        let (Some(data), Some(provided)) = (data.as_object_mut(), provided.as_object()) else {
+            panic!("case data must be an object");
+        };
+        for (k, v) in provided {
+            data.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
     let data = brrrty_js::Value::from_json(&data);
     let got = engine
         .parse(&case.name, &case.template)
