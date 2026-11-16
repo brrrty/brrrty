@@ -263,11 +263,21 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
     let run = std::thread::Builder::new()
         .name("brrrty-config".into())
         .stack_size(STACK_SIZE)
-        .spawn(move || evaluate(&src, clock));
+        .spawn(move || brrrty_core::contain::catch(|| evaluate(&src, clock)));
+    let crashed = |why: String| {
+        Err(vec![
+            Problem::error(
+                codes::CONFIG_ERROR,
+                format!("Brrrty crashed while running {CONFIG_FILE}: {why}"),
+            )
+            .with_help(BUG_HELP),
+        ])
+    };
     let result = match run {
         Ok(handle) => match handle.join() {
-            Ok(r) => r,
-            Err(panic) => std::panic::resume_unwind(panic),
+            Ok(Ok(r)) => r,
+            Ok(Err(why)) => crashed(why),
+            Err(_) => crashed("the thread running it stopped".into()),
         },
         Err(e) => Err(vec![Problem::error(
             codes::BUILD_THREADS_FAILED,
@@ -278,6 +288,9 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         .map(Some)
         .map_err(|ps| ps.into_iter().map(|p| p.with_path(CONFIG_FILE)).collect())
 }
+
+/// Help for a problem that comes from a panic in Brrrty while running a script.
+pub(crate) const BUG_HELP: &str = "this is a bug in Brrrty, not in your script. Please report it at https://github.com/brrrty/brrrty/issues";
 
 /// Run a script and read what it set. Problems have no path yet.
 fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {

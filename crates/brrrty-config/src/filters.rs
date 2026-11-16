@@ -11,7 +11,6 @@
 //! refuses the page that used it and nothing else. The error has two
 //! positions: the template's, and the script's own.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use brrrty_js::Value;
@@ -84,16 +83,9 @@ fn call(
             f.call::<Dynamic>(&rt.engine, &rt.ast, argv)
         })
     };
-    let result = std::panic::catch_unwind(AssertUnwindSafe(run));
+    let result = brrrty_core::contain::catch(run);
     match result {
-        Err(panic) => {
-            let why = panic
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| panic.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "it panicked".into());
-            Err(format!("filter `{name}` failed: {why}"))
-        }
+        Err(why) => Err(format!("filter `{name}` failed: {why}")),
         Ok(Err(e)) => Err(describe(name, *e)),
         Ok(Ok(result)) => to_value(&result)
             .map_err(|why| format!("filter `{name}` returned a value that can't be data: {why}")),

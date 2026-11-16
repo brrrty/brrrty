@@ -54,16 +54,24 @@ fn run_file(req: &DataRequest, clock: Clock) -> Result<Value, Problem> {
     let run = std::thread::Builder::new()
         .name("brrrty-data".into())
         .stack_size(STACK_SIZE)
-        .spawn(move || evaluate(&src, &global, clock, &label))
+        .spawn(move || brrrty_core::contain::catch(|| evaluate(&src, &global, clock, &label)))
         .map_err(|e| {
             Problem::error(
                 codes::BUILD_THREADS_FAILED,
                 format!("cannot start a thread to run a data file: {e}"),
             )
         })?;
+    let crashed = |why: String| {
+        Err(Problem::error(
+            codes::DATA_RHAI_ERROR,
+            format!("Brrrty crashed while running this data file: {why}"),
+        )
+        .with_help(crate::BUG_HELP))
+    };
     match run.join() {
-        Ok(r) => r,
-        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(Ok(r)) => r,
+        Ok(Err(why)) => crashed(why),
+        Err(_) => crashed("the thread running it stopped".into()),
     }
 }
 

@@ -309,13 +309,8 @@ impl Pipeline<'_> {
             }
             Ok(self.markdown.render(source))
         };
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(render))
-            .map_err(|panic| {
-                let why = panic
-                    .downcast_ref::<&str>()
-                    .map(|s| s.to_string())
-                    .or_else(|| panic.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "it panicked".into());
+        crate::contain::catch(render)
+            .map_err(|why| {
                 Problem::error(
                     codes::MARKDOWN_RENDER_FAILED,
                     format!("the Markdown renderer failed on this file: {why}"),

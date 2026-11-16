@@ -169,6 +169,13 @@ pub fn engine_for(clock: Clock, label: String) -> Engine {
     e.on_print(|s| println!("{s}"));
     e.on_debug(move |s, _src, pos| eprintln!("{label} {pos}: {s}"));
 
+    // Debug builds only: a panic on demand, so tests can check that a panic inside a script
+    // run becomes a Problem through the real binary, panic hook and all.
+    #[cfg(debug_assertions)]
+    e.register_fn("__brrrty_test_panic", || -> () {
+        panic!("deliberate test panic from a script")
+    });
+
     e.register_type_with_name::<Config>("Config")
         .register_type_with_name::<Ignores>("Ignores")
         .register_type_with_name::<JsDate>("Date");

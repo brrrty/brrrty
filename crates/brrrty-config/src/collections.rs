@@ -18,7 +18,6 @@
 //! function returns (an array, an `object()`, a map, nested any way) holds
 //! those same items, so their content and identity survive.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 
 use brrrty_core::{CollectionError, CollectionFn, CollectionInput, CollectionPage, Problem, codes};
@@ -217,7 +216,7 @@ fn run(
             f.call::<Dynamic>(&rt.engine, &rt.ast, (api,))
         })
     };
-    let result = std::panic::catch_unwind(AssertUnwindSafe(call));
+    let result = brrrty_core::contain::catch(call);
     let premature = crate::object::take_premature();
     if let Some(path) = undated.lock().ok().and_then(|mut u| u.take()) {
         return Err(CollectionError::Undated(path));
@@ -226,14 +225,7 @@ fn run(
         Err(CollectionError::Failed(problem(name, message, code, pos)))
     };
     let value = match result {
-        Err(panic) => {
-            let why = panic
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| panic.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "it panicked".into());
-            return failed(why, codes::CONFIG_ERROR, at);
-        }
+        Err(why) => return failed(why, codes::CONFIG_ERROR, at),
         Ok(Err(e)) => {
             let parts = crate::error_parts(*e);
             let pos = if parts.position.is_none() {

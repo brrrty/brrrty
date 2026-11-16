@@ -863,8 +863,10 @@ fn invalid_ignore_line_warns_and_the_build_goes_on() {
     assert!(!root.join("_site/skip").exists());
 }
 
-/// The markdown-it crate panics on a strikethrough that spans a CRLF line break inside a list
-/// item. That refuses the one page, with a Problem naming the file, and the site still builds.
+/// The markdown-it crate panics (an integer overflow, so only in debug builds) on a
+/// strikethrough that spans a CRLF line break inside a list item. That refuses the one page,
+/// with a Problem naming the file, and the site still builds. In a release build the overflow
+/// wraps and the page matches markdown-it 14 (`markdownIt().render(...)` printed by Node).
 #[test]
 fn a_markdown_panic_refuses_only_that_page() {
     let t = tempfile::tempdir().unwrap();
@@ -876,12 +878,59 @@ fn a_markdown_panic_refuses_only_that_page() {
         .iter()
         .filter(|p| p.code == codes::MARKDOWN_RENDER_FAILED)
         .collect();
-    assert_eq!(bad.len(), 1, "{:?}", r.problems);
-    assert_eq!(bad[0].path.as_deref(), Some(Path::new("src/bad.md")));
-    assert!(bad[0].help.as_deref().unwrap().contains("report"));
-    assert!(!t.path().join("_site/bad/index.html").exists());
+    if cfg!(debug_assertions) {
+        assert_eq!(bad.len(), 1, "{:?}", r.problems);
+        assert_eq!(bad[0].path.as_deref(), Some(Path::new("src/bad.md")));
+        assert!(bad[0].help.as_deref().unwrap().contains("report"));
+        assert!(!t.path().join("_site/bad/index.html").exists());
+    } else {
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(
+            read(t.path().join("_site/bad/index.html")),
+            "<ol start=\"2\">\n<li>`<s>中\n---</s>(<img src=\"u\" alt=\"i\"></li>\n</ol>\n"
+        );
+    }
     assert_eq!(
         read(t.path().join("_site/ok/index.html")),
         "<h1>fine</h1>\n"
     );
+}
+
+/// A renderer that panics on any page containing `PANIC`, in every build profile.
+struct PanickyMarkdown(MarkdownIt);
+
+impl brrrty_markdown::MarkdownRenderer for PanickyMarkdown {
+    fn render(&self, source: &str) -> String {
+        if source.contains("PANIC") {
+            panic!("deliberate renderer panic");
+        }
+        self.0.render(source)
+    }
+}
+
+/// Containment works in release builds too, and on every Rayon worker: each panicking page is
+/// refused with the panic's message, and every other page is written.
+#[test]
+fn renderer_panics_refuse_their_pages_on_every_thread() {
+    let t = tempfile::tempdir().unwrap();
+    for i in 0..40 {
+        write(t.path(), &format!("src/ok{i}.md"), "# fine\n");
+        write(t.path(), &format!("src/bad{i}.md"), "PANIC\n");
+    }
+    let r = build(&opts(t.path()), &PanickyMarkdown(MarkdownIt::new()));
+    let bad: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::MARKDOWN_RENDER_FAILED)
+        .collect();
+    assert_eq!(bad.len(), 40, "{:?}", r.problems);
+    assert_eq!(r.problems.len(), 40, "{:?}", r.problems);
+    assert!(bad[0].message.contains("deliberate renderer panic"));
+    for i in 0..40 {
+        assert_eq!(
+            read(t.path().join(format!("_site/ok{i}/index.html"))),
+            "<h1>fine</h1>\n"
+        );
+        assert!(!t.path().join(format!("_site/bad{i}/index.html")).exists());
+    }
 }

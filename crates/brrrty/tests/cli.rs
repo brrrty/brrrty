@@ -373,3 +373,106 @@ fn rhai_data_files_work_without_a_config_and_follow_source_date_epoch() {
         stderr(&out)
     );
 }
+
+/// The panic hook stands down inside containment, so a Markdown panic (an integer overflow in
+/// markdown-it, so only in debug builds) refuses its page and the build exits 1, not 101. Many
+/// copies run across the Rayon workers. In a release build the overflow wraps and the page
+/// matches markdown-it 14, printed by Node.
+#[test]
+fn a_markdown_panic_is_a_page_error_not_a_crash() {
+    let mut files = vec![("src/ok.md".to_string(), "# fine\n".to_string())];
+    for i in 0..24 {
+        files.push((format!("src/bad{i}.md"), "2) `~~中\r\n---~~(![i](u)".into()));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&files);
+    let out = run_in(t.path(), &[]);
+    let err = stderr(&out);
+    assert!(!err.contains("internal bug"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(t.path().join("_site/src/ok/index.html")).unwrap(),
+        "<h1>fine</h1>\n"
+    );
+    if cfg!(debug_assertions) {
+        assert_eq!(out.status.code(), Some(1), "{err}");
+        assert_eq!(err.matches("markdown-render-failed").count(), 24, "{err}");
+        assert!(err.contains("markdown-it-0.6.1/src/"), "{err}");
+        assert!(!t.path().join("_site/src/bad0").exists());
+    } else {
+        assert_eq!(out.status.code(), Some(0), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("_site/src/bad0/index.html")).unwrap(),
+            "<ol start=\"2\">\n<li>`<s>中\n---</s>(<img src=\"u\" alt=\"i\"></li>\n</ol>\n"
+        );
+    }
+}
+
+/// Outside containment the hook still reports the bug and exits 101.
+#[cfg(debug_assertions)]
+#[test]
+fn an_uncontained_panic_is_a_bug_report_and_101() {
+    let t = site(&[]);
+    let out = run_in(t.path(), &["--__panic"]);
+    assert_eq!(out.status.code(), Some(101));
+    let err = stderr(&out);
+    assert!(err.contains("Brrrty hit an internal bug"), "{err}");
+    assert!(err.contains("deliberate test panic"), "{err}");
+    assert!(err.contains("issues/new?"), "{err}");
+}
+
+/// A panic while a script runs is a Problem through the real binary, panic hook and all: at the
+/// config's top level it stops the build (exit 1), in a data file it refuses the pages that use
+/// its data, and in a filter or collection it refuses its pages. Debug builds only, where
+/// scripts can call `__brrrty_test_panic()`.
+#[cfg(debug_assertions)]
+#[test]
+fn script_panics_are_problems_not_crashes() {
+    let top = site(&[
+        ("brrrty.config.rhai", "__brrrty_test_panic();\n"),
+        ("a.md", "a\n"),
+    ]);
+    let o = run_in(top.path(), &[]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains(codes::CONFIG_ERROR), "{err}");
+    assert!(err.contains("deliberate test panic from a script"), "{err}");
+    assert!(!err.contains("internal bug"), "{err}");
+
+    let data = site(&[
+        ("_data/boom.rhai", "__brrrty_test_panic()"),
+        ("uses.liquid", "{{ boom }}"),
+        ("ok.md", "ok\n"),
+    ]);
+    let o = run_in(data.path(), &[]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains(codes::DATA_RHAI_ERROR), "{err}");
+    assert!(err.contains("deliberate test panic from a script"), "{err}");
+    assert!(!err.contains("internal bug"), "{err}");
+
+    let filter = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.add_filter(\"boom\", |v| __brrrty_test_panic());\n\
+             config.add_collection(\"bad\", |api| __brrrty_test_panic());\n",
+        ),
+        ("f.liquid", "{{ 1 | boom }}"),
+        ("c.liquid", "{{ collections.bad }}"),
+        ("ok.md", "ok\n"),
+    ]);
+    let o = run_in(filter.path(), &[]);
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("filter `boom` failed: deliberate test panic"),
+        "{err}"
+    );
+    assert_eq!(err.matches("deliberate test panic").count(), 3, "{err}");
+    assert!(!err.contains("internal bug"), "{err}");
+    assert!(filter.path().join("_site/ok/index.html").is_file());
+    assert!(!filter.path().join("_site/f/index.html").exists());
+    assert!(!filter.path().join("_site/c/index.html").exists());
+}

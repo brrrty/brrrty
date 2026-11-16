@@ -38,9 +38,32 @@ fn truncate_chars(s: &str, max: usize) -> String {
     }
 }
 
+/// A dependency's source path from the crates.io registry, from its crate folder on, so a
+/// Problem doesn't show the folder Brrrty was built in.
+fn short_source_path(file: &str) -> &str {
+    let unified = file.replace('\\', "/");
+    match unified.find("/registry/src/") {
+        Some(i) => {
+            let rest = &file[i + "/registry/src/".len()..];
+            rest.find(['/', '\\']).map_or(rest, |j| &rest[j + 1..])
+        }
+        None => file,
+    }
+}
+
 /// Replace the default panic output with a friendly message, then exit 101.
+///
+/// Inside [`brrrty_core::contain::catch`] the hook only notes where the panic happened and
+/// returns, so the panic unwinds to that `catch_unwind` and becomes a Problem.
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
+        if brrrty_core::contain::is_active() {
+            if let Some(l) = info.location() {
+                let file = short_source_path(l.file());
+                brrrty_core::contain::note_location(format!("{file}:{}", l.line()));
+            }
+            return;
+        }
         let message = if let Some(s) = info.payload().downcast_ref::<&str>() {
             (*s).to_string()
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -73,4 +96,23 @@ pub fn install_panic_hook() {
         eprintln!("Please report it: {url}");
         std::process::exit(101);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_source_path;
+
+    #[test]
+    fn registry_paths_start_at_the_crate() {
+        assert_eq!(
+            short_source_path(
+                "/home/u/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markdown-it-0.6.1/src/lib.rs"
+            ),
+            "markdown-it-0.6.1/src/lib.rs"
+        );
+        assert_eq!(
+            short_source_path("crates/brrrty-core/src/render.rs"),
+            "crates/brrrty-core/src/render.rs"
+        );
+    }
 }
