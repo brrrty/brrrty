@@ -13,20 +13,26 @@ ELEVENTY_DIR=/path/to/node_modules/@11ty/eleventy \
   python3 crates/brrrty-core/tools/order-calibration/calibrate.py 80 1
 ```
 
-The arguments are the number of sites and a seed. Add `njk` to mix
-Nunjucks templates and layouts into the sites (Brrrty doesn't render them,
-but they still take their place in the order):
+The arguments are the number of sites and a seed, then optional flags:
+
+- `njk` mixes Nunjucks templates and layouts into the sites (Brrrty
+  doesn't render them, but they still take their place in the order).
+- `dates` gives each page its date in one of 11ty's ways: front matter, a
+  `YYYY-MM-DD` in the file or folder name, `Last Modified`, `Created`, or
+  none. The last three read the disk, so those pages finish after the
+  others, in the order the disk answers; they are compared as a set.
 
 ```sh
-ELEVENTY_DIR=... python3 crates/brrrty-core/tools/order-calibration/calibrate.py 80 7 njk
+ELEVENTY_DIR=... python3 crates/brrrty-core/tools/order-calibration/calibrate.py 80 12 dates njk
 ```
 
 **Calibrated** means the last line reads `0 mismatches over N sites`: on
 every generated site 11ty builds, the simulation gives the same templates,
 in the same order, each added in the same microtask round. The script exits
 1 otherwise. The last calibration (11ty 3.1.8) gave 0 mismatches over 74
-sites (seed 1, 6 skipped because 11ty refused them), and with `njk` 0 over
-74 (seed 7) and 0 over 72 (seed 8).
+sites (seed 1, 6 skipped because 11ty refused them); with `njk` 0 over 74
+(seed 7) and 0 over 72 (seed 8); with `dates` 0 over 79 (seed 11); with
+`dates njk` 0 over 76 (seed 12).
 
 ## Files
 
@@ -44,10 +50,11 @@ sites (seed 1, 6 skipped because 11ty refused them), and with `njk` 0 over
 
 When `ELEVENTY_VERSION` in `src/build.rs` changes:
 
-1. Rerun the calibration above against the new 11ty, with and without
-   `njk`. If it reports
+1. Rerun the calibration above against the new 11ty: plain, with `njk`,
+   and with `dates njk`. If it reports
    mismatches, use `events.mjs -v` on a failing site to find the changed
    step, then update `sim.py` and `src/order.rs` together until it reports
    0 mismatches.
-2. Regenerate the order fixtures: `cargo xtask fixtures-refresh order`, then
-   `cargo xtask fixtures-refresh order-data`. Then run `cargo test --workspace`.
+2. Regenerate the order fixtures: `cargo xtask fixtures-refresh order`,
+   `cargo xtask fixtures-refresh order-data` and `cargo xtask
+   fixtures-refresh order-dates`. Then run `cargo test --workspace`.

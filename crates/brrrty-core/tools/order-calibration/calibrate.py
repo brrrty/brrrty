@@ -59,7 +59,17 @@ def main():
                     print(f"s{i}: {t['path']} reached global data at {t['A']}, predicted {want_a}")
             got = simulate(templates, layouts)
             want = [(g, p) for g, a, s, p in rows]
-            if got != want:
+            # Pages that read their date from the disk finish in the order the
+            # disk answers: compare them as a set, after the others.
+            undated = {t["path"] for t in templates if not t["dated"]}
+            k = len(want) - len(undated)
+            got_paths = [p for _, p in got]
+            want_paths = [p for _, p in want]
+            if undated:
+                ok = got[:k] == want[:k] and set(got_paths[k:]) == set(want_paths[k:]) == undated
+            else:
+                ok = got == want
+            if not ok:
                 bad += 1
                 print(f"s{i}: order differs\n  11ty {want}\n  sim  {got}")
     finally:

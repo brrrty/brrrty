@@ -1,0 +1,6 @@
+fm,post,news,dirtag,lastmod,all,
+./posts/2019-01-01-b.liquid
+./d/d.md
+./f.liquid
+./2020-03-04-a.md
+./2021-05-06/c.html

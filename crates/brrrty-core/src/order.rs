@@ -34,9 +34,10 @@
 //!    path in `_includes`, replacing what was there. So `layout: post` and
 //!    `layout: post.liquid` share a layout only sometimes; this is
 //!    simulated as it happens.
-//! 4. A page with no `date` (or `date: Created` and the like) then reads
-//!    the file's dates from the disk, so those pages come after all the
-//!    others, in the order they asked.
+//! 4. A page with `date: Created` and the like, or with no `date` and no
+//!    `YYYY-MM-DD` in its input path, then reads the file's dates from the
+//!    disk, so those pages come after all the others, in the order they
+//!    asked. A date in the file or folder name needs no disk.
 //!
 //! Using a shared promise through one async wrapper resumes 2 microtasks
 //! after it settles, or 3 after the call if it has already settled. The
@@ -100,7 +101,8 @@ pub(crate) struct OrderTemplate {
     /// The layout its data names, as written (front matter, then data
     /// files, then global data).
     pub layout: Option<String>,
-    /// It has a `date` 11ty doesn't read from the disk.
+    /// 11ty finds its date without reading the disk: a `date` in its data,
+    /// or a `YYYY-MM-DD` in its input path.
     pub dated: bool,
 }
 

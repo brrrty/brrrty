@@ -1,5 +1,5 @@
 """Random sites weighted toward data files, layout chains and directory-data
-layouts. usage: python3 gen_site.py OUTDIR SEED [undated] [src] [reads] [njk]
+layouts. usage: python3 gen_site.py OUTDIR SEED [undated] [src] [reads] [njk] [dates]
 (writes OUTDIR/site and meta.json)
 
 meta.json lists each template with: path, ext, data-file count, the spelled
@@ -13,6 +13,10 @@ undated = "undated" in flags
 # Nunjucks templates and layouts too: Brrrty places them in the order
 # without rendering them.
 njk = "njk" in flags
+# Every way a page gets its date: front matter, a YYYY-MM-DD in the file or
+# folder name, `Last Modified` / `Created`, or none (the last three read the
+# disk, so those pages come last).
+dates = "dates" in flags
 rng = random.Random(seed)
 site = os.path.join(out, "site", "src") if "src" in flags else os.path.join(out, "site")
 os.makedirs(site, exist_ok=True)
@@ -36,7 +40,7 @@ for i, name in enumerate(names[: rng.randint(1, 5)]):
     front = f"---\nlayout: {parent}.{layouts[parent][0]}\n---\n" if parent else ""
     w(f"_includes/{name}.{ext}", front + ("<x>{{ content | safe }}</x>" if ext == "njk" else "<x>{{ content }}</x>"))
 
-dirs = ["", "", "posts/", "docs/", "posts/2020/", "a/b/"]
+dirs = ["", "", "posts/", "docs/", "posts/2020/", "a/b/"] + (["2019-12-31/", "posts/", "posts/"] if dates else [])
 dir_layout = {}
 dir_files = {}
 for d in set(dirs):
@@ -61,12 +65,22 @@ for i in range(rng.randint(4, 14)):
     d = rng.choice(dirs)
     ext = rng.choice(["md", "liquid", "html"] + (["njk"] if njk else []))
     stem = rng.choice(["a", "b", "c", "x", "Post", "z1", "q"]) + str(rng.randint(0, 9))
+    mode = rng.choice(["fm", "name", "name", "name", "lastmod", "created", "none"]) if dates else None
+    if mode == "name":
+        stem = f"2020-0{rng.randint(1, 9)}-1{rng.randint(0, 9)}-{stem}"
     rel = f"{d}{stem}.{ext}"
     if rel.lower() in used:
         continue
     used.add(rel.lower())
     front = {}
-    if not undated or rng.random() < 0.5:
+    if mode is not None:
+        if mode == "fm":
+            front["date"] = "2020-01-01"
+        elif mode == "lastmod":
+            front["date"] = "Last Modified"
+        elif mode == "created":
+            front["date"] = "Created"
+    elif not undated or rng.random() < 0.5:
         front["date"] = "2020-01-01"
     lay = None
     if layouts and rng.random() < 0.6:
@@ -99,7 +113,7 @@ for i in range(rng.randint(4, 14)):
         text += ("{% for p in collections." + tag + " %}{% if p.inputPath != page.inputPath %}"
                  "({{ p.templateContent | size }}){% endif %}{% endfor %}")
     w(rel, f"---\n{body}---\n{text}\n")
-    meta.append({"path": "./" + rel, "files": files, "layout": lay, "dated": "date" in front})
+    meta.append({"path": "./" + rel, "files": files, "layout": lay, "dated": front.get("date", "") not in ("", "Last Modified", "Created") or mode == "name"})
 w("keys.liquid", "---\neleventyExcludeFromCollections: true\npermalink: keys.txt\ndate: 2020-01-01\n---\n{% for c in collections %}{{ c[0] }},{% endfor %}")
 with open(os.path.join(out, "meta.json"), "w") as f:
     json.dump({"templates": meta, "layouts": {k: list(v) for k, v in layouts.items()}}, f)

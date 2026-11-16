@@ -45,7 +45,7 @@ def parse(site, ticks_rows, share=True):
                         if v and lay is None:
                             lay = v
         templates.append({"path": path, "ext": ext, "A": a, "start": start,
-                          "layout": lay})
+                          "layout": lay, "dated": dated(front(os.path.join(site, rel)), path)})
     return templates, layouts
 
 
@@ -59,3 +59,15 @@ def data_files(site, rel):
         dd = "/".join(parts[:k])
         n += sum(os.path.exists(os.path.join(site, dd, parts[k - 1] + sfx)) for sfx in (".11tydata.json", ".json"))
     return n
+
+
+DISK = {"last modified", "created", "git last modified", "git created"}
+
+
+def dated(front_matter, input_path):
+    """11ty's getMappedDate needs no disk: a date in the data, else a
+    YYYY-MM-DD anywhere in the input path."""
+    d = front_matter.get("date", "")
+    if d:
+        return d.lower() not in DISK
+    return re.search(r"\d{4}-\d{2}-\d{2}", input_path) is not None

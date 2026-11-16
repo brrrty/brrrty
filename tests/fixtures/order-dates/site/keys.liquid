@@ -1,0 +1,8 @@
+---
+permalink: keys.txt
+date: 2020-01-01
+eleventyExcludeFromCollections: true
+---
+{% for c in collections %}{{ c[0] }},{% endfor %}
+{% for p in collections.all %}{% unless p.data.tags contains "lastmod" %}{{ p.inputPath }}
+{% endunless %}{% endfor %}

@@ -252,24 +252,39 @@ fn slash_path(p: &Path) -> String {
         .join("/")
 }
 
-/// 11ty reads a page's date from the file system (its creation or change
-/// time, or git) unless the data has a date of its own.
-fn reads_no_file_date(date: Option<&Value>) -> bool {
+/// Whether 11ty finds a page's date without reading the disk
+/// (`Template.getMappedDate`). It reads the disk (a `stat`, or `git`) for
+/// `Last Modified`, `Created` and the `git` forms, and for a page with no
+/// truthy `date` whose input path has no `YYYY-MM-DD` in it. A date in the
+/// data, or the first such date in the input path (`./posts/2020-03-04-x.md`,
+/// `./2020-03-04/x.md`), needs no disk.
+fn reads_no_file_date(date: Option<&Value>, input_path: &str) -> bool {
     match date {
-        Some(Value::String(s)) => {
+        Some(Value::String(s)) if !s.is_empty() => {
             let s = s.to_lowercase();
-            !s.is_empty()
-                && ![
-                    "last modified",
-                    "created",
-                    "git last modified",
-                    "git created",
-                ]
-                .contains(&s.as_str())
+            ![
+                "last modified",
+                "created",
+                "git last modified",
+                "git created",
+            ]
+            .contains(&s.as_str())
         }
-        Some(v) => v.js_truthy(),
-        None => false,
+        Some(v) if v.js_truthy() => true,
+        _ => has_path_date(input_path),
     }
+}
+
+/// `/(\d{4}-\d{2}-\d{2})/` matches somewhere in `path`.
+fn has_path_date(path: &str) -> bool {
+    let b = path.as_bytes();
+    let shape = b"dddd-dd-dd";
+    b.windows(shape.len()).any(|w| {
+        w.iter().zip(shape).all(|(c, s)| match s {
+            b'd' => c.is_ascii_digit(),
+            _ => c == s,
+        })
+    })
 }
 
 /// The data 11ty gives every page: `eleventy`, then `pkg` (the project's
@@ -309,8 +324,9 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
 /// When bumping it: rerun `crates/brrrty-core/tools/order-calibration`
 /// (`calibrate.py`, see its README) until it reports 0 mismatches, updating
 /// `src/order.rs` if 11ty's loading steps changed; then rerun
-/// `cargo xtask fixtures-refresh order` and
-/// `cargo xtask fixtures-refresh order-data`.
+/// `cargo xtask fixtures-refresh order`,
+/// `cargo xtask fixtures-refresh order-data` and
+/// `cargo xtask fixtures-refresh order-dates`.
 const ELEVENTY_VERSION: &str = "3.1.8";
 
 fn at(p: Problem, line: Option<usize>) -> Problem {
@@ -696,7 +712,10 @@ fn load_page_inner(
         rel: rel.to_path_buf(),
         data_files: order_files.len(),
         layout: order_layouts.first().map(|(n, _)| n.clone()),
-        dated: reads_no_file_date(data.get("date")),
+        dated: reads_no_file_date(
+            data.get("date"),
+            &format!("{}{}", dot_dir(shared.input_rel), slash_path(rel)),
+        ),
     };
     let templ = |pages| {
         Ok(Loaded::Template(Box::new(Templ {
@@ -2014,6 +2033,33 @@ impl Drop for OpenGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// From `Template.getMappedDate`: which pages read their date from disk.
+    #[test]
+    fn which_pages_read_their_date_from_disk() {
+        let s = |t: &str| Value::String(t.into());
+        let plain = "./src/a.md";
+        let dated_path = "./src/posts/2020-03-04-a.md";
+        assert!(reads_no_file_date(Some(&s("2020-01-01")), plain));
+        assert!(reads_no_file_date(None, dated_path));
+        assert!(reads_no_file_date(None, "./2021-05-06/c.html"));
+        assert!(reads_no_file_date(Some(&s("")), dated_path));
+        assert!(reads_no_file_date(Some(&Value::Bool(false)), dated_path));
+        assert!(!reads_no_file_date(None, plain));
+        assert!(!reads_no_file_date(None, "./src/2020-3-04-a.md"));
+        assert!(!reads_no_file_date(Some(&s("")), plain));
+        for special in [
+            "Last Modified",
+            "created",
+            "git Last Modified",
+            "GIT CREATED",
+        ] {
+            assert!(
+                !reads_no_file_date(Some(&s(special)), dated_path),
+                "{special}"
+            );
+        }
+    }
 
     #[test]
     fn contained_output_path_accepts_plain_relative_paths() {

@@ -139,4 +139,7 @@ def simulate(templates, layouts, input_dir="."):
     for t in sorted(templates, key=lambda t: t["order"]):
         sim.spawn(tmpl(t))
     sim.run()
-    return done
+    # A page that reads its date from the disk (no date, `Last Modified`,
+    # `Created`) finishes after every other page, in the order it asked.
+    undated = {t["path"] for t in templates if not t.get("dated", True)}
+    return [d for d in done if d[1] not in undated] + [d for d in done if d[1] in undated]
