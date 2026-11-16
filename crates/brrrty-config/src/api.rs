@@ -304,6 +304,16 @@ pub fn engine_for(clock: Clock, label: String) -> Engine {
 
     let now = move || JsDate(clock.now_ms());
     e.register_fn("now", now);
+    // Rhai's `timestamp()` reads the real clock, so it would give different output on every
+    // build even with SOURCE_DATE_EPOCH set. Rhai's time package is left out (`no_time`), and
+    // this says what to use instead of "function not found".
+    e.register_fn("timestamp", || -> Result<(), Box<EvalAltResult>> {
+        Err(runtime(
+            "timestamp() is not available: it reads the real clock, so output would change from \
+             one build to the next. Use now(), which follows SOURCE_DATE_EPOCH"
+                .into(),
+        ))
+    });
     e.register_fn("date", |ms: INT| JsDate(time_clip(ms as f64)));
     e.register_fn("date", |_: ()| JsDate(f64::NAN));
     // `new Date(null)` is the epoch.

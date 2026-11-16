@@ -273,6 +273,18 @@ fn deeply_nested_data_is_stopped_without_overflowing() {
     assert_eq!(p.line, Some(3));
 }
 
+/// Rhai's `timestamp()` reads the real clock, so it is refused with a pointer to `now()`, at
+/// the top level. `tests/filters.rs` checks a filter that calls it.
+#[test]
+fn timestamp_is_refused_and_points_to_now() {
+    for script in ["timestamp()", "let t = timestamp();\nt.elapsed"] {
+        let p = err(script);
+        assert_eq!(p.code, codes::CONFIG_INVALID);
+        assert_eq!(p.line, Some(1));
+        assert!(p.message.contains("Use now()"), "{}", p.message);
+    }
+}
+
 #[test]
 fn scripts_cannot_import_or_eval() {
     assert_eq!(err(r#"import "x" as x;"#).code, codes::CONFIG_ERROR);

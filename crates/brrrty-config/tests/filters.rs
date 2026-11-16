@@ -1379,3 +1379,13 @@ fn a_filter_sort_with_a_failing_comparator_refuses_its_page() {
         r.problems
     );
 }
+
+/// A filter that calls Rhai's `timestamp()` (the real clock) refuses its page instead of
+/// writing a different value on every build. `tests/config.rs` checks the top level.
+#[test]
+fn a_filter_calling_timestamp_is_refused() {
+    let cfg = load("config.add_filter(\"el\", |v| timestamp().elapsed.to_string());");
+    let why = render(&cfg, "{{ 1 | el }}", "{}").unwrap_err();
+    assert!(why.contains("timestamp() is not available"), "{why}");
+    assert!(why.contains("Use now()"), "{why}");
+}

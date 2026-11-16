@@ -20,7 +20,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "all
 indexmap = "2"
 regex = "1.13.1"
 regex-syntax = "0.8.11"
-rhai = { version = "=1.27.0", features = ["sync", "no_closure"] }
+rhai = { version = "=1.27.0", features = ["sync", "no_closure", "no_time"] }
 stacker = "0.1.25"
 url = "2.5.8"
 
