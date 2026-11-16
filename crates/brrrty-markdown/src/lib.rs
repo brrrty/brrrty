@@ -1,7 +1,5 @@
 //! Markdown rendering for Brrrty.
 
-use std::sync::Mutex;
-
 /// Renders Markdown source to an HTML string.
 pub trait MarkdownRenderer: Send + Sync {
     fn render(&self, source: &str) -> String;
@@ -11,7 +9,7 @@ pub trait MarkdownRenderer: Send + Sync {
 /// without the indented `code` rule, plus tables, strikethrough, and raw HTML. No linkify,
 /// typographer, or smart quotes.
 pub struct MarkdownIt {
-    md: Mutex<markdown_it::MarkdownIt>,
+    md: markdown_it::MarkdownIt,
 }
 
 impl MarkdownIt {
@@ -38,7 +36,7 @@ impl MarkdownIt {
         markdown_it::plugins::html::add(&mut md);
         markdown_it::plugins::extra::strikethrough::add(&mut md);
         markdown_it::plugins::extra::tables::add(&mut md);
-        MarkdownIt { md: Mutex::new(md) }
+        MarkdownIt { md }
     }
 }
 
@@ -50,8 +48,7 @@ impl Default for MarkdownIt {
 
 impl MarkdownRenderer for MarkdownIt {
     fn render(&self, source: &str) -> String {
-        let md = self.md.lock().unwrap_or_else(|e| e.into_inner());
-        md.parse(source).render()
+        self.md.parse(source).render()
     }
 }
 
@@ -106,6 +103,26 @@ mod tests {
                 .unwrap();
             assert!(handle.join().is_ok());
         }
+    }
+
+    /// One renderer is shared by every render thread, with no lock, and
+    /// each thread still gets its own output.
+    #[test]
+    fn renders_from_many_threads_at_once() {
+        let md = MarkdownIt::new();
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|s| {
+            for t in 0..8 {
+                let (md, start) = (&md, &start);
+                s.spawn(move || {
+                    start.wait();
+                    for i in 0..200 {
+                        let out = md.render(&format!("# T{t}\n\nitem *{i}*\n"));
+                        assert_eq!(out, format!("<h1>T{t}</h1>\n<p>item <em>{i}</em></p>\n"));
+                    }
+                });
+            }
+        });
     }
 
     /// 11ty disables markdown-it's `code` rule, so indented lines are paragraph text.
