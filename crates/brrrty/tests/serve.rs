@@ -739,6 +739,52 @@ fn kept_pages_never_reach_the_output_folder() {
     });
 }
 
+/// Pages refused by Nunjucks, and by the syntax highlighting scan for a language that changes
+/// a grammar, are kept like any other refused page, and never reach the output folder.
+#[test]
+fn pages_refused_by_nunjucks_or_a_grammar_change_are_kept() {
+    let t = site();
+    write(
+        t.path(),
+        "brrrty.config.rhai",
+        r#"config.add_plugin("syntaxhighlight");"#,
+    );
+    write(t.path(), "src/about.njk", "about {{ 1 + 1 }}");
+    write(t.path(), "src/code.md", "```js\nlet a = 1;\n```\n");
+    with_session(t.path(), |live| {
+        live.settle();
+        let code = get(live.server, "/code/").1;
+        assert!(code.contains("language-js"), "{code}");
+        assert_eq!(get(live.server, "/about/").1, "about 2");
+        let about = live.root.join("_site/about/index.html");
+        let code_out = live.root.join("_site/code/index.html");
+        fs::remove_file(&about).unwrap();
+        fs::remove_file(&code_out).unwrap();
+
+        // `random` is refused in Nunjucks; a `regex` fence changes Prism's `javascript`
+        // grammar, so code.md is refused too.
+        write(live.root, "src/about.njk", "{{ [1, 2] | random }}");
+        write(live.root, "src/regex.md", "```regex\n^a+$\n```\n");
+        let r = loop {
+            let r = live.next_rebuild();
+            if r.refused.len() == 3 {
+                break r;
+            }
+        };
+        assert!(r.served && !r.ok, "{r:?}");
+        let mut refused: Vec<String> = r.refused.iter().map(|p| p.display().to_string()).collect();
+        refused.sort();
+        assert_eq!(refused, ["src/about.njk", "src/code.md", "src/regex.md"]);
+        assert_eq!(r.kept, 2, "{r:?}");
+        assert_eq!(get(live.server, "/about/"), (200, "about 2".to_string()));
+        assert_eq!(get(live.server, "/code/").1, code);
+        // regex.md never built, so it has nothing to keep.
+        assert_eq!(get(live.server, "/regex/").0, 404);
+        assert!(!about.exists() && !code_out.exists());
+        assert_eq!(get(live.server, "/").0, 200);
+    });
+}
+
 #[test]
 fn a_build_that_stops_before_writing_pages_keeps_the_last_one() {
     let t = site();
