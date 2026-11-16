@@ -1,5 +1,5 @@
 """Random sites weighted toward data files, layout chains and directory-data
-layouts. usage: python3 gen_site.py OUTDIR SEED [undated] [src] [reads] [njk] [dates]
+layouts. usage: python3 gen_site.py OUTDIR SEED [undated] [src] [reads] [njk] [dates] [imports]
 (writes OUTDIR/site and meta.json)
 
 meta.json lists each template with: path, ext, data-file count, the spelled
@@ -17,6 +17,10 @@ njk = "njk" in flags
 # folder name, `Last Modified` / `Created`, or none (the last three read the
 # disk, so those pages come last).
 dates = "dates" in flags
+# `eleventyImport.collections` in front matter and directory data, and
+# templates that paginate a collection: both reorder 11ty's collections graph.
+imports = "imports" in flags
+TAGS = ["t0", "t1", "t2", "t3", "t4"]
 rng = random.Random(seed)
 site = os.path.join(out, "site", "src") if "src" in flags else os.path.join(out, "site")
 os.makedirs(site, exist_ok=True)
@@ -53,6 +57,8 @@ for d in set(dirs):
             lname = rng.choice(list(layouts))
             data["layout"] = f"{lname}.{layouts[lname][0]}"
             dir_layout[d] = data["layout"]
+        if imports and rng.random() < 0.4:
+            data["eleventyImport"] = {"collections": rng.sample(TAGS + ["all", "none"], rng.randint(1, 2))}
         w(f"{d}{leaf}.json", json.dumps(data))
         dir_files[d] = dir_files.get(d, 0) + 1
     if rng.random() < 0.2:
@@ -88,7 +94,14 @@ for i in range(rng.randint(4, 14)):
         spelled = rng.choice([f"{lname}.{layouts[lname][0]}", f"{lname}.{layouts[lname][0]}", lname])
         front["layout"] = spelled
         lay = spelled
-    front["tags"] = rng.choice(["t0", "t1", "t2", "t3", "t4"])
+    front["tags"] = rng.choice(TAGS)
+    if imports and rng.random() < 0.4:
+        picks = rng.sample(TAGS + ["all", "none", "[keys]"], rng.randint(1, 3))
+        front["eleventyImport"] = "{collections: [" + ", ".join(json.dumps(t) for t in picks) + "]}"
+    if imports and ext != "njk" and rng.random() < 0.08:
+        target = rng.choice([t for t in TAGS if t != front["tags"]] + ["all"])
+        front["pagination"] = "{data: collections." + target + ", size: 1, alias: it}"
+        front["permalink"] = '"' + d + stem + '-{{ pagination.pageNumber }}/"'
     files = 0
     for sfx in [".11tydata.json", ".json"]:
         if rng.random() < 0.25:
@@ -108,6 +121,8 @@ for i in range(rng.randint(4, 14)):
                 break
     body = "".join(f"{k}: {v}\n" for k, v in front.items())
     text = "x"
+    if imports and ext != "njk" and rng.random() < 0.3:
+        text += "{% for c in collections %}{{ c[0] }},{% endfor %}"
     if "reads" in flags and ext != "njk" and rng.random() < 0.4:
         tag = rng.choice(["t0", "t1", "t2", "t3", "t4"])
         text += ("{% for p in collections." + tag + " %}{% if p.inputPath != page.inputPath %}"

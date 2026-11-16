@@ -39,7 +39,14 @@ pub(crate) struct Membership {
     pub tags: Vec<String>,
     pub exclude: Option<Exclude>,
     /// The collection `pagination.data` reads, if it reads one.
-    pub consumes: Option<String>,
+    pub pagination: Option<String>,
+    /// `eleventyImport.collections`: more collections the template uses,
+    /// as 11ty's graph names them, with whether the entry was a string
+    /// (only a string can be `all` or a stage name to 11ty).
+    pub imports: Vec<(String, bool)>,
+    /// An `eleventyImport.collections` entry Brrrty can't name the way
+    /// 11ty does (a date, which JavaScript prints in the local time zone).
+    pub unknown_import: bool,
     /// `pagination.addAllPagesToCollections` is truthy.
     pub add_all: bool,
 }
@@ -99,10 +106,27 @@ impl Membership {
                 _ => None,
             })
             .filter(|t| !t.is_empty());
+        // `TemplateMap.#addEntryToGlobalDependencyGraph`: only an array
+        // counts, and `addNewNodeRelationships` drops falsy entries.
+        let mut imports = Vec::new();
+        let mut unknown_import = false;
+        if let Some(Value::Object(import)) = data.get("eleventyImport")
+            && let Some(Value::Array(list)) = import.get("collections")
+        {
+            for v in list.iter().filter(|v| v.js_truthy()) {
+                match v {
+                    Value::Date(_) => unknown_import = true,
+                    Value::String(s) => imports.push((s.to_string(), true)),
+                    v => imports.push((v.to_js_string(), false)),
+                }
+            }
+        }
         Membership {
             tags: tags_of(data),
             exclude: exclude_of(data),
-            consumes,
+            pagination: consumes,
+            imports,
+            unknown_import,
             add_all: pagination
                 .and_then(|p| p.get("addAllPagesToCollections"))
                 .is_some_and(Value::js_truthy),
@@ -195,14 +219,29 @@ impl Graph {
         }
     }
 
-    /// `addTemplate`.
+    /// `addTemplate`. `consumes` is the pagination target, then each
+    /// `eleventyImport.collections` entry; a non-string entry never equals
+    /// `all` or a stage name (11ty compares with `===`).
     fn template(&mut self, file: &str, m: &Membership) {
         let basic = format!("{PREFIX}[basic]");
-        let consumes: Vec<String> = m.consumes.iter().cloned().collect();
+        let consumes: Vec<(String, bool)> = m
+            .pagination
+            .iter()
+            .map(|t| (t.clone(), true))
+            .chain(m.imports.iter().cloned())
+            .collect();
         if consumes.is_empty() {
             self.uses(&basic, file);
         }
-        let consumes_all = consumes.iter().any(|c| c == "all");
+        let named = |name: &str| consumes.iter().any(|(c, s)| *s && c == name);
+        let consumes_all = named("all");
+        // A template that consumes `[userconfig]` publishes its tags in the
+        // `[keys]` stage.
+        let stage = if named("[userconfig]") {
+            format!("{PREFIX}[keys]")
+        } else {
+            basic.clone()
+        };
         let mut publishes = dedupe(m.publishes());
         if consumes_all {
             publishes.retain(|p| p != "all");
@@ -210,13 +249,13 @@ impl Graph {
         for tag in &publishes {
             let bracketed = tag.starts_with('[') && tag.ends_with(']');
             if !consumes_all && tag != "all" && !bracketed {
-                self.uses(&basic, &format!("{PREFIX}{tag}"));
+                self.uses(&stage, &format!("{PREFIX}{tag}"));
             }
             self.uses(&format!("{PREFIX}{tag}"), file);
         }
-        for tag in &consumes {
+        for (tag, string) in &consumes {
             self.uses(file, &format!("{PREFIX}{tag}"));
-            let stage = STAGES.iter().position(|s| s == tag);
+            let stage = STAGES.iter().position(|s| *string && s == tag);
             if let Some(i) = stage
                 && i > 0
                 && let Some(next) = STAGES.get(i + 1)
@@ -496,7 +535,9 @@ mod tests {
         Membership {
             tags: tags.iter().map(|t| t.to_string()).collect(),
             exclude: None,
-            consumes: consumes.map(str::to_string),
+            pagination: consumes.map(str::to_string),
+            imports: Vec::new(),
+            unknown_import: false,
             add_all: false,
         }
     }
@@ -565,6 +606,41 @@ mod tests {
                 "all"
             ]
         );
+    }
+
+    /// Probed: `eleventyImport.collections` entries are consumed like a
+    /// pagination target, so the collections they name come before the
+    /// template's own tags (fixture `collections-import`).
+    #[test]
+    fn imports_come_before_the_importer() {
+        let mut b = m(&["tb", "post"], None);
+        b.imports = vec![("post".to_string(), true), ("tz".to_string(), true)];
+        let order = collection_order(&[
+            ("./a.md", m(&["ta"], None)),
+            ("./b.md", b),
+            ("./c.md", m(&["tc", "post"], None)),
+            ("./z.md", m(&["tz"], None)),
+        ]);
+        assert_eq!(order, ["ta", "post", "tz", "tb", "tc", "(all set)", "all"]);
+    }
+
+    /// Probed: only a string entry is `all` or a stage name to 11ty, and
+    /// `[userconfig]` moves the importer's tags to the `[keys]` stage.
+    #[test]
+    fn imports_match_names_strictly() {
+        let mut a = m(&["ta"], None);
+        a.imports = vec![("[userconfig]".to_string(), true), ("tq".to_string(), true)];
+        let mut q = m(&["tq", "tr"], None);
+        q.imports = vec![("[keys]".to_string(), true)];
+        let mut s = m(&["ts"], None);
+        s.imports = vec![("[basic]".to_string(), true), ("tb".to_string(), true)];
+        let order = collection_order(&[
+            ("./a.md", a),
+            ("./b.md", m(&["tb"], None)),
+            ("./q.md", q),
+            ("./s.md", s),
+        ]);
+        assert_eq!(order, ["tb", "tq", "tr", "ts", "ta", "(all set)", "all"]);
     }
 
     #[test]

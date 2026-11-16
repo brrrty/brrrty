@@ -788,3 +788,47 @@ fn a_failing_page_under_an_unrenderable_layout_reports_the_layout() {
         errs[0]
     );
 }
+
+/// `eleventyImport.collections` reorders 11ty's collections graph (fixture
+/// `collections-import`). An entry 11ty names in the local time zone, or one
+/// that may be a collection the 11ty config adds, can't be placed, so reads
+/// of `collections` are refused.
+#[test]
+fn imports_brrrty_cannot_place_refuse_collections() {
+    let t = site("{% for c in collections %}{{ c[0] }} {% endfor %}");
+    write(
+        t.path(),
+        "src/d.md",
+        "---\neleventyImport:\n  collections: [x, 2020-01-01]\n---\nd\n",
+    );
+    let r = run(t.path());
+    let p = report_problem(&r);
+    assert_eq!(p.code, codes::DATA_UNSUPPORTED);
+    assert!(
+        p.message.contains(
+            "src/d.md lists a date in `eleventyImport.collections`, which 11ty names in the local time zone"
+        ),
+        "{}",
+        p.message
+    );
+
+    let t = site("{{ collections.x | size }}");
+    write(
+        t.path(),
+        "src/d.md",
+        "---\neleventyImport:\n  collections: [x, posts]\n---\nd\n",
+    );
+    write(
+        t.path(),
+        "eleventy.config.js",
+        "module.exports = () => ({});",
+    );
+    let r = run(t.path());
+    let p = report_problem(&r);
+    assert!(
+        p.message.contains("src/d.md imports `posts` with `eleventyImport.collections`, which is not a tag collection and may be one your 11ty config adds"),
+        "{}",
+        p.message
+    );
+    assert!(t.path().join("_site/d/index.html").is_file());
+}

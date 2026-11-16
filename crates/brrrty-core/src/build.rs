@@ -1,6 +1,6 @@
 //! The build pipeline: discover, parse, resolve, render, write, copy.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -750,7 +750,8 @@ fn load_page_inner(
         }]));
     };
     let pagination_line = key_line(&text, "pagination");
-    if membership.consumes.is_some() || spec.path.first().map(String::as_str) == Some("collections")
+    if membership.pagination.is_some()
+        || spec.path.first().map(String::as_str) == Some("collections")
     {
         // Needs the collections: expanded once they are built.
         check_collection_target(
@@ -803,7 +804,7 @@ fn check_collection_target(
 ) -> Result<(), Problem> {
     let key = spec.key();
     let fail = |p: Problem| pagination_problem(p, from.clone(), line, shown);
-    if membership.consumes.as_deref() == Some("[keys]") {
+    if membership.pagination.as_deref() == Some("[keys]") {
         return Err(fail(
             Problem::error(
                 codes::PAGINATION_UNSUPPORTED,
@@ -812,7 +813,7 @@ fn check_collection_target(
             .with_help("Paginate one collection, like `collections.posts`."),
         ));
     }
-    if membership.consumes.is_none() {
+    if membership.pagination.is_none() {
         return Err(fail(
             Problem::error(
                 codes::PAGINATION_UNSUPPORTED,
@@ -1553,7 +1554,8 @@ fn build_in_pool(
         javascript.len(),
         templates.iter().any(|t| t.computed_membership),
         js_data,
-    );
+    )
+    .or_else(|| imports_gap(&templates, &input_rel, has_config));
     let input_dot = dot_dir(&input_rel);
     let mut slots: Vec<Slot> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
@@ -1951,6 +1953,39 @@ fn blocking_layout(slot: &Slot) -> Option<Problem> {
 enum Slot {
     Ready(Vec<Prepared>),
     Deferred(Box<Deferred>),
+}
+
+/// Why the collections can't be built when a template's
+/// `eleventyImport.collections` can't be followed: 11ty names an entry that
+/// is a date in the local time zone, and an entry that names a collection
+/// the 11ty config may add moves the template to a later stage of 11ty's
+/// graph.
+fn imports_gap(templates: &[Templ], input_rel: &Path, has_config: bool) -> Option<String> {
+    let shown = |t: &Templ| input_rel.join(&t.rel).display().to_string();
+    if let Some(t) = templates.iter().find(|t| t.membership.unknown_import) {
+        return Some(format!(
+            "{} lists a date in `eleventyImport.collections`, which 11ty names in the local time zone",
+            shown(t)
+        ));
+    }
+    if !has_config {
+        return None;
+    }
+    let tags: HashSet<&str> = templates
+        .iter()
+        .flat_map(|t| t.membership.tags.iter().map(String::as_str))
+        .collect();
+    templates.iter().find_map(|t| {
+        let (name, _) = t
+            .membership
+            .imports
+            .iter()
+            .find(|(name, _)| name != "all" && !tags.contains(name.as_str()))?;
+        Some(format!(
+            "{} imports `{name}` with `eleventyImport.collections`, which is not a tag collection and may be one your 11ty config adds",
+            shown(t)
+        ))
+    })
 }
 
 /// Why the collections can't be built, when they can't. A collection built

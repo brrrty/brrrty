@@ -26,13 +26,34 @@ The arguments are the number of sites and a seed, then optional flags:
 ELEVENTY_DIR=... python3 crates/brrrty-core/tools/order-calibration/calibrate.py 80 12 dates njk
 ```
 
+- `imports` adds `eleventyImport.collections` to front matter and
+  directory data, and a few templates that paginate a collection. These
+  don't move the map order, but they reorder 11ty's collections graph
+  (`src/collections.rs`), which decides the keys of `collections` and the
+  order content renders in. Set `BRRRTY` to a Brrrty binary to check it:
+  the script then builds each site with 11ty and with Brrrty and compares
+  `keys.txt` and every file both write.
+
+```sh
+ELEVENTY_DIR=... BRRRTY=target/release/brrrty \
+  python3 crates/brrrty-core/tools/order-calibration/calibrate.py 100 31 imports
+```
+
 **Calibrated** means the last line reads `0 mismatches over N sites`: on
 every generated site 11ty builds, the simulation gives the same templates,
 in the same order, each added in the same microtask round. The script exits
 1 otherwise. The last calibration (11ty 3.1.8) gave 0 mismatches over 74
 sites (seed 1, 6 skipped because 11ty refused them); with `njk` 0 over 74
 (seed 7) and 0 over 72 (seed 8); with `dates` 0 over 79 (seed 11); with
-`dates njk` 0 over 76 (seed 12).
+`dates njk` 0 over 76 (seed 12). With `BRRRTY` set: `imports` 0 over 78
+(seed 31), `imports dates njk` 0 over 77 (seed 32), `imports reads` 0 over
+46 (seed 33). Many `imports` sites are skipped because 11ty refuses them
+("Could not find pagination data"); Brrrty refuses the same template
+(checked by hand on 13 of them).
+
+These runs were on macOS. 11ty's glob doesn't sort, so on Linux its order
+among templates that settle in the same round may differ; Brrrty's is the
+same on both.
 
 ## Files
 
@@ -51,7 +72,7 @@ sites (seed 1, 6 skipped because 11ty refused them); with `njk` 0 over 74
 When `ELEVENTY_VERSION` in `src/build.rs` changes:
 
 1. Rerun the calibration above against the new 11ty: plain, with `njk`,
-   and with `dates njk`. If it reports
+   with `dates njk`, and with `imports` (with `BRRRTY` set). If it reports
    mismatches, use `events.mjs -v` on a failing site to find the changed
    step, then update `sim.py` and `src/order.rs` together until it reports
    0 mismatches.

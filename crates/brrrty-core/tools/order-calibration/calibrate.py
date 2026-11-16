@@ -14,7 +14,7 @@ templates, in the same order, each added in the same microtask round.
 Sites 11ty refuses (a generated duplicate permalink or layout cycle) are
 skipped and counted. Exits 1 on any mismatch.
 """
-import os, shutil, subprocess, sys, tempfile
+import filecmp, os, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -29,6 +29,32 @@ def rows_of(text):
         if len(p) == 4 and p[0].isdigit():
             out.append((int(p[0]), int(p[1]), int(p[2]), p[3]))
     return out
+
+
+def files_under(root):
+    out = set()
+    for d, _, names in os.walk(root):
+        for n in names:
+            out.add(os.path.relpath(os.path.join(d, n), root))
+    return out
+
+
+def compare_outputs(site, work):
+    """Build with 11ty and Brrrty; return a list of differences."""
+    a, b = os.path.join(work, "_11"), os.path.join(work, "_b")
+    cli = os.path.join(os.environ["ELEVENTY_DIR"], "cmd.cjs")
+    r = subprocess.run(["node", cli, "--input=.", f"--output={a}"], cwd=site, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    subprocess.run([os.environ["BRRRTY"], "--input", ".", "--output", b], cwd=site, capture_output=True, text=True)
+    want, got = files_under(a), files_under(b)
+    diffs = []
+    if "keys.txt" not in got:
+        diffs.append("Brrrty did not write keys.txt")
+    for f in sorted(want & got):
+        if not filecmp.cmp(os.path.join(a, f), os.path.join(b, f), shallow=False):
+            diffs.append(f"{f}: 11ty {open(os.path.join(a, f)).read()!r} Brrrty {open(os.path.join(b, f)).read()!r}")
+    return diffs
 
 
 def main():
@@ -72,6 +98,11 @@ def main():
             if not ok:
                 bad += 1
                 print(f"s{i}: order differs\n  11ty {want}\n  sim  {got}")
+            if os.environ.get("BRRRTY"):
+                diffs = compare_outputs(site, out)
+                if diffs:
+                    bad += 1
+                    print(f"s{i}: output differs\n  " + "\n  ".join(diffs))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{bad} mismatches over {checked} sites ({skipped} skipped: 11ty refused them)")
