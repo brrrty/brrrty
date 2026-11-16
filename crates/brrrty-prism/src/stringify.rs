@@ -5,6 +5,7 @@
 //! types the others don't, so their order never shows.
 
 use crate::highlight::{Highlighter, PREFIXES, hook_regex, js_replace, units};
+use crate::regex::JsText;
 use crate::tokenize::{Content, Item, Refusal, Token, Units};
 
 /// `Prism.util.encode`: `&` and `<` escaped and no-break spaces made plain,
@@ -178,7 +179,8 @@ impl Highlighter<'_> {
         let prefix = self.stringify_token(&prefix_token, env.language)?;
         let mut lines = Vec::new();
         let mut last = 0;
-        while let Some(m) = self.exec(hook_regex::HTML_LINE, &highlighted, last)? {
+        let js = JsText::from_units(&highlighted);
+        while let Some(m) = self.exec_js(hook_regex::HTML_LINE, &js, last)? {
             if m.end == m.index {
                 return Err(Refusal(
                     "diff-highlight's line pattern matched nothing, which loops forever in Prism"

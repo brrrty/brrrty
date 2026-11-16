@@ -35,43 +35,45 @@ use brrrty_jsregex::ast::{self, Node};
 use brrrty_jsregex::classes;
 use brrrty_jsregex::set::UnitSet;
 
-/// Backtracking limits. fancy-regex counts one step per failed attempt,
-/// including each start position an `exec` scans, so the steps a correct
-/// match needs grow with the text it scans: on the five test sites at most
-/// 138 per unit scanned (77k in one `exec`); on the fuzz at most 764 (vim's
-/// list of a few hundred keywords tried at every position). Some patterns
-/// are quadratic in a line's length in Node too: markdown's setext heading,
-/// `\S.*(?:\n|\r\n?)(?:==+|--+)`, needs about n² steps on one line of n
-/// units. So:
+/// Backtracking limits.
 ///
-/// - Each `exec` first runs with [`FREE_STEPS`] plus [`FREE_STEPS_PER_UNIT`]
-///   per unit from `lastIndex` to the end (rounded up to a power of two
-///   times [`FREE_STEPS`]), uncharged: above what any site code needs, and
-///   linear, so the free part stays a constant factor of a scan, as in
-///   Prism.
-/// - A match that needs more is run again with twice the limit, each run
-///   charged in full to the highlight's spare budget: [`BUDGET_BASE`] plus
-///   [`BUDGET_PER_UNIT_SQUARED`] times the square of the code's length, up
-///   to [`BUDGET_MAX`].
-/// - When the next run wouldn't fit in what is left, the code is refused.
+/// A pattern with nothing but what the `regex` crate matches (no lookaround,
+/// `\b`, multiline anchor or backreference) runs there, in linear time, and
+/// is never limited. Any other runs in two steps:
 ///
-/// Measured worst cases are in the tests (tests/backtrack.rs).
-pub const FREE_STEPS: u64 = 10_000;
-/// See [`FREE_STEPS`].
-pub const FREE_STEPS_PER_UNIT: u64 = 256;
-/// See [`FREE_STEPS`].
-pub const BUDGET_BASE: u64 = 50_000_000;
-/// See [`FREE_STEPS`].
-pub const BUDGET_PER_UNIT_SQUARED: u64 = 2;
-/// See [`FREE_STEPS`].
-pub const BUDGET_MAX: u64 = 250_000_000;
+/// - The prefilter, the pattern with each lookaround (and `\b`, multiline
+///   `^`/`$`) left out (a trailing positive lookahead matched as text) and
+///   each backreference taken as any text, finds where a match can start.
+///   It matches wherever the pattern can, in the `regex` crate, in linear
+///   time: a reverse lazy DFA finds all its starts in one pass (kept for a
+///   whole text, which greedy patterns and hook loops search again and
+///   again), and forward searches find the first few in a part of a text.
+/// - At each such start, from `lastIndex` on, the pattern anchored there
+///   (`\G`) runs in fancy-regex's backtracking engine until one matches.
+///
+/// Each anchored attempt runs with a step limit of [`FIRST_STEPS`], doubled
+/// until it answers, and every limit tried is charged to the highlight's
+/// budget (within four times the steps taken, plus [`FIRST_STEPS`]). The
+/// budget is one total for the whole highlight, nested ones included:
+/// [`BUDGET_BASE`] plus [`BUDGET_PER_UNIT`] per unit of code. Measured
+/// charges: at most 47 thousand for a code block on the test sites, 4.2
+/// million for Prism's own test fixtures (a 9,000-unit vim file, 470 a
+/// unit), 86 million for a 90,594-unit minified bundle (955 a unit). When the
+/// next attempt won't fit, the code is refused: only backtracking that grows
+/// faster than the code does (as in a long run of unclosed template strings)
+/// gets there, in seconds (tests/backtrack.rs).
+pub const FIRST_STEPS: u64 = 64;
+/// See [`FIRST_STEPS`].
+pub const BUDGET_BASE: u64 = 20_000_000;
+/// See [`FIRST_STEPS`].
+pub const BUDGET_PER_UNIT: u64 = 2_000;
 
 /// The step limits each pattern can be compiled with (on first use).
-const TIERS: [u64; 32] = {
-    let mut t = [0u64; 32];
+const TIERS: [u64; 40] = {
+    let mut t = [0u64; 40];
     let mut i = 0;
-    while i < 32 {
-        t[i] = FREE_STEPS << i;
+    while i < 40 {
+        t[i] = FIRST_STEPS << i;
         i += 1;
     }
     t
@@ -81,20 +83,28 @@ const TIERS: [u64; 32] = {
 #[derive(Clone, Debug)]
 pub struct BacktrackBudget {
     remaining: u64,
+    /// What was charged so far.
+    spent: u64,
 }
 
 impl BacktrackBudget {
     /// The budget for highlighting `units` units of code.
     pub fn for_code(units: usize) -> Self {
         let n = units as u64;
-        let total = BUDGET_BASE
-            .saturating_add(BUDGET_PER_UNIT_SQUARED.saturating_mul(n.saturating_mul(n)))
-            .min(BUDGET_MAX);
-        Self { remaining: total }
+        let total = BUDGET_BASE.saturating_add(BUDGET_PER_UNIT.saturating_mul(n));
+        Self {
+            remaining: total,
+            spent: 0,
+        }
     }
 
     pub fn remaining(&self) -> u64 {
         self.remaining
+    }
+
+    /// The steps charged so far.
+    pub fn spent(&self) -> u64 {
+        self.spent
     }
 }
 
@@ -122,25 +132,45 @@ fn char_unit(c: char) -> u16 {
     }
 }
 
-/// Text as JavaScript sees it: a sequence of UTF-16 units.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct JsText {
+/// The text a [`JsText`] is a view of.
+#[derive(Debug)]
+struct Buf {
     /// One `char` per unit (see the module docs).
     s: String,
     /// The byte offset in `s` of each unit, and `s.len()` last.
     starts: Vec<usize>,
-    /// The last unit outside ASCII that has another case (see
-    /// [`fold_risk`]).
-    last_cased: Option<usize>,
+    /// For each unit (and the end), the first unit at or after it that is
+    /// outside ASCII and has another case (see [`fold_risk`]), or
+    /// `u32::MAX`.
+    next_cased: Vec<u32>,
+    /// Where each guard prefix occurs (see `JsRegex::fold_guard`), found on
+    /// first use.
+    occurrences: std::sync::Mutex<Vec<(String, std::sync::Arc<Vec<usize>>)>>,
+    /// Where each pattern's prefilter can match in the whole text, by
+    /// pattern id, found on first use.
+    prefiltered: std::sync::Mutex<Vec<(usize, std::sync::Arc<Vec<usize>>)>>,
 }
+
+/// Text as JavaScript sees it: a sequence of UTF-16 units. A slice is a
+/// view of the same text, made in constant time.
+#[derive(Clone, Debug)]
+pub struct JsText {
+    buf: std::sync::Arc<Buf>,
+    from: usize,
+    to: usize,
+}
+
+impl PartialEq for JsText {
+    fn eq(&self, other: &Self) -> bool {
+        self.hay() == other.hay()
+    }
+}
+
+impl Eq for JsText {}
 
 impl JsText {
     pub fn new(text: &str) -> Self {
-        let mut buf = [0u16; 2];
-        let units: Vec<u16> = text
-            .chars()
-            .flat_map(|c| c.encode_utf16(&mut buf).to_vec())
-            .collect();
+        let units: Vec<u16> = text.encode_utf16().collect();
         Self::from_units(&units)
     }
 
@@ -152,17 +182,33 @@ impl JsText {
             s.push(unit_char(u));
         }
         starts.push(s.len());
-        let last_cased = last_cased(units.iter().copied());
+        let risk = fold_risk();
+        let mut next_cased = vec![u32::MAX; units.len() + 1];
+        for i in (0..units.len()).rev() {
+            let u = units[i];
+            next_cased[i] = if u >= 0x80 && risk.contains(u) {
+                i as u32
+            } else {
+                next_cased[i + 1]
+            };
+        }
+        let to = units.len();
         Self {
-            s,
-            starts,
-            last_cased,
+            buf: std::sync::Arc::new(Buf {
+                s,
+                starts,
+                next_cased,
+                occurrences: std::sync::Mutex::new(Vec::new()),
+                prefiltered: std::sync::Mutex::new(Vec::new()),
+            }),
+            from: 0,
+            to,
         }
     }
 
     /// The number of UTF-16 units.
     pub fn len(&self) -> usize {
-        self.starts.len() - 1
+        self.to - self.from
     }
 
     pub fn is_empty(&self) -> bool {
@@ -170,19 +216,16 @@ impl JsText {
     }
 
     pub fn units(&self) -> impl Iterator<Item = u16> + '_ {
-        self.s.chars().map(char_unit)
+        self.hay().chars().map(char_unit)
     }
 
-    /// Units `from..to`.
+    /// Units `from..to`, a view of the same text.
     pub fn slice(&self, from: usize, to: usize) -> Self {
-        let (a, b) = (self.starts[from], self.starts[to]);
-        let s = self.s[a..b].to_string();
-        let starts = self.starts[from..=to].iter().map(|x| x - a).collect();
-        let last_cased = last_cased(s.chars().map(char_unit));
+        assert!(from <= to && to <= self.len());
         Self {
-            s,
-            starts,
-            last_cased,
+            buf: self.buf.clone(),
+            from: self.from + from,
+            to: self.from + to,
         }
     }
 
@@ -194,22 +237,88 @@ impl JsText {
             .collect()
     }
 
-    /// The unit at byte offset `b` of the inner string.
-    fn unit_at(&self, b: usize) -> usize {
-        self.starts.binary_search(&b).unwrap_or_else(|i| i)
+    /// The view as JsText characters.
+    fn hay(&self) -> &str {
+        &self.buf.s[self.buf.starts[self.from]..self.buf.starts[self.to]]
     }
-}
 
-/// The index of the last unit outside ASCII in [`fold_risk`].
-fn last_cased(units: impl Iterator<Item = u16>) -> Option<usize> {
-    let risk = fold_risk();
-    let mut last = None;
-    for (i, u) in units.enumerate() {
-        if u >= 0x80 && risk.contains(u) {
-            last = Some(i);
-        }
+    /// The byte offset in [`JsText::hay`] of unit `u` of the view.
+    fn byte(&self, u: usize) -> usize {
+        self.buf.starts[self.from + u] - self.buf.starts[self.from]
     }
-    last
+
+    /// The unit of the view at byte offset `b` of [`JsText::hay`].
+    fn unit_at(&self, b: usize) -> usize {
+        let abs = self.buf.starts[self.from] + b;
+        self.buf.starts.binary_search(&abs).unwrap_or_else(|i| i) - self.from
+    }
+
+    /// Whether the view is all of its text.
+    fn is_whole(&self) -> bool {
+        self.from == 0 && self.to + 1 == self.buf.starts.len()
+    }
+
+    /// Where `pre` (the prefilter of pattern `id`) can match in the view,
+    /// as byte offsets of [`JsText::hay`]; kept for a view of the whole
+    /// text, which a greedy pattern runs on again and again.
+    fn starts_of(&self, id: usize, pre: &Starts) -> std::sync::Arc<Vec<usize>> {
+        let whole = self.is_whole();
+        if whole
+            && let Some((_, s)) = self
+                .buf
+                .prefiltered
+                .lock()
+                .expect("not poisoned")
+                .iter()
+                .find(|(k, _)| *k == id)
+        {
+            return s.clone();
+        }
+        let s = std::sync::Arc::new(pre.find(self.hay()));
+        if whole {
+            self.buf
+                .prefiltered
+                .lock()
+                .expect("not poisoned")
+                .push((id, s.clone()));
+        }
+        s
+    }
+
+    /// Whether a unit in [`fold_risk`] is at or after unit `u` of the view.
+    fn cased_from(&self, u: usize) -> bool {
+        (self.buf.next_cased[self.from + u] as usize) < self.to
+    }
+
+    /// The first unit at or after `u` where `prefix` (JsText characters)
+    /// starts and fits in the view.
+    fn find_from(&self, prefix: &str, u: usize) -> Option<usize> {
+        let occ = {
+            let mut cache = self.buf.occurrences.lock().expect("not poisoned");
+            match cache.iter().find(|(p, _)| p == prefix) {
+                Some((_, o)) => o.clone(),
+                None => {
+                    let mut o = Vec::new();
+                    let s = &self.buf.s;
+                    let mut b = 0;
+                    while let Some(i) = s[b..].find(prefix) {
+                        let at = b + i;
+                        o.push(self.buf.starts.binary_search(&at).unwrap_or_else(|x| x));
+                        b = at + s[at..].chars().next().map_or(1, char::len_utf8);
+                    }
+                    let o = std::sync::Arc::new(o);
+                    cache.push((prefix.to_string(), o.clone()));
+                    o
+                }
+            }
+        };
+        let len = prefix.chars().count();
+        let abs = self.from + u;
+        let i = occ.partition_point(|&x| x < abs);
+        occ.get(i)
+            .filter(|&&x| x + len <= self.to)
+            .map(|&x| x - self.from)
+    }
 }
 
 /// Why a pattern can't be translated exactly.
@@ -259,13 +368,23 @@ fn fold_risk() -> &'static UnitSet {
 /// A translated pattern.
 #[derive(Debug)]
 pub struct JsRegex {
+    /// Unique to this pattern (keys the start positions a text caches).
+    id: usize,
     /// `/source/flags`.
     js: String,
     /// The `fancy-regex` pattern.
     pattern: String,
-    /// The pattern compiled with each tier's backtracking limit, on first
+    /// The pattern in the `regex` crate, when it has nothing that crate
+    /// can't match (it then runs in linear time, unlimited).
+    easy: Option<regex::Regex>,
+    /// Otherwise, the prefilter (see [`FIRST_STEPS`]), and the pattern
+    /// after `\G` in fancy-regex, compiled with each tier's limit on first
     /// use.
-    tiers: [std::sync::OnceLock<fancy_regex::Regex>; TIERS.len()],
+    prefilter: Option<Starts>,
+    anchored: Option<(
+        String,
+        [std::sync::OnceLock<fancy_regex::Regex>; TIERS.len()],
+    )>,
     groups: u32,
     /// For a pattern with a backreference with `i` to a group that can hold
     /// units outside ASCII: literal units (as [`JsText`] characters), one of
@@ -276,6 +395,89 @@ pub struct JsRegex {
     fold_guard: Option<Vec<String>>,
 }
 
+/// The prefilter: where a match of it can start, found for a whole text
+/// at once by a reverse lazy DFA (every match, `MatchKind::All`), in
+/// linear time.
+#[derive(Debug)]
+struct Starts {
+    /// The prefilter, forward, for the first start alone.
+    forward: regex::Regex,
+    dfa: regex_automata::hybrid::dfa::DFA,
+    caches: std::sync::Mutex<Vec<regex_automata::hybrid::dfa::Cache>>,
+}
+
+impl Starts {
+    fn new(pattern: &str) -> Result<Self, String> {
+        use regex_automata::hybrid::dfa::DFA;
+        use regex_automata::{MatchKind, nfa::thompson};
+        let dfa = DFA::builder()
+            .configure(DFA::config().match_kind(MatchKind::All))
+            .thompson(thompson::Config::new().reverse(true))
+            .build(pattern)
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            forward: regex::Regex::new(pattern).map_err(|e| e.to_string())?,
+            dfa,
+            caches: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The byte offsets in `hay` where a match can start, in order. If the
+    /// DFA gives up, every character boundary (still every start).
+    fn find(&self, hay: &str) -> Vec<usize> {
+        let mut cache = self
+            .caches
+            .lock()
+            .expect("not poisoned")
+            .pop()
+            .unwrap_or_else(|| self.dfa.create_cache());
+        let out = self.scan(hay, &mut cache).unwrap_or_else(|| {
+            hay.char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(hay.len()))
+                .collect()
+        });
+        self.caches.lock().expect("not poisoned").push(cache);
+        out
+    }
+
+    fn scan(
+        &self,
+        hay: &str,
+        cache: &mut regex_automata::hybrid::dfa::Cache,
+    ) -> Option<Vec<usize>> {
+        let input = regex_automata::Input::new(hay);
+        let bytes = hay.as_bytes();
+        let mut out = Vec::new();
+        let mut sid = self.dfa.start_state_reverse(cache, &input).ok()?;
+        // A match state is entered one byte late: after the byte at `at`,
+        // a match starts at `at + 1`.
+        for at in (0..bytes.len()).rev() {
+            sid = self.dfa.next_state(cache, sid, bytes[at]).ok()?;
+            if sid.is_tagged() {
+                if sid.is_match() {
+                    out.push(at + 1);
+                } else if sid.is_dead() {
+                    break;
+                } else if sid.is_quit() {
+                    return None;
+                }
+            }
+        }
+        sid = self.dfa.next_eoi_state(cache, sid).ok()?;
+        if sid.is_match() {
+            out.push(0);
+        }
+        out.reverse();
+        out.retain(|&i| hay.is_char_boundary(i));
+        Some(out)
+    }
+}
+
+fn runtime(e: fancy_regex::Error) -> ExecError {
+    ExecError(e.to_string())
+}
+
 impl JsRegex {
     /// `exec` with the `g` flag and `lastIndex` = `last`: the first match
     /// at or after unit `last` in `text`, with a budget of its own.
@@ -283,8 +485,8 @@ impl JsRegex {
         self.exec_budgeted(text, last, &mut BacktrackBudget::for_code(text.len()))
     }
 
-    /// [`JsRegex::exec`], charging `budget` for backtracking past what is
-    /// free (see [`FREE_STEPS`]).
+    /// [`JsRegex::exec`], charging `budget` for backtracking (see
+    /// [`FIRST_STEPS`]).
     pub fn exec_budgeted(
         &self,
         text: &JsText,
@@ -295,69 +497,125 @@ impl JsRegex {
             return Ok(None);
         }
         if let Some(prefixes) = &self.fold_guard
-            && let Some(cased) = text.last_cased
+            && text.cased_from(last)
         {
-            let rest = &text.s[text.starts[last]..];
-            let first = prefixes.iter().filter_map(|p| rest.find(p.as_str())).min();
-            if first.is_some_and(|b| text.unit_at(text.starts[last] + b) <= cased) {
+            let first = prefixes
+                .iter()
+                .filter_map(|p| text.find_from(p, last))
+                .min();
+            if first.is_some_and(|p| text.cased_from(p)) {
                 return Err(ExecError(
                     "this pattern compares a backreference without case, and the text has a letter outside ASCII where it could apply, which JavaScript and fancy-regex fold differently".into(),
                 ));
             }
         }
-        let free = FREE_STEPS
-            .saturating_add(FREE_STEPS_PER_UNIT.saturating_mul((text.len() - last + 1) as u64));
-        let first = TIERS
-            .iter()
-            .position(|&t| t >= free)
-            .unwrap_or(TIERS.len() - 1);
-        let mut tier = first;
-        let caps = loop {
-            let limit = TIERS[tier];
-            if tier > first {
-                if limit > budget.remaining {
-                    return Err(ExecError(format!(
-                        "matching this code backtracks too much: one match needed more than {} steps, past the {} it was allowed, with {} left of the highlight's spare steps",
-                        TIERS[tier - 1],
-                        free,
-                        budget.remaining
-                    )));
+        let hay = text.hay();
+        let found: Option<Vec<Option<(usize, usize)>>> =
+            match (&self.easy, &self.prefilter, &self.anchored) {
+                (Some(re), _, _) => re.captures_at(hay, text.byte(last)).map(|c| {
+                    (0..=self.groups as usize)
+                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                        .collect()
+                }),
+                (None, Some(pre), Some((pattern, tiers))) => {
+                    let b = text.byte(last);
+                    let starts = if text.is_whole() {
+                        text.starts_of(self.id, pre)
+                    } else {
+                        // A view of part of a text (a non-greedy pattern on one
+                        // string of the token list) is usually matched once,
+                        // near its start: candidates come from forward searches,
+                        // which stop at each, until they have read twice the
+                        // view; then all starts are found at once.
+                        let mut from = b;
+                        let mut read = 0;
+                        loop {
+                            let Some(m) = pre.forward.find_at(hay, from) else {
+                                return Ok(None);
+                            };
+                            let at = m.start();
+                            read += m.end() - from;
+                            if let Some(caps) = Self::attempt(pattern, tiers, hay, at, budget)? {
+                                let g: Vec<Option<(usize, usize)>> = (0..=self.groups as usize)
+                                    .map(|i| caps.get(i).map(|m| (m.start(), m.end())))
+                                    .collect();
+                                return Ok(Some(self.to_match(text, &g)));
+                            }
+                            match hay[at..].chars().next() {
+                                Some(ch) => from = at + ch.len_utf8(),
+                                None => return Ok(None),
+                            }
+                            if read > 2 * hay.len() + 64 {
+                                let mut all = pre.find(hay);
+                                all.retain(|&x| x >= from);
+                                break std::sync::Arc::new(all);
+                            }
+                        }
+                    };
+                    let from = starts.partition_point(|&x| x < b);
+                    let mut found = None;
+                    for &at in &starts[from..] {
+                        if let Some(caps) = Self::attempt(pattern, tiers, hay, at, budget)? {
+                            found = Some(
+                                (0..=self.groups as usize)
+                                    .map(|i| caps.get(i).map(|m| (m.start(), m.end())))
+                                    .collect(),
+                            );
+                            break;
+                        }
+                    }
+                    found
                 }
-                budget.remaining -= limit;
+                _ => unreachable!("a pattern is easy or has a prefilter"),
+            };
+        Ok(found.map(|g| self.to_match(text, &g)))
+    }
+
+    /// Byte spans of `hay` (group 0 first) as a [`Match`] in units.
+    fn to_match(&self, text: &JsText, g: &[Option<(usize, usize)>]) -> Match {
+        let span = |(a, b): (usize, usize)| (text.unit_at(a), text.unit_at(b));
+        let (index, end) = span(g[0].expect("group 0"));
+        Match {
+            index,
+            end,
+            groups: g[1..].iter().map(|x| x.map(span)).collect(),
+        }
+    }
+
+    /// The pattern anchored at byte `at` of `hay`, its limit doubled until
+    /// it answers, each limit charged.
+    fn attempt<'h>(
+        pattern: &str,
+        tiers: &[std::sync::OnceLock<fancy_regex::Regex>; TIERS.len()],
+        hay: &'h str,
+        at: usize,
+        budget: &mut BacktrackBudget,
+    ) -> Result<Option<fancy_regex::Captures<'h, str>>, ExecError> {
+        for (tier, &limit) in TIERS.iter().enumerate() {
+            if limit > budget.remaining {
+                return Err(ExecError(format!(
+                    "matching this code backtracks too much: the highlight took its {} steps (one match was at more than {})",
+                    budget.spent + budget.remaining,
+                    limit / 2
+                )));
             }
-            let re = self.tiers[tier].get_or_init(|| {
-                fancy_regex::RegexBuilder::new(&self.pattern)
+            budget.remaining -= limit;
+            budget.spent += limit;
+            let re = tiers[tier].get_or_init(|| {
+                fancy_regex::RegexBuilder::new(pattern)
                     .backtrack_limit(limit as usize)
                     .build()
                     .expect("the pattern compiled before")
             });
-            match re.captures_from_pos(&text.s, text.starts[last]) {
-                Ok(c) => break c,
+            match re.captures_from_pos(hay, at) {
+                Ok(c) => return Ok(c),
                 Err(fancy_regex::Error::RuntimeError(
                     fancy_regex::RuntimeError::BacktrackLimitExceeded,
-                )) if tier + 1 < TIERS.len() => tier += 1,
-                Err(fancy_regex::Error::RuntimeError(
-                    fancy_regex::RuntimeError::BacktrackLimitExceeded,
-                )) => {
-                    return Err(ExecError(format!(
-                        "matching this code backtracks too much: one match needed more than {limit} steps"
-                    )));
-                }
-                Err(e) => return Err(ExecError(e.to_string())),
+                )) => {}
+                Err(e) => return Err(runtime(e)),
             }
-        };
-        Ok(caps.map(|c| {
-            let whole = c.get(0).expect("group 0");
-            let span = |m: fancy_regex::Match<'_>| (text.unit_at(m.start()), text.unit_at(m.end()));
-            let (index, end) = span(whole);
-            Match {
-                index,
-                end,
-                groups: (1..=self.groups as usize)
-                    .map(|i| c.get(i).map(span))
-                    .collect(),
-            }
-        }))
+        }
+        Err(ExecError("matching this code backtracks too much".into()))
     }
 
     /// The JavaScript pattern, as `/source/flags`.
@@ -376,6 +634,8 @@ struct Flags {
     icase: bool,
     multiline: bool,
     dot_all: bool,
+    /// Write the prefilter: lookaround left out, a backreference as any text.
+    loose: bool,
 }
 
 /// Translate the JavaScript pattern `source` with `flags`.
@@ -485,16 +745,39 @@ fn translate_with(source: &str, flags: &str, spans_only: bool) -> Result<JsRegex
     });
     let mut out = String::new();
     emit(node, f, &mut out);
-    let re = fancy_regex::RegexBuilder::new(&out)
-        .backtrack_limit(TIERS[0] as usize)
-        .build()
-        .map_err(|e| Untranslatable(format!("fancy-regex refused the translation: {e}")))?;
-    let tiers: [std::sync::OnceLock<fancy_regex::Regex>; TIERS.len()] = Default::default();
-    let _ = tiers[0].set(re);
+    let build = |p: &str| {
+        fancy_regex::RegexBuilder::new(p)
+            .backtrack_limit(TIERS[0] as usize)
+            .build()
+            .map_err(|e| Untranslatable(format!("fancy-regex refused the translation: {e}")))
+    };
+    // fancy-regex checks the pattern.
+    build(&out)?;
+    let easy = regex::Regex::new(&out).ok();
+    let (prefilter, anchored) = if easy.is_none() {
+        let mut loose = String::new();
+        emit_prefilter(node, Flags { loose: true, ..f }, &mut loose);
+        let prefilter = Starts::new(&loose).map_err(|e| {
+            Untranslatable(format!(
+                "the prefilter of this pattern doesn't compile: {e}"
+            ))
+        })?;
+        let anchored = format!(r"\G(?:{out})");
+        let tiers: [std::sync::OnceLock<fancy_regex::Regex>; TIERS.len()] =
+            std::array::from_fn(|_| std::sync::OnceLock::new());
+        let _ = tiers[0].set(build(&anchored)?);
+        (Some(prefilter), Some((anchored, tiers)))
+    } else {
+        (None, None)
+    };
+    static IDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     Ok(JsRegex {
+        id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         js: format!("/{source}/{flags}"),
         pattern: out,
-        tiers,
+        easy,
+        prefilter,
+        anchored,
         groups: if spans_only { 0 } else { pattern.groups },
         fold_guard,
     })
@@ -569,6 +852,61 @@ fn literal_prefix(node: &Node) -> Vec<u16> {
     }
 }
 
+/// The prefilter of a whole pattern: `emit` with `loose`, except that a
+/// positive lookahead the pattern ends with is matched as text. A match of
+/// the pattern at `q` that ends at `e` has its lookahead match at `e`, so
+/// the prefilter matches at `q` too: its starts still include every start
+/// of the pattern.
+fn emit_prefilter(node: &Node, f: Flags, out: &mut String) {
+    let zero_width = |x: &Node| {
+        matches!(x, Node::Empty | Node::Look { .. } | Node::Boundary { .. })
+            || (f.multiline && matches!(x, Node::Start | Node::End))
+    };
+    match node {
+        Node::Alt(xs) => {
+            out.push_str("(?:");
+            for (i, x) in xs.iter().enumerate() {
+                if i > 0 {
+                    out.push('|');
+                }
+                emit_prefilter(x, f, out);
+            }
+            out.push(')');
+        }
+        Node::Group { node, .. } => {
+            out.push_str("(?:");
+            emit_prefilter(node, f, out);
+            out.push(')');
+        }
+        Node::Look {
+            behind: false,
+            negate: false,
+            node,
+        } => emit_prefilter(node, f, out),
+        Node::Concat(xs) => {
+            let k = xs.iter().rposition(|x| !zero_width(x)).map_or(0, |k| k + 1);
+            for x in &xs[..k] {
+                emit(x, f, out);
+            }
+            // The first positive lookahead after the last part that takes
+            // text; the rest of that tail takes none, and is left out.
+            if let Some(Node::Look { node, .. }) = xs[k..].iter().find(|x| {
+                matches!(
+                    x,
+                    Node::Look {
+                        behind: false,
+                        negate: false,
+                        ..
+                    }
+                )
+            }) {
+                emit_prefilter(node, f, out);
+            }
+        }
+        other => emit(other, f, out),
+    }
+}
+
 /// `c` as a pattern character.
 fn push_char(out: &mut String, c: char) {
     if c.is_ascii_alphanumeric() {
@@ -579,9 +917,14 @@ fn push_char(out: &mut String, c: char) {
 }
 
 /// A class that matches the units in `set`, as [`JsText`] characters.
-fn push_set(out: &mut String, set: &UnitSet) {
+fn push_set(out: &mut String, set: &UnitSet, f: Flags) {
     if set.is_empty() {
-        out.push_str("(?!)");
+        // Nothing matches; the `regex` crate has no `(?!)`.
+        out.push_str(if f.loose {
+            r"[^\x{0}-\x{10FFFF}]"
+        } else {
+            "(?!)"
+        });
         return;
     }
     if set.len() == 1 {
@@ -617,7 +960,7 @@ fn emit(node: &Node, f: Flags, out: &mut String) {
         Node::Empty => {}
         Node::Unit(u) => {
             if f.icase {
-                push_set(out, &classes::case_closure(&UnitSet::unit(*u)));
+                push_set(out, &classes::case_closure(&UnitSet::unit(*u)), f);
             } else {
                 push_char(out, unit_char(*u));
             }
@@ -628,7 +971,16 @@ fn emit(node: &Node, f: Flags, out: &mut String) {
             } else {
                 set.clone()
             };
-            push_set(out, &if *negated { set.complement() } else { set });
+            push_set(out, &if *negated { set.complement() } else { set }, f);
+        }
+        Node::Start | Node::End | Node::Boundary { .. } | Node::Look { .. }
+            if f.loose
+                && (f.multiline || matches!(node, Node::Boundary { .. } | Node::Look { .. })) => {}
+        Node::Backref(_) if f.loose => out.push_str("(?s:.)*"),
+        Node::Group { node, .. } if f.loose => {
+            out.push_str("(?:");
+            emit(node, f, out);
+            out.push(')');
         }
         Node::Start if f.multiline => out.push_str(&format!(r"(?:\A|(?<={LINE}))")),
         Node::Start => out.push_str(r"\A"),

@@ -63,3 +63,21 @@ fn first_difference(a: &str, b: &str) -> (String, String) {
     let take = |s: &str| s.get(from..).unwrap_or("").chars().take(160).collect();
     (take(a), take(b))
 }
+
+/// markup-templating recurses once per placeholder in a run of markup;
+/// Node runs out of stack at about 4,400, so Brrrty refuses past 1,000.
+#[test]
+fn a_long_run_of_template_parts_is_refused() {
+    let liquid = grammars().language("liquid").unwrap();
+    let run = |n: usize| {
+        highlight(
+            &"{{ a }}".repeat(n),
+            liquid,
+            "liquid",
+            &mut AllLoaded::default(),
+        )
+    };
+    assert!(run(900).is_ok());
+    let e = run(1100).unwrap_err();
+    assert!(e.0.contains("markup-templating"), "{}", e.0);
+}

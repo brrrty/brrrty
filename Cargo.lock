@@ -299,6 +299,8 @@ version = "0.0.5"
 dependencies = [
  "brrrty-jsregex",
  "fancy-regex",
+ "regex",
+ "regex-automata",
  "regex-syntax",
  "serde_json",
 ]

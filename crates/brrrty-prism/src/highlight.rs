@@ -241,8 +241,9 @@ pub(crate) fn js_replace(
     let mut out = Vec::with_capacity(s.len());
     let mut done = 0;
     let mut last = 0;
+    let js = JsText::from_units(s);
     while last <= s.len() {
-        let Some(m) = h.exec(re, s, last)? else {
+        let Some(m) = h.exec_js(re, &js, last)? else {
             break;
         };
         out.extend_from_slice(&s[done..m.index]);
@@ -256,6 +257,40 @@ pub(crate) fn js_replace(
     out.extend_from_slice(&s[done..]);
     Ok(out)
 }
+
+/// The numbers `i` whose placeholder (`placeholder(language, i)`) occurs in
+/// `code`: `env.code.indexOf(placeholder) !== -1`, for every `i` at once.
+/// An occurrence is `___`, the language, a run of digits (`i` written
+/// without leading zeros) and `___`.
+fn placeholders_in(code: &[u16], language: &str) -> std::collections::HashSet<usize> {
+    let head = units(&format!("___{}", language.to_ascii_uppercase()));
+    let mut out = std::collections::HashSet::new();
+    let mut at = 0;
+    while let Some(i) = index_of(&code[at..], &head) {
+        let start = at + i + head.len();
+        let digits = code[start..]
+            .iter()
+            .take_while(|u| (0x30..=0x39).contains(*u))
+            .count();
+        let run = &code[start..start + digits];
+        let closed = code[start + digits..].starts_with(&units("___"));
+        if digits > 0 && closed && (digits == 1 || run[0] != 0x30) && digits < 19 {
+            let n = run
+                .iter()
+                .fold(0usize, |n, &d| n * 10 + usize::from(d - 0x30));
+            out.insert(n);
+        }
+        at += i + 1;
+    }
+    out
+}
+
+/// How deep markup-templating's `walkTokens` may recurse here (once per
+/// placeholder in a run of markup, and per token level). Node runs out of
+/// stack at about 4,400 to 5,500 (it varies, and 11ty's own frames take
+/// some), so where Node is sure to succeed is far below; Brrrty refuses
+/// past this.
+pub const PLACEHOLDER_DEPTH: usize = 1000;
 
 /// `'___' + language.toUpperCase() + index + '___'`.
 fn placeholder(language: &str, index: usize) -> Units {
@@ -296,10 +331,21 @@ pub fn highlight(
 }
 
 impl Highlighter<'_> {
+    /// A hook pattern's `exec` on `s`, once (a loop builds the text once
+    /// and calls [`Highlighter::exec_js`]).
     pub(crate) fn exec(
         &mut self,
         re: hook_regex::HookRegex,
         s: &[u16],
+        last: usize,
+    ) -> Result<Option<Match>, Refusal> {
+        self.exec_js(re, &JsText::from_units(s), last)
+    }
+
+    pub(crate) fn exec_js(
+        &mut self,
+        re: hook_regex::HookRegex,
+        s: &JsText,
         last: usize,
     ) -> Result<Option<Match>, Refusal> {
         let compiled = compile_hook_regex(re).map_err(|e| {
@@ -309,7 +355,7 @@ impl Highlighter<'_> {
             ))
         })?;
         compiled
-            .exec_budgeted(&JsText::from_units(s), last, &mut self.budget)
+            .exec_budgeted(s, last, &mut self.budget)
             .map_err(|e| Refusal(e.0))
     }
 
@@ -400,15 +446,16 @@ impl Highlighter<'_> {
     ) -> Result<(Units, Vec<(usize, Units)>), Refusal> {
         let mut stack: Vec<(usize, Units)> = Vec::new();
         let mut inside_raw = false;
-        let original = code.to_vec();
+        let taken = placeholders_in(code, language);
         let mut keep = Vec::new();
         // The filter runs on each match in order; collect its answers first
         // (it can't see the replacement).
         let mut matches = Vec::new();
         {
             let mut last = 0;
+            let js = JsText::from_units(code);
             while last <= code.len() {
-                let Some(m) = self.exec(pattern, code, last)? else {
+                let Some(m) = self.exec_js(pattern, &js, last)? else {
                     break;
                 };
                 last = if m.end == m.index { m.end + 1 } else { m.end };
@@ -452,7 +499,7 @@ impl Highlighter<'_> {
             }
             // `tokenStack.length` of the sparse array.
             let mut i = stack.last().map_or(0, |(k, _)| k + 1);
-            while index_of(&original, &placeholder(language, i)).is_some() {
+            while taken.contains(&i) {
                 i += 1;
             }
             stack.push((i, text.to_vec()));
@@ -472,7 +519,7 @@ impl Highlighter<'_> {
     ) -> Result<(), Refusal> {
         let grammar = language_id(language);
         let mut j = 0;
-        self.walk_placeholders(tokens, language, grammar, stack, &mut j)
+        self.walk_placeholders(tokens, language, grammar, stack, &mut j, 0)
     }
 
     fn walk_placeholders(
@@ -482,13 +529,25 @@ impl Highlighter<'_> {
         grammar: GrammarId,
         stack: &[(usize, Units)],
         j: &mut usize,
+        depth: usize,
     ) -> Result<(), Refusal> {
-        let mut i = 0;
-        while i < tokens.len() {
+        if depth > PLACEHOLDER_DEPTH {
+            return Err(Refusal(format!(
+                "the code has more than {PLACEHOLDER_DEPTH} {language} parts in one stretch of markup: Prism's markup-templating recurses once per part, and past about 4,400 Node runs out of stack"
+            )));
+        }
+        // JavaScript splices the replacement into the array and goes on
+        // with its second element; here the list is rebuilt as it goes
+        // (a splice per placeholder would shift the rest each time).
+        let mut rest: std::collections::VecDeque<Item> = std::mem::take(tokens).into();
+        let mut out = Vec::with_capacity(rest.len());
+        while let Some(mut item) = rest.pop_front() {
             if *j >= stack.len() {
+                out.push(item);
+                out.extend(rest.drain(..));
                 break;
             }
-            let s: Option<Units> = match &tokens[i] {
+            let s: Option<Units> = match &item {
                 Item::Str(s) => Some(s.clone()),
                 Item::Token(Token {
                     content: Content::Str(s),
@@ -512,31 +571,40 @@ impl Highlighter<'_> {
                     let mut replacement = Vec::new();
                     if !before.is_empty() {
                         let mut b = vec![Item::Str(before.to_vec())];
-                        self.walk_placeholders(&mut b, language, grammar, stack, j)?;
+                        self.walk_placeholders(&mut b, language, grammar, stack, j, depth + 1)?;
                         replacement.extend(b);
                     }
                     replacement.push(Item::Token(middle));
                     if !after.is_empty() {
                         let mut a = vec![Item::Str(after.to_vec())];
-                        self.walk_placeholders(&mut a, language, grammar, stack, j)?;
+                        self.walk_placeholders(&mut a, language, grammar, stack, j, depth + 1)?;
                         replacement.extend(a);
                     }
-                    match &mut tokens[i] {
+                    match item {
                         Item::Str(_) => {
-                            tokens.splice(i..=i, replacement);
+                            let mut r = replacement.into_iter();
+                            out.extend(r.next());
+                            for x in r.rev() {
+                                rest.push_front(x);
+                            }
                         }
-                        Item::Token(tok) => tok.content = Content::Items(replacement),
+                        Item::Token(mut tok) => {
+                            tok.content = Content::Items(replacement);
+                            out.push(Item::Token(tok));
+                        }
                     }
+                    continue;
                 }
             } else if let Item::Token(Token {
                 content: Content::Items(xs),
                 ..
-            }) = &mut tokens[i]
+            }) = &mut item
             {
-                self.walk_placeholders(xs, language, grammar, stack, j)?;
+                self.walk_placeholders(xs, language, grammar, stack, j, depth + 1)?;
             }
-            i += 1;
+            out.push(item);
         }
+        *tokens = out;
         Ok(())
     }
 
