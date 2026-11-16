@@ -31,10 +31,10 @@ use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use http::{Body, ParseError, Request, Response};
 use path::{Found, Resolved, Root};
@@ -47,8 +47,43 @@ pub const DEFAULT_HOST: &str = "localhost";
 /// server's `portReassignmentRetryCount`.
 pub const PORT_RETRIES: u16 = 10;
 
-const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// A write that makes no progress for this long fails.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Limits on what one client can hold. [`Limits::default`] suits `brrrty
+/// serve`; tests shrink them.
+#[derive(Debug, Clone)]
+pub struct Limits {
+    /// How long a kept-alive connection may sit with no request.
+    pub idle_timeout: Duration,
+    /// The total time a request head (line and headers) may take to arrive
+    /// once its first byte has. A client that is slower gets a 408. This is a
+    /// deadline for the whole head, not for each read, so sending a byte at a
+    /// time cannot hold a connection open.
+    pub head_timeout: Duration,
+    /// How many connections may be open at once. Past this, a new connection
+    /// is answered with a 503 and closed straight away. Refusing out loud is
+    /// better than leaving the connection unanswered in the backlog, where a
+    /// browser just hangs, and it keeps threads bounded either way.
+    pub max_connections: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits {
+            idle_timeout: Duration::from_secs(5),
+            head_timeout: Duration::from_secs(15),
+            max_connections: 256,
+        }
+    }
+}
+
+/// How long to wait after the `n`th accept error in a row (1 is the first).
+/// Doubles from 10 ms to a 1 s cap, so a descriptor shortage does not spin a
+/// core.
+fn accept_backoff(n: u32) -> Duration {
+    Duration::from_millis(10u64 << n.saturating_sub(1).min(7)).min(Duration::from_secs(1))
+}
 
 /// Why the server could not start or change folders.
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +139,47 @@ struct Shared {
     stopping: AtomicBool,
     conns: Mutex<HashMap<u64, TcpStream>>,
     next_conn: AtomicU64,
+    active: AtomicUsize,
+    limits: Limits,
+}
+
+/// Removes a connection from the books when its thread ends.
+struct ConnGuard {
+    shared: Arc<Shared>,
+    id: u64,
+}
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        self.shared
+            .conns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+        self.shared.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A stream whose reads stop at a deadline, however the bytes trickle in.
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Option<Instant>,
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.deadline {
+            Some(d) => {
+                let left = d
+                    .checked_duration_since(Instant::now())
+                    .filter(|l| !l.is_zero())
+                    .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))?;
+                self.stream.set_read_timeout(Some(left))?;
+            }
+            None => self.stream.set_read_timeout(None)?,
+        }
+        self.stream.read(buf)
+    }
 }
 
 /// Entry point: [`Server::start`].
@@ -117,6 +193,16 @@ impl Server {
     /// `host` is `localhost` (the loopback address) by default; pass an
     /// address such as `0.0.0.0` to let other machines connect.
     pub fn start(output: &Path, host: &str, port: u16) -> Result<RunningServer, ServeError> {
+        Server::start_with_limits(output, host, port, Limits::default())
+    }
+
+    /// [`Server::start`] with explicit [`Limits`].
+    pub fn start_with_limits(
+        output: &Path,
+        host: &str,
+        port: u16,
+        limits: Limits,
+    ) -> Result<RunningServer, ServeError> {
         let root = Root::new(output).map_err(|source| ServeError::Root {
             path: output.display().to_string(),
             source,
@@ -129,6 +215,8 @@ impl Server {
             stopping: AtomicBool::new(false),
             conns: Mutex::new(HashMap::new()),
             next_conn: AtomicU64::new(0),
+            active: AtomicUsize::new(0),
+            limits,
         });
         let accept_shared = Arc::clone(&shared);
         let accept = std::thread::Builder::new()
@@ -233,6 +321,11 @@ impl RunningServer {
 
     /// Serve a different folder from now on. Requests already running finish
     /// against the folder they started with. On error the old folder stays.
+    ///
+    /// The server holds the folder's path, not an open handle. Swap in a new
+    /// directory per build and remove the old one after a short delay, rather
+    /// than renaming over the folder being served; a request that has
+    /// resolved a file in a directory that vanishes gets a 404.
     pub fn set_root(&self, output: &Path) -> Result<(), ServeError> {
         let root = Root::new(output).map_err(|source| ServeError::Root {
             path: output.display().to_string(),
@@ -279,11 +372,29 @@ impl Drop for RunningServer {
 }
 
 fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
+    let mut errors = 0u32;
     for stream in listener.incoming() {
         if shared.stopping.load(Ordering::SeqCst) {
             break;
         }
-        let Ok(stream) = stream else { continue };
+        let mut stream = match stream {
+            Ok(s) => {
+                errors = 0;
+                s
+            }
+            Err(_) => {
+                errors = errors.saturating_add(1);
+                std::thread::sleep(accept_backoff(errors));
+                continue;
+            }
+        };
+        if shared.active.fetch_add(1, Ordering::SeqCst) >= shared.limits.max_connections {
+            shared.active.fetch_sub(1, Ordering::SeqCst);
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+            let resp = plain_error(503).header("Retry-After", "1");
+            let _ = http::write_response(&mut stream, resp, false, false);
+            continue;
+        }
         let id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
         if let Ok(clone) = stream.try_clone() {
             shared
@@ -292,46 +403,43 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(id, clone);
         }
+        let guard = ConnGuard {
+            shared: Arc::clone(&shared),
+            id,
+        };
         let conn_shared = Arc::clone(&shared);
-        let spawned = std::thread::Builder::new()
+        // If the spawn fails the closure, and the guard in it, is dropped.
+        let _ = std::thread::Builder::new()
             .name("brrrty-serve-conn".into())
             .spawn(move || {
+                let _guard = guard;
                 handle_connection(stream, &conn_shared);
-                conn_shared
-                    .conns
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&id);
             });
-        if spawned.is_err() {
-            shared
-                .conns
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
-        }
     }
 }
 
 fn handle_connection(stream: TcpStream, shared: &Shared) {
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let Ok(mut writer) = stream.try_clone() else {
         return;
     };
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(DeadlineStream {
+        stream,
+        deadline: None,
+    });
     loop {
         if shared.stopping.load(Ordering::SeqCst) {
             return;
         }
-        // Wait for the first byte of the next request briefly, then allow a
-        // slow client more time to finish sending it.
-        let _ = reader.get_ref().set_read_timeout(Some(IDLE_TIMEOUT));
+        // Wait for the first byte of the next request, then hold the client
+        // to one deadline for the whole head.
+        reader.get_mut().deadline = Some(Instant::now() + shared.limits.idle_timeout);
         match std::io::BufRead::fill_buf(&mut reader) {
             Ok([]) | Err(_) => return,
             Ok(_) => {}
         }
-        let _ = reader.get_ref().set_read_timeout(Some(REQUEST_TIMEOUT));
+        reader.get_mut().deadline = Some(Instant::now() + shared.limits.head_timeout);
         let req = match http::read_request(&mut reader) {
             Ok(r) => r,
             Err(ParseError::Closed) => return,
@@ -341,6 +449,7 @@ fn handle_connection(stream: TcpStream, shared: &Shared) {
                 return;
             }
         };
+        reader.get_mut().deadline = None;
         let keep_alive = req.keep_alive();
         let head_only = req.method.eq_ignore_ascii_case("HEAD");
         let resp = route(&req, shared);
@@ -387,8 +496,9 @@ fn current_hook(shared: &Shared) -> Option<Arc<HtmlHook>> {
 fn file_response(req: &Request, shared: &Shared, found: &Found, status: u16) -> Response {
     let content_type = mime::content_type(&found.name);
     let open = || File::open(&found.real).and_then(|f| f.metadata().map(|m| (f, m)));
+    // The file can vanish between resolving it and opening it (a rebuild).
     let Ok((mut file, meta)) = open() else {
-        return plain_error(500);
+        return plain_error(404);
     };
     let size = meta.len();
 
@@ -585,6 +695,14 @@ mod tests {
         assert_eq!(parse_range("bytes=0-1,4-5", 10), RangeOutcome::Full);
         assert_eq!(parse_range("items=0-1", 10), RangeOutcome::Full);
         assert_eq!(parse_range("bytes=4-2", 10), RangeOutcome::Full);
+    }
+
+    #[test]
+    fn accept_errors_back_off_to_a_cap() {
+        assert_eq!(accept_backoff(1), Duration::from_millis(10));
+        assert_eq!(accept_backoff(2), Duration::from_millis(20));
+        assert_eq!(accept_backoff(8), Duration::from_millis(1000));
+        assert_eq!(accept_backoff(u32::MAX), Duration::from_secs(1));
     }
 
     #[test]

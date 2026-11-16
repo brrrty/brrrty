@@ -72,7 +72,11 @@ fn read_line<R: BufRead>(r: &mut R) -> Result<Vec<u8>, ParseError> {
         .by_ref()
         .take(MAX_LINE as u64 + 1)
         .read_until(b'\n', &mut buf)
-        .map_err(|_| ParseError::Closed)?;
+        .map_err(|e| match e.kind() {
+            // The head took longer than its budget to arrive.
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => ParseError::Reject(408),
+            _ => ParseError::Closed,
+        })?;
     if n == 0 {
         return Err(ParseError::Closed);
     }
@@ -134,6 +138,16 @@ pub(crate) fn read_request<R: BufRead>(r: &mut R) -> Result<Request, ParseError>
         }
         headers.push((name.to_ascii_lowercase(), value.trim().to_string()));
     }
+    // Two lengths, or a length next to Transfer-Encoding, are how a request
+    // gets read differently by two parties. Refuse them rather than guess.
+    let mut lengths = headers.iter().filter(|(n, _)| n == "content-length");
+    let length = lengths.next();
+    if lengths.next().is_some()
+        || length.is_some_and(|(_, v)| v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()))
+        || (length.is_some() && headers.iter().any(|(n, _)| n == "transfer-encoding"))
+    {
+        return Err(ParseError::Reject(400));
+    }
     Ok(Request {
         method: method.to_string(),
         target: target.to_string(),
@@ -188,9 +202,11 @@ fn reason(status: u16) -> &'static str {
         301 => "Moved Permanently",
         400 => "Bad Request",
         404 => "Not Found",
+        408 => "Request Timeout",
         416 => "Range Not Satisfiable",
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         505 => "HTTP Version Not Supported",
         _ => "Unknown",
     }

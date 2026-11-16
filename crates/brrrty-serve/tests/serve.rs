@@ -9,10 +9,11 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use brrrty_serve::{
-    DEFAULT_HOST, DEFAULT_PORT, HtmlRewrite, PORT_RETRIES, RunningServer, ServeError, Server,
+    DEFAULT_HOST, DEFAULT_PORT, HtmlRewrite, Limits, PORT_RETRIES, RunningServer, ServeError,
+    Server,
 };
 
 struct Reply {
@@ -637,6 +638,172 @@ fn malformed_requests_are_rejected() {
     assert_eq!(get(&srv, "/a%zz").status, 400);
     assert_eq!(get(&srv, "/%c3%28").status, 400);
     assert_eq!(get(&srv, "/a%").status, 400);
+}
+
+// ---- limits on what a client can hold ---------------------------------
+
+fn limited(f: &Fixture, limits: Limits) -> RunningServer {
+    Server::start_with_limits(&f.site, DEFAULT_HOST, 0, limits).unwrap()
+}
+
+fn connect(srv: &RunningServer) -> TcpStream {
+    let s = TcpStream::connect(srv.local_addr()).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    s
+}
+
+/// Whether the server has closed `s` (EOF or reset) without sending more.
+fn closed_by_peer(s: &mut TcpStream) -> bool {
+    let mut b = [0u8; 1];
+    matches!(s.read(&mut b), Ok(0) | Err(_))
+}
+
+#[test]
+fn a_slow_drip_head_hits_one_total_deadline() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            head_timeout: Duration::from_millis(800),
+            ..Limits::default()
+        },
+    );
+    let mut s = connect(&srv);
+    let start = Instant::now();
+    s.write_all(b"GET /about HTTP/1.1\r\n").unwrap();
+    // One header every 300 ms: each read arrives well inside any per-read
+    // timeout, but the head as a whole is far too slow.
+    let mut reply = None;
+    for i in 0..30 {
+        std::thread::sleep(Duration::from_millis(300));
+        if s.write_all(format!("X-Drip-{i}: x\r\n").as_bytes())
+            .is_err()
+        {
+            break;
+        }
+        s.set_read_timeout(Some(Duration::from_millis(1))).unwrap();
+        let mut b = [0u8; 1];
+        if matches!(s.peek(&mut b), Ok(1)) {
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            reply = Some(read_reply(&mut s, false));
+            break;
+        }
+    }
+    let reply = reply.expect("the server answered while the client was still dripping");
+    assert_eq!(reply.status, 408);
+    assert!(start.elapsed() < Duration::from_secs(5));
+    assert!(closed_by_peer(&mut s));
+}
+
+#[test]
+fn a_fast_client_is_not_held_to_the_head_deadline() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            head_timeout: Duration::from_millis(800),
+            ..Limits::default()
+        },
+    );
+    assert_eq!(get(&srv, "/about").status, 200);
+}
+
+#[test]
+fn an_idle_connection_is_closed_after_the_idle_timeout() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            idle_timeout: Duration::from_millis(300),
+            ..Limits::default()
+        },
+    );
+    let mut s = connect(&srv);
+    let start = Instant::now();
+    assert!(closed_by_peer(&mut s));
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn connections_past_the_cap_get_503_and_a_slot_frees_up() {
+    let f = fixture(true);
+    let srv = limited(
+        &f,
+        Limits {
+            max_connections: 3,
+            ..Limits::default()
+        },
+    );
+    let mut held: Vec<TcpStream> = (0..3).map(|_| connect(&srv)).collect();
+    // Make sure all three are counted before the fourth arrives.
+    for s in &mut held {
+        s.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\n\r\n")
+            .unwrap();
+        assert_eq!(read_reply(s, false).status, 200);
+    }
+    let mut over = connect(&srv);
+    let r = read_reply(&mut over, false);
+    assert_eq!(r.status, 503);
+    assert_eq!(r.header("retry-after"), Some("1"));
+    assert!(closed_by_peer(&mut over));
+    // Dropping one frees its slot.
+    held.pop();
+    let mut ok = false;
+    for _ in 0..100 {
+        let mut s = connect(&srv);
+        s.write_all(b"GET /about HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        if read_reply(&mut s, false).status == 200 {
+            ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(ok, "a slot never freed up");
+}
+
+// ---- request framing --------------------------------------------------
+
+#[test]
+fn conflicting_content_lengths_are_refused_and_the_connection_closes() {
+    let f = fixture(true);
+    let srv = start(&f);
+    // The reviewer's case: a 0 then a 30, with a pipelined request in the
+    // "body". It must not be served as a second request.
+    let smuggled = "GET /about HTTP/1.1\r\nHost: x\r\n\r\n";
+    let req = format!(
+        "GET /about HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nContent-Length: 30\r\n\r\n{smuggled}"
+    );
+    let mut s = connect(&srv);
+    s.write_all(req.as_bytes()).unwrap();
+    let r = read_reply(&mut s, false);
+    assert_eq!(r.status, 400);
+    assert_eq!(r.header("connection"), Some("close"));
+    assert!(closed_by_peer(&mut s), "a second response followed");
+}
+
+#[test]
+fn other_ambiguous_framing_is_refused() {
+    let f = fixture(true);
+    let srv = start(&f);
+    for extra in [
+        "Content-Length: 5, 5",
+        "Content-Length: 0, 30",
+        "Content-Length: abc",
+        "Content-Length: -1",
+        "Content-Length:",
+        "Content-Length: 0\r\nTransfer-Encoding: chunked",
+        "Transfer-Encoding: chunked\r\nContent-Length: 0",
+    ] {
+        let req = format!("POST /about HTTP/1.1\r\nHost: x\r\n{extra}\r\n\r\n");
+        assert_eq!(raw(&srv, req.as_bytes()).status, 400, "{extra}");
+    }
+    // One plain length is fine, and a body is not read as a request.
+    let r = raw(
+        &srv,
+        b"POST /about HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nConnection: close\r\n\r\nabcd",
+    );
+    assert_eq!(r.status, 200);
 }
 
 // ---- swapping the folder and the HTML hook ----------------------------
