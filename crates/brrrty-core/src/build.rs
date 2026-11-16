@@ -1937,6 +1937,7 @@ fn build_in_pool(
         engine: &engine,
         loader: &loader,
         markdown,
+        syntax_highlight: opts.config.syntax_highlight,
     };
     let jobs: Vec<ContentPage<'_>> = prepared
         .iter()

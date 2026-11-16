@@ -66,6 +66,8 @@ pub struct State {
     pub filters: IndexMap<String, FilterDef>,
     /// `add_collection` functions by name, with where each was added.
     pub collections: IndexMap<String, (FnPtr, Position)>,
+    /// `add_plugin("syntaxhighlight")` was called.
+    pub syntax_highlight: bool,
 }
 
 /// The `config` object.
@@ -240,6 +242,25 @@ pub fn engine_for(clock: Clock, label: String) -> Engine {
             Ok(())
         },
     );
+    e.register_fn(
+        "add_plugin",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            add_plugin(&mut lock(&c.0), &name, None, ctx.call_position())
+        },
+    );
+    e.register_fn(
+        "add_plugin",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString,
+         options: Map|
+         -> Result<(), Box<EvalAltResult>> {
+            add_plugin(&mut lock(&c.0), &name, Some(options), ctx.call_position())
+        },
+    );
     crate::collections::register(&mut e);
     crate::object::register(&mut e);
     crate::jshelpers::register(&mut e);
@@ -390,6 +411,41 @@ fn register_text(e: &mut Engine) {
     e.register_fn("to_locale_date_string", |d: &mut JsDate| {
         locale_date_string(Tz::Local, d.0)
     });
+}
+
+/// The plugins `add_plugin` knows, by the name a script gives.
+pub const PLUGINS: [&str; 1] = ["syntaxhighlight"];
+
+/// `eleventyConfig.addPlugin(plugin, options)` for a plugin Brrrty has its
+/// own version of, named as in [`PLUGINS`].
+fn add_plugin(
+    state: &mut State,
+    name: &str,
+    options: Option<Map>,
+    pos: Position,
+) -> Result<(), Box<EvalAltResult>> {
+    match name {
+        // `@11ty/eleventy-plugin-syntaxhighlight`: Brrrty doesn't highlight
+        // yet, so this only marks what 11ty would highlight, to refuse it.
+        // Its options change how code is highlighted, which can't matter
+        // until it is.
+        "syntaxhighlight" => {
+            let _ = options;
+            state.syntax_highlight = true;
+            Ok(())
+        }
+        _ => Err(invalid(
+            format!(
+                "add_plugin(\"{name}\", ...): Brrrty doesn't have this plugin. It has {}",
+                PLUGINS
+                    .iter()
+                    .map(|p| format!("`{p}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            pos,
+        )),
+    }
 }
 
 /// 11ty's `addGlobalData`: two plain objects merge deeply, anything else

@@ -60,6 +60,7 @@ pub mod codes {
     pub const TAGS_INVALID: &str = "tags-invalid";
     pub const SYMLINK_BROKEN: &str = "symlink-broken";
     pub const SYMLINK_LOOP: &str = "symlink-loop";
+    pub const SYNTAX_HIGHLIGHT_UNSUPPORTED: &str = "syntax-highlight-unsupported";
     pub const TEMPLATE_ENGINE_OVERRIDE_INVALID: &str = "template-engine-override-invalid";
     pub const TEMPLATE_ENGINE_UNSUPPORTED: &str = "template-engine-unsupported";
     pub const TEMPLATE_NOT_UTF8: &str = "template-not-utf8";

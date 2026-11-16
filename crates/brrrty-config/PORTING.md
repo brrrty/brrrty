@@ -234,6 +234,42 @@ the script's own statements don't run.
   JSON or CSV file), calls `git`, or imports other modules. There is no
   `import` or file access in a data script.
 
+## Plugins
+
+`eleventyConfig.addPlugin(plugin, options)` becomes
+`config.add_plugin("name", #{ ... })` for the plugins Brrrty has its own
+version of. Any other name is an error where it is added.
+
+**Port every `addPlugin` line.** Brrrty reads only the Rhai port, so it
+can't see a plugin the JS config adds and the port leaves out. A missing
+plugin is not refused: the pages it would change are written as if it
+weren't there, and they differ from 11ty's. The scoreboard shows them as
+`different`; nothing else does.
+
+### `syntaxhighlight`
+
+`@11ty/eleventy-plugin-syntaxhighlight` (Prism):
+
+```rhai
+config.add_plugin("syntaxhighlight");
+```
+
+Brrrty doesn't highlight code yet, so the marker refuses every page the
+plugin would change, and only those:
+
+- a Markdown page (or Markdown layout) with a fenced code block that names
+  a language. A fence with no language (a bare `` ``` ``) is plain in 11ty
+  too, so it builds; so do indented lines (11ty turns markdown-it's
+  indented `code` rule off);
+- a Liquid template that uses the plugin's `{% highlight %}` tag;
+- any page that reads such a page's `templateContent` or `content` (a blog
+  index that shows excerpts, a feed).
+
+Each is refused with "syntax highlighting is coming soon". The plugin's
+options are accepted and don't change this. Without the marker, the same
+pages are written with plain `<pre><code>` blocks, which is wrong for a
+site whose 11ty config uses the plugin: add it.
+
 ## Regular expressions
 
 `regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`
@@ -266,6 +302,8 @@ Some text is refused, since the answer would differ:
 3. Replace each JS operator in the table above with its helper.
 4. Run the JS and the port on the same inputs in Node and compare. Include
    `undefined`, `null`, `0`, `""`, non-ASCII text and emoji.
-5. Run `cargo xtask scoreboard`. Every page that builds must be identical to
+5. Port every `addPlugin` call (see Plugins); a plugin left out is not
+   noticed.
+6. Run `cargo xtask scoreboard`. Every page that builds must be identical to
    11ty's. A refused page names its reason; fix the port, or the pattern,
    until it builds.

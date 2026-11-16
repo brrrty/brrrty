@@ -166,6 +166,52 @@ pub(crate) struct Pipeline<'a> {
     pub engine: &'a Engine,
     pub loader: &'a FsLoader,
     pub markdown: &'a dyn MarkdownRenderer,
+    /// The config added 11ty's syntax highlighting plugin: what it would
+    /// highlight is refused.
+    pub syntax_highlight: bool,
+}
+
+/// The help on every page syntax highlighting would change.
+const HIGHLIGHT_HELP: &str = "syntax highlighting is coming soon. Until then this page can't be built the way 11ty builds it; the rest of the site still builds";
+
+/// A fenced code block that names a language, in a site that uses 11ty's
+/// syntax highlighting plugin: 11ty highlights it with Prism, which Brrrty
+/// can't do yet.
+fn highlight_problem(
+    fence: &brrrty_markdown::HighlightedFence,
+    file: &Path,
+    line: Option<usize>,
+) -> Problem {
+    let lang = fence.info.split_whitespace().next().unwrap_or("");
+    let p = Problem::error(
+        codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
+        format!("this page has a fenced code block in `{lang}`, which 11ty's syntax highlighting plugin highlights"),
+    )
+    .with_path(file)
+    .with_help(HIGHLIGHT_HELP);
+    match line {
+        Some(l) => p.at(l, 1),
+        None => p,
+    }
+}
+
+/// A `{% highlight %}` tag in a site that uses 11ty's syntax highlighting
+/// plugin, which adds that tag: said as such, not as an unknown tag.
+pub(crate) fn highlight_tag_problem(p: Problem, syntax_highlight: bool) -> Problem {
+    if syntax_highlight
+        && p.code == codes::LIQUID_SYNTAX
+        && p.message.starts_with("tag \"highlight\" not found")
+    {
+        Problem {
+            code: codes::SYNTAX_HIGHLIGHT_UNSUPPORTED,
+            message: "this page uses `{% highlight %}`, the syntax highlighting plugin's tag"
+                .to_string(),
+            help: Some(HIGHLIGHT_HELP.to_string()),
+            ..p
+        }
+    } else {
+        p
+    }
 }
 
 impl Pipeline<'_> {
@@ -190,9 +236,14 @@ impl Pipeline<'_> {
             Engines::Raw => job.body.to_string(),
             Engines::Liquid => page_liquid(&mut undefined)?,
             Engines::Markdown { liquid: true } => {
-                self.render_markdown(&page_liquid(&mut undefined)?, job.shown)?
+                let source = page_liquid(&mut undefined)?;
+                // A line in the page is only known when Liquid changed nothing.
+                let line = (source == job.body).then_some(job.body_line);
+                self.render_markdown(&source, job.shown, line)?
             }
-            Engines::Markdown { liquid: false } => self.render_markdown(job.body, job.shown)?,
+            Engines::Markdown { liquid: false } => {
+                self.render_markdown(job.body, job.shown, Some(job.body_line))?
+            }
         };
         Ok(Output { html, undefined })
     }
@@ -213,7 +264,7 @@ impl Pipeline<'_> {
                 Kind::Liquid(t) => self.liquid(t, &layout_data, &mut undefined, job)?,
                 Kind::Markdown(t) => {
                     let out = self.liquid(t, &layout_data, &mut undefined, job)?;
-                    self.render_markdown(&out, &layout.shown)?
+                    self.render_markdown(&out, &layout.shown, None)?
                 }
                 // Pages with such a layout are refused before they get here.
                 Kind::Unrenderable(p) => return Err(p.clone()),
@@ -226,8 +277,26 @@ impl Pipeline<'_> {
     }
 
     /// Renders Markdown, turning a panic in the Markdown library into a Problem for this page.
-    fn render_markdown(&self, source: &str, file: &Path) -> Result<String, Problem> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.markdown.render(source)))
+    /// `line` is the line `source` starts after in `file`, when it is the file's own text.
+    fn render_markdown(
+        &self,
+        source: &str,
+        file: &Path,
+        line: Option<usize>,
+    ) -> Result<String, Problem> {
+        let render = || {
+            if self.syntax_highlight
+                && let Some(fence) = self.markdown.highlighted_fence(source)
+            {
+                return Err(highlight_problem(
+                    &fence,
+                    file,
+                    line.map(|l| l + fence.line),
+                ));
+            }
+            Ok(self.markdown.render(source))
+        };
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(render))
             .map_err(|panic| {
                 let why = panic
                     .downcast_ref::<&str>()
@@ -242,7 +311,7 @@ impl Pipeline<'_> {
                 .with_help(
                     "this is a bug in Brrrty's Markdown library. Changing the Markdown near the construct it chokes on (for example, putting `~~strikethrough~~` or emphasis on one line, or a blank line before a list) usually works around it. Please report the file at https://github.com/brrrty/brrrty/issues",
                 )
-            })
+            })?
     }
 
     fn liquid(
@@ -278,7 +347,10 @@ impl Pipeline<'_> {
         } else {
             (template.to_path_buf(), 0)
         };
-        liquid_problem(e, path, offset, Some(job.shown))
+        highlight_tag_problem(
+            liquid_problem(e, path, offset, Some(job.shown)),
+            self.syntax_highlight,
+        )
     }
 }
 

@@ -3,6 +3,51 @@
 /// Renders Markdown source to an HTML string.
 pub trait MarkdownRenderer: Send + Sync {
     fn render(&self, source: &str) -> String;
+
+    /// The first fenced code block that names a language, which a markdown-it `highlight`
+    /// function (11ty's syntax highlighting plugin) would be given: the language as written and
+    /// the 1-based line the fence opens on in `source`. `None` when there is none, or when the
+    /// renderer can't tell.
+    fn highlighted_fence(&self, _source: &str) -> Option<HighlightedFence> {
+        None
+    }
+}
+
+/// A fenced code block that names a language: what a markdown-it `highlight` function is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightedFence {
+    /// The info string after the fence marker, as written.
+    pub info: String,
+    /// The line the fence opens on, from 1.
+    pub line: usize,
+}
+
+/// The first fence in `ast` whose info string isn't blank. markdown-it calls `highlight` with
+/// the first word of the unescaped, trimmed info string, and the plugin defers to plain output
+/// only when that is empty; an info string of only escaped spaces (`&#32;`) is counted too, which
+/// is safe: it only refuses more.
+fn first_fence(ast: &markdown_it::Node, source: &str) -> Option<HighlightedFence> {
+    use markdown_it::plugins::cmark::block::fence::CodeFence;
+    let mut found = None;
+    ast.walk(|n, _| {
+        if found.is_some() {
+            return;
+        }
+        let Some(fence) = n.cast::<CodeFence>() else {
+            return;
+        };
+        let blank = |c: char| c.is_whitespace() || c == '\u{feff}';
+        if fence.info.trim_matches(blank).is_empty() {
+            return;
+        }
+        let start = n.srcmap.map_or(0, |m| m.get_byte_offsets().0);
+        let line = source[..start.min(source.len())].matches('\n').count() + 1;
+        found = Some(HighlightedFence {
+            info: fence.info.clone(),
+            line,
+        });
+    });
+    found
 }
 
 /// markdown-it's table rule needs a `|` in the header row too, so `a\n|--` is a paragraph. The
@@ -119,6 +164,10 @@ impl MarkdownRenderer for MarkdownIt {
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast, false);
         ast.render()
+    }
+
+    fn highlighted_fence(&self, source: &str) -> Option<HighlightedFence> {
+        first_fence(&self.md.parse(source), source)
     }
 }
 
@@ -337,6 +386,27 @@ mod tests {
                 });
             }
         });
+    }
+
+    #[test]
+    fn finds_fences_that_name_a_language() {
+        let f = |s: &str| md().highlighted_fence(s);
+        assert_eq!(f("```\nplain\n```\n"), None);
+        assert_eq!(f("~~~   \nplain\n~~~\n"), None);
+        assert_eq!(f("para\n\n    indented\n"), None);
+        assert_eq!(f("`inline` code\n"), None);
+        assert_eq!(
+            f("# T\n\n```\nx\n```\n\n~~~js {1}\nlet a;\n~~~\n"),
+            Some(HighlightedFence {
+                info: "js {1}".into(),
+                line: 7
+            })
+        );
+        assert_eq!(f("> ```text\n> x\n> ```\n").map(|h| h.line), Some(1));
+        assert_eq!(
+            f("- a\n\n  ```php\n  x\n  ```\n").map(|h| h.info),
+            Some("php".into())
+        );
     }
 
     /// 11ty disables markdown-it's `code` rule, so indented lines are paragraph text.

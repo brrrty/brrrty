@@ -52,6 +52,14 @@
 //! backreferences (see the `regex` module for the other differences), and
 //! `url_hostname(s)`, `date(ms)`, `to_locale_date_string(d)`.
 //!
+//! ## Plugins
+//!
+//! `config.add_plugin("name", #{ ... })` adds a plugin Brrrty has its own
+//! version of. `syntaxhighlight` (`@11ty/eleventy-plugin-syntaxhighlight`)
+//! is a marker until Brrrty highlights code: every page the plugin would
+//! change is refused. Any other name is an error. Brrrty can't see a plugin
+//! the 11ty config adds and the port leaves out (see `PORTING.md`).
+//!
 //! ## Values
 //!
 //! Every JavaScript number arrives as a float, so `n / 2` is `3.5` for
@@ -158,6 +166,8 @@ pub struct SiteConfig {
     pub filters: Vec<brrrty_core::ConfigFilter>,
     /// `add_collection` collections, in order.
     pub collections: Vec<brrrty_core::ConfigCollection>,
+    /// `add_plugin("syntaxhighlight")` was called.
+    pub syntax_highlight: bool,
 }
 
 impl SiteConfig {
@@ -172,6 +182,7 @@ impl SiteConfig {
             filters: self.filters.clone(),
             collections: self.collections.clone(),
             data: None,
+            syntax_highlight: self.syntax_highlight,
         }
     }
 }
@@ -314,6 +325,7 @@ fn evaluate(src: &str, clock: Clock) -> Result<SiteConfig, Vec<Problem>> {
         problems,
         filters,
         collections,
+        syntax_highlight: state.syntax_highlight,
     })
 }
 

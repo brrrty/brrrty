@@ -39,6 +39,10 @@ pub struct ConfigOptions {
     /// Runs `.rhai` data files. A site needs no config file to have them,
     /// so the command line sets this whether or not there is a config.
     pub data: Option<DataRunner>,
+    /// The config added 11ty's syntax highlighting plugin
+    /// (`@11ty/eleventy-plugin-syntaxhighlight`). Brrrty doesn't highlight
+    /// yet, so every page it would change is refused.
+    pub syntax_highlight: bool,
 }
 
 /// One `.rhai` data file to run.
