@@ -22,6 +22,8 @@ struct Rule {
     /// The anchored path pattern, relative to the root, with `/` separators.
     anchored: String,
     matcher: GlobMatcher,
+    /// Added by the config file's `ignores.add`, not read from an ignore file.
+    from_config: bool,
 }
 
 #[derive(Debug, Default)]
@@ -109,6 +111,7 @@ impl IgnoreRules {
                     text: text.to_string(),
                     anchored,
                     matcher: glob.compile_matcher(),
+                    from_config: false,
                 });
             }
         }
@@ -119,6 +122,51 @@ impl IgnoreRules {
             rules,
             warnings,
         })
+    }
+
+    /// Add the config file's `ignores.add` globs. 11ty reads each one from the
+    /// project root (`./` is added and the path normalized), except one that
+    /// starts with `**/`, which matches anywhere. A folder is not given `/**`
+    /// the way an ignore file line is; it is still skipped whole, because
+    /// the walk doesn't enter an ignored folder.
+    pub fn add_config(&mut self, file: &Path, globs: &[String]) {
+        for (i, text) in globs.iter().enumerate() {
+            let anchored = if text.starts_with("**/") {
+                text.clone()
+            } else {
+                let p = crate::options::normalize(Path::new(text.trim_start_matches('/')));
+                path_str(&p)
+            };
+            if anchored.is_empty() || anchored.starts_with("..") {
+                continue;
+            }
+            match GlobBuilder::new(&anchored).literal_separator(true).build() {
+                Ok(glob) => self.rules.push(Rule {
+                    file: file.to_path_buf(),
+                    dir: PathBuf::new(),
+                    line_no: 0,
+                    text: text.clone(),
+                    anchored,
+                    matcher: glob.compile_matcher(),
+                    from_config: true,
+                }),
+                Err(e) => self.warnings.push(
+                    Problem::warning(
+                        codes::IGNORE_LINE_INVALID,
+                        format!(
+                            "ignore `{text}` (number {} added in {}) is not a valid pattern ({}), so it was skipped",
+                            i + 1,
+                            path_str(file),
+                            e.kind()
+                        ),
+                    )
+                    .with_path(file)
+                    .with_help(
+                        "check the brackets and braces in the pattern, or escape them with a backslash",
+                    ),
+                ),
+            }
+        }
     }
 
     /// `path` (absolute, as the walker yields it) relative to the root, spelled through the
@@ -172,7 +220,7 @@ impl IgnoreRules {
         let mut listed: Option<Vec<String>> = None;
         let templates: Vec<PathBuf> = templates.iter().filter_map(|t| self.root_rel(t)).collect();
         for rule in &self.rules {
-            if self.root.join(&rule.anchored).exists() {
+            if rule.from_config || self.root.join(&rule.anchored).exists() {
                 continue;
             }
             let all =

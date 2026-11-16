@@ -68,7 +68,28 @@ pub(crate) fn copy_passthrough_avoiding(
         problems: Vec::new(),
     };
 
-    for entry in &opts.passthrough {
+    let entries = opts
+        .config
+        .passthrough
+        .iter()
+        .map(|e| (e.from.as_str().into(), e.to.as_deref(), true))
+        .chain(opts.passthrough.iter().map(|p| (p.clone(), None, false)));
+    for (entry, to, from_config) in entries {
+        let entry: PathBuf = entry;
+        if from_config && is_glob(&entry.to_string_lossy()) {
+            c.problems.push(
+                Problem::error(
+                    codes::PASSTHROUGH_UNSUPPORTED,
+                    format!(
+                        "passthrough path {} is a glob, which Brrrty doesn't copy yet",
+                        entry.display()
+                    ),
+                )
+                .with_path(config_path(opts, &entry))
+                .with_help("name the files or folders to copy, one entry each"),
+            );
+            continue;
+        }
         let escapes = entry.is_absolute()
             || entry.components().any(|c| {
                 matches!(
@@ -85,7 +106,7 @@ pub(crate) fn copy_passthrough_avoiding(
                         entry.display()
                     ),
                 )
-                .with_path(entry)
+                .with_path(&entry)
                 .with_help("remove `..` segments and absolute paths from passthrough entries"),
             );
             continue;
@@ -105,12 +126,19 @@ pub(crate) fn copy_passthrough_avoiding(
             );
             continue;
         }
-        let dest = match source.strip_prefix(&input) {
-            Ok(rel) => out.join(rel),
-            Err(_) => out.join(&clean),
+        // 11ty treats an empty target like no target.
+        let mapped = to.filter(|t| !t.is_empty());
+        let dest = match mapped {
+            // A target is relative to the output folder, with any leading
+            // slash dropped; `/` is the output folder itself.
+            Some(t) => crate::options::normalize(&out.join(t.trim_start_matches('/'))),
+            None => match source.strip_prefix(&input) {
+                Ok(rel) => out.join(rel),
+                Err(_) => out.join(&clean),
+            },
         };
-        if dest == out {
-            c.problems.push(
+        if dest == out && (mapped.is_none() || !source.is_dir()) {
+            let p = if mapped.is_none() {
                 Problem::error(
                     codes::PASSTHROUGH_IS_INPUT,
                     format!(
@@ -118,12 +146,21 @@ pub(crate) fn copy_passthrough_avoiding(
                         entry.display()
                     ),
                 )
-                .with_path(&clean)
-                .with_help("Pass through specific folders inside it instead (like src/images)."),
-            );
+                .with_help("Pass through specific folders inside it instead (like src/images).")
+            } else {
+                Problem::error(
+                    codes::PASSTHROUGH_UNSUPPORTED,
+                    format!(
+                        "passthrough file {} would be copied onto the output folder itself",
+                        entry.display()
+                    ),
+                )
+                .with_help("give the file a name in the output folder, like `favicon.ico`")
+            };
+            c.problems.push(p.with_path(&clean));
             continue;
         }
-        if !crate::build::is_inside(&out, &dest) {
+        if dest != out && !crate::build::is_inside(&out, &dest) {
             c.problems.push(
                 Problem::error(
                     codes::OUTPUT_ESCAPES,
@@ -145,6 +182,20 @@ pub(crate) fn copy_passthrough_avoiding(
         overridden: c.overridden,
         problems: c.problems,
     }
+}
+
+/// A path 11ty would read as a glob rather than a file name.
+fn is_glob(path: &str) -> bool {
+    path.contains(['*', '?', '[', ']', '{', '}', '!'])
+}
+
+/// Where to point a problem with a config entry: the config file when there
+/// is one.
+fn config_path(opts: &BuildOptions, entry: &Path) -> PathBuf {
+    opts.config
+        .file
+        .clone()
+        .unwrap_or_else(|| entry.to_path_buf())
 }
 
 fn collect_entry(source: &Path, dest: &Path, c: &mut Copier) {

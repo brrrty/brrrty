@@ -293,3 +293,56 @@ fn slug_of_a_date_prints_it_in_the_local_zone() {
         assert_eq!(html, format!("{slug}|{slugify}"), "{tz}");
     }
 }
+
+#[test]
+fn the_config_sets_the_folders_and_flags_win() {
+    let d = site(&[
+        (
+            "brrrty.config.rhai",
+            "#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+        ),
+        ("src/a.md", "a\n"),
+        ("other/b.md", "b\n"),
+    ]);
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/a/index.html").is_file());
+    // 11ty's command line overrides its config's `dir`.
+    let o = run_in(
+        d.path(),
+        &["build", "--quiet", "--input", "other", "--output", "out"],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("out/b/index.html").is_file());
+    assert!(!d.path().join("out/a").exists());
+}
+
+#[test]
+fn a_config_error_stops_before_building() {
+    let d = site(&[
+        ("brrrty.config.rhai", "let a = 1;\nlet b = ;\n"),
+        ("a.md", "a\n"),
+    ]);
+    let o = run_in(d.path(), &["build"]);
+    assert_eq!(o.status.code(), Some(1));
+    let err = stderr(&o);
+    assert!(err.contains(codes::CONFIG_SYNTAX), "{err}");
+    assert!(err.contains("brrrty.config.rhai:2:9"), "{err}");
+    assert!(!d.path().join("_site").exists());
+}
+
+#[test]
+fn a_bad_source_date_epoch_is_an_error() {
+    let d = site(&[("a.md", "a\n")]);
+    let o = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .current_dir(d.path())
+        .env("SOURCE_DATE_EPOCH", "soon")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        stderr(&o).contains(codes::SOURCE_DATE_EPOCH_INVALID),
+        "{}",
+        stderr(&o)
+    );
+}

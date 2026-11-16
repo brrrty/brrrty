@@ -83,6 +83,29 @@ fn merged_item(target: Option<Value>, source: &Value) -> Value {
     }
 }
 
+/// The config's `addGlobalData` values as 11ty sets them: each name in
+/// JavaScript key order, with lodash's `set`, so `a.b` sets `b` inside `a`.
+pub(crate) fn config_global(added: &Data) -> Result<Data, Problem> {
+    let mut out = Data::new();
+    for (name, value) in Value::js_entries(added) {
+        let refuse = |why: String| {
+            Problem::error(
+                codes::CONFIG_UNSUPPORTED,
+                format!("global data `{name}` can't be set: {why}"),
+            )
+            .with_help("name the value with plain keys separated by dots, like `site.title`")
+        };
+        if name.contains(['[', ']', '"', '\'']) {
+            return Err(refuse(
+                "Brrrty doesn't read brackets or quotes in a key path".into(),
+            ));
+        }
+        let path: Vec<String> = name.split('.').map(str::to_string).collect();
+        set_path(&mut out, &path, value.clone()).map_err(refuse)?;
+    }
+    Ok(out)
+}
+
 /// `v` with every object's keys in JavaScript order: integer-like keys first
 /// in ascending order, then the other keys in insertion order, as JavaScript
 /// objects do; 11ty's data is a JavaScript object.

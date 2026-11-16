@@ -17,8 +17,8 @@ use crate::collections::{self, Entry, Membership, Page};
 use crate::content::{self, ContentPage};
 use crate::data::{
     BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags,
-    frozen_keys, frozen_problem, js_help, js_object, key_line, load_global, merge, page_data,
-    reserved_keys, reserved_problem,
+    config_global, frozen_keys, frozen_problem, js_help, js_object, key_line, load_global, merge,
+    page_data, reserved_keys, reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::{Data, split_front_matter};
@@ -1412,7 +1412,17 @@ fn build_in_pool(
         report.problems.push(p);
         return finish(report, strict, start);
     }
-    let mut has_config = false;
+    if let Err(message) = brrrty_js::clock::source_date_epoch() {
+        report.problems.push(
+            Problem::error(codes::SOURCE_DATE_EPOCH_INVALID, message)
+                .with_help("set it to whole seconds since 1970, or unset it to use the clock"),
+        );
+        return finish(report, strict, start);
+    }
+    report.problems.extend(opts.config.problems.iter().cloned());
+    // A config file may add collections. Brrrty's own config can't yet, and
+    // when there is one, 11ty's config is not read, so it isn't reported.
+    let mut has_config = opts.config.file.is_some();
     if let Ok(root) = opts.root_dir() {
         for name in [
             "eleventy.config.js",
@@ -1422,6 +1432,9 @@ fn build_in_pool(
         ] {
             if root.join(name).is_file() {
                 has_config = true;
+                if opts.config.file.is_some() {
+                    continue;
+                }
                 report.problems.push(
                     Problem::warning(
                         codes::ELEVENTY_CONFIG_IGNORED,
@@ -1532,15 +1545,33 @@ fn build_in_pool(
         })
         .collect();
     let (globals, output_shown) = globals(opts, &root, &input_rel);
-    // 11ty merges its `eleventy` data over `_data` (deeply), then replaces
-    // `pkg` outright with the project's package.json.
+    // 11ty sets the config's `addGlobalData` values, adds its `eleventy`
+    // data, and merges that over `_data` (deeply); then it replaces `pkg`
+    // outright with the project's package.json.
+    let mut initial = match config_global(&opts.config.global_data) {
+        Ok(d) => d,
+        Err(p) => {
+            let file = opts.config.file.clone().unwrap_or_default();
+            report.problems.push(p.with_path(file));
+            Data::new()
+        }
+    };
+    let reserved = reserved_keys(&initial);
+    if !reserved.is_empty() {
+        let file = opts.config.file.clone().unwrap_or_default();
+        report
+            .problems
+            .push(reserved_problem(&reserved).with_path(file));
+        for key in &reserved {
+            initial.shift_remove(key.split('.').next().unwrap_or(key));
+        }
+    }
+    if let Some(v) = globals.get("eleventy") {
+        initial.insert("eleventy".to_string(), v.clone());
+    }
     let mut global = Data::new();
     merge(&mut global, &user_data);
-    let mut eleventy = Data::new();
-    if let Some(v) = globals.get("eleventy") {
-        eleventy.insert("eleventy".to_string(), v.clone());
-    }
-    merge(&mut global, &eleventy);
+    merge(&mut global, &js_object(&initial));
     if let Some(v) = globals.get("pkg") {
         global.insert("pkg".to_string(), v.clone());
     }

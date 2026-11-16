@@ -1,0 +1,22 @@
+[package]
+name = "brrrty-config"
+version = "0.0.4"
+description = "Reads brrrty.config.rhai, the Rhai config for Brrrty, an Eleventy-compatible static site generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["static-site", "ssg", "eleventy", "11ty", "rhai"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
+
+[dependencies]
+brrrty-core = { path = "../brrrty-core", version = "0.0.4" }
+brrrty-js = { path = "../brrrty-js", version = "0.0.4" }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
+indexmap = "2"
+rhai = { version = "=1.27.0", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

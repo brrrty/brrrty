@@ -14,6 +14,7 @@ fn opts_with_passthrough(root: &Path, pt: &[&str]) -> BuildOptions {
         output: PathBuf::from("_site"),
         passthrough: pt.iter().map(PathBuf::from).collect(),
         strict: false,
+        config: Default::default(),
     }
 }
 

@@ -30,6 +30,7 @@ fn run(root: &Path) -> BuildReport {
             output: PathBuf::from("_site"),
             passthrough: Vec::new(),
             strict: false,
+            config: Default::default(),
         },
         &MarkdownIt::new(),
     )

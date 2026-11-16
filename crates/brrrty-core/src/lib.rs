@@ -27,7 +27,7 @@ pub use build::{BuildReport, build};
 pub use discover::{Discovery, discover};
 pub use frontmatter::split_front_matter;
 pub use js::js_truthy;
-pub use options::BuildOptions;
+pub use options::{BuildOptions, ConfigOptions, PassthroughEntry};
 pub use page::{Page, file_path_stem, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;
 pub use permalink::{Permalink, resolve_permalink};

@@ -1,17 +1,46 @@
+use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 use std::path::{Component, Path, PathBuf};
 
 /// Options for one build.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     pub root: PathBuf,
     /// Relative to `root`.
     pub input: PathBuf,
     /// Relative to `root`, or absolute.
     pub output: PathBuf,
-    /// Relative to `root`.
+    /// Relative to `root`; copied after the config's passthrough entries.
     pub passthrough: Vec<PathBuf>,
     pub strict: bool,
+    /// What the project's config file set.
+    pub config: ConfigOptions,
+}
+
+/// What a config file (`brrrty.config.rhai`) set, besides the folders,
+/// which go in [`BuildOptions`] itself.
+#[derive(Debug, Clone, Default)]
+pub struct ConfigOptions {
+    /// The config file, relative to the root; `None` when there is none.
+    pub file: Option<PathBuf>,
+    /// `addPassthroughCopy` entries, in 11ty's order.
+    pub passthrough: Vec<PassthroughEntry>,
+    /// `ignores.add` globs, relative to the root as 11ty reads them.
+    pub ignores: Vec<String>,
+    /// `addGlobalData` values by name as given: `a.b` sets `b` inside `a`.
+    pub global_data: Data,
+    /// Warnings from reading the config, reported with the build's.
+    pub problems: Vec<Problem>,
+}
+
+/// One `addPassthroughCopy` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassthroughEntry {
+    /// The file or folder to copy, relative to the root.
+    pub from: String,
+    /// Where to copy it, relative to the output folder. `None` keeps its
+    /// path, relative to the input folder when it is inside it.
+    pub to: Option<String>,
 }
 
 /// Resolve `.` and `..` lexically, without touching the filesystem.
@@ -180,6 +209,7 @@ mod tests {
             output: PathBuf::from("_site"),
             passthrough: vec![],
             strict: false,
+            config: ConfigOptions::default(),
         };
         assert_eq!(o("./src/").input_rel().unwrap(), PathBuf::from("src"));
         assert_eq!(o(".").input_rel().unwrap(), PathBuf::new());

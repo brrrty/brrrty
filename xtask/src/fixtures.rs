@@ -6,6 +6,27 @@ use std::process::Command;
 
 const ELEVENTY: &str = "@11ty/eleventy@3.1.8";
 
+/// The fixture's `source_date_epoch`, if its `fixture.toml` sets one.
+fn source_date_epoch(fixture: &Path) -> Result<Option<u64>, String> {
+    let file = fixture.join("fixture.toml");
+    if !file.is_file() {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e| format!("bad {}: {e}", file.display()))?;
+    match table.get("source_date_epoch") {
+        None => Ok(None),
+        Some(toml::Value::Integer(n)) if *n >= 0 => Ok(Some(*n as u64)),
+        Some(v) => Err(format!(
+            "{}: source_date_epoch must be whole seconds, got {v}",
+            file.display()
+        )),
+    }
+}
+
 /// Returns Ok(true) when every requested fixture was refreshed.
 pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
     let dir = root.join("tests").join("fixtures");
@@ -48,12 +69,17 @@ pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
                 .map_err(|e| format!("cannot delete {}: {e}", tmp.display()))?;
         }
         println!("refreshing fixture {n}");
-        let out = Command::new("npx")
-            .args(["--yes", ELEVENTY, "--quiet"])
+        let epoch = source_date_epoch(&fixture)?;
+        let mut cmd = Command::new("npx");
+        cmd.args(["--yes", ELEVENTY, "--quiet"])
             .arg(format!("--output={}", tmp.display()))
             .current_dir(fixture.join("site"))
-            .output()
-            .map_err(|e| format!("cannot run npx: {e}"))?;
+            .env("NODE_OPTIONS", crate::clock::node_options(root))
+            .env_remove("SOURCE_DATE_EPOCH");
+        if let Some(e) = epoch {
+            cmd.env("SOURCE_DATE_EPOCH", e.to_string());
+        }
+        let out = cmd.output().map_err(|e| format!("cannot run npx: {e}"))?;
         if !out.status.success() {
             eprintln!(
                 "fixture {n}: eleventy failed ({}), keeping old expected/",

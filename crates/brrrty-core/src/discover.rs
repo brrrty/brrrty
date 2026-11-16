@@ -38,7 +38,9 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     let output = opts.output_dir()?;
     let input_rel = opts.input_rel()?;
 
-    let rules = IgnoreRules::load(&root, &input, &input_rel)?;
+    let mut rules = IgnoreRules::load(&root, &input, &input_rel)?;
+    let config_file = opts.config.file.clone().unwrap_or_default();
+    rules.add_config(&config_file, &opts.config.ignores);
     let mut found = Discovery {
         warnings: rules.warnings.clone(),
         ..Discovery::default()

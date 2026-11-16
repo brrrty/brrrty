@@ -1,5 +1,6 @@
 //! Developer tasks: `cargo xtask <command>`.
 
+mod clock;
 mod compat;
 mod fixtures;
 mod settings;

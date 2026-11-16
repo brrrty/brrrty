@@ -7,6 +7,7 @@ use std::process::Command;
 use brrrty_compat::{AllowList, Counts, compare_dirs};
 use sha2::{Digest, Sha256};
 
+use crate::clock::{COMPAT_EPOCH, SHIM, shim_path};
 use crate::settings::SiteSettings;
 
 struct SiteRun {
@@ -87,6 +88,9 @@ fn stamp_from_parts(
         Some(l) => part("lock", l),
         None => part("nolock", b""),
     }
+    // The reference is built at a frozen time, by the preload script.
+    part("epoch", COMPAT_EPOCH.to_string().as_bytes());
+    part("shim", SHIM.as_bytes());
     let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     format!("{head}\n{digest}\n")
 }
@@ -142,6 +146,7 @@ fn eleventy_version(site_dir: &Path) -> String {
 }
 
 fn ensure_reference(
+    root: &Path,
     site_dir: &Path,
     work: &Path,
     refresh: bool,
@@ -172,7 +177,7 @@ fn ensure_reference(
             ));
         }
     }
-    let bin = site_dir.join("node_modules/.bin/eleventy");
+    let bin = site_dir.join("node_modules/@11ty/eleventy/cmd.cjs");
     if !bin.exists() {
         return Err(format!(
             "Eleventy is not installed in the site: {} is missing (is @11ty/eleventy in its package.json and lockfile?)",
@@ -188,7 +193,11 @@ fn ensure_reference(
     let _ = fs::remove_file(&stamp_path);
     fs::create_dir_all(work).map_err(|e| format!("cannot create {}: {e}", work.display()))?;
     println!("reference: building with Eleventy {version}");
-    let out = Command::new(&bin)
+    let out = Command::new("node")
+        .arg("--require")
+        .arg(shim_path(root))
+        .arg(&bin)
+        .env("SOURCE_DATE_EPOCH", COMPAT_EPOCH.to_string())
         .arg("--quiet")
         .arg(format!("--output={}", reference.display()))
         .current_dir(site_dir)
@@ -237,7 +246,7 @@ fn run_site(
         .map_err(|e| format!("cannot resolve {}: {e}", site_dir.display()))?;
 
     let work = root.join("target").join("compat").join(site);
-    let (reference, eleventy_version) = ensure_reference(&site_dir, &work, refresh)?;
+    let (reference, eleventy_version) = ensure_reference(root, &site_dir, &work, refresh)?;
 
     let actual = work.join("brrrty");
     if actual.exists() {
@@ -247,11 +256,10 @@ fn run_site(
     // A panicking brrrty may create nothing; the comparison still needs a folder.
     fs::create_dir_all(&actual).map_err(|e| format!("cannot create {}: {e}", actual.display()))?;
     let mut cmd = Command::new(root.join("target").join("release").join("brrrty"));
-    cmd.args(["build", "--input", &settings.input, "--output"])
-        .arg(&actual);
-    for p in &settings.passthrough {
-        cmd.args(["--passthrough", p]);
-    }
+    cmd.args(["build", "--output"])
+        .arg(&actual)
+        .env("SOURCE_DATE_EPOCH", COMPAT_EPOCH.to_string());
+    cmd.args(brrrty_folder_args(&settings, has_brrrty_config(&site_dir)));
     let status = cmd
         .current_dir(&site_dir)
         .status()
@@ -276,6 +284,26 @@ fn run_site(
         report_path,
         compare,
     })
+}
+
+/// Whether the site has a Brrrty config, which then sets its folders and
+/// passthrough copies the way its 11ty config does for 11ty.
+fn has_brrrty_config(site_dir: &Path) -> bool {
+    site_dir.join("brrrty.config.rhai").is_file()
+}
+
+/// The flags for the folders and passthrough copies in the settings file,
+/// which stand in for a site's 11ty config until it has a Brrrty config.
+fn brrrty_folder_args(settings: &SiteSettings, has_config: bool) -> Vec<String> {
+    if has_config {
+        return Vec::new();
+    }
+    let mut args = vec!["--input".to_string(), settings.input.clone()];
+    for p in &settings.passthrough {
+        args.push("--passthrough".into());
+        args.push(p.clone());
+    }
+    args
 }
 
 fn exit_label(code: Option<i32>) -> String {
@@ -420,6 +448,17 @@ mod tests {
         assert!(!passes(true, Some(101)));
         assert!(!passes(true, None));
         assert!(!passes(false, Some(0)));
+    }
+
+    #[test]
+    fn a_brrrty_config_replaces_the_settings_folders() {
+        let settings =
+            SiteSettings::from_toml("input = \"src\"\npassthrough = [\"src/a\"]").unwrap();
+        assert_eq!(
+            brrrty_folder_args(&settings, false),
+            ["--input", "src", "--passthrough", "src/a"]
+        );
+        assert!(brrrty_folder_args(&settings, true).is_empty());
     }
 
     #[test]

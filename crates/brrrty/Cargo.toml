@@ -21,6 +21,7 @@ name = "brrrty"
 path = "src/main.rs"
 
 [dependencies]
+brrrty-config = { path = "../brrrty-config", version = "0.0.4" }
 brrrty-core = { path = "../brrrty-core", version = "0.0.4" }
 brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.4" }
 clap = { version = "4.6.7", features = ["derive"] }

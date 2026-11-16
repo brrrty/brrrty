@@ -35,12 +35,14 @@ enum Command {
 
 #[derive(Args, Clone)]
 struct BuildArgs {
-    /// Folder with your source files
-    #[arg(long, default_value = ".")]
-    input: PathBuf,
-    /// Folder to write the site to
-    #[arg(long, default_value = "_site")]
-    output: PathBuf,
+    /// Folder with your source files [default: `dir.input` from
+    /// brrrty.config.rhai, or .]
+    #[arg(long)]
+    input: Option<PathBuf>,
+    /// Folder to write the site to [default: `dir.output` from
+    /// brrrty.config.rhai, or _site]
+    #[arg(long)]
+    output: Option<PathBuf>,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -60,12 +62,29 @@ fn run_build(args: BuildArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let color = std::io::stderr().is_terminal();
+    // The config sets the folders; flags on the command line win, as 11ty's do.
+    let site = match brrrty_config::load(&root) {
+        Ok(site) => site,
+        Err(problems) => {
+            report::print_problems(&problems, &root, color);
+            return ExitCode::from(1);
+        }
+    };
+    let dir = site.as_ref().map(|s| s.dir.clone()).unwrap_or_default();
     let opts = BuildOptions {
+        input: args
+            .input
+            .or_else(|| dir.input.map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from(".")),
+        output: args
+            .output
+            .or_else(|| dir.output.map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("_site")),
         root,
-        input: args.input,
-        output: args.output,
         passthrough: args.passthrough,
         strict: args.strict,
+        config: site.map(|s| s.build_options()).unwrap_or_default(),
     };
     let report = build(&opts, &MarkdownIt::new());
     if !args.quiet {
@@ -79,7 +98,6 @@ fn run_build(args: BuildArgs) -> ExitCode {
     }
     if !report.problems.is_empty() {
         let root = opts.root_dir().unwrap_or_else(|_| opts.root.clone());
-        let color = std::io::stderr().is_terminal();
         report::print_problems(&report.problems, &root, color);
     }
     if report.has_errors() {

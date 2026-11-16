@@ -1,5 +1,6 @@
 //! JavaScript-like runtime values shared by Brrrty's template engines.
 
+pub mod clock;
 mod eleventy;
 mod eleventy_tables;
 mod number;

@@ -9,6 +9,7 @@ fn opts(root: &Path, input: &str, output: &str) -> BuildOptions {
         output: PathBuf::from(output),
         passthrough: vec![],
         strict: false,
+        config: Default::default(),
     }
 }
 

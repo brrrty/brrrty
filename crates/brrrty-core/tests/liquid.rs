@@ -13,6 +13,7 @@ fn opts(root: &Path) -> BuildOptions {
         output: PathBuf::from("_site"),
         passthrough: Vec::new(),
         strict: false,
+        config: Default::default(),
     }
 }
 

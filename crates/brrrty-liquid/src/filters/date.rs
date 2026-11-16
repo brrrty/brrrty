@@ -126,10 +126,9 @@ fn parse_date(r: &Renderer<'_>, v: &Value, timezone: &Value) -> R<Option<LiquidD
     Ok(LiquidDate::new(ms, tz, fixed))
 }
 
+/// `new Date()`: `SOURCE_DATE_EPOCH` when it is set, else the clock.
 fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_millis() as f64)
+    brrrty_js::clock::now_ms()
 }
 
 /// `TimeClip`: out of range is `NaN`, anything else loses its fraction.

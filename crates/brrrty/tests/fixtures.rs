@@ -25,7 +25,13 @@ fn every_fixture_matches_reference_output() {
     for fixture in names {
         let text = fs::read_to_string(fixture.join("fixture.toml")).expect("fixture.toml");
         let cfg: toml::Table = text.parse().expect("valid fixture.toml");
-        let input = cfg["input"].as_str().expect("input is a string");
+        // Without `input`, the folders come from the fixture's config file.
+        let input = cfg
+            .get("input")
+            .map(|v| v.as_str().expect("input is a string"));
+        let epoch = cfg
+            .get("source_date_epoch")
+            .map(|v| v.as_integer().expect("source_date_epoch is whole seconds"));
         let passthrough: Vec<&str> = cfg
             .get("passthrough")
             .and_then(|v| v.as_array())
@@ -35,8 +41,15 @@ fn every_fixture_matches_reference_output() {
         let out = tempfile::tempdir().expect("tempdir");
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_brrrty"));
         cmd.current_dir(fixture.join("site"))
-            .args(["build", "--input", input, "--output"])
+            .env_remove("SOURCE_DATE_EPOCH")
+            .args(["build", "--output"])
             .arg(out.path());
+        if let Some(input) = input {
+            cmd.args(["--input", input]);
+        }
+        if let Some(epoch) = epoch {
+            cmd.env("SOURCE_DATE_EPOCH", epoch.to_string());
+        }
         for p in &passthrough {
             cmd.args(["--passthrough", p]);
         }

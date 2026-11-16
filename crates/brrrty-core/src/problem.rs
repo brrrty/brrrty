@@ -5,6 +5,12 @@ pub mod codes {
     pub const BUILD_THREADS_FAILED: &str = "build-threads-failed";
     pub const COMPUTED_CYCLE: &str = "computed-cycle";
     pub const COMPUTED_UNSUPPORTED: &str = "computed-unsupported";
+    pub const CONFIG_ERROR: &str = "config-error";
+    pub const CONFIG_INVALID: &str = "config-invalid";
+    pub const CONFIG_LIMIT: &str = "config-limit";
+    pub const CONFIG_SYNTAX: &str = "config-syntax";
+    pub const CONFIG_UNREADABLE: &str = "config-unreadable";
+    pub const CONFIG_UNSUPPORTED: &str = "config-unsupported";
     pub const CONTENT_CYCLE: &str = "content-cycle";
     pub const CONTENT_UNAVAILABLE: &str = "content-unavailable";
     pub const CWD_UNAVAILABLE: &str = "cwd-unavailable";
@@ -41,9 +47,11 @@ pub mod codes {
     pub const PASSTHROUGH_IS_INPUT: &str = "passthrough-is-input";
     pub const PASSTHROUGH_MISSING: &str = "passthrough-missing";
     pub const PASSTHROUGH_OVERRIDES_PAGE: &str = "passthrough-overrides-page";
+    pub const PASSTHROUGH_UNSUPPORTED: &str = "passthrough-unsupported";
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
     pub const PERMALINK_UNSUPPORTED: &str = "permalink-unsupported";
+    pub const SOURCE_DATE_EPOCH_INVALID: &str = "source-date-epoch-invalid";
     pub const TAGS_INVALID: &str = "tags-invalid";
     pub const SYMLINK_BROKEN: &str = "symlink-broken";
     pub const SYMLINK_LOOP: &str = "symlink-loop";
