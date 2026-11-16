@@ -558,3 +558,69 @@ fn never_panics_on_fragment_soup() {
         seed = seed.wrapping_add(1);
     }
 }
+
+/// Runs `f` on a thread with a 2 MiB stack, the size Rust gives spawned
+/// threads by default.
+fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+#[test]
+fn long_operator_chains_are_capped_not_overflowed() {
+    for src in [
+        format!("{{% if a{} %}}{{% endif %}}", " and a".repeat(20_000)),
+        format!("{{% if a{} %}}{{% endif %}}", " == a".repeat(20_000)),
+        format!("{{% if {}a %}}{{% endif %}}", "not ".repeat(20_000)),
+    ] {
+        let e = on_small_stack(move || parse("t", &src).unwrap_err());
+        assert_eq!(e.kind, ErrorKind::TooDeep);
+        assert_eq!(
+            e.message,
+            "expressions nest too deeply (more than 256 levels)"
+        );
+    }
+    // 256 levels of operators still parse.
+    let ok = format!("{{% if a{} %}}{{% endif %}}", " and a".repeat(256));
+    assert!(on_small_stack(move || parse("t", &ok).is_ok()));
+    let deep = format!("{{% if a{} %}}{{% endif %}}", " and a".repeat(257));
+    assert!(on_small_stack(move || parse("t", &deep).is_err()));
+}
+
+#[test]
+fn spans_on_one_long_line_are_linear() {
+    let src = format!(
+        "é{{% if a %}}{}{{% endif %}}{{{{ x{} }}}}",
+        "{% elsif a %}x".repeat(20_000),
+        " | f".repeat(20_000)
+    );
+    let start = std::time::Instant::now();
+    let t = parse("t", &src).unwrap();
+    assert!(
+        start.elapsed().as_secs_f64() < 1.0,
+        "took {:?}",
+        start.elapsed()
+    );
+    let TagKind::If { branches, .. } = &tag(&t.nodes[1]).kind else {
+        panic!()
+    };
+    assert_eq!(branches.len(), 20_001);
+    // "é" is one UTF-16 unit, `{% if a %}` is 10 and each `{% elsif a %}x` is 14.
+    assert_eq!(branches[20_000].span.column, 2 + 10 + 14 * 19_999);
+
+    let src = format!(
+        "{{% case a %}}{}{{% endcase %}}",
+        "{% when 1, 2 or 3 %}x".repeat(20_000)
+    );
+    let start = std::time::Instant::now();
+    parse("t", &src).unwrap();
+    assert!(
+        start.elapsed().as_secs_f64() < 1.0,
+        "took {:?}",
+        start.elapsed()
+    );
+}

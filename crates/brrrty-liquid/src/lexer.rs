@@ -61,13 +61,22 @@ pub(crate) fn slice(input: &str, a: usize, b: usize) -> &str {
 pub(crate) struct LineIndex<'a> {
     input: &'a str,
     starts: Vec<usize>,
+    /// The last position looked up, as (offset, line, column). Spans are
+    /// made mostly in source order, so counting on from here keeps a long
+    /// line linear instead of quadratic. Small steps back, such as a
+    /// tag's span made after its arguments, are cheap too.
+    last: std::cell::Cell<(usize, usize, usize)>,
 }
 
 impl<'a> LineIndex<'a> {
     pub fn new(input: &'a str) -> LineIndex<'a> {
         let mut starts = vec![0];
         starts.extend(input.match_indices('\n').map(|(i, _)| i + 1));
-        LineIndex { input, starts }
+        LineIndex {
+            input,
+            starts,
+            last: std::cell::Cell::new((0, 1, 1)),
+        }
     }
 
     pub fn position(&self, offset: usize) -> (usize, usize) {
@@ -76,8 +85,24 @@ impl<'a> LineIndex<'a> {
         let offset = offset.min(self.input.len());
         let line = self.starts.partition_point(|&s| s <= offset);
         let start = self.starts[line - 1];
-        let col = self.input[start..offset].encode_utf16().count() + 1 + past;
-        (line, col)
+        let (last_offset, last_line, last_col) = self.last.get();
+        let col = if last_line != line || offset - start < offset.abs_diff(last_offset) {
+            1 + utf16_len(&self.input[start..offset])
+        } else if last_offset <= offset {
+            last_col + utf16_len(&self.input[last_offset..offset])
+        } else {
+            last_col - utf16_len(&self.input[offset..last_offset])
+        };
+        self.last.set((offset, line, col));
+        (line, col + past)
+    }
+}
+
+fn utf16_len(s: &str) -> usize {
+    if s.is_ascii() {
+        s.len()
+    } else {
+        s.encode_utf16().count()
     }
 }
 
@@ -773,7 +798,7 @@ impl<'a> Cursor<'a> {
                 None => break,
             }
         }
-        Ok(build_expression(toks))
+        build_expression(toks)
     }
 
     pub fn read_filtered_value(&mut self) -> Result<FilteredValue, Located> {
@@ -944,7 +969,11 @@ fn join(a: Span, b: Span) -> Span {
 /// of values. Operators of equal precedence group to the right. An
 /// operator with no operand left gets `Missing`. The result is the bottom
 /// of the stack, so in `a b` the `b` is dropped.
-fn build_expression(toks: Vec<ExprTok>) -> Option<Expr> {
+///
+/// Operators may nest at most `MAX_DEPTH` deep, so a long chain like
+/// `a and a and ...` is an error instead of a tree too deep to walk.
+/// LiquidJS evaluates such chains; nothing real comes close to the limit.
+fn build_expression(toks: Vec<ExprTok>) -> Result<Option<Expr>, Located> {
     let mut postfix = Vec::new();
     let mut ops: Vec<(Op, Span)> = Vec::new();
     for t in toks {
@@ -964,30 +993,51 @@ fn build_expression(toks: Vec<ExprTok>) -> Option<Expr> {
     while let Some((op, span)) = ops.pop() {
         postfix.push(ExprTok::Op(op, span));
     }
-    let mut stack: Vec<Expr> = Vec::new();
+    // Each entry keeps how many operators deep it is.
+    let mut stack: Vec<(Expr, usize)> = Vec::new();
+    let missing = |span| (Expr::Missing { span }, 0);
+    let too_deep = |span: Span| Located {
+        kind: ErrorKind::TooDeep,
+        message: format!("expressions nest too deeply (more than {MAX_DEPTH} levels)"),
+        help: None,
+        offset: span.start,
+    };
     for t in postfix {
         match t {
-            ExprTok::Val(v) => stack.push(v),
+            ExprTok::Val(v) => stack.push((v, 0)),
             ExprTok::Op(Op::Not, span) => {
-                let operand = stack.pop().unwrap_or(Expr::Missing { span });
-                stack.push(Expr::Not {
-                    span: join(span, operand.span()),
-                    operand: Box::new(operand),
-                });
+                let (operand, d) = stack.pop().unwrap_or_else(|| missing(span));
+                if d >= MAX_DEPTH {
+                    return Err(too_deep(span));
+                }
+                stack.push((
+                    Expr::Not {
+                        span: join(span, operand.span()),
+                        operand: Box::new(operand),
+                    },
+                    d + 1,
+                ));
             }
             ExprTok::Op(Op::Binary(op), span) => {
-                let rhs = stack.pop().unwrap_or(Expr::Missing { span });
-                let lhs = stack.pop().unwrap_or(Expr::Missing { span });
-                stack.push(Expr::Binary {
-                    span: join(join(lhs.span(), span), rhs.span()),
-                    op,
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
-                });
+                let (rhs, dr) = stack.pop().unwrap_or_else(|| missing(span));
+                let (lhs, dl) = stack.pop().unwrap_or_else(|| missing(span));
+                let d = dl.max(dr);
+                if d >= MAX_DEPTH {
+                    return Err(too_deep(span));
+                }
+                stack.push((
+                    Expr::Binary {
+                        span: join(join(lhs.span(), span), rhs.span()),
+                        op,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    },
+                    d + 1,
+                ));
             }
         }
     }
-    stack.into_iter().next()
+    Ok(stack.into_iter().next().map(|(e, _)| e))
 }
 
 /// Reads a whole template into tokens and applies whitespace control:
