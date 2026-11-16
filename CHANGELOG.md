@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+Data, permalinks, pagination and collections:
+
+- JSON data files in `_data` load as 11ty loads them, including folders of data files and symbolic links. JavaScript data files (`.js`, `.cjs`, `.mjs`) don't run yet: only the pages that use their data are refused.
+- Template and directory data files (`page.json`, `page.11tydata.json`, `folder/folder.json` and the like) apply to their pages, and the whole data cascade merges deeply in 11ty's order: global data, layouts, data files, then front matter.
+- `eleventyComputed` values are rendered in 11ty's dependency order.
+- Permalinks can be Liquid templates, and `permalink` can be computed.
+- `pagination` works over lists and objects, with `size`, `alias`, `reverse`, `filter`, `resolve: values` and `generatePageOnEmptyData`. Any `size` 11ty accepts works, such as `'3'` or `[2]`.
+- `collections` are built from `tags`, with `collections.all`, `eleventyExcludeFromCollections` and `addAllPagesToCollections`, in 11ty's order. Pages can paginate a collection.
+- `templateContent` and `content` of collection items work, including pages that read each other's content, rendered in the order 11ty renders them.
+- Nunjucks templates and pages under a Nunjucks layout are collection items. Their own pages aren't written yet, but pages that list them build.
+- Front matter YAML reads values the way 11ty's YAML loader does: dates, `0123` as 123, `.inf`, and numbers too large for JavaScript stay strings.
+- A file named like its folder (`posts/posts.md`) is written as the folder's `index.html`, as in 11ty.
+
+Where 11ty stops the whole build, Brrrty refuses only the page or data file at fault and builds the rest: a bad data file, pagination over missing data, two pages with one permalink, a `templateContent` circle, or a computed data loop.
+
+New errors:
+
+- `data-file-invalid`: a data file that can't be read or parsed.
+- `data-js-unsupported`: a page uses data from a JavaScript data file, which Brrrty can't run yet. Pages that don't use it still build.
+- `computed-cycle` and `computed-unsupported`: computed values that depend on each other in a loop, or a computed key Brrrty can't set yet, such as `layout`.
+- `pagination-invalid` and `pagination-unsupported`: pagination 11ty can't build, or that Brrrty can't follow yet.
+- `content-cycle` and `content-unavailable`: a page reads `templateContent` in a circle, or content that 11ty wouldn't have rendered yet.
+- `tags-invalid`: `tags` that are neither a string nor a list.
+- `permalink-unsupported`: `permalinkBypassOutputDir`, which would write outside the output folder.
+
+Removed:
+
+- The `permalink-templated` error. Templated permalinks now render.
+
 ## 0.0.3 - 2026-11-15
 
 Liquid templates and layouts:
