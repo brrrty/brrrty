@@ -262,8 +262,7 @@ fn a_first_build_with_a_broken_page_serves_the_rest() {
         !out.iter().any(|l| l.starts_with("The first build")),
         "{out:?}"
     );
-    // As with 11ty, a build that never wrote leaves no output folder.
-    assert!(!dir.path().join("_site").exists());
+    assert!(!dir.path().join("_site/.brrrty-serve").exists());
 }
 
 #[test]
@@ -277,7 +276,8 @@ fn strict_exits_1_when_the_first_build_fails() {
         err.contains("The first build failed, so Brrrty stopped (--strict)."),
         "{err}"
     );
-    assert!(!dir.path().join("_site/.brrrty-serve").exists());
+    // As with 11ty, a build that never wrote leaves no output folder.
+    assert!(!dir.path().join("_site").exists());
 }
 
 #[test]
