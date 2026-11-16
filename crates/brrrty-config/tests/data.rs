@@ -487,3 +487,103 @@ fn without_a_runner_rhai_data_is_refused_with_a_problem() {
     let r = build(&opts, &brrrty_markdown::MarkdownIt::new());
     assert!(r.problems.iter().any(|p| p.code == codes::DATA_RHAI_ERROR));
 }
+
+/// Probed with 11ty 3.1.8: `<key>.json` and `<key>.js` (here `.rhai`, which
+/// takes the same place) merge with `Merge`, the later file over the earlier.
+/// The expected text is what 11ty printed with `{{ key | json }}`.
+#[test]
+fn two_files_for_one_key_merge_like_11ty() {
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "a",
+            r#"{"v":1,"only_json":1,"n":{"x":1}}"#,
+            "#{ v: 2, n: #{ y: 2 } }",
+            r#"{"v":2,"only_json":1,"n":{"x":1,"y":2}}"#,
+        ),
+        ("b", "[1]", "[2]", "[1,2]"),
+        ("c", r#"{"k":1}"#, "5", r#"{"k":1}"#),
+        ("d", "5", "#{ k: 1 }", r#"{"k":1}"#),
+        ("e", "5", "6", "6"),
+        (
+            "g",
+            r#"{"a":[1],"o":{"p":1}}"#,
+            r#"#{ a: [2], "override:o": #{ q: 1 } }"#,
+            r#"{"a":[1,2],"o":{"q":1}}"#,
+        ),
+        ("h", r#"{"k":1}"#, "()", r#"{"k":1}"#),
+        (
+            "i",
+            r#"{"z":1,"a":2}"#,
+            r#"#{ a: 3, m: 4, "2": 5 }"#,
+            r#"{"2":5,"z":1,"a":3,"m":4}"#,
+        ),
+        ("j", r#"{"k":1}"#, "null_value()", r#"{"k":1}"#),
+        ("k", "null", "#{ k: 1 }", r#"{"k":1}"#),
+    ];
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut body = String::new();
+    for (k, json, rhai, want) in cases {
+        files.push((format!("src/_data/{k}.json"), json.to_string()));
+        files.push((format!("src/_data/{k}.rhai"), rhai.to_string()));
+        body.push_str(&format!("{k}={{{{ {k} | json }}}}\n"));
+        let _ = want;
+    }
+    let (name, text) = page(&body);
+    files.push((name.to_string(), text));
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (t, r) = site(&refs);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    // The page is markdown, which escapes quotes in text.
+    let got = out(&t, "out.html").unwrap().replace("&quot;", "\"");
+    let want: String = cases
+        .iter()
+        .map(|(k, _, _, w)| format!("{k}={w}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(got.trim(), want);
+}
+
+#[test]
+fn top_level_code_does_not_run_when_data_is_defined() {
+    let (t, r) = run(
+        &[("src/_data/k.rhai", "let boom = 1 / 0;\nfn data() { 7 }")],
+        "{{ k }}",
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(out(&t, "out.html").unwrap().trim(), "7");
+}
+
+#[test]
+fn using_config_in_a_data_script_gets_data_wording() {
+    let (_t, r) = run(
+        &[("src/_data/k.rhai", "config.add_filter(\"x\", |v| v);")],
+        "{{ k }}",
+    );
+    let p = r
+        .problems
+        .iter()
+        .find(|p| p.code == codes::DATA_RHAI_SYNTAX)
+        .unwrap_or_else(|| panic!("{:#?}", r.problems));
+    let help = p.help.as_deref().unwrap();
+    assert!(help.contains("no `config`"), "{help}");
+    assert!(!help.contains("curry"), "{help}");
+}
+
+#[test]
+fn shadow_note_for_template_data_names_the_file() {
+    let (_t, r) = site(&[
+        ("src/x.11tydata.js", "module.exports = { v: 'js' };"),
+        ("src/x.11tydata.rhai", "#{ v: \"rhai\" }"),
+        ("src/x.md", "---\npermalink: x.html\n---\n{{ v }}"),
+    ]);
+    let note = r
+        .problems
+        .iter()
+        .find(|p| p.severity == Severity::Info)
+        .unwrap();
+    assert!(!note.message.contains("this key"), "{}", note.message);
+    assert!(note.message.contains("x.11tydata.rhai"), "{}", note.message);
+}

@@ -137,6 +137,11 @@ pub fn utc_string(ms: f64) -> String {
 
 /// An engine with Brrrty's limits and the config API registered.
 pub fn engine(clock: Clock) -> Engine {
+    engine_for(clock, crate::CONFIG_FILE.to_string())
+}
+
+/// [`engine`] for a script called `label` in `debug` output.
+pub fn engine_for(clock: Clock, label: String) -> Engine {
     let mut e = Engine::new();
     e.set_max_operations(MAX_OPERATIONS)
         .set_max_call_levels(MAX_CALL_LEVELS)
@@ -158,7 +163,7 @@ pub fn engine(clock: Clock) -> Engine {
         )
     });
     e.on_print(|s| println!("{s}"));
-    e.on_debug(|s, _src, pos| eprintln!("{} {pos}: {s}", crate::CONFIG_FILE));
+    e.on_debug(move |s, _src, pos| eprintln!("{label} {pos}: {s}"));
 
     e.register_type_with_name::<Config>("Config")
         .register_type_with_name::<Ignores>("Ignores")

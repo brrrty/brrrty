@@ -46,6 +46,8 @@ pub struct ConfigOptions {
 pub struct DataRequest<'a> {
     /// The file, as a path that can be read.
     pub file: &'a Path,
+    /// The file as reported, relative to the root.
+    pub shown: &'a Path,
     /// The data 11ty hands an exported function: the config's
     /// `add_global_data` values and 11ty's own `eleventy` data.
     pub global: &'a Data,

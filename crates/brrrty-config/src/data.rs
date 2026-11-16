@@ -50,10 +50,11 @@ fn run_file(req: &DataRequest, clock: Clock) -> Result<Value, Problem> {
             .with_help("save the file as UTF-8")
     })?;
     let global = req.global.clone();
+    let label = req.shown.display().to_string();
     let run = std::thread::Builder::new()
         .name("brrrty-data".into())
         .stack_size(STACK_SIZE)
-        .spawn(move || evaluate(&src, &global, clock))
+        .spawn(move || evaluate(&src, &global, clock, &label))
         .map_err(|e| {
             Problem::error(
                 codes::BUILD_THREADS_FAILED,
@@ -67,13 +68,26 @@ fn run_file(req: &DataRequest, clock: Clock) -> Result<Value, Problem> {
 }
 
 /// Run one script on its own engine and read its value.
-pub(crate) fn evaluate(src: &str, global: &Data, clock: Clock) -> Result<Value, Problem> {
+pub(crate) fn evaluate(
+    src: &str,
+    global: &Data,
+    clock: Clock,
+    label: &str,
+) -> Result<Value, Problem> {
     crate::api::start_clock();
-    let engine = crate::api::engine(clock);
+    let engine = crate::api::engine_for(clock, label.to_string());
     let ast = engine.compile(src).map_err(|e| {
-        let mut p = crate::syntax_problem(&e);
-        p.code = codes::DATA_RHAI_SYNTAX;
-        p
+        let help = match &*e.0 {
+            rhai::ParseErrorType::VariableUndefined(name) if name == "config" => {
+                "a data script has no `config`: that object is only in brrrty.config.rhai".to_string()
+            }
+            rhai::ParseErrorType::VariableUndefined(_) => "a function can't see variables outside it, and a closure `|x| ...` can't capture them. Pass the value in as an argument; see PORTING.md".to_string(),
+            _ => "fix the script; Rhai's syntax is close to JavaScript's, see https://rhai.rs/book/".to_string(),
+        };
+        at(
+            Problem::error(codes::DATA_RHAI_SYNTAX, e.0.to_string()).with_help(help),
+            e.1,
+        )
     })?;
     let exported = ast.iter_functions().find(|f| f.name == "data");
     let result: Result<Dynamic, _> = match exported {
@@ -92,7 +106,14 @@ pub(crate) fn evaluate(src: &str, global: &Data, clock: Clock) -> Result<Value, 
                     ));
                 }
             };
-            engine.call_fn::<Dynamic>(&mut Scope::new(), &ast, "data", args)
+            // Only `data` runs: the script's own statements don't.
+            engine.call_fn_with_options::<Dynamic>(
+                rhai::CallFnOptions::new().eval_ast(false),
+                &mut Scope::new(),
+                &ast,
+                "data",
+                args,
+            )
         }
         None => engine.eval_ast::<Dynamic>(&ast),
     };

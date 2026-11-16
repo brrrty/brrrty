@@ -63,7 +63,7 @@ pub(crate) fn merge(target: &mut Data, source: &Data) {
     }
 }
 
-fn merged_item(target: Option<Value>, source: &Value) -> Value {
+pub(crate) fn merged_item(target: Option<Value>, source: &Value) -> Value {
     match (target, source) {
         (Some(Value::Array(t)), Value::Array(s)) => {
             Value::Array(Arc::new(t.iter().chain(s.iter()).cloned().collect()))

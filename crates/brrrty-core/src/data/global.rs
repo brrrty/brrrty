@@ -7,7 +7,7 @@ use std::sync::Arc;
 use brrrty_js::Value;
 
 use super::rhai;
-use super::{js_object, reserved_keys, reserved_problem};
+use super::{js_object, merged_item, reserved_keys, reserved_problem};
 use crate::discover::{broken_link_warning, loop_warning};
 use crate::frontmatter::Data;
 use crate::options::DataRunner;
@@ -99,6 +99,7 @@ pub(crate) fn load_global(
         .collect();
 
     let mut data = Data::new();
+    let mut seen: Vec<Vec<String>> = Vec::new();
     for file in files {
         let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
         let path = key_path(&file);
@@ -146,6 +147,17 @@ pub(crate) fn load_global(
         };
         match loaded {
             Ok(v) => {
+                // Two files for one key (`a.json` and `a.js`) merge, the
+                // later one over the earlier, as 11ty's `Merge` does.
+                let v = if seen.contains(&path) {
+                    match get_path(&data, &path) {
+                        Some(old) => merged_item(Some(old.clone()), &v),
+                        None => v,
+                    }
+                } else {
+                    v
+                };
+                seen.push(path.clone());
                 if set_path(&mut data, &path, v).is_err() {
                     out.problems.push(
                         Problem::error(
@@ -267,6 +279,19 @@ pub(crate) fn read_json(file: &Path) -> Result<Value, JsonError> {
                 .map_or(full.clone(), |(m, _)| m.to_string());
             (message, Some((e.line(), e.column())))
         })
+}
+
+/// The value at `path`, through objects only.
+fn get_path<'a>(data: &'a Data, path: &[String]) -> Option<&'a Value> {
+    let (first, rest) = path.split_first()?;
+    let v = data.get(first.as_str())?;
+    if rest.is_empty() {
+        return Some(v);
+    }
+    match v {
+        Value::Object(o) => get_path(o, rest),
+        _ => None,
+    }
 }
 
 /// True for the keys lodash's `set` turns into a list position.
