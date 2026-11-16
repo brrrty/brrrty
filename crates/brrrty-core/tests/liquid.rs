@@ -764,3 +764,61 @@ fn package_json_is_pkg() {
         r#"[{"name":"n","version":"1.2.3"}]"#
     );
 }
+
+/// Front matter scalars resolve as js-yaml resolves them (probed with 11ty 3.1.8,
+/// whose gray-matter calls js-yaml 4.3.2): `0123` is 123, `.inf` is `Infinity`,
+/// and an unquoted timestamp is a `Date` (its `date: "%s"` is the epoch second).
+#[test]
+fn front_matter_scalars_resolve_like_js_yaml() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/index.liquid",
+        "---
+a: 0123
+b: 08
+c: 02134
+d: 0x1F
+e: 0o17
+f: 1_000
+g: .inf
+h: -.inf
+i: .nan
+j: ~
+k: null
+l: yes
+m: no
+n: on
+o: off
+p: 1e3
+q: 2020-01-02
+r: 2020-01-02T03:04:05+02:00
+s: 2020-01-02 03:04:05
+t: '0123'
+u: 2020-01-02T03:04:05.123456Z
+w: 2020-13-45
+x: 0b101
+y: -0x1F
+z: 0777
+---
+a={{ a }} b={{ b }} c={{ c }} d={{ d }} e={{ e }} f={{ f }} g={{ g }} h={{ h }} i={{ i }} j=[{{ j }}] k=[{{ k }}] l={{ l }} m={{ m }} n={{ n }} o={{ o }} p={{ p }}
+q={{ q | date: \"%s\" }}
+r={{ r | date: \"%s\" }}
+s={{ s | date: \"%s\" }}
+t={{ t }} u={{ u | date: \"%s %L\" }} w={{ w | date: \"%s\" }} x={{ x }} y={{ y }} z={{ z }}
+a_size={{ a | size }} t_size={{ t | size }} q_size={{ q | size }}
+",
+    );
+    assert_clean(&run(root));
+    assert_eq!(
+        read(root, "index.html"),
+        "a=123 b=8 c=2134 d=31 e=15 f=1_000 g=Infinity h=-Infinity i=NaN j=[] k=[] l=yes m=no n=on o=off p=1000
+q=1577923200
+r=1577927045
+s=1577934245
+t=0123 u=1577934245 123 w=1613260800 x=5 y=-31 z=777
+a_size=0 t_size=4 q_size=0
+"
+    );
+}

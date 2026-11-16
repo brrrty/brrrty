@@ -2,8 +2,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use serde_json::{Map, Value};
+use brrrty_js::Value;
 
+use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 
 /// The outcome of resolving a page's permalink.
@@ -18,10 +19,7 @@ pub enum Permalink {
 /// Resolve the URL and output path for a page.
 ///
 /// `rel_to_input` is the source file path relative to the input directory.
-pub fn resolve_permalink(
-    rel_to_input: &Path,
-    front_matter: &Map<String, Value>,
-) -> Result<Permalink, Problem> {
+pub fn resolve_permalink(rel_to_input: &Path, front_matter: &Data) -> Result<Permalink, Problem> {
     match front_matter.get("permalink") {
         None => Ok(default_permalink(rel_to_input)),
         Some(Value::Bool(false)) => Ok(Permalink::Skip),
@@ -53,6 +51,8 @@ fn kind(v: &Value) -> &'static str {
         Value::String(_) => "a string",
         Value::Array(_) => "a list",
         Value::Object(_) => "a map",
+        Value::Undefined => "undefined",
+        Value::Date(_) => "a date",
     }
 }
 
@@ -87,11 +87,7 @@ fn default_permalink(rel: &Path) -> Permalink {
     build(&segments, true)
 }
 
-fn explicit_permalink(
-    rel: &Path,
-    raw: &str,
-    front_matter: &Map<String, Value>,
-) -> Result<Permalink, Problem> {
+fn explicit_permalink(rel: &Path, raw: &str, front_matter: &Data) -> Result<Permalink, Problem> {
     if raw.contains("{{") || raw.contains("{%") {
         return Err(Problem::error(
             codes::PERMALINK_TEMPLATED,
@@ -159,7 +155,7 @@ fn explicit_permalink(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value as Json, json};
 
     fn w(url: &str, out: &str) -> Permalink {
         Permalink::Write {
@@ -167,18 +163,18 @@ mod tests {
             output_rel: out.into(),
         }
     }
-    fn fm(v: Value) -> Map<String, Value> {
-        let mut m = Map::new();
-        m.insert("permalink".into(), v);
+    fn fm(v: Json) -> Data {
+        let mut m = Data::new();
+        m.insert("permalink".into(), Value::from_json(&v));
         m
     }
-    fn r(v: Value) -> Result<Permalink, Problem> {
+    fn r(v: Json) -> Result<Permalink, Problem> {
         resolve_permalink(Path::new("c.md"), &fm(v))
     }
 
     #[test]
     fn defaults_match_11ty() {
-        let none = Map::new();
+        let none = Data::new();
         assert_eq!(
             resolve_permalink(Path::new("about.md"), &none).unwrap(),
             w("/about/", "about/index.html")
@@ -261,9 +257,12 @@ mod tests {
         );
     }
 
-    fn r_flag(permalink: &str, flag: Value) -> Result<Permalink, Problem> {
+    fn r_flag(permalink: &str, flag: Json) -> Result<Permalink, Problem> {
         let mut m = fm(permalink.into());
-        m.insert("eleventyAllowMissingExtension".into(), flag);
+        m.insert(
+            "eleventyAllowMissingExtension".into(),
+            Value::from_json(&flag),
+        );
         resolve_permalink(Path::new("c.md"), &m)
     }
 
@@ -325,15 +324,12 @@ mod tests {
         let e = r(true.into()).unwrap_err();
         assert_eq!(e.code, codes::PERMALINK_INVALID);
         assert_eq!(e.help.as_deref(), Some("Did you mean `permalink: false`?"));
-        assert_eq!(
-            r(Value::from(5)).unwrap_err().code,
-            codes::PERMALINK_INVALID
-        );
+        assert_eq!(r(Json::from(5)).unwrap_err().code, codes::PERMALINK_INVALID);
     }
 
     #[test]
     fn null_and_empty_use_the_default() {
-        assert_eq!(r(Value::Null).unwrap(), w("/c/", "c/index.html"));
+        assert_eq!(r(Json::Null).unwrap(), w("/c/", "c/index.html"));
         assert_eq!(r("".into()).unwrap(), w("/c/", "c/index.html"));
     }
 

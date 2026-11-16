@@ -5,10 +5,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use brrrty_js::{Value, array_index};
-use indexmap::IndexMap;
-use serde_json::{Map, Value as Json};
+use brrrty_js::Value;
 
+use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 
 const OVERRIDE_PREFIX: &str = "override:";
@@ -21,7 +20,7 @@ const OVERRIDE_PREFIX: &str = "override:";
 /// - a plain object target stays when the source is not an object;
 /// - anything else is replaced by the source;
 /// - a key written `override:name` replaces `name` instead of merging.
-pub(crate) fn merge(target: &mut Map<String, Json>, source: &Map<String, Json>) {
+pub(crate) fn merge(target: &mut Data, source: &Data) {
     for (key, value) in source {
         let clean = key.strip_prefix(OVERRIDE_PREFIX).unwrap_or(key);
         // 11ty merges with the key as written, so an `override:` key merges
@@ -32,55 +31,65 @@ pub(crate) fn merge(target: &mut Map<String, Json>, source: &Map<String, Json>) 
     }
 }
 
-fn merged_item(target: Option<Json>, source: &Json) -> Json {
+fn merged_item(target: Option<Value>, source: &Value) -> Value {
     match (target, source) {
-        (Some(Json::Array(mut t)), Json::Array(s)) => {
-            t.extend(s.iter().cloned());
-            Json::Array(t)
+        (Some(Value::Array(t)), Value::Array(s)) => {
+            Value::Array(Arc::new(t.iter().chain(s.iter()).cloned().collect()))
         }
-        (Some(Json::Object(mut t)), Json::Object(s)) => {
+        (Some(Value::Object(t)), Value::Object(s)) => {
+            let mut t = Arc::unwrap_or_clone(t);
             merge(&mut t, s);
-            Json::Object(t)
+            Value::Object(Arc::new(t))
         }
-        (Some(t @ Json::Object(_)), _) => t,
+        (Some(t @ Value::Object(_)), _) => t,
         // A missing or falsy target takes a copy of a source object, with
         // its `override:` keys cleaned.
-        (t, Json::Object(s)) if t.as_ref().is_none_or(|t| !crate::js::js_truthy(t)) => {
-            let mut copy = Map::new();
+        (t, Value::Object(s)) if t.as_ref().is_none_or(|t| !t.js_truthy()) => {
+            let mut copy = Data::new();
             merge(&mut copy, s);
-            Json::Object(copy)
+            Value::Object(Arc::new(copy))
         }
         (_, s) => s.clone(),
     }
 }
 
-/// `v` as a JavaScript value. Objects list integer-like keys first in
-/// ascending order, then the other keys in insertion order, as JavaScript
+/// `v` with every object's keys in JavaScript order: integer-like keys first
+/// in ascending order, then the other keys in insertion order, as JavaScript
 /// objects do; 11ty's data is a JavaScript object.
-pub(crate) fn js_value(v: &Json) -> Value {
+pub(crate) fn js_value(v: &Value) -> Value {
     match v {
-        Json::Object(o) => Value::Object(Arc::new(js_object(o))),
-        Json::Array(a) => Value::Array(Arc::new(a.iter().map(js_value).collect())),
-        other => Value::from_json(other),
+        Value::Object(o) => Value::Object(Arc::new(js_object(o))),
+        Value::Array(a) => Value::Array(Arc::new(a.iter().map(js_value).collect())),
+        other => other.clone(),
     }
 }
 
-pub(crate) fn js_object(o: &Map<String, Json>) -> IndexMap<String, Value> {
-    let mut index: Vec<(u32, &String, &Json)> = Vec::new();
-    let mut rest = Vec::new();
-    for (k, v) in o {
-        match array_index(k) {
-            Some(i) => index.push((i, k, v)),
-            None => rest.push((k, v)),
-        }
-    }
-    index.sort_by_key(|(i, _, _)| *i);
-    index
+pub(crate) fn js_object(o: &Data) -> Data {
+    Value::js_entries(o)
         .into_iter()
-        .map(|(_, k, v)| (k, v))
-        .chain(rest)
         .map(|(k, v)| (k.clone(), js_value(v)))
         .collect()
+}
+
+/// `v` the way `JSON.stringify` writes it, for messages: dates are ISO strings and
+/// non-finite numbers are `null`.
+pub(crate) fn json_text(v: &Value) -> String {
+    fn to_json(v: &Value) -> serde_json::Value {
+        use serde_json::Value as J;
+        match v {
+            Value::Undefined | Value::Null => J::Null,
+            Value::Bool(b) => J::Bool(*b),
+            Value::Number(n) => serde_json::Number::from_f64(*n).map_or(J::Null, J::Number),
+            Value::String(s) => J::String(s.to_string()),
+            Value::Array(a) => J::Array(a.iter().map(to_json).collect()),
+            Value::Object(o) => J::Object(o.iter().map(|(k, v)| (k.clone(), to_json(v))).collect()),
+            Value::Date(d) => J::String(
+                d.with_timezone(&chrono::Utc)
+                    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            ),
+        }
+    }
+    serde_json::to_string(&to_json(v)).unwrap_or_default()
 }
 
 /// Top-level names 11ty sets itself and refuses from data.
@@ -98,7 +107,7 @@ const RESERVED_PAGE: &[&str] = &[
 ];
 
 /// The reserved names `data` sets, as 11ty's `ReservedData` finds them.
-pub(crate) fn reserved_keys(data: &Map<String, Json>) -> Vec<String> {
+pub(crate) fn reserved_keys(data: &Data) -> Vec<String> {
     let mut keys: Vec<String> = RESERVED
         .iter()
         .filter(|k| data.contains_key(**k))
@@ -106,14 +115,14 @@ pub(crate) fn reserved_keys(data: &Map<String, Json>) -> Vec<String> {
         .collect();
     match data.get("page") {
         None => {}
-        Some(Json::Object(page)) => keys.extend(
+        Some(Value::Object(page)) => keys.extend(
             RESERVED_PAGE
                 .iter()
                 .filter(|k| page.contains_key(**k))
                 .map(|k| format!("page.{k}")),
         ),
         // `typeof null` is "object" in JavaScript, so 11ty lets null through.
-        Some(Json::Null) => {}
+        Some(Value::Null) => {}
         Some(_) => keys.push("page".to_string()),
     }
     keys
@@ -234,18 +243,22 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn map(v: Json) -> Map<String, Json> {
-        match v {
-            Json::Object(m) => m,
+    fn map(v: serde_json::Value) -> Data {
+        match Value::from_json(&v) {
+            Value::Object(m) => Arc::unwrap_or_clone(m),
             _ => unreachable!(),
         }
+    }
+
+    fn val(v: serde_json::Value) -> Value {
+        Value::from_json(&v)
     }
 
     /// Probed: layout `{list: [l1, l2], obj: {a: 1, b: 2}, author: {name: lay}}`
     /// under page `{list: [p1], obj: {b: 3, c: 4}, author: Bob}`.
     #[test]
     fn merges_like_11ty() {
-        let mut t = Map::new();
+        let mut t = Data::new();
         merge(
             &mut t,
             &map(
@@ -259,8 +272,10 @@ mod tests {
             ),
         );
         assert_eq!(
-            Json::Object(t),
-            json!({"list": ["l1", "l2", "p1"], "obj": {"a": 1, "b": 3, "c": 4}, "author": {"name": "lay"}, "arr": {"k": "v"}, "str": {"k": "v"}})
+            Value::Object(Arc::new(t)),
+            val(
+                json!({"list": ["l1", "l2", "p1"], "obj": {"a": 1, "b": 3, "c": 4}, "author": {"name": "lay"}, "arr": {"k": "v"}, "str": {"k": "v"}})
+            )
         );
     }
 
@@ -272,14 +287,16 @@ mod tests {
             &map(json!({"override:tags": ["b"], "override:o": {"y": 2}, "n": {"override:z": [1]}})),
         );
         assert_eq!(
-            Json::Object(t),
-            json!({"tags": ["b"], "o": {"y": 2}, "n": {"z": [1]}})
+            Value::Object(Arc::new(t)),
+            val(json!({"tags": ["b"], "o": {"y": 2}, "n": {"z": [1]}}))
         );
     }
 
     #[test]
     fn javascript_key_order() {
-        let v = js_value(&json!({"b": "B", "2": "two", "a": "A", "1": "one", "01": "x"}));
+        let v = js_value(&val(
+            json!({"b": "B", "2": "two", "a": "A", "1": "one", "01": "x"}),
+        ));
         let Value::Object(o) = v else { unreachable!() };
         assert_eq!(o.keys().collect::<Vec<_>>(), ["1", "2", "b", "a", "01"]);
     }

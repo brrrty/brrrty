@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use brrrty_js::Value;
+use brrrty_js::Value as Json;
 use brrrty_liquid::{Engine, ErrorKind, LiquidError, Template};
 use brrrty_markdown::MarkdownRenderer;
 use indexmap::IndexMap;
-use serde_json::Value as Json;
 
 use crate::layout::{Kind, LayoutFile};
 use crate::loader::FsLoader;
@@ -49,12 +49,12 @@ pub(crate) fn engines_for(ext: &str, over: Option<&Json>) -> Result<(Engines, St
     };
     // `typeof (value || "") !== "string"` is an error in 11ty.
     let text = match over {
-        Json::String(s) => s.as_str(),
-        v if !crate::js::js_truthy(v) => "",
+        Json::String(s) => s.as_ref(),
+        v if !v.js_truthy() => "",
         v => {
             return Err(override_error(format!(
                 "templateEngineOverride must be a string, found {}",
-                serde_json::to_string(v).unwrap_or_default()
+                crate::data::json_text(v)
             )));
         }
     };
@@ -254,8 +254,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn engines(ext: &str, over: Option<Json>) -> Result<(Engines, String), &'static str> {
-        engines_for(ext, over.as_ref()).map_err(|p| p.code)
+    fn engines(
+        ext: &str,
+        over: Option<serde_json::Value>,
+    ) -> Result<(Engines, String), &'static str> {
+        engines_for(ext, over.map(|j| Json::from_json(&j)).as_ref()).map_err(|p| p.code)
     }
 
     /// Probed: `page.templateSyntax` and output for each override.

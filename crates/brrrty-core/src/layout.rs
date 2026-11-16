@@ -20,11 +20,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use brrrty_js::Value;
 use brrrty_liquid::{Engine, Template};
-use serde_json::{Map, Value as Json};
 
-use crate::data::key_line;
-use crate::frontmatter::split_front_matter;
+use crate::data::{json_text, key_line};
+use crate::frontmatter::{Data, split_front_matter};
 use crate::loader::lexical;
 use crate::problem::{Problem, codes};
 use crate::render::{body_line, liquid_problem};
@@ -46,7 +46,7 @@ pub(crate) struct LayoutFile {
     /// Canonical, to tell layouts apart however they are named.
     pub real: PathBuf,
     pub kind: Kind,
-    pub data: Map<String, Json>,
+    pub data: Data,
     pub template: Template,
     /// Lines in the file before the body.
     pub body_line: usize,
@@ -89,8 +89,8 @@ pub(crate) struct Layouts<'a> {
 }
 
 /// The JavaScript spelling of a front matter value, for messages.
-fn shown_value(v: &Json) -> String {
-    serde_json::to_string(v).unwrap_or_default()
+fn shown_value(v: &Value) -> String {
+    json_text(v)
 }
 
 impl<'a> Layouts<'a> {
@@ -156,7 +156,7 @@ impl<'a> Layouts<'a> {
             chain.push((layout.clone(), name));
             match next {
                 None => break,
-                Some(Json::String(s)) if !s.is_empty() => name = s,
+                Some(Value::String(s)) if !s.is_empty() => name = s.to_string(),
                 Some(other) => {
                     return Err(ChainError::Layout(at_line(
                         Problem::error(

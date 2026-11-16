@@ -17,6 +17,7 @@ pub mod passthrough;
 pub mod permalink;
 pub mod problem;
 mod render;
+mod yaml;
 
 pub use build::{BuildReport, build};
 pub use discover::{Discovery, discover};

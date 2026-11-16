@@ -11,14 +11,14 @@ use brrrty_liquid::{Engine, EngineOptions, Tz};
 use brrrty_markdown::MarkdownRenderer;
 use indexmap::IndexMap;
 use rayon::prelude::*;
-use serde_json::{Map, Value as Json};
+use serde_json::Value as Json;
 
 use crate::data::{
     global_data_names, js_object, key_line, local_data_files, merge, reserved_keys,
     reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
-use crate::frontmatter::split_front_matter;
+use crate::frontmatter::{Data, split_front_matter};
 use crate::layout::{ChainError, LayoutFile, Layouts};
 use crate::loader::FsLoader;
 use crate::options::BuildOptions;
@@ -89,7 +89,7 @@ struct Shared<'a> {
     input_rel: &'a Path,
     layouts: &'a Layouts<'a>,
     /// `eleventy` and `pkg`, the data 11ty supplies to every page.
-    globals: Map<String, Json>,
+    globals: Data,
     /// The output folder as 11ty spells it in `page.outputPath`.
     output_shown: String,
 }
@@ -124,7 +124,7 @@ fn slash_path(p: &Path) -> String {
 
 /// The data 11ty gives every page: `eleventy`, then `pkg` (the project's
 /// `package.json`, or `{}`).
-fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Map<String, Json>, String) {
+fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String) {
     let input = dot_dir(input_rel);
     let output = crate::options::normalize(&opts.output);
     let output_shown = dot_dir(&output);
@@ -147,10 +147,10 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Map<String, J
         .ok()
         .and_then(|t| serde_json::from_str::<Json>(&t).ok())
         .filter(Json::is_object)
-        .unwrap_or_else(|| Json::Object(Map::new()));
-    let mut g = Map::new();
-    g.insert("eleventy".to_string(), eleventy);
-    g.insert("pkg".to_string(), pkg);
+        .unwrap_or_else(|| Json::Object(Default::default()));
+    let mut g = Data::new();
+    g.insert("eleventy".to_string(), Value::from_json(&eleventy));
+    g.insert("pkg".to_string(), Value::from_json(&pkg));
     (g, output_shown)
 }
 
@@ -203,8 +203,8 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
 
     let layouts = match front.get("layout") {
         None => Vec::new(),
-        Some(v) if !crate::js::js_truthy(v) => Vec::new(),
-        Some(Json::String(name)) => match shared.layouts.chain(name, &shown, &text) {
+        Some(v) if !v.js_truthy() => Vec::new(),
+        Some(Value::String(name)) => match shared.layouts.chain(name, &shown, &text) {
             Ok(chain) => chain,
             Err(ChainError::Page(p)) => return Err(p),
             Err(ChainError::Layout(p)) => return Ok(Loaded::LayoutFailed(p)),
@@ -215,7 +215,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
                     codes::LAYOUT_INVALID,
                     format!(
                         "`layout` must be a layout name, found {}",
-                        serde_json::to_string(other).unwrap_or_default()
+                        crate::data::json_text(other)
                     ),
                 )
                 .with_path(&shown)
@@ -245,7 +245,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
 
     // The layout chain's data, farthest first and without `layout`, then the
     // page's own, over the data 11ty supplies.
-    let mut layout_data = Map::new();
+    let mut layout_data = Data::new();
     for layout in layouts.iter().rev() {
         merge(&mut layout_data, &layout.data);
     }
@@ -283,7 +283,7 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     // `page`, in the order 11ty fills it in, after any `page` keys of the
     // page's own.
     let mut page = match data.get("page") {
-        Some(Json::Object(own)) => js_object(own),
+        Some(Value::Object(own)) => js_object(own),
         _ => IndexMap::new(),
     };
     let string = |s: String| Value::String(s.into());
@@ -323,7 +323,7 @@ const UNSUPPORTED_KEYS: &[&str] = &["pagination", "eleventyComputed"];
 
 /// Refuse pages that 11ty would process further than Brrrty can yet, instead of writing
 /// output that silently differs.
-fn reject_unsupported_keys(data: &Map<String, Json>, shown: &Path) -> Result<(), Problem> {
+fn reject_unsupported_keys(data: &Data, shown: &Path) -> Result<(), Problem> {
     let keys: Vec<String> = UNSUPPORTED_KEYS
         .iter()
         .filter(|k| data.contains_key(**k))

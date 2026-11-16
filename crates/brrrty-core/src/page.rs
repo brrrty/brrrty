@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::SystemTime;
 
+use brrrty_js::Value;
 use chrono::{DateTime, NaiveDate, Utc};
 use regex::Regex;
-use serde_json::{Map, Value};
 
+use crate::frontmatter::Data;
 use crate::problem::{Problem, codes};
 
 /// A template file with its front matter parsed.
@@ -17,7 +18,7 @@ pub struct Page {
     pub input_path: PathBuf,
     pub file_slug: String,
     pub date: DateTime<Utc>,
-    pub data: Map<String, Value>,
+    pub data: Data,
     pub body: String,
 }
 
@@ -103,17 +104,25 @@ fn parse_timestamp(text: &str) -> Option<DateTime<Utc>> {
 /// project-root-relative `input_path`, then `created`. A path date that is not a real
 /// date is a `date-invalid` problem for this page (11ty aborts the whole build).
 pub fn resolve_date(
-    front_matter: &Map<String, Value>,
+    front_matter: &Data,
     input_path: &Path,
     created: SystemTime,
     modified: SystemTime,
 ) -> Result<DateTime<Utc>, Problem> {
     if let Some(value) = front_matter.get("date") {
         let invalid = || {
-            Problem::error(codes::DATE_INVALID, format!("cannot parse date {value}"))
-                .with_help("use YYYY-MM-DD or an RFC 3339 timestamp")
+            Problem::error(
+                codes::DATE_INVALID,
+                format!("cannot parse date {}", value.to_js_string()),
+            )
+            .with_help("use YYYY-MM-DD or an RFC 3339 timestamp")
         };
-        let text = value.as_str().ok_or_else(invalid)?.trim();
+        let text = match value {
+            // An unquoted YAML timestamp is already an instant.
+            Value::Date(d) => return Ok(d.with_timezone(&Utc)),
+            Value::String(s) => s.trim(),
+            _ => return Err(invalid()),
+        };
         // 11ty keywords. Git history lookups come later, so the `git` forms use file times.
         match text {
             "Last Modified" | "git Last Modified" => return Ok(modified.into()),
@@ -148,6 +157,12 @@ pub fn resolve_date(
 mod tests {
     use super::*;
 
+    fn fm_date(s: &str) -> Data {
+        let mut m = Data::new();
+        m.insert("date".into(), Value::String(s.into()));
+        m
+    }
+
     #[test]
     fn slugs() {
         assert_eq!(
@@ -176,7 +191,7 @@ mod tests {
     #[test]
     fn date_precedence() {
         let epoch = SystemTime::UNIX_EPOCH;
-        let fm: Map<_, _> = serde_json::from_str(r#"{"date":"2020-01-02"}"#).unwrap();
+        let fm = fm_date("2020-01-02");
         assert_eq!(
             resolve_date(&fm, Path::new("2026-11-08-x.md"), epoch, epoch)
                 .unwrap()
@@ -184,13 +199,13 @@ mod tests {
             "2020-01-02T00:00:00+00:00"
         );
         assert_eq!(
-            resolve_date(&Map::new(), Path::new("2026-11-08-x.md"), epoch, epoch)
+            resolve_date(&Data::new(), Path::new("2026-11-08-x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339(),
             "2026-11-08T00:00:00+00:00"
         );
         assert_eq!(
-            resolve_date(&Map::new(), Path::new("x.md"), epoch, epoch)
+            resolve_date(&Data::new(), Path::new("x.md"), epoch, epoch)
                 .unwrap()
                 .timestamp(),
             0
@@ -200,15 +215,14 @@ mod tests {
     #[test]
     fn rfc3339_and_invalid_dates() {
         let epoch = SystemTime::UNIX_EPOCH;
-        let fm: Map<_, _> =
-            serde_json::from_str(r#"{"date":"2020-01-02T03:04:05+02:00"}"#).unwrap();
+        let fm = fm_date("2020-01-02T03:04:05+02:00");
         assert_eq!(
             resolve_date(&fm, Path::new("x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339(),
             "2020-01-02T01:04:05+00:00"
         );
-        let bad: Map<_, _> = serde_json::from_str(r#"{"date":"nope"}"#).unwrap();
+        let bad = fm_date("nope");
         assert_eq!(
             resolve_date(&bad, Path::new("x.md"), epoch, epoch)
                 .unwrap_err()
@@ -236,7 +250,7 @@ mod tests {
     #[test]
     fn dates_from_anywhere_in_path() {
         let t = SystemTime::UNIX_EPOCH;
-        let none = Map::new();
+        let none = Data::new();
         let d = |p: &str| resolve_date(&none, Path::new(p), t, t).map(|d| d.to_rfc3339());
         assert_eq!(
             d("src/posts/2026-01-02/hello.md").unwrap(),
@@ -260,7 +274,7 @@ mod tests {
     #[test]
     fn only_ascii_digits_make_a_date() {
         let t = SystemTime::UNIX_EPOCH;
-        let none = Map::new();
+        let none = Data::new();
         // Arabic-Indic and fullwidth digits are not `\d` in JavaScript.
         for p in [
             "posts/\u{662}\u{660}\u{662}\u{666}-\u{660}\u{661}-\u{660}\u{662}-hello.md",
@@ -276,7 +290,7 @@ mod tests {
     #[test]
     fn front_matter_date_beats_bad_path_date() {
         let t = SystemTime::UNIX_EPOCH;
-        let fm: Map<_, _> = serde_json::from_str(r#"{"date":"2020-01-01"}"#).unwrap();
+        let fm = fm_date("2020-01-01");
         let d = resolve_date(&fm, Path::new("src/2026-13-45-x/page.md"), t, t).unwrap();
         assert_eq!(d.to_rfc3339(), "2020-01-01T00:00:00+00:00");
     }
@@ -286,7 +300,7 @@ mod tests {
         let created = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
         let modified = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2000);
         let secs = |kw: &str| {
-            let fm: Map<_, _> = serde_json::from_value(serde_json::json!({ "date": kw })).unwrap();
+            let fm = fm_date(kw);
             resolve_date(&fm, Path::new("x.md"), created, modified)
                 .unwrap()
                 .timestamp()
@@ -301,7 +315,7 @@ mod tests {
     fn timestamps_with_time() {
         let epoch = SystemTime::UNIX_EPOCH;
         let date = |s: &str| {
-            let fm: Map<_, _> = serde_json::from_value(serde_json::json!({ "date": s })).unwrap();
+            let fm = fm_date(s);
             resolve_date(&fm, Path::new("x.md"), epoch, epoch)
                 .unwrap()
                 .to_rfc3339()
