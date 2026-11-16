@@ -356,6 +356,58 @@ fn copying_passthrough_files_never_rebuilds_on_its_own() {
 }
 
 #[test]
+fn changed_pages_are_read_only_while_a_tab_is_open() {
+    let t = site();
+    with_live(t.path(), |live| {
+        live.settle();
+        write(live.root, "src/index.md", page("two"));
+        let r = live.next_rebuild();
+        assert!(r.ok && r.pages.is_empty(), "{r:?}");
+        let mut ws = live.socket();
+        ws.recv().unwrap();
+        wait_for("the page to be counted", || live.live.clients() == 1);
+        write(live.root, "src/index.md", page("three"));
+        assert_eq!(live.next_rebuild().pages.len(), 1);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_looping_back_up_a_passthrough_folder_are_not_followed() {
+    // Two links to an ancestor make a tree of 2^n paths; following them hung every build.
+    let t = site();
+    std::os::unix::fs::symlink("..", t.path().join("src/img/a")).unwrap();
+    std::os::unix::fs::symlink("..", t.path().join("src/img/b")).unwrap();
+    std::os::unix::fs::symlink("dot.png", t.path().join("src/img/link.png")).unwrap();
+    with_live(t.path(), |live| {
+        live.settle();
+        write(live.root, "src/img/dot.png", [9, 9]);
+        let r = live.next_rebuild();
+        assert!(r.ok, "{:?}", r.problems);
+        live.no_rebuild();
+    });
+}
+
+#[test]
+fn a_page_on_a_rebound_name_cannot_listen() {
+    let t = site();
+    with_live(t.path(), |live| {
+        let port = live.server.port();
+        let mut s = TcpStream::connect(live.server.local_addr()).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        write!(
+            s,
+            "GET /.brrrty/live HTTP/1.1\r\nHost: evil.example:{port}\r\nOrigin: http://evil.example:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+        )
+        .unwrap();
+        let mut buf = String::new();
+        let _ = s.read_to_string(&mut buf);
+        assert!(buf.starts_with("HTTP/1.1 403"), "{buf}");
+        assert_eq!(live.live.clients(), 0);
+    });
+}
+
+#[test]
 fn a_failed_first_build_is_shown_to_pages_that_connect() {
     let t = site();
     write(t.path(), "src/index.md", page("{% if %}"));
@@ -437,26 +489,42 @@ fn chrome() -> Option<PathBuf> {
     mac.exists().then_some(mac)
 }
 
-/// A headless Chrome with a throwaway profile. Dropping it, on every path including a
-/// panic, kills Chrome's whole process group and then removes the profile.
+/// A headless Chrome with a throwaway profile, driven over `--remote-debugging-pipe`.
+///
+/// Dropping it, on return or panic, kills Chrome's process group and then removes the
+/// profile. If the test process dies without unwinding (Ctrl-C, a CI timeout), the pipe's
+/// ends close with it and Chrome exits on its own, so it is never left running.
 #[cfg(unix)]
 struct Chrome {
     child: std::process::Child,
     profile: Option<tempfile::TempDir>,
-    devtools: String,
+}
+
+/// The DevTools pipe: messages to Chrome, and a channel of messages from it (a reader thread
+/// splits them at the NUL that ends each).
+#[cfg(unix)]
+struct Pipe {
+    to: std::io::PipeWriter,
+    from: Receiver<String>,
 }
 
 #[cfg(unix)]
 impl Chrome {
-    fn launch(binary: &Path) -> Chrome {
+    fn launch(binary: &Path) -> (Chrome, Pipe) {
         use std::io::BufRead;
+        use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
         let profile = tempfile::tempdir().unwrap();
-        let mut child = std::process::Command::new(binary)
+        // Chrome reads commands on fd 3 and writes replies and events on fd 4.
+        let (commands_read, commands_write) = std::io::pipe().unwrap();
+        let (events_read, events_write) = std::io::pipe().unwrap();
+        let (cr, ew) = (commands_read.as_raw_fd(), events_write.as_raw_fd());
+        let mut command = std::process::Command::new(binary);
+        command
             .args([
                 "--headless=new",
                 &format!("--user-data-dir={}", profile.path().display()),
-                "--remote-debugging-port=0",
+                "--remote-debugging-pipe",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-background-networking",
@@ -472,33 +540,57 @@ impl Chrome {
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            // Its own process group, so the renderers and helpers go with it.
-            .process_group(0)
-            .spawn()
-            .expect("start Chrome");
-        let stderr = child.stderr.take().unwrap();
-        let mut chrome = Chrome {
+            .stderr(std::process::Stdio::null())
+            // Its own process group, so the renderers and helpers go with it on drop.
+            .process_group(0);
+        // SAFETY: only async-signal-safe calls (fcntl, dup2) between fork and exec. The fds
+        // are first moved above 10 so placing one on 3 can't clobber the other.
+        unsafe {
+            command.pre_exec(move || {
+                let high_r = libc::fcntl(cr, libc::F_DUPFD, 10);
+                let high_w = libc::fcntl(ew, libc::F_DUPFD, 10);
+                if high_r < 0
+                    || high_w < 0
+                    || libc::dup2(high_r, 3) < 0
+                    || libc::dup2(high_w, 4) < 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().expect("start Chrome");
+        // Only Chrome holds these ends now, so its exit closes the pipe.
+        drop((commands_read, events_write));
+        let chrome = Chrome {
             child,
             profile: Some(profile),
-            devtools: String::new(),
         };
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            // Keep draining, so Chrome never blocks on a full pipe.
-            for line in std::io::BufReader::new(stderr)
-                .lines()
-                .map_while(Result::ok)
-            {
-                if let Some(url) = line.strip_prefix("DevTools listening on ") {
-                    let _ = tx.send(url.trim().to_string());
+            let mut reader = std::io::BufReader::new(events_read);
+            loop {
+                let mut buf = Vec::new();
+                match reader.read_until(0, &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if buf.last() == Some(&0) {
+                            buf.pop();
+                        }
+                        if tx.send(String::from_utf8_lossy(&buf).into_owned()).is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         });
-        chrome.devtools = rx
-            .recv_timeout(DEADLINE)
-            .expect("Chrome to print its DevTools address");
-        chrome
+        (
+            chrome,
+            Pipe {
+                to: commands_write,
+                from: rx,
+            },
+        )
     }
 }
 
@@ -526,7 +618,7 @@ impl Drop for Chrome {
 /// A DevTools protocol session with one page.
 #[cfg(unix)]
 struct Cdp {
-    ws: Client,
+    pipe: Pipe,
     session: String,
     next: u64,
     console: Vec<(String, String)>,
@@ -535,13 +627,9 @@ struct Cdp {
 
 #[cfg(unix)]
 impl Cdp {
-    fn open(devtools: &str) -> Cdp {
-        let rest = devtools.strip_prefix("ws://").unwrap();
-        let (host, path) = rest.split_at(rest.find('/').unwrap());
-        let addr = host.parse().unwrap();
-        let ws = Client::connect(addr, path, None).unwrap();
+    fn open(pipe: Pipe) -> Cdp {
         let mut cdp = Cdp {
-            ws,
+            pipe,
             session: String::new(),
             next: 0,
             console: Vec::new(),
@@ -569,9 +657,17 @@ impl Cdp {
         if !self.session.is_empty() {
             msg["sessionId"] = Value::String(self.session.clone());
         }
-        self.ws.send(&msg.to_string()).unwrap();
+        let mut bytes = msg.to_string().into_bytes();
+        bytes.push(0);
+        self.pipe.to.write_all(&bytes).unwrap();
         loop {
-            let m = json(&self.ws.recv().unwrap());
+            let m = json(
+                &self
+                    .pipe
+                    .from
+                    .recv_timeout(DEADLINE)
+                    .expect("Chrome to answer"),
+            );
             if m["id"] == id {
                 assert!(m.get("error").is_none(), "{method}: {m}");
                 return m["result"].clone();
@@ -658,8 +754,8 @@ fn headless_chrome_follows_edits_without_a_manual_reload() {
     };
     let t = site();
     with_live(t.path(), |live| {
-        let chrome = Chrome::launch(&binary);
-        let mut cdp = Cdp::open(&chrome.devtools);
+        let (chrome, pipe) = Chrome::launch(&binary);
+        let mut cdp = Cdp::open(pipe);
         let url = format!("http://{}/", live.server.local_addr());
         cdp.call("Page.navigate", serde_json::json!({"url": url}));
         let msg = "document.getElementById('msg')?.textContent";
@@ -678,6 +774,7 @@ fn headless_chrome_follows_edits_without_a_manual_reload() {
         assert_eq!(cdp.loads, loads);
 
         // The layout: a full reload with the new HTML.
+        cdp.console.clear();
         write(
             live.root,
             "src/_includes/base.liquid",
@@ -686,6 +783,8 @@ fn headless_chrome_follows_edits_without_a_manual_reload() {
         cdp.wait_eval("document.title", "T2".into());
         cdp.wait_eval("window.__marker === undefined", true.into());
         cdp.wait_eval(msg, "two".into());
+        // The reloaded page's own socket, not the old page's on its way out.
+        cdp.wait_console("log", "Connected");
         wait_for("the reloaded page to connect", || live.live.clients() == 1);
         live.settle();
 

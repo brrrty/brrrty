@@ -110,7 +110,8 @@ pub struct Rebuild {
     pub css_only: bool,
     /// What the build reported, warnings included.
     pub problems: Vec<Problem>,
-    /// The pages of the changed templates, as now served. Empty when the build failed.
+    /// The pages of the changed templates, as now served. Read only while live-reload tabs are
+    /// connected ([`Session::live_reload`]); empty otherwise, and when the build failed.
     pub pages: Vec<ChangedPage>,
     /// The URLs of the changed stylesheets, as passthrough copied them.
     pub stylesheets: Vec<String>,
@@ -237,6 +238,15 @@ pub struct Session {
     /// macOS, copying a file can make FSEvents report it again, flags and all, though nothing
     /// changed; an event for a file that still looks like this is that echo, not an edit.
     copied: HashMap<PathBuf, Stamp>,
+    /// The same, just before the build before it; `None` until there was one. A file whose
+    /// stamp moved between the two builds without being among the files that started the
+    /// later one was edited in the moment between the debounce firing and the stamps being
+    /// taken, so its event is real even though its stamp still matches.
+    copied_before: Option<HashMap<PathBuf, Stamp>>,
+    /// The files that started the last build, relative to the project folder.
+    last_changed: Vec<PathBuf>,
+    /// The live-reload channel, when attached: changed pages are read only for open tabs.
+    live: Option<LiveReload>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     hooks: Vec<Arc<RebuildHook>>,
@@ -299,6 +309,9 @@ impl Session {
             next_tmp: 0,
             last_watch_error: None,
             copied: HashMap::new(),
+            copied_before: None,
+            last_changed: Vec::new(),
+            live: None,
             tx,
             rx,
             hooks: Vec::new(),
@@ -374,6 +387,7 @@ impl Session {
         }
         let hook = live.clone();
         self.on_rebuild(Arc::new(move |r: &Rebuild| hook.rebuilt(r)));
+        self.live = Some(live.clone());
         live
     }
 
@@ -439,8 +453,10 @@ impl Session {
                 println!("File changed: {}", p.display());
             }
         }
+        self.last_changed = changed.to_vec();
         let built = self.build();
         let (mut ok, problems) = (built.ok, built.problems);
+        let tabs_open = self.live.as_ref().is_some_and(|l| l.clients() > 0);
         let mut pages = Vec::new();
         let mut output_problems = Vec::new();
         if let Some(dir) = built.dir {
@@ -450,7 +466,7 @@ impl Session {
                     self.mirror(&dir);
                     output_problems = self.mirror_problems.clone();
                     // The changed templates' pages, for a page showing one to patch itself.
-                    for p in &built.pages {
+                    for p in built.pages.iter().filter(|_| tabs_open) {
                         if changed.contains(&p.source)
                             && let Ok(content) = fs::read_to_string(dir.join(&p.output))
                         {
@@ -524,7 +540,10 @@ impl Session {
             }
         };
         self.refresh(&opts);
-        self.copied = stamps(&self.passthrough);
+        let now = stamps(&self.passthrough);
+        let first = self.next_build == 0;
+        let before = std::mem::replace(&mut self.copied, now);
+        self.copied_before = (!first).then_some(before);
         let dir = self.new_build_dir();
         // The user (or a `brrrty build`) may have removed the output folder meanwhile.
         let _ = fs::create_dir_all(&self.staging);
@@ -774,10 +793,15 @@ impl Session {
             if self.rewatch && p.is_dir() && (*p == self.input || *p == self.root) {
                 self.rewatch_all();
             }
-            let echo = self
-                .copied
-                .get(p)
-                .is_some_and(|s| Stamp::of(p).as_ref() == Some(s));
+            let echo = {
+                let rel = p.strip_prefix(&self.root).unwrap_or(p);
+                is_echo(
+                    Stamp::of(p).as_ref(),
+                    self.copied.get(p),
+                    self.copied_before.as_ref().map(|b| b.get(p)),
+                    self.last_changed.iter().any(|c| c == rel),
+                )
+            };
             if !echo && self.counts(p) {
                 any = true;
                 let rel = p.strip_prefix(&self.root).unwrap_or(p).to_path_buf();
@@ -927,18 +951,45 @@ impl Stamp {
     }
 }
 
-/// The stamps of every file at or under `paths`.
+/// Whether an event for a passthrough file is the echo of the last build copying it: the file
+/// looks as it did just before that build (`now` and `at_build`), and either it looked the
+/// same before the build before (`before`; `None` when there was none) or its change was
+/// among the files that started the last build (`announced`).
+fn is_echo(
+    now: Option<&Stamp>,
+    at_build: Option<&Stamp>,
+    before: Option<Option<&Stamp>>,
+    announced: bool,
+) -> bool {
+    let Some(at_build) = at_build else {
+        return false;
+    };
+    if now != Some(at_build) {
+        return false;
+    }
+    match before {
+        None => true,
+        Some(b) => b == Some(at_build) || announced,
+    }
+}
+
+/// The stamps of every file at or under `paths`. Symlinked folders are not followed, as the
+/// passthrough copy doesn't follow them, so a link back up the tree can't loop; a symlinked
+/// file is stamped by its target.
 fn stamps(paths: &[PathBuf]) -> HashMap<PathBuf, Stamp> {
     let mut out = HashMap::new();
     let mut todo: Vec<PathBuf> = paths.to_vec();
     while let Some(p) = todo.pop() {
-        match fs::read_dir(&p) {
-            Ok(entries) => todo.extend(entries.flatten().map(|e| e.path())),
-            Err(_) => {
-                if let Some(s) = Stamp::of(&p) {
-                    out.insert(p, s);
-                }
+        let Ok(meta) = fs::symlink_metadata(&p) else {
+            continue;
+        };
+        if meta.is_dir() {
+            if let Ok(entries) = fs::read_dir(&p) {
+                todo.extend(entries.flatten().map(|e| e.path()));
             }
+        } else if let Some(s) = Stamp::of(&p) {
+            // A file, or a symlink to one; a symlink to a folder has no stamp.
+            out.insert(p, s);
         }
     }
     out
@@ -1035,4 +1086,37 @@ fn same_bytes(a: &Path, b: &Path) -> bool {
         return false;
     }
     matches!((fs::read(a), fs::read(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    fn stamp(len: u64) -> Stamp {
+        Stamp {
+            len,
+            modified: None,
+            #[cfg(unix)]
+            changed: (0, 0, 0),
+        }
+    }
+
+    #[test]
+    fn echoes_and_edits_are_told_apart() {
+        let (a, b) = (stamp(1), stamp(2));
+        // After the first build: unchanged is an echo, changed or gone is an edit.
+        assert!(is_echo(Some(&a), Some(&a), None, false));
+        assert!(!is_echo(Some(&b), Some(&a), None, false));
+        assert!(!is_echo(None, Some(&a), None, false));
+        // A file that isn't a passthrough file is never an echo.
+        assert!(!is_echo(Some(&a), None, None, false));
+        // Unchanged across two builds: an echo.
+        assert!(is_echo(Some(&a), Some(&a), Some(Some(&a)), false));
+        // Changed between the two builds and announced by the last one: an echo.
+        assert!(is_echo(Some(&b), Some(&b), Some(Some(&a)), true));
+        // Changed between them but not announced: edited after the debounce fired and
+        // before the stamps were taken, so the event is the edit's own.
+        assert!(!is_echo(Some(&b), Some(&b), Some(Some(&a)), false));
+        assert!(!is_echo(Some(&b), Some(&b), Some(None), false));
+    }
 }

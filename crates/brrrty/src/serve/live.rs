@@ -12,6 +12,7 @@
 //! Brrrty also logs a build error to pages that connect while it stands, and reports
 //! problems writing the output folder the same way.
 
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use brrrty_core::{Problem, Severity};
@@ -31,11 +32,56 @@ const MORPHDOM_JS: &str = include_str!("morphdom.js");
 /// The tag injected into HTML pages.
 pub const SCRIPT_TAG: &str = r#"<script type="module" src="/.brrrty/reload-client.js"></script>"#;
 
+/// How many messages may wait for one page. A page that falls this far behind has stopped
+/// reading, and is dropped.
+const QUEUE: usize = 16;
+
+/// One connected page. Its messages go through a queue that a thread of its own writes out,
+/// so a page that reads slowly or not at all holds up only itself, never a rebuild.
+struct Page {
+    ws: WebSocket,
+    queue: SyncSender<Arc<str>>,
+}
+
+impl Page {
+    fn new(ws: WebSocket) -> Option<Page> {
+        let (queue, rx) = mpsc::sync_channel::<Arc<str>>(QUEUE);
+        let writer = ws.clone();
+        std::thread::Builder::new()
+            .name("brrrty-live-reload".into())
+            .spawn(move || {
+                for message in rx {
+                    if writer.send_text(&message).is_err() {
+                        break;
+                    }
+                }
+                writer.close();
+            })
+            .ok()?;
+        Some(Page { ws, queue })
+    }
+
+    /// Queue `message`; false when the page is gone or too far behind.
+    fn send(&self, message: &Arc<str>) -> bool {
+        if self.ws.is_open() && self.queue.try_send(Arc::clone(message)).is_ok() {
+            return true;
+        }
+        self.ws.close();
+        false
+    }
+}
+
 #[derive(Default)]
 struct State {
-    sockets: Vec<WebSocket>,
+    pages: Vec<Page>,
     /// The `error` message for the problems that stand, sent to each page that connects.
-    error: Option<String>,
+    error: Option<Arc<str>>,
+}
+
+impl State {
+    fn broadcast(&mut self, message: &Arc<str>) {
+        self.pages.retain(|p| p.send(message));
+    }
 }
 
 /// The live-reload channel of one server. Clones share it.
@@ -72,13 +118,18 @@ impl LiveReload {
     }
 
     fn connected(&self, ws: WebSocket) {
+        let Some(page) = Page::new(ws.clone()) else {
+            ws.close();
+            return;
+        };
+        // Queued under the lock, so no rebuild's message can come before these.
         let mut state = self.lock();
-        let mut ok = ws.send_text(r#"{"type":"connected"}"#).is_ok();
+        let mut ok = page.send(&Arc::from(r#"{"type":"connected"}"#));
         if let Some(error) = &state.error {
-            ok = ok && ws.send_text(error).is_ok();
+            ok = ok && page.send(error);
         }
         if ok {
-            state.sockets.push(ws);
+            state.pages.push(page);
         }
     }
 
@@ -89,38 +140,37 @@ impl LiveReload {
     /// How many pages are connected.
     pub fn clients(&self) -> usize {
         let mut state = self.lock();
-        state.sockets.retain(WebSocket::is_open);
-        state.sockets.len()
+        state.pages.retain(|p| p.ws.is_open());
+        state.pages.len()
     }
 
-    fn broadcast(state: &mut State, message: &str) {
-        state.sockets.retain(|ws| ws.send_text(message).is_ok());
-    }
-
-    /// Tell the open pages about a rebuild.
+    /// Tell the open pages about a rebuild. Never waits on a page.
     pub fn rebuilt(&self, r: &Rebuild) {
+        // Built before taking the lock: a reload can carry whole pages.
+        let reload: Option<Arc<str>> = r.ok.then(|| reload_message(r).into());
+        let error: Option<Arc<str>> = if !r.ok {
+            Some(error_message(&r.problems).into())
+        } else if !r.output_problems.is_empty() {
+            Some(error_message(&r.output_problems).into())
+        } else {
+            None
+        };
         let mut state = self.lock();
-        if !r.ok {
-            let message = error_message(&r.problems);
-            Self::broadcast(&mut state, &message);
-            state.error = Some(message);
-            return;
+        if let Some(reload) = &reload {
+            state.broadcast(reload);
         }
-        Self::broadcast(&mut state, &reload_message(r));
-        state.error = None;
-        if !r.output_problems.is_empty() {
-            let message = error_message(&r.output_problems);
-            Self::broadcast(&mut state, &message);
-            state.error = Some(message);
+        if let Some(error) = &error {
+            state.broadcast(error);
         }
+        state.error = error;
     }
 
     /// Log `problems` in the open pages, and in each page that connects until the next good
     /// build. For a first build that failed, before any rebuild.
     pub fn show_problems(&self, problems: &[Problem]) {
+        let message: Arc<str> = error_message(problems).into();
         let mut state = self.lock();
-        let message = error_message(problems);
-        Self::broadcast(&mut state, &message);
+        state.broadcast(&message);
         state.error = Some(message);
     }
 }

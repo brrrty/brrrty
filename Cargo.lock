@@ -196,6 +196,7 @@ dependencies = [
  "brrrty-markdown",
  "brrrty-serve",
  "clap",
+ "libc",
  "miette",
  "notify",
  "percent-encoding",
