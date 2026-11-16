@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use rayon::prelude::*;
+
 use crate::options::{BuildOptions, root_relative};
 use crate::problem::{Problem, codes};
 
@@ -287,6 +289,7 @@ fn copy_planned(c: &mut Copier) {
     }
     let plan = std::mem::take(&mut c.plan);
     let mut done: HashSet<PathBuf> = HashSet::new();
+    let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (source, dest) in plan {
         if !done.insert(dest.clone()) {
             continue;
@@ -311,34 +314,81 @@ fn copy_planned(c: &mut Copier) {
             );
             continue;
         }
-        copy_file(&source, &dest, c);
+        jobs.push((source, dest));
+    }
+    // Every job has its own destination, so they can run in any order; the
+    // results are folded in walk order to keep the report stable.
+    let (root, out, pages) = (c.root, c.out, c.pages);
+    let outcomes: Vec<Copied> = crate::io_threads::install(|| {
+        jobs.par_iter()
+            .map(|(source, dest)| copy_file(source, dest, root, out, pages))
+            .collect()
+    });
+    for outcome in outcomes {
+        if outcome.overrides_page {
+            c.overridden.insert(outcome.dest);
+        }
+        c.problems.extend(outcome.problems);
+        match outcome.placed {
+            Some((placed, true)) => {
+                c.copied += 1;
+                c.files.push(placed);
+            }
+            Some((placed, false)) => {
+                c.unchanged += 1;
+                c.files.push(placed);
+            }
+            None => {}
+        }
     }
 }
 
-fn copy_file(source: &Path, dest: &Path, c: &mut Copier) {
+/// What happened to one passthrough file.
+struct Copied {
+    dest: PathBuf,
+    overrides_page: bool,
+    /// The file's `(source, destination)` as reported, and whether it was
+    /// copied (rather than already up to date); `None` if it failed.
+    placed: Option<((PathBuf, PathBuf), bool)>,
+    problems: Vec<Problem>,
+}
+
+fn copy_file(
+    source: &Path,
+    dest: &Path,
+    root: &Path,
+    out: &Path,
+    pages: &HashMap<PathBuf, PathBuf>,
+) -> Copied {
+    let mut done = Copied {
+        dest: dest.to_path_buf(),
+        overrides_page: false,
+        placed: None,
+        problems: Vec::new(),
+    };
     let meta = match fs::metadata(source) {
         Ok(m) => m,
         Err(e) => {
-            c.problems.push(
+            done.problems.push(
                 Problem::error(
                     codes::PASSTHROUGH_COPY_FAILED,
                     format!("cannot read passthrough source: {e}"),
                 )
-                .with_path(root_relative(c.root, source)),
+                .with_path(root_relative(root, source)),
             );
-            return;
+            return done;
         }
     };
-    let overrides_page = c.pages.get(dest);
+    let overrides_page = pages.get(dest);
     if let Some(page) = overrides_page {
-        c.overridden.insert(dest.to_path_buf());
+        done.overrides_page = true;
         // The same bytes landing on the same path is not worth a warning.
         let identical = matches!(
             (fs::read(source), fs::read(dest)),
             (Ok(a), Ok(b)) if a == b
         );
         if !identical {
-            c.problems.push(
+            done.problems.push(
             Problem::warning(
                 codes::PASSTHROUGH_OVERRIDES_PAGE,
                 format!(
@@ -355,31 +405,28 @@ fn copy_file(source: &Path, dest: &Path, c: &mut Copier) {
         }
     }
     let placed = (
-        root_relative(c.root, source),
-        dest.strip_prefix(c.out).unwrap_or(dest).to_path_buf(),
+        root_relative(root, source),
+        dest.strip_prefix(out).unwrap_or(dest).to_path_buf(),
     );
     if overrides_page.is_none() && is_up_to_date(&meta, dest) {
-        c.unchanged += 1;
-        c.files.push(placed);
-        return;
+        done.placed = Some((placed, false));
+        return done;
     }
     let result = dest
         .parent()
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| fs::copy(source, dest).map(|_| ()));
     match result {
-        Ok(()) => {
-            c.copied += 1;
-            c.files.push(placed);
-        }
-        Err(e) => c.problems.push(
+        Ok(()) => done.placed = Some((placed, true)),
+        Err(e) => done.problems.push(
             Problem::error(
                 codes::PASSTHROUGH_COPY_FAILED,
                 format!("cannot copy file: {e}"),
             )
-            .with_path(root_relative(c.root, source)),
+            .with_path(root_relative(root, source)),
         ),
     }
+    done
 }
 
 fn is_up_to_date(source: &fs::Metadata, dest: &Path) -> bool {

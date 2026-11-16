@@ -2217,30 +2217,36 @@ fn build_once(
             return report;
         }
     }
-    let results: Vec<Written> = ready
-        .into_par_iter()
-        .map(|r| -> Written {
-            let (i, dest, html, shown) = r?;
-            if let Some(parent) = dest.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
+    // Written on the writer threads: see `io_threads`.
+    let results: Vec<Written> = crate::io_threads::install(|| {
+        ready
+            .into_par_iter()
+            .map(|r| -> Written {
+                let (i, dest, html, shown) = r?;
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        (
+                            Problem::error(
+                                codes::WRITE_FAILED,
+                                format!("cannot create folder: {e}"),
+                            )
+                            .with_path(shown),
+                            None,
+                        )
+                    })?;
+                }
+                let hash = content_hash(html.as_bytes());
+                fs::write(&dest, html).map_err(|e| {
                     (
-                        Problem::error(codes::WRITE_FAILED, format!("cannot create folder: {e}"))
+                        Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
                             .with_path(shown),
                         None,
                     )
                 })?;
-            }
-            let hash = content_hash(html.as_bytes());
-            fs::write(&dest, html).map_err(|e| {
-                (
-                    Problem::error(codes::WRITE_FAILED, format!("cannot write output: {e}"))
-                        .with_path(shown),
-                    None,
-                )
-            })?;
-            Ok((i, hash))
-        })
-        .collect();
+                Ok((i, hash))
+            })
+            .collect()
+    });
     // The pages of one template often fail the same way: say it once. A page
     // that isn't written reports its own problem only when another page's
     // problem points to it.

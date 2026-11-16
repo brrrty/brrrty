@@ -1109,3 +1109,61 @@ fn the_report_lists_refused_templates_and_hashes_what_it_wrote() {
     write(root, "src/x.njk", "x");
     assert!(!build(&strict, &MarkdownIt::new()).complete);
 }
+
+#[test]
+fn many_passthrough_files_and_pages_land_intact_and_report_in_walk_order() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let mut expected = Vec::new();
+    for d in 0..12 {
+        for f in 0..25 {
+            let rel = format!("assets/d{d:02}/sub/f{f:02}.bin");
+            write(root, &rel, format!("{d}-{f}").repeat(f + 1));
+            expected.push((PathBuf::from(&rel), PathBuf::from(&rel)));
+        }
+        for p in 0..10 {
+            write(
+                root,
+                &format!("src/s{d}/p{p}.md"),
+                format!("---\npermalink: /s{d}/p{p}/deep/\n---\npage {d} {p}\n"),
+            );
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let run = root.join("assets/d00/sub/f00.bin");
+        fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let o = opts_with_passthrough(root, &["assets"]);
+    let r = build(&o, &MarkdownIt::new());
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!((r.written, r.copied, r.unchanged), (120, 300, 0));
+    // Copies run in parallel, but the report keeps the order of the walk.
+    assert_eq!(r.passthrough, expected);
+    for (src, dest) in &expected {
+        assert_eq!(
+            fs::read(root.join(src)).unwrap(),
+            fs::read(root.join("_site").join(dest)).unwrap()
+        );
+    }
+    for d in 0..12 {
+        for p in 0..10 {
+            let page = read(root.join(format!("_site/s{d}/p{p}/deep/index.html")));
+            assert!(page.contains(&format!("page {d} {p}")), "{page}");
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &str| fs::metadata(root.join(p)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode("_site/assets/d00/sub/f00.bin"), 0o755);
+        assert_eq!(
+            mode("_site/assets/d00/sub/f01.bin"),
+            mode("assets/d00/sub/f01.bin")
+        );
+    }
+    let again = build(&o, &MarkdownIt::new());
+    assert_eq!((again.copied, again.unchanged), (0, 300));
+    assert_eq!(again.passthrough, expected);
+}
