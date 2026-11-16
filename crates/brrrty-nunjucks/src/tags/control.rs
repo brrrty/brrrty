@@ -48,6 +48,7 @@ impl Renderer<'_> {
                         let frame = tpl.frame();
                         frame.set(name, v, false)?;
                         self.loop_bindings(&frame, i, &len)?;
+                        self.step()?;
                         self.exec(&f.body, scope, out)?;
                         i += 1;
                         check_count(i, self.engine.item_limit)?;
@@ -70,6 +71,7 @@ impl Renderer<'_> {
                         }
                         let frame = tpl.frame();
                         self.loop_bindings(&frame, i, &len)?;
+                        self.step()?;
                         self.exec(&f.body, scope, out)?;
                         i += 1;
                         check_count(i, self.engine.item_limit)?;
@@ -88,6 +90,7 @@ impl Renderer<'_> {
                         frame.set(&names[0], k, false)?;
                         frame.set(&names[1], v, false)?;
                         self.loop_bindings(&frame, i, &len)?;
+                        self.step()?;
                         self.exec(&f.body, scope, out)?;
                         check_count(i + 1, self.engine.item_limit)?;
                     }

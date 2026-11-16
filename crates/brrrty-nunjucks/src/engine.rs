@@ -61,6 +61,9 @@ pub struct Engine {
     pub(crate) output_limit: usize,
     /// The most items a loop or `range()` may have.
     pub(crate) item_limit: usize,
+    /// The most loop iterations a render may run in all, nested loops,
+    /// includes and macros together.
+    pub(crate) step_limit: usize,
 }
 
 /// The most a render may write: 512 MiB.
@@ -74,6 +77,7 @@ impl Engine {
             globals: HashMap::new(),
             output_limit: OUTPUT_LIMIT,
             item_limit: crate::render::MAX_ITEMS,
+            step_limit: crate::render::MAX_STEPS,
         }
     }
 

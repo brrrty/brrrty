@@ -18,6 +18,10 @@ use crate::value::{Func, Global, Obj, Val};
 
 /// The most items a loop or `range()` may have.
 pub(crate) const MAX_ITEMS: usize = 1_000_000;
+/// The most loop iterations a render may run in all. One loop is held to
+/// [`MAX_ITEMS`], but nested loops multiply: two nested `range(10000)`
+/// loops would run for minutes, and this stops them in seconds.
+pub(crate) const MAX_STEPS: usize = 3_000_000;
 /// The most templates (includes, imports, layouts) open at once.
 pub(crate) const MAX_TEMPLATES: usize = 64;
 /// The most macro calls open at once.
@@ -176,6 +180,8 @@ pub(crate) struct Renderer<'a> {
     written: usize,
     pub templates: usize,
     pub calls: usize,
+    /// Loop iterations run so far, in all.
+    steps: usize,
     /// Loaded templates by the name they were loaded under.
     pub cache: HashMap<String, Arc<Program>>,
     undefined: BTreeSet<String>,
@@ -189,6 +195,7 @@ impl<'a> Renderer<'a> {
             written: 0,
             templates: 0,
             calls: 0,
+            steps: 0,
             cache: HashMap::new(),
             undefined: BTreeSet::new(),
         }
@@ -222,6 +229,18 @@ impl<'a> Renderer<'a> {
             }
             Err(e) => Err(e.into_error(&program.name)),
         }
+    }
+
+    /// Counts one loop iteration against the render's budget.
+    pub fn step(&mut self) -> R<()> {
+        self.steps += 1;
+        if self.steps > self.engine.step_limit {
+            return Err(too_many(format!(
+                "the loops in this render ran more than {} times in all",
+                self.engine.step_limit
+            )));
+        }
+        Ok(())
     }
 
     pub fn ops(&self) -> Ops {
@@ -847,6 +866,31 @@ mod tests {
     #[test]
     fn the_real_limit_is_512_mib() {
         assert_eq!(engine().output_limit, 512 * 1024 * 1024);
+    }
+
+    /// Each loop is under the item limit, but together they run past the
+    /// render's budget.
+    #[test]
+    fn nested_loops_share_one_budget() {
+        let mut e = engine();
+        assert_eq!(e.step_limit, 3_000_000);
+        e.step_limit = 1000;
+        let nested = |n: usize| {
+            format!(
+                "{{% for a in range({n}) %}}{{% for b in range({n}) %}}{{% endfor %}}{{% endfor %}}"
+            )
+        };
+        assert_eq!(render(&e, &nested(30), &[]).unwrap(), "");
+        let err = render(&e, &nested(40), &[]).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Limit);
+        assert!(
+            err.message.contains("more than 1000 times in all"),
+            "{err:?}"
+        );
+        // `for k, v in` counts too.
+        let obj = "{% for a in range(10) %}{% for k, v in {a:1,b:2} %}{% endfor %}{% endfor %}";
+        e.step_limit = 20;
+        assert_eq!(kind(render(&e, obj, &[])), ErrorKind::Limit);
     }
 
     #[test]
