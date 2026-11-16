@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "brrrty-compat",
  "brrrty-core",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-compat"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "globset",
  "regex",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "brrrty-js",
  "brrrty-liquid",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-js"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "chrono",
  "indexmap",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-liquid"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "brrrty-js",
  "chrono",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-markdown"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "markdown-it",
 ]
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "brrty"
-version = "0.0.3"
+version = "0.0.4"
 
 [[package]]
 name = "bstr"

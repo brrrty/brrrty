@@ -1,6 +1,6 @@
 [package]
 name = "brrrty"
-version = "0.0.3"
+version = "0.0.4"
 description = "Brrrty, a fast static site generator compatible with Eleventy (11ty) projects."
 edition.workspace = true
 rust-version.workspace = true
@@ -21,8 +21,8 @@ name = "brrrty"
 path = "src/main.rs"
 
 [dependencies]
-brrrty-core = { path = "../brrrty-core", version = "0.0.3" }
-brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.3" }
+brrrty-core = { path = "../brrrty-core", version = "0.0.4" }
+brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.4" }
 clap = { version = "4.6.7", features = ["derive"] }
 miette = { version = "7.6.0", features = ["fancy"] }
 percent-encoding = "2.3.1"
@@ -30,4 +30,4 @@ percent-encoding = "2.3.1"
 [dev-dependencies]
 tempfile = "3.27.0"
 toml = "1.2.1"
-brrrty-compat = { path = "../brrrty-compat", version = "0.0.3" }
+brrrty-compat = { path = "../brrrty-compat", version = "0.0.4" }
