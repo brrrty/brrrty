@@ -1,0 +1,7 @@
+{%- if pagination.pages.length > 1 %}
+<nav class="pager" aria-label="Pages">
+  {%- if pagination.href.previous %}<a rel="prev" href="{{ pagination.href.previous }}">Newer</a>{% endif %}
+  <span>Page {{ pagination.pageNumber + 1 }} of {{ pagination.pages.length }}</span>
+  {%- if pagination.href.next %}<a rel="next" href="{{ pagination.href.next }}">Older</a>{% endif %}
+</nav>
+{%- endif %}

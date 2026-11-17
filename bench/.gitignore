@@ -1,0 +1,7 @@
+# Written by generate.mjs and run.mjs.
+/site/node_modules/
+/site/src/posts/*.md
+/site/src/images/
+/site/_site/
+/site/_site-11ty/
+/site/_site-brrrty/

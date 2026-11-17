@@ -1,0 +1,10 @@
+<header class="site-header">
+  <a class="brand" href="/">{{ site.title }}</a>
+  <nav>
+    <ul>
+      {%- for link in [["Home", "/"], ["Tags", "/tags/"], ["Categories", "/categories/"], ["About", "/about/"], ["Feed", "/feed.xml"]] %}
+      <li><a href="{{ link[1] }}"{% if page.url == link[1] %} aria-current="page"{% endif %}>{{ link[0] }}</a></li>
+      {%- endfor %}
+    </ul>
+  </nav>
+</header>

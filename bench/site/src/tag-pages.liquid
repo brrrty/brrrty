@@ -1,0 +1,24 @@
+---
+layout: layouts/base.njk
+pagination:
+  data: collections.tagPages
+  size: 1
+  alias: tp
+permalink: "/tags/{{ tp.tag | slugify }}/{% if tp.pageNumber > 1 %}page/{{ tp.pageNumber }}/{% endif %}"
+eleventyComputed:
+  title: "Tagged {{ tp.tag }}"
+---
+<h1>Tagged #{{ tp.tag }}</h1>
+<p>{{ tp.total }} posts, page {{ tp.pageNumber }} of {{ tp.totalPages }}.</p>
+{%- for post in tp.posts %}
+{% include "partials/post-card.liquid" %}
+{%- endfor %}
+<nav class="pager" aria-label="Pages">
+  {%- if tp.pageNumber > 1 %}
+  {%- assign prev = tp.pageNumber | minus: 1 %}
+  <a rel="prev" href="/tags/{{ tp.tag | slugify }}/{% if prev > 1 %}page/{{ prev }}/{% endif %}">Newer</a>
+  {%- endif %}
+  {%- if tp.pageNumber < tp.totalPages %}
+  <a rel="next" href="/tags/{{ tp.tag | slugify }}/page/{{ tp.pageNumber | plus: 1 }}/">Older</a>
+  {%- endif %}
+</nav>

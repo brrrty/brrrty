@@ -1,0 +1,9 @@
+{
+  "title": "Example Field Notes",
+  "description": "A synthetic blog for benchmarking static site generators.",
+  "url": "https://example.com",
+  "language": "en",
+  "author": "A. Writer",
+  "tagPageSize": 10,
+  "categoryPageSize": 20
+}

@@ -1,0 +1,13 @@
+---
+layout: layouts/base.njk
+---
+<article class="post">
+  <h1>{{ title }}</h1>
+  <p class="meta">
+    <time datetime="{{ page.date | isoDate }}">{{ page.date | readableDate }}</time>
+    &middot; {{ content | readingTime }} min read
+    &middot; filed under <a href="/categories/{{ category | slugify }}/">{{ category }}</a>, {{ page.date | date: "%B %Y" }}
+  </p>
+  {{ content }}
+  {% include "partials/tag-list.liquid" %}
+</article>
