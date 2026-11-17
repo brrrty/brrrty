@@ -126,6 +126,7 @@ mod git;
 mod glob;
 mod highlight;
 mod jshelpers;
+mod markdown_rules;
 mod object;
 mod plugins;
 use brrrty_jsregex::matcher as regex;
@@ -191,6 +192,8 @@ pub struct SiteConfig {
     pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
+    /// Renderer rules `amend_library("md", ...)` set on 11ty's library.
+    pub markdown_rules: Option<brrrty_core::MarkdownRules>,
     /// What the script read from the project, and its filters and collections read later.
     pub reads: brrrty_core::FileReads,
 }
@@ -208,6 +211,7 @@ impl SiteConfig {
             collections: self.collections.clone(),
             data: None,
             syntax_highlight: self.syntax_highlight.clone(),
+            markdown_rules: self.markdown_rules.clone(),
             feeds: self.feeds.clone(),
             template_engines: self.template_engines,
             reads: self.reads.clone(),
@@ -356,6 +360,16 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
             name,
         })
         .collect();
+    let markdown_rules = state
+        .markdown_lib
+        .map(|md| md.rules())
+        .filter(|rules| !rules.is_empty())
+        .map(|rules| {
+            brrrty_core::MarkdownRules(Arc::new(markdown_rules::ConfigRules {
+                runtime: runtime.clone(),
+                rules,
+            }))
+        });
     Ok(SiteConfig {
         file: PathBuf::from(CONFIG_FILE),
         dir,
@@ -371,6 +385,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         filters,
         collections,
         syntax_highlight: state.syntax_highlight,
+        markdown_rules,
         feeds: state.feeds,
         reads,
     })

@@ -298,6 +298,8 @@ pub(crate) struct Pipeline<'a> {
     /// 11ty's syntax highlighting plugin, when the config added it and it
     /// highlights Markdown.
     pub highlight: Option<&'a crate::plugins::syntaxhighlight::SyntaxHighlight>,
+    /// Renderer rules on 11ty's library (`amendLibrary("md", ...)`).
+    pub rules: Option<&'a (dyn brrrty_markdown::RenderRules + Send + Sync)>,
 }
 
 /// The help on a page whose code Brrrty can't highlight exactly.
@@ -421,14 +423,31 @@ impl Pipeline<'_> {
         line: Option<usize>,
     ) -> Result<String, Problem> {
         // `Err(Ok(why))` is a construct the Markdown library refuses; `Err(Err(p))` a highlight
-        // problem.
+        // problem or a renderer rule that failed.
+        let rule_failed = |why: String| {
+            Problem::error(codes::MARKDOWN_RULE_FAILED, why)
+                .with_path(file)
+                .with_help("fix the markdown-it renderer rule named above in your config (`config.amend_library(\"md\", ...)`)")
+        };
+        let with_rules = |highlight: Option<&mut brrrty_markdown::Highlight<'_>>| {
+            let rules = self.rules.expect("called with rules");
+            self.markdown
+                .try_render_with_rules(source, highlight, rules)
+                .map_err(|e| match e {
+                    brrrty_markdown::RenderError::Refused(why) => Ok(why),
+                    brrrty_markdown::RenderError::Rule(why) => Err(rule_failed(why)),
+                })
+        };
         let render = || -> Result<String, Result<String, Problem>> {
             let Some(plugin) = self.highlight else {
+                if self.rules.is_some() {
+                    return with_rules(None);
+                }
                 return self.markdown.try_render(source).map_err(Ok);
             };
             let mut page = plugin.page();
             let mut failed = None;
-            let html = self.markdown.try_render_highlighted(source, &mut |fence| {
+            let mut highlight = |fence: &brrrty_markdown::Fence<'_>| {
                 if failed.is_some() {
                     return None;
                 }
@@ -446,10 +465,17 @@ impl Pipeline<'_> {
                         None
                     }
                 }
-            });
+            };
+            let html = if self.rules.is_some() {
+                with_rules(Some(&mut highlight))
+            } else {
+                self.markdown
+                    .try_render_highlighted(source, &mut highlight)
+                    .map_err(Ok)
+            };
             match failed {
                 Some(p) => Err(Err(p)),
-                None => html.map_err(Ok),
+                None => html,
             }
         };
         let refused = |why: String| {

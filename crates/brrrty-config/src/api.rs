@@ -74,6 +74,8 @@ pub struct State {
     pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
+    /// 11ty's markdown-it, once `amend_library("md", ...)` has been called.
+    pub markdown_lib: Option<crate::markdown_rules::MdLib>,
 }
 
 /// The `config` object.
@@ -303,6 +305,35 @@ pub fn engine_for(
             add_plugin(&mut lock(&c.0), &name, Some(options), ctx.call_position())
         },
     );
+    e.register_fn(
+        "amend_library",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString,
+         f: FnPtr|
+         -> Result<(), Box<EvalAltResult>> {
+            if name != "md" {
+                return Err(runtime(format!(
+                    "amend_library(\"{name}\", ...): Brrrty only has 11ty's Markdown library, \"md\""
+                )));
+            }
+            let md = lock(&c.0)
+                .markdown_lib
+                .get_or_insert_with(crate::markdown_rules::MdLib::eleventy)
+                .clone();
+            let _ = f.call_within_context::<Dynamic>(&ctx, (md,))?;
+            Ok(())
+        },
+    );
+    e.register_fn(
+        "set_library",
+        |_: &mut Config, name: ImmutableString, _: Dynamic| -> Result<(), Box<EvalAltResult>> {
+            Err(runtime(format!(
+                "set_library(\"{name}\", ...) isn't ported: Brrrty renders Markdown with its own markdown-it, set up as 11ty's; use amend_library(\"md\", |md| ...) for renderer rules"
+            )))
+        },
+    );
+    crate::markdown_rules::register(&mut e);
     crate::collections::register(&mut e);
     crate::object::register(&mut e);
     crate::jshelpers::register(&mut e);

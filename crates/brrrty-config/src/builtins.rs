@@ -31,7 +31,7 @@ fn format(d: &Dynamic, fmt: &str, zone: &str, locale: &str) -> Res<String> {
 }
 
 /// `s || ''`, then markdown-it's check that the input is a string.
-fn source(s: &Dynamic, what: &str) -> Res<Option<String>> {
+pub(crate) fn source(s: &Dynamic, what: &str) -> Res<Option<String>> {
     let v = to_value(s).map_err(|why| invalid(format!("{what}: {why}"), rhai::Position::NONE))?;
     if !v.js_truthy() {
         return Ok(None);
@@ -46,7 +46,7 @@ fn source(s: &Dynamic, what: &str) -> Res<Option<String>> {
 }
 
 /// The options map of `markdown(s, options)`.
-fn markdown_options(options: &Dynamic) -> Res<markdown::Options> {
+pub(crate) fn markdown_options(options: &Dynamic) -> Res<markdown::Options> {
     let err = |m: String| invalid(format!("markdown: {m}"), rhai::Position::NONE);
     let v = to_value(options).map_err(|why| err(format!("options: {why}")))?;
     let brrrty_js::Value::Object(map) = v else {

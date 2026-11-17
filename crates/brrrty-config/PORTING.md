@@ -195,8 +195,64 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   `fuzzy_link: true`, as in JavaScript. The typographer is markdown-it's:
   `(c)`, `+-`, `...`, `--`, `---`, and smart quotes `“”‘’`. markdown-it is
   15.0.3; a site with 15.0.2 installed differs from it only
-  with `html: true`, on some HTML comments. A config that adds a markdown-it
-  plugin or rule to its own instance can't be ported yet.
+  with `html: true`, on some HTML comments. For an instance with renderer
+  rules, use `markdown_it(options)` (see below).
+
+### markdown-it renderer rules
+
+A renderer rule (`md.renderer.rules.link_open = (tokens, idx, options, env,
+self) => ...`) ports to a Rhai function with the same five parameters. `self`
+is a reserved word in Rhai, so call the last one `renderer`.
+
+| JavaScript | In Rhai |
+|---|---|
+| `eleventyConfig.amendLibrary('md', (md) => plugin(md))` | `config.amend_library("md", \|md\| plugin(md));` |
+| `const md = new MarkdownIt({ linkify: true }); plugin(md); md.render(s)` | `let md = markdown_it(#{ linkify: true }); plugin(md); md.render(s)` |
+| `md.renderer.rules.link_open = (tokens, idx, options, env, self) => ...` | `md.renderer.rules.link_open = \|tokens, idx, options, env, renderer\| ...;` |
+| `tokens[idx].attrGet('href')` | `tokens[idx].attr_get("href")` (`()` when there is none) |
+| `attrSet`, `attrJoin`, `attrIndex`, `attrPush([n, v])` | `attr_set`, `attr_join`, `attr_index`, `attr_push([n, v])` |
+| `self.renderToken(tokens, idx, options)` | `renderer.render_token(tokens, idx, options)` |
+| `self.renderAttrs(token)`, `md.utils.escapeHtml(s)` | `renderer.render_attrs(token)`, `escape_html(s)` |
+| `const base = md.renderer.rules.link_open \|\| renderToken` | `md.renderer.rules.link_open = Fn("my_rule").curry(md.renderer.rules.link_open);` |
+
+Rhai closures can't capture variables, so a rule that wraps the rule before
+it takes it as a curried first parameter: `fn my_rule(base, tokens, idx,
+options, env, renderer)`, calling `base.call(tokens, idx, options, env,
+renderer)`, or `renderer.render_token(tokens, idx, options)` when `base` is
+`()` (no rule was set). Reading `md.renderer.rules.text` (and `image`,
+`code_inline`, `softbreak`, `hardbreak`, `html_inline`) gives markdown-it's own
+rule, which a wrapper calls the same way. Setting a rule to `()` removes it.
+
+- `amend_library("md", f)` runs `f` on 11ty's own markdown-it as the config
+  loads; its rules apply to every `.md` template and Markdown layout, as in
+  11ty. Other library names, and `set_library`, are errors.
+- `markdown_it()` is `markdownIt()`; `markdown_it(options)` takes the options
+  of `markdown(s, options)`. `md.render(s)` renders as `markdown()` does, with
+  the instance's rules. `markdown()` and `markdown_inline()` never have rules.
+- Rules run for inline tokens: `text`, `link_open`, `link_close`, `image`,
+  `code_inline`, `softbreak`, `hardbreak`, `html_inline`, `em_open`,
+  `em_close`, `strong_open`, `strong_close`, `s_open` and `s_close`. A rule
+  for a block token (`paragraph_open`, `heading_open`, `fence`, `table_open`
+  and the rest) is an error when it is set; one for `inline`, or a type
+  markdown-it never makes, is never called, as in markdown-it.
+- `tokens` is one inline block's token list, exactly as markdown-it hands it
+  to `renderInline` (after linkify, the typographer and `text_join`). It is
+  read-only as a list: `tokens[i]` (`()` past either end), `tokens.len`; adding,
+  removing or replacing a token is an error. A token's `type`, `tag`,
+  `attrs`, `nesting`, `level`, `content`, `markup`, `info`, `block` and
+  `hidden` can be read and set, and the renderer sees the change. `map`,
+  `meta` and `children` are `()`; reading an `image`'s `children` is an error.
+  Attribute names and values must be strings (JavaScript would turn a number
+  into one).
+- `options` is read-only: `html`, `xhtmlOut`, `breaks`, `linkify`,
+  `typographer`, `langPrefix`, `quotes`. Others are errors.
+- `env`: 11ty renders with the page's data as `env`, which rules can't read
+  yet, so reading it on 11ty's library is an error; on a `markdown_it()`
+  instance it is `{}`, so a read gives `()`. Writing to it is an error.
+- A rule must return a string. A rule that fails, returns anything else, or
+  runs markdown-it's image rule on a token without `alt` (markdown-it throws)
+  refuses that page with `markdown-rule-failed`, or makes that `md.render` an
+  error.
 
 ### What Markdown Brrrty refuses
 

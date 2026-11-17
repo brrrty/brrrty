@@ -2277,6 +2277,7 @@ fn build_once(
         langs: &langs,
         markdown,
         highlight: highlight.as_ref().filter(|p| p.options.has_format("md")),
+        rules: opts.config.markdown_rules.as_ref().map(|r| r.0.as_ref()),
     };
     let jobs: Vec<ContentPage<'_>> = prepared
         .iter()

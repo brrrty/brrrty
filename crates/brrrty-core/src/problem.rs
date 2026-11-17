@@ -43,6 +43,7 @@ pub mod codes {
     pub const LIQUID_SYNTAX: &str = "liquid-syntax";
     pub const LIQUID_UNKNOWN_FILTER: &str = "liquid-unknown-filter";
     pub const MARKDOWN_RENDER_FAILED: &str = "markdown-render-failed";
+    pub const MARKDOWN_RULE_FAILED: &str = "markdown-rule-failed";
     pub const NUNJUCKS_LIMIT: &str = "nunjucks-limit";
     pub const NUNJUCKS_RENDER: &str = "nunjucks-render";
     pub const NUNJUCKS_SYNTAX: &str = "nunjucks-syntax";

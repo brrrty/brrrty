@@ -73,6 +73,9 @@ pub struct ConfigOptions {
     /// 11ty's syntax highlighting plugin
     /// (`@11ty/eleventy-plugin-syntaxhighlight`), when the config added it.
     pub syntax_highlight: Option<crate::plugins::syntaxhighlight::SyntaxHighlight>,
+    /// Renderer rules on 11ty's own markdown-it (`amendLibrary("md", ...)`), when the config
+    /// set any.
+    pub markdown_rules: Option<MarkdownRules>,
     /// The feeds `feedPlugin` (`@11ty/eleventy-plugin-rss`) adds, in the
     /// order they were added: each is a virtual template.
     pub feeds: Vec<crate::plugins::rss::FeedOptions>,
@@ -178,6 +181,17 @@ pub struct DataRunner(pub DataFn);
 impl std::fmt::Debug for DataRunner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("DataRunner")
+    }
+}
+
+/// markdown-it renderer rules for 11ty's own library: every `.md` template and Markdown layout
+/// is rendered through them.
+#[derive(Clone)]
+pub struct MarkdownRules(pub std::sync::Arc<dyn brrrty_markdown::RenderRules + Send + Sync>);
+
+impl std::fmt::Debug for MarkdownRules {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MarkdownRules")
     }
 }
 

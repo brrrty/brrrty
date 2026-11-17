@@ -10,10 +10,11 @@ homepage.workspace = true
 keywords = ["static-site", "ssg", "eleventy", "11ty", "rhai"]
 categories = ["command-line-utilities", "web-programming"]
 readme = false
-exclude = ["tools/", "tests/regex_probes.rs", "tests/sort_probes.rs", "tests/csv_probes.rs", "tests/probes/"]
+exclude = ["tools/", "tests/regex_probes.rs", "tests/sort_probes.rs", "tests/csv_probes.rs", "tests/markdown_rules.rs", "tests/probes/"]
 
 [dependencies]
 brrrty-core = { path = "../brrrty-core", version = "0.0.17" }
+brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.17" }
 brrrty-liquid = { path = "../brrrty-liquid", version = "0.0.17" }
 brrrty-js = { path = "../brrrty-js", version = "0.0.17" }
 brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.0.17" }
@@ -28,7 +29,6 @@ stacker = "0.1.25"
 url = "2.5.8"
 
 [dev-dependencies]
-brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.17" }
 brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.17" }
 tempfile = "3.27.0"
 

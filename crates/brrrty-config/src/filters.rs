@@ -38,8 +38,8 @@ pub struct Runtime {
 /// stack of [`CALL_STACK`] bytes. Rhai recurses on Rust's stack, and a debug
 /// build's frames are big. Render threads have 16 MiB, so most calls
 /// don't need a new one.
-const STACK_RED_ZONE: usize = 12 * 1024 * 1024;
-const CALL_STACK: usize = 128 * 1024 * 1024;
+pub(crate) const STACK_RED_ZONE: usize = 12 * 1024 * 1024;
+pub(crate) const CALL_STACK: usize = 128 * 1024 * 1024;
 
 /// How many arguments (the value included) the script function takes, not
 /// counting the ones curried in.
