@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.10 - 2026-11-17
 
 - Brrrty is on npm: `npm install --save-dev brrrty`, then `brrrty build` in your scripts. The `brrrty` package is a small launcher that runs a prebuilt binary from `@brrrty/darwin-arm64`, `@brrrty/darwin-x64`, `@brrrty/linux-arm64-musl` or `@brrrty/linux-x64-musl`, whichever npm installed for the platform. No install scripts and no Rust toolchain needed. The Linux binaries are static, so they run on Alpine and glibc distributions alike. Arguments, output and exit codes pass through unchanged, and Ctrl-C under `npm run` or `npx` stops `brrrty serve` cleanly with exit 0. Ctrl-\\ and every other terminating signal Node can catch are passed on too, and `brrrty serve` stops cleanly by itself if the launcher is killed outright, so it never stays behind holding its port.
 - Each release attaches binaries for those four platforms, with SHA-256 sums, to its GitHub release.
