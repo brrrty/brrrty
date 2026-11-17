@@ -29,7 +29,8 @@
   </div>
 </header>
 <main id="main">
-{{ content | safe }}
+{#- Alegreya's "11" reads like "I1" at display sizes, so the 11 in "11ty" is set in a system serif. #}
+{{ content | replace(r/(^|[\s(>])11ty\b/g, '$1<span class="n11">11</span>ty') | safe }}
 </main>
 <footer class="foot">
   <div class="wrap">

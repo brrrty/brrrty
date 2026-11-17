@@ -8,19 +8,32 @@ lead: Brrrty builds an existing 11ty project. Your templates, Markdown, layouts 
 
 ## Install
 
-With Rust 1.89 or later:
+With npm, on macOS or Linux (arm64 or x64), in your site's folder:
+
+```sh
+npm i -D brrrty
+```
+
+Then point your scripts at it in `package.json`:
+
+```json
+{
+  "scripts": {
+    "build": "brrrty build",
+    "serve": "brrrty serve"
+  }
+}
+```
+
+and run `npm run build`. The package runs a prebuilt binary for your platform, with no install scripts and no Rust toolchain.
+
+Or, with Rust 1.89 or later, install it with Cargo:
 
 ```sh
 cargo install brrrty
 ```
 
-From 0.0.10, Brrrty is also on npm, for macOS and Linux. Add it to a project with `npm i -D brrrty` and run it with `npx brrrty`.
-
-Check it works:
-
-```sh
-brrrty --version
-```
+Check it works with `npx brrrty --version`, or `brrrty --version` after `cargo install`.
 
 ## How a project is laid out
 
@@ -87,13 +100,13 @@ A page that uses data from a `.js` file with no port is refused with `data-js-un
 ## 3. Build
 
 ```sh
-brrrty build
+npm run build
 ```
 
-`brrrty` on its own does the same. It writes the site into `_site` and prints one line, like this one from building this site:
+That runs `brrrty build`; `brrrty` on its own does the same. It writes the site into `_site` and prints one line, like this one from building this site:
 
 ```text
-Wrote 9 files, copied 6 files in 0.01 seconds (brrrty 0.0.9)
+Wrote 9 files, copied 6 files in 0.01 seconds (brrrty 0.0.10)
 ```
 
 The flags are:
@@ -113,7 +126,7 @@ Flags on the command line win over the config, as they do in 11ty.
 Brrrty never writes a page it can't write exactly as 11ty would. When it hits something it can't reproduce, or something 11ty would fail on, it skips that page, prints a problem with a code, the file, the line and a hint, and builds the rest of the site. Here, a page uses a filter the config doesn't add yet:
 
 ```text
-Wrote 0 files, copied 0 files in 0.00 seconds (brrrty 0.0.9)
+Wrote 0 files, copied 0 files in 0.00 seconds (brrrty 0.0.10)
 liquid-unknown-filter
 
   × undefined filter: shout
@@ -133,10 +146,10 @@ A build with any error exits with status 1. Fix the cause, or port the missing p
 ## 4. Serve
 
 ```sh
-brrrty serve
+npm run serve
 ```
 
-It builds the site, serves it at `http://localhost:8080/`, and rebuilds on every change, with live reload in the browser. See [`brrrty serve`](/docs/serve/).
+`brrrty serve` builds the site, serves it at `http://localhost:8080/`, and rebuilds on every change, with live reload in the browser. See [`brrrty serve`](/docs/serve/).
 
 ## 5. Check the output against 11ty
 
@@ -144,7 +157,7 @@ The point of Brrrty is that the output is the same. Build with both and compare:
 
 ```sh
 npx @11ty/eleventy --output=_site-11ty
-brrrty build --output _site-brrrty
+npx brrrty build --output _site-brrrty
 diff -r _site-11ty _site-brrrty
 ```
 

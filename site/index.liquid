@@ -2,6 +2,9 @@
 layout: base.njk
 description: Brrrty builds your 11ty site in Rust and writes the same files 11ty 3.1.8 writes, byte for byte, in about a third of the time.
 ---
+{%- comment -%} The latest release, read from the changelog page at build time. {%- endcomment -%}
+{%- assign changelog = collections.all | where: "url", "/changelog/" | first -%}
+{%- assign release = changelog.templateContent | split: "<h2>" | slice: 1 | first | split: " - " | first -%}
 <div class="wrap">
   <section class="spread" aria-labelledby="intro">
     <h1 id="intro">Your 11ty site, built in Rust. Same bytes, sooner.</h1>
@@ -9,8 +12,8 @@ description: Brrrty builds your 11ty site in Rust and writes the same files 11ty
     <div class="account">
 
       <div class="install">
-<pre><code>cargo install brrrty</code></pre>
-        <p>Needs Rust 1.89 or later. From 0.0.10 it is on npm too: <code class="nowrap">npm i -D brrrty</code>.</p>
+<pre><code>npm i -D brrrty</code></pre>
+        <p>Then <code class="nowrap">"build": "brrrty build"</code> in your <code>package.json</code> scripts. On macOS and Linux. Or, with Rust 1.89 or later, <code class="nowrap">cargo install brrrty</code>.</p>
       </div>
       <p class="next">
         <a class="button" href="/docs/getting-started/">Move a site over</a>
@@ -73,7 +76,7 @@ description: Brrrty builds your 11ty site in Rust and writes the same files 11ty
         <div><dt>Config</dt><dd><code>brrrty.config.rhai</code>, a <a href="https://rhai.rs">Rhai</a> script shaped like <code>eleventyConfig</code>: filters, collections, global data, passthrough copy, and the RSS and syntax highlighting plugins. <a href="/docs/configuration/">Reference</a>.</dd></div>
         <div><dt>Refusals</dt><dd>Where it can't match 11ty exactly, it refuses that page and says why, and builds the rest. It never writes a page that might differ. <a href="/docs/differences/">What it refuses</a>.</dd></div>
         <div><dt>Dev server</dt><dd><code>brrrty serve</code> rebuilds on every change and updates open pages in place. <a href="/docs/serve/">Details</a>.</dd></div>
-        <div><dt>Status</dt><dd>Early: version {{ site.version }}. Try it on a copy of your site and compare the output with 11ty's before you rely on it.</dd></div>
+        <div><dt>Status</dt><dd>Early: version {{ release }}. Try it on a copy of your site and compare the output with 11ty's before you rely on it.</dd></div>
       </dl>
     </div>
   </section>

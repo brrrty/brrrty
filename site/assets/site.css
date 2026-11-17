@@ -116,6 +116,10 @@ img, svg { max-width: 100%; }
 }
 .skip:focus { top: 0.5rem; }
 
+/* The 11 in "11ty": Alegreya's 1 reads like an I beside another 1. */
+.n11 { font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; }
+code .n11, pre .n11 { font-family: inherit; }
+
 .vh {
   position: absolute !important;
   width: 1px; height: 1px;

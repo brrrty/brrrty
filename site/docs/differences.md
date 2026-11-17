@@ -47,7 +47,7 @@ It listens on `localhost` only, answers only requests that name this machine, an
 
 ## Small things
 
-- The summary line is Brrrty's own: `Wrote 9 files, copied 6 files in 0.01 seconds (brrrty 0.0.9)`. Problems print with a code, such as `liquid-unknown-filter`, and a hint.
+- The summary line is Brrrty's own: `Wrote 9 files, copied 6 files in 0.01 seconds (brrrty 0.0.10)`. Problems print with a code, such as `liquid-unknown-filter`, and a hint.
 - Template files that 11ty only reads through a plugin (`.webc`, `.pug`, `.mdx` and others) are skipped with a warning.
 - The live-reload script lives at `/.brrrty/` instead of `/.11ty/`.
 
