@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `brrrty init` sets up an existing 11ty site in one step: `npx brrrty init`. It adds `brrrty` to `devDependencies` at its own version and sets the `build` and `start` scripts to `brrrty build` and `brrrty serve`. Scripts that ran 11ty are kept as `build:11ty` and `start:11ty`; scripts that run something else are left alone, with a note saying what to change. The rest of `package.json` keeps its indentation, line endings and key order.
+- `brrrty init` also writes `brrrty.config.rhai` from `eleventy.config.js` (`.mjs`, `.cjs` or `.eleventy.js`), reading it without running it. Folders, `markdownTemplateEngine` and `htmlTemplateEngine`, passthrough copies and ignores with literal paths, and the syntax highlighting and RSS feed plugins with literal options are ported. Every other statement gets a `// TODO:` that quotes the JavaScript with its line numbers and links to the docs. It lists JavaScript data files that still need a `.rhai` port, and prints the next steps. It never overwrites `brrrty.config.rhai`, writes only `package.json` and `brrrty.config.rhai` in the site's folder (each atomically, and never through a symlink that leads outside it), and doesn't run `npm install`.
+- `brrrty init` shows its changes as a diff and asks before writing. `--yes` skips asking, `--dry-run` writes nothing, and without a terminal to ask in it writes nothing unless given `--yes`. `--dir` points it at another folder. A folder that isn't an 11ty site exits with status 2.
+- A bare `brrrty` in an 11ty site without `brrrty.config.rhai` prints a one-line hint to run `npx brrrty init` before building as before.
+
 ## 0.0.12 - 2026-11-17
 
 - npm releases are published with npm trusted publishing: the release workflow proves its identity to npm through GitHub's OIDC token, so no npm token is stored in the repository.

@@ -34,6 +34,21 @@ enum Command {
     Build(BuildArgs),
     /// Build the site, serve it with live reload, and rebuild on every change
     Serve(ServeArgs),
+    /// Set up an 11ty site to build with Brrrty: package.json and brrrty.config.rhai
+    Init(InitArgs),
+}
+
+#[derive(Args, Clone)]
+struct InitArgs {
+    /// The site's folder [default: the current folder]
+    #[arg(long)]
+    dir: Option<PathBuf>,
+    /// Make the changes without asking
+    #[arg(long, short = 'y')]
+    yes: bool,
+    /// Show the changes as a diff and write nothing
+    #[arg(long, conflicts_with = "yes")]
+    dry_run: bool,
 }
 
 #[derive(Args, Clone)]
@@ -231,8 +246,34 @@ fn shown_url(server: &brrrty_serve::RunningServer, asked: u16) -> String {
     }
 }
 
+fn run_init(args: InitArgs) -> ExitCode {
+    let dir = match args.dir {
+        Some(d) => d,
+        None => match std::env::current_dir() {
+            Ok(r) => r,
+            Err(e) => {
+                brrrty::say_err!("Brrrty could not find the current folder: {e}");
+                return ExitCode::from(1);
+            }
+        },
+    };
+    ExitCode::from(brrrty::init::run(&brrrty::init::Options {
+        dir,
+        yes: args.yes,
+        dry_run: args.dry_run,
+        interactive: std::io::stdin().is_terminal(),
+    }))
+}
+
 fn main() -> ExitCode {
     bug::install_panic_hook();
+    // A bare `brrrty` in an 11ty site that isn't set up yet points at `init`.
+    if std::env::args_os().len() == 1
+        && let Ok(cwd) = std::env::current_dir()
+        && brrrty::init::should_hint(&cwd)
+    {
+        brrrty::say_err!("This looks like an 11ty site. Run `npx brrrty init` to set it up.");
+    }
     let cli = Cli::parse();
     #[cfg(debug_assertions)]
     if cli.panic_test {
@@ -241,6 +282,7 @@ fn main() -> ExitCode {
     match cli.command {
         Some(Command::Build(args)) => run_build(args),
         Some(Command::Serve(args)) => run_serve(args),
+        Some(Command::Init(args)) => run_init(args),
         None => run_build(cli.build),
     }
 }

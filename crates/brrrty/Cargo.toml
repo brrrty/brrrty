@@ -30,6 +30,9 @@ miette = { version = "7.6.0", features = ["fancy"] }
 # 8.2.2 is newer than two weeks; stay on 8.2.1.
 notify = "=8.2.1"
 percent-encoding = "2.3.1"
+# `brrrty init`: reads and edits package.json, and shows its changes as a diff.
+serde_json = { version = "1", features = ["preserve_order"] }
+similar = "3.2.1"
 
 [target.'cfg(unix)'.dependencies]
 # Ctrl-C and SIGTERM for `brrrty serve`.
@@ -38,7 +41,6 @@ signal-hook = { version = "=0.4.6", default-features = false, features = ["itera
 [dev-dependencies]
 # The Chrome test hands Chrome its DevTools pipe (already in the tree through notify).
 libc = "0.2.191"
-serde_json = "1"
 tempfile = "3.27.0"
 toml = "1.2.1"
 brrrty-compat = { path = "../brrrty-compat", version = "0.0.12" }
