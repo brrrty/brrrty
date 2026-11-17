@@ -254,13 +254,20 @@ fn obj(pairs: &[(&str, Value)]) -> Value {
     ))
 }
 
-/// Nunjucks fails with "filter not found: nope"; Brrrty names the filter too.
+/// Nunjucks 3.2.4 ends its message with "Error: filter not found: nope"; Brrrty gives that line,
+/// and suggests the closest name when one is near.
 #[test]
-fn an_unknown_filter_is_an_error_that_names_it() {
+fn an_unknown_filter_is_nunjucks_s_error_with_a_suggestion() {
     let engine = engine();
-    let err = engine
-        .compile("t", "{{ x | nope }}")
-        .and_then(|t| engine.render(&t, &Value::Undefined, &NoIncludes))
-        .unwrap_err();
-    assert!(err.message.contains("nope"), "{err}");
+    let fail = |t: &str| {
+        engine
+            .compile("t", t)
+            .and_then(|t| engine.render(&t, &Value::Undefined, &NoIncludes))
+            .unwrap_err()
+    };
+    let err = fail("{{ x | nope }}");
+    assert_eq!(err.message, "Error: filter not found: nope");
+    let err = fail("{{ x | uppr }}");
+    assert_eq!(err.message, "Error: filter not found: uppr");
+    assert_eq!(err.help.as_deref(), Some("did you mean `upper`?"));
 }

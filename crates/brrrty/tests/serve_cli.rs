@@ -353,7 +353,13 @@ fn a_host_for_every_interface_prints_a_url_a_browser_can_open() {
         &["--input", "src", "--port", "0", "--host", "0.0.0.0"],
     );
     // `http://0.0.0.0:<port>/` is not something a browser opens; the port still serves.
-    let port = serve.port();
+    let line = serve.line_starting("Server at ");
+    let port: u16 = line
+        .strip_prefix("Server at http://localhost:")
+        .and_then(|rest| rest.strip_suffix('/'))
+        .unwrap_or_else(|| panic!("not a localhost URL: {line}"))
+        .parse()
+        .unwrap();
     assert!(get_ok(port));
     serve.signal(libc::SIGINT);
     let (status, _, err) = serve.wait();

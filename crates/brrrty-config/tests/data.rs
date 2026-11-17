@@ -719,3 +719,18 @@ fn a_data_function_with_two_parameters_is_an_error() {
     assert!(p.message.contains("takes 2 parameters"), "{}", p.message);
     assert!(out(&t, "out.html").is_none());
 }
+
+/// Data scripts print constant numbers in `${}` as JavaScript does, as config scripts do:
+/// Rhai's optimizer would fold these to `10.0` and `1e21`. Node: `${10}`, `${1e21}`.
+#[test]
+fn constants_in_interpolation_print_as_javascript_does() {
+    let (t, r) = run(
+        &[(
+            "src/_data/n.rhai",
+            "const PER_PAGE = 10.0;\n#{ a: `${10.0}`, b: `${1e21}`, c: `${PER_PAGE} per page` }",
+        )],
+        "{{ n.a }}|{{ n.b }}|{{ n.c }}",
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(out(&t, "out.html").unwrap().trim(), "10|1e+21|10 per page");
+}

@@ -449,12 +449,25 @@ mod tests {
         assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
     }
 
+    /// The reason phrases of RFC 9110 section 15 (431 is RFC 6585's).
     #[test]
-    fn every_status_sent_has_its_reason() {
-        for s in [
-            200, 206, 301, 400, 403, 404, 408, 416, 426, 431, 500, 503, 505,
+    fn every_status_sent_has_its_rfc_reason() {
+        for (status, phrase) in [
+            (200, "OK"),
+            (206, "Partial Content"),
+            (301, "Moved Permanently"),
+            (400, "Bad Request"),
+            (403, "Forbidden"),
+            (404, "Not Found"),
+            (408, "Request Timeout"),
+            (416, "Range Not Satisfiable"),
+            (426, "Upgrade Required"),
+            (431, "Request Header Fields Too Large"),
+            (500, "Internal Server Error"),
+            (503, "Service Unavailable"),
+            (505, "HTTP Version Not Supported"),
         ] {
-            assert_ne!(reason(s), "Unknown", "{s}");
+            assert_eq!(reason(status), phrase, "{status}");
         }
         assert_eq!(reason(299), "Unknown");
     }

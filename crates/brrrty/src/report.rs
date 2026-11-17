@@ -312,11 +312,22 @@ mod tests {
     }
 
     #[test]
-    fn colored_output_carries_escape_codes_and_plain_output_none() {
-        let p = Problem::error(codes::TEMPLATE_UNSUPPORTED, "boom");
+    fn color_marks_the_code_icon_and_help_by_severity() {
         let root = Path::new(".");
-        assert!(render_problem(&p, root, true).contains('\u{1b}'));
-        assert!(!render_problem(&p, root, false).contains('\u{1b}'));
+        let error = Problem::error(codes::TEMPLATE_UNSUPPORTED, "boom").with_help("try");
+        assert_eq!(
+            render_problem(&error, root, true),
+            "\u{1b}[31mtemplate-unsupported\u{1b}[0m\n\n  \u{1b}[31m×\u{1b}[0m boom\n\u{1b}[36m  help: \u{1b}[0mtry\n"
+        );
+        let warning = Problem::warning(codes::TEMPLATE_UNSUPPORTED, "boom");
+        assert_eq!(
+            render_problem(&warning, root, true),
+            "\u{1b}[33mtemplate-unsupported\u{1b}[0m\n\n  \u{1b}[33m⚠\u{1b}[0m boom\n"
+        );
+        assert_eq!(
+            render_problem(&error, root, false),
+            "template-unsupported\n\n  × boom\n  help: try\n"
+        );
     }
 
     #[test]
