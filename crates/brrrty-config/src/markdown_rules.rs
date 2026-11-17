@@ -43,8 +43,12 @@ enum Kind {
 struct LibState {
     kind: Kind,
     rules: IndexMap<String, FnPtr>,
-    /// Made while pages render (in a filter, a collection or a rule): only that call can reach
-    /// it, so its rules can change.
+    /// Made while no script's top level was running on this thread, that is while pages
+    /// render (in a filter, a collection or a rule called from one). Such an instance can only
+    /// be reached from that call: the config's state has been taken by then, so `config.add_*`
+    /// can't keep it, and returned values go through `to_value`, which refuses it. So its rules
+    /// can change. An instance made while the config or a data file loads, even inside a rule
+    /// run then, can be kept (a filter's curried value, say) and so is frozen like the rest.
     private: bool,
 }
 
@@ -63,11 +67,10 @@ pub struct MdRules(Arc<Mutex<LibState>>);
 impl MdLib {
     fn new(kind: Kind) -> MdLib {
         let loading = LOADING.with(|c| c.get()) > 0;
-        let in_rule = IN_RULE.with(|c| c.get()) > 0;
         MdLib(Arc::new(Mutex::new(LibState {
             kind,
             rules: IndexMap::new(),
-            private: !loading || in_rule,
+            private: !loading,
         })))
     }
 

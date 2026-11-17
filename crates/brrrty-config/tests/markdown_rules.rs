@@ -580,3 +580,39 @@ fn an_instance_made_in_a_filter_can_have_rules() {
         "<p><a href=\"b\" rel=\"x\">a</a></p>\n"
     );
 }
+
+/// Review round 3, C-4: an instance made inside a rule while the config loads can be kept (here
+/// as a filter's curried value), so it is frozen like any library made at load: every build
+/// writes the same pages, and the page that tries to change it is refused.
+#[test]
+fn an_instance_made_in_a_rule_at_load_is_frozen() {
+    let script = r#"
+fn stamp(t, i, o, e, s) { "MUTATED" }
+fn f(p, s) { if s == "flip" { p.renderer.rules.text = Fn("stamp"); } p.render("x") }
+fn stash(cfg, t, i, o, e, s) { let p = markdown_it(); cfg.add_filter("leaky", Fn("f").curry(p)); s.render_token(t, i, o) }
+let outer = markdown_it();
+outer.renderer.rules.link_open = Fn("stash").curry(config);
+outer.render("[a](/b)");
+"#;
+    let mut pages: Vec<(String, String)> = (0..40)
+        .map(|i| (format!("p{i}.liquid"), "{{ \"q\" | leaky }}".to_string()))
+        .collect();
+    pages.push(("flip.liquid".into(), "{{ \"flip\" | leaky }}".into()));
+    let pages: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    for _ in 0..3 {
+        let (t, r) = site(script, &pages);
+        let e = errors(&r);
+        assert_eq!(e.len(), 1, "{e:#?}");
+        assert!(
+            e[0].message.contains("can't be changed while pages render"),
+            "{e:#?}"
+        );
+        for i in 0..40 {
+            assert_eq!(out(&t, &format!("p{i}/index.html")).unwrap(), "<p>x</p>\n");
+        }
+        assert!(out(&t, "flip/index.html").is_none());
+    }
+}
