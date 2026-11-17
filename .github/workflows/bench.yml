@@ -1,0 +1,46 @@
+name: Bench
+
+# Builds the synthetic blog in bench/ with 11ty and with Brrrty on a GitHub
+# runner, checks every file is identical, and writes the timings to the job
+# summary. Brrrty is built from source at this commit, never installed from
+# npm; 11ty comes from bench/site/package-lock.json. See bench/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Timed runs per tool
+        default: "5"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.1"
+          cache: npm
+          cache-dependency-path: bench/site/package-lock.json
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build Brrrty
+        run: cargo build --release --locked -p brrrty
+      - name: Install 11ty
+        working-directory: bench/site
+        run: npm ci --no-audit --no-fund
+      - name: Compare
+        env:
+          RUNS: ${{ inputs.runs || '5' }}
+        run: node bench/run.mjs
