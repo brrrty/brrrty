@@ -13,6 +13,21 @@ pub const SHIM: &str = include_str!("freeze-time.cjs");
 /// date is the same in every time zone.
 pub const COMPAT_EPOCH: u64 = 1_767_268_800;
 
+/// The local zone both compat builds run in. A zone with daylight saving
+/// time exercises the local-date code, and it is the zone the first
+/// references were made in.
+pub const COMPAT_TZ: &str = "America/Chicago";
+
+/// The locale both compat builds run in. Node's no-argument
+/// `localeCompare` and `toLocaleString` follow it; Brrrty's ports are
+/// en-US's.
+pub const COMPAT_LOCALE: &str = "en_US.UTF-8";
+
+/// Pins the zone and locale on a compat build's command.
+pub fn pin_env(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    cmd.env("TZ", COMPAT_TZ).env("LC_ALL", COMPAT_LOCALE)
+}
+
 /// The preload script's path in the repo.
 pub fn shim_path(root: &Path) -> PathBuf {
     root.join("xtask").join("src").join("freeze-time.cjs")
@@ -26,6 +41,15 @@ pub fn node_options(root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compat_builds_pin_the_zone_and_locale() {
+        let mut cmd = std::process::Command::new("true");
+        pin_env(&mut cmd);
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert!(envs.contains(&("TZ".as_ref(), Some(COMPAT_TZ.as_ref()))));
+        assert!(envs.contains(&("LC_ALL".as_ref(), Some(COMPAT_LOCALE.as_ref()))));
+    }
 
     #[test]
     fn the_shim_is_in_the_repo_and_generic() {

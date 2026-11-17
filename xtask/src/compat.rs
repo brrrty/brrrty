@@ -7,7 +7,7 @@ use std::process::Command;
 use brrrty_compat::{AllowList, Counts, compare_dirs};
 use sha2::{Digest, Sha256};
 
-use crate::clock::{COMPAT_EPOCH, SHIM, shim_path};
+use crate::clock::{COMPAT_EPOCH, COMPAT_LOCALE, COMPAT_TZ, SHIM, pin_env, shim_path};
 use crate::settings::SiteSettings;
 
 struct SiteRun {
@@ -91,6 +91,9 @@ fn stamp_from_parts(
     // The reference is built at a frozen time, by the preload script.
     part("epoch", COMPAT_EPOCH.to_string().as_bytes());
     part("shim", SHIM.as_bytes());
+    // ... in a pinned zone and locale.
+    part("tz", COMPAT_TZ.as_bytes());
+    part("locale", COMPAT_LOCALE.as_bytes());
     let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     format!("{head}\n{digest}\n")
 }
@@ -193,7 +196,7 @@ fn ensure_reference(
     let _ = fs::remove_file(&stamp_path);
     fs::create_dir_all(work).map_err(|e| format!("cannot create {}: {e}", work.display()))?;
     println!("reference: building with Eleventy {version}");
-    let out = Command::new("node")
+    let out = pin_env(&mut Command::new("node"))
         .arg("--require")
         .arg(shim_path(root))
         .arg(&bin)
@@ -256,6 +259,7 @@ fn run_site(
     // A panicking brrrty may create nothing; the comparison still needs a folder.
     fs::create_dir_all(&actual).map_err(|e| format!("cannot create {}: {e}", actual.display()))?;
     let mut cmd = Command::new(root.join("target").join("release").join("brrrty"));
+    pin_env(&mut cmd);
     cmd.args(["build", "--output"])
         .arg(&actual)
         .env("SOURCE_DATE_EPOCH", COMPAT_EPOCH.to_string());
