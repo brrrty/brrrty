@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.15 - 2026-11-17
 
 - Data files and the config can read files in the project: `read_text(path)` is `fs.readFileSync(path, 'utf8')`, `read_json(path)` is `JSON.parse` of it, `read_dir(path)` and `read_dir(path, #{ recursive: true })` are `fs.readdirSync` in Node's order, `file_exists(path)` is `fs.existsSync`, and `parse_csv(text, options)` is csv-parse 7.0.3's `parse`, quirks and error messages included, for the options `columns`, `delimiter`, `bom`, `trim`, `ltrim`, `rtrim`, `skip_empty_lines` and `relax_column_count`. Other csv-parse options are refused by name.
 - Paths are relative to the project folder and can't leave it: an absolute path and a `..` are refused, and every path is opened through a handle on the project folder one component at a time (cap-std), so a symlink that leads outside is refused even if it is swapped in mid-build. Recursive listings enter symlinked folders as Node 26 does, refusing one that leads outside or loops. Only regular files are read (a FIFO is refused, not waited on), a file over 16 MiB is refused unread, and nothing writes.

@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-jsregex"
-version = "0.0.14"
+version = "0.0.15"
 description = "JavaScript regular expression syntax and semantics for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
