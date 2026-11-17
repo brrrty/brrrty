@@ -102,6 +102,8 @@ pub(crate) fn add(md: &mut MarkdownIt, linkify: Option<Linkify>) {
 #[derive(Debug)]
 pub(crate) struct LinkifyLink {
     pub url: String,
+    /// Made by the core rule, from what was a `text` token until then.
+    pub core: bool,
 }
 
 impl NodeValue for LinkifyLink {
@@ -114,8 +116,8 @@ impl NodeValue for LinkifyLink {
     }
 }
 
-fn link_node(url: String, text: String) -> Node {
-    let mut node = Node::new(LinkifyLink { url });
+fn link_node(url: String, text: String, core: bool) -> Node {
+    let mut node = Node::new(LinkifyLink { url, core });
     node.children.push(Node::new(Text { content: text }));
     node
 }
@@ -181,7 +183,7 @@ impl InlineRule for LinkifyInline {
         let text = state.md.link_formatter.normalize_link_text(&url);
         state.trailing_text_pop(k);
         state.pos -= k;
-        let mut node = link_node(full, text);
+        let mut node = link_node(full, text, false);
         node.srcmap = state.get_map(state.pos, state.pos + url.len());
         Some((node, url.len()))
     }
@@ -480,7 +482,7 @@ fn core_linkify(
                         content: units_string(&text[last..link.index])?,
                     }));
                 }
-                nodes.push(link_node(full, url_text));
+                nodes.push(link_node(full, url_text, true));
                 last = link.last_index;
             }
             if last < text.len() {

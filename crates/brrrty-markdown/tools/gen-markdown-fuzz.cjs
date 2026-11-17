@@ -20,6 +20,24 @@ if (options) {
 } else {
   md = process.env.MARKDOWN_MODE === 'eleventy' ? markdownIt({ html: true }).disable('code') : markdownIt();
 }
+// MARKDOWN_TOKENS=1 adds `tokens`: each inline token's children, as renderer rules see them.
+// MARKDOWN_RULES=1 adds `ruled`: the render with the generic renderer rules of
+// `markdown-rules.cjs` installed on a second instance set up the same way.
+const dumpTokens = !!process.env.MARKDOWN_TOKENS;
+let ruledMd = null;
+if (process.env.MARKDOWN_RULES) {
+  const install = require('./markdown-rules.cjs');
+  if (options) {
+    ruledMd = markdownIt({ html: !!options.html, linkify: !!options.linkify, typographer: !!options.typographer });
+    ruledMd.linkify.set({ fuzzyLink: !!options.fuzzyLink });
+  } else {
+    ruledMd = process.env.MARKDOWN_MODE === 'eleventy' ? markdownIt({ html: true }).disable('code') : markdownIt();
+  }
+  install(ruledMd);
+}
+const tokenDump = (s) => md.parse(s, {}).filter((t) => t.type === 'inline').map((t) => t.children.map((c) => ({
+  type: c.type, tag: c.tag, attrs: c.attrs, nesting: c.nesting, level: c.level, content: c.content, markup: c.markup, info: c.info, block: c.block, hidden: c.hidden,
+})));
 let seed = Number(process.argv[2] || 1) >>> 0;
 const N = Number(process.argv[3] || 6000);
 const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -52,6 +70,9 @@ for (let i = 0; i < N; i++) {
   const n = 1 + Math.floor(rnd() * (family ? 14 : options ? 12 : 9));
   let s = '';
   for (let j = 0; j < n; j++) s += pick(ALL);
-  cases.push(options ? { s, render: md.render(s) } : { s, render: md.render(s), render_inline: md.renderInline(s) });
+  const c = options ? { s, render: md.render(s) } : { s, render: md.render(s), render_inline: md.renderInline(s) };
+  if (dumpTokens) c.tokens = tokenDump(s);
+  if (ruledMd) c.ruled = ruledMd.render(s);
+  cases.push(c);
 }
 process.stdout.write('[' + cases.map((c) => JSON.stringify(c)).join(',\n') + ']\n');

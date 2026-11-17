@@ -11,8 +11,14 @@ mod linkify;
 mod linkify_re;
 mod mdurl;
 mod refuse;
+mod rules;
 mod table;
 mod uc_micro;
+
+pub use rules::{
+    LANG_PREFIX, NoRules, QUOTES, RenderError, RenderOptions, RenderRules, Token, escape_html,
+    has_default_rule, is_block_type, render_attrs, render_default, render_token,
+};
 
 /// Renders Markdown source to an HTML string.
 pub trait MarkdownRenderer: Send + Sync {
@@ -44,6 +50,21 @@ pub trait MarkdownRenderer: Send + Sync {
         highlight: &mut Highlight<'_>,
     ) -> Result<String, String> {
         Ok(self.render_highlighted(source, highlight))
+    }
+
+    /// [`MarkdownRenderer::try_render_highlighted`] (or [`MarkdownRenderer::try_render`] with no
+    /// `highlight`) with renderer rules for inline tokens (see [`RenderRules`]). A renderer that
+    /// can't run rules refuses.
+    fn try_render_with_rules(
+        &self,
+        source: &str,
+        highlight: Option<&mut Highlight<'_>>,
+        rules: &dyn RenderRules,
+    ) -> Result<String, RenderError> {
+        let _ = (source, highlight, rules);
+        Err(RenderError::Refused(
+            "this Markdown renderer can't run markdown-it renderer rules".into(),
+        ))
     }
 }
 
@@ -348,11 +369,22 @@ impl MarkdownIt {
         highlight: Option<&mut Highlight<'_>>,
         refuse: bool,
     ) -> Result<String, String> {
+        self.finish_with(source, highlight, refuse, None)
+            .map_err(|e| e.to_string())
+    }
+
+    fn finish_with(
+        &self,
+        source: &str,
+        highlight: Option<&mut Highlight<'_>>,
+        refuse: bool,
+        rules: Option<&dyn RenderRules>,
+    ) -> Result<String, RenderError> {
         let source = trim_blank_tail(source);
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast);
         if refuse {
-            refuse::check(&ast, source)?;
+            refuse::check(&ast, source).map_err(RenderError::Refused)?;
         }
         let marker = pick_marker(source);
         fix_end_of_text(&mut ast, source, marker);
@@ -361,6 +393,9 @@ impl MarkdownIt {
         }
         fix_tight_blocks(&mut ast, marker);
         alt::fix_images(&mut ast, false);
+        if let Some(rules) = rules {
+            rules::apply(&mut ast, source, rules, &ELEVENTY_OPTIONS)?;
+        }
         Ok(render_marked(&ast, marker))
     }
 }
@@ -387,7 +422,25 @@ impl MarkdownRenderer for MarkdownIt {
     ) -> Result<String, String> {
         self.finish(source, Some(highlight), true)
     }
+
+    fn try_render_with_rules(
+        &self,
+        source: &str,
+        highlight: Option<&mut Highlight<'_>>,
+        rules: &dyn RenderRules,
+    ) -> Result<String, RenderError> {
+        self.finish_with(source, highlight, true, Some(rules))
+    }
 }
+
+/// The options of 11ty's instance, `markdownIt({ html: true })`.
+const ELEVENTY_OPTIONS: RenderOptions = RenderOptions {
+    html: true,
+    xhtml_out: false,
+    breaks: false,
+    linkify: false,
+    typographer: false,
+};
 
 /// The markdown-it port set up like `require('markdown-it')()` with no options: the `default`
 /// preset, which has HTML **off** (unlike 11ty's own instance), linkify, the typographer and
@@ -518,17 +571,43 @@ impl DefaultMarkdownIt {
 
     /// `md.render(source)`, refusing when `refuse` (see [`MarkdownRenderer::try_render`]).
     fn render_block(&self, source: &str, refuse: bool) -> Result<String, String> {
+        self.render_block_with(source, refuse, None)
+            .map_err(|e| e.to_string())
+    }
+
+    fn render_block_with(
+        &self,
+        source: &str,
+        refuse: bool,
+        rules: Option<&dyn RenderRules>,
+    ) -> Result<String, RenderError> {
         let source = trim_blank_tail(source);
         let mut ast = self.block.parse(source);
         fix_tree(&mut ast);
         if refuse {
-            refuse::check(&ast, source)?;
+            refuse::check(&ast, source).map_err(RenderError::Refused)?;
         }
         let marker = pick_marker(source);
         fix_end_of_text(&mut ast, source, marker);
         fix_tight_blocks(&mut ast, marker);
         alt::fix_images(&mut ast, true);
+        if let Some(rules) = rules {
+            let options = RenderOptions {
+                html: false,
+                ..ELEVENTY_OPTIONS
+            };
+            rules::apply(&mut ast, source, rules, &options)?;
+        }
         Ok(render_marked(&ast, marker))
+    }
+
+    /// `md.render(source)` with renderer rules for inline tokens (see [`RenderRules`]).
+    pub fn render_with_rules(
+        &self,
+        source: &str,
+        rules: &dyn RenderRules,
+    ) -> Result<String, RenderError> {
+        self.render_block_with(source, true, Some(rules))
     }
 }
 
@@ -551,6 +630,7 @@ pub struct ConfiguredMarkdownIt {
     md: markdown_it::MarkdownIt,
     rules: core_rules::Rules,
     plain: bool,
+    options: RenderOptions,
 }
 
 impl ConfiguredMarkdownIt {
@@ -576,6 +656,13 @@ impl ConfiguredMarkdownIt {
                 typographer: options.typographer,
             },
             plain,
+            options: RenderOptions {
+                html: options.html,
+                xhtml_out: false,
+                breaks: false,
+                linkify: options.linkify,
+                typographer: options.typographer,
+            },
         }
     }
 
@@ -583,17 +670,44 @@ impl ConfiguredMarkdownIt {
     /// be sure to read as linkify-it does, or a smart quote next to an image whose label can't be
     /// found in the source.
     pub fn render(&self, source: &str) -> Result<String, String> {
+        self.render_with(source, None).map_err(|e| e.to_string())
+    }
+
+    /// [`ConfiguredMarkdownIt::render`] with renderer rules for inline tokens (see
+    /// [`RenderRules`]).
+    pub fn render_with_rules(
+        &self,
+        source: &str,
+        rules: &dyn RenderRules,
+    ) -> Result<String, RenderError> {
+        self.render_with(source, Some(rules))
+    }
+
+    /// The options a renderer rule is given.
+    pub fn options(&self) -> RenderOptions {
+        self.options
+    }
+
+    fn render_with(
+        &self,
+        source: &str,
+        rules: Option<&dyn RenderRules>,
+    ) -> Result<String, RenderError> {
         let source = trim_blank_tail(source);
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast);
-        refuse::check(&ast, source)?;
+        refuse::check(&ast, source).map_err(RenderError::Refused)?;
         if !self.plain {
-            core_rules::run(&mut ast, &self.md, source, self.rules)?;
+            core_rules::run(&mut ast, &self.md, source, self.rules)
+                .map_err(RenderError::Refused)?;
         }
         let marker = pick_marker(source);
         fix_end_of_text(&mut ast, source, marker);
         fix_tight_blocks(&mut ast, marker);
         alt::fix_images(&mut ast, true);
+        if let Some(rules) = rules {
+            rules::apply(&mut ast, source, rules, &self.options)?;
+        }
         Ok(render_marked(&ast, marker))
     }
 }
@@ -703,7 +817,7 @@ fn trim_blank_tail(source: &str) -> &str {
 
 /// Writes `marker` as it is (taken out with the newline after it by [`render_marked`]).
 #[derive(Debug)]
-struct Mark(char);
+pub(crate) struct Mark(char);
 
 impl markdown_it::NodeValue for Mark {
     fn render(&self, _: &markdown_it::Node, fmt: &mut dyn markdown_it::Renderer) {

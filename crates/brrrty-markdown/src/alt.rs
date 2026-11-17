@@ -11,10 +11,10 @@ use markdown_it::{Node, NodeValue, Renderer};
 
 /// An image with its `alt` worked out.
 #[derive(Debug)]
-struct AltImage {
-    url: String,
-    title: Option<String>,
-    alt: String,
+pub(crate) struct AltImage {
+    pub url: String,
+    pub title: Option<String>,
+    pub alt: String,
 }
 
 impl NodeValue for AltImage {
