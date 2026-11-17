@@ -35,6 +35,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 similar = "3.2.1"
 
 [target.'cfg(unix)'.dependencies]
+# `brrrty init` opens package.json and the 11ty config with O_NONBLOCK, so a
+# file swapped for a FIFO can't block it.
+libc = "0.2.191"
 # Ctrl-C and SIGTERM for `brrrty serve`.
 signal-hook = { version = "=0.4.6", default-features = false, features = ["iterator"] }
 

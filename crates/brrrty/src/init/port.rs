@@ -591,16 +591,66 @@ impl<'a> Reader<'a> {
             let returns = self.toks[x].is_ident("return");
             let before = self.items.len();
             self.statement(&param, x, y);
+            if self.whole.is_some() {
+                return true;
+            }
             if returns {
                 stopped = Some("11ty never runs this: it comes after `return`");
-            } else if self.may_stop(x, y)
-                && self.items[before..]
-                    .iter()
-                    .all(|i| matches!(i, Item::Todo { .. }))
-            {
-                stopped =
-                    Some("this may not run in 11ty: the code above can return or throw first");
+                continue;
             }
+            let unported = self.items[before..]
+                .iter()
+                .all(|i| matches!(i, Item::Todo { .. }));
+            if !unported {
+                continue;
+            }
+            // Code Brrrty doesn't port could end the function early, or change
+            // any setting through the config object: then nothing is certain.
+            if self.may_stop(x, y) {
+                self.give_up("code in the config function can return or throw early, so Brrrty can't tell which settings 11ty ends up with");
+                return true;
+            }
+            if !param.is_empty() && self.mentions(&param, x, y) && !self.inert(&param, x, y) {
+                self.give_up(format!(
+                    "code Brrrty can't port uses `{param}`, and could change any setting, so nothing here is certain"
+                ));
+                return true;
+            }
+        }
+        true
+    }
+
+    /// Whether `toks[a..b]` uses the name `name`, other than as a property.
+    fn mentions(&self, name: &str, a: usize, b: usize) -> bool {
+        (a..b).any(|k| {
+            self.toks[k].is_ident(name)
+                && !(k > 0 && (self.toks[k - 1].is(".") || self.toks[k - 1].is("?.")))
+        })
+    }
+
+    /// A call `p.method(...)` that can't change a folder or template engine:
+    /// `p` isn't in its arguments, and it isn't a `set*Directory` call whose
+    /// folder Brrrty couldn't read.
+    fn inert(&self, p: &str, a: usize, b: usize) -> bool {
+        let t = &self.toks;
+        let start = if t[a].is_ident("await") { a + 1 } else { a };
+        if b < start + 4
+            || !t[start].is_ident(p)
+            || !t[start + 1].is(".")
+            || !t[start + 3].is("(")
+            || js::matching(t, start + 3) != Some(b - 1)
+        {
+            return false;
+        }
+        let Some(method) = t[start + 2].ident() else {
+            return false;
+        };
+        if self.mentions(p, start + 4, b - 1) {
+            return false;
+        }
+        if method.ends_with("Directory") {
+            let args = js::split_commas(t, start + 4, b - 1);
+            return args.len() == 1 && matches!(self.lit(args[0]), Some(Lit::Str(_)));
         }
         true
     }
@@ -921,7 +971,9 @@ impl<'a> Reader<'a> {
     fn returned(&mut self, a: usize, b: usize) {
         let link = format!("{DOCS}#what-the-script-returns");
         let Some(props) = js::object_props(&self.toks, a, b) else {
-            return self.todo(a, b, "port what the config returns", link);
+            return self.give_up(
+                "Brrrty can't read what the config returns, so it can't tell which settings 11ty uses",
+            );
         };
         for p in props {
             let (x, y) = p.range;
@@ -1257,7 +1309,8 @@ module.exports = function (eleventyConfig) {
             "{}",
             p.text
         );
-        assert!(p.text.contains("may not run"), "{}", p.text);
+        assert!(p.text.contains("can return or throw early"), "{}", p.text);
+        assert!(live(&p).is_empty(), "{}", p.text);
         // A `return` inside a filter's own function doesn't stop anything.
         let src = "module.exports = function (c) {\n  c.addFilter(\"f\", function (s) { return s; });\n  c.addFilter(\"g\", (s) => { return s; });\n  c.addPassthroughCopy(\"a\");\n};\n";
         let p = port(src, "eleventy.config.js");
@@ -1451,5 +1504,62 @@ module.exports = function (eleventyConfig) {
             }
         }
         assert!(started.elapsed().as_secs() < 20, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn unported_code_using_the_config_ports_nothing() {
+        for src in [
+            // 11ty writes `dist` in production.
+            "module.exports = function (eleventyConfig) {\n  eleventyConfig.setOutputDirectory(\"_site\");\n  if (process.env.NODE_ENV === \"production\") eleventyConfig.setOutputDirectory(\"dist\");\n};\n",
+            // A helper that gets the config object.
+            "const setup = require(\"./setup\");\nmodule.exports = function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"a\");\n  setup(eleventyConfig);\n  return { dir: { input: \"src\" }, markdownTemplateEngine: \"njk\" };\n};\n",
+            "module.exports = function (c) {\n  c.setInputDirectory(\"src\");\n  [0].forEach(() => c.setOutputDirectory(\"evil\"));\n};\n",
+            "module.exports = function (c) {\n  const cfg = c;\n  cfg.setOutputDirectory(\"x\");\n  return { dir: { input: \"src\" } };\n};\n",
+            "module.exports = function (c) {\n  c.setOutputDirectory(process.env.OUT);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addPlugin(plugin, { config: c });\n  return { dir: { input: \"src\" } };\n};\n",
+            "module.exports = function (c) {\n  return { ...base, dir: { input: \"src\" } };\n};\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert_eq!(p.todos, 1, "{src}\n{}", p.text);
+        }
+        // Calls on the config that can't change a setting still allow a port.
+        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s);\n  c.addPlugin(somePlugin);\n  c.setIncludesDirectory(\"_partials\");\n  c.addPassthroughCopy(\"a\");\n  return { dir: { input: \"src\" } };\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+        assert!(p.text.contains("input: \"src\""), "{}", p.text);
+    }
+
+    #[test]
+    fn a_slash_that_could_be_either_is_never_guessed() {
+        for src in [
+            // Real 11ty writes `./evil`: `/'/` is a regular expression.
+            "module.exports = function (c) {\n  c.setOutputDirectory(\"good\");\n  if (process.env.X) /'/.test(\"\"); c.setOutputDirectory(\"evil\"); // '\n};\n",
+            "module.exports = function (c) {\n  while (x) /\"/.test(s);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  if (x) {}\n  /'/.test(\"\"); c.addPassthroughCopy(\"b\"); // '\n};\n",
+            "module.exports = function (c) {\n  i++ /'/; c.addPassthroughCopy(\"b\"); // '\n};\n",
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s.replace(/}/g, \"\")}`);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${a / b}`);\n};\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert!(
+                p.text.contains("port all of this file"),
+                "{src}\n{}",
+                p.text
+            );
+        }
+        // Clear cases still read: division after a call, a regex after `(` or `,`.
+        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.split(/,/).length / 2);\n  c.addFilter(\"g\", (s) => `${s}/x`);\n  c.addPassthroughCopy(\"a\");\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
     }
 }

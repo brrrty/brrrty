@@ -168,7 +168,16 @@ fn read_inside(root: &Path, name: &str) -> Result<Option<Read>, String> {
     let Some(path) = resolve_inside(root, name)? else {
         return Ok(None);
     };
-    let f = fs::File::open(&path).map_err(|e| format!("Brrrty can't read {name}: {e}"))?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let f = options
+        .open(&path)
+        .map_err(|e| format!("Brrrty can't read {name}: {e}"))?;
     // Checked again on the open file, in case it changed in between.
     if !f.metadata().is_ok_and(|m| m.is_file()) {
         return Err(format!("{name} isn't a regular file"));
@@ -332,6 +341,34 @@ fn new_package() -> String {
     )
 }
 
+/// `text` with control characters escaped, so a hostile `package.json` or
+/// config can't break a line or send escape codes to the terminal.
+fn shown(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            let escaped: Vec<char> = if c.is_control() {
+                c.escape_default().collect()
+            } else {
+                vec![c]
+            };
+            escaped
+        })
+        .collect()
+}
+
+/// [`shown`], keeping line breaks and tabs: for the diff.
+fn shown_lines(text: &str) -> String {
+    text.split('\n')
+        .map(|l| {
+            l.split('\t')
+                .map(|p| shown(p.strip_suffix('\r').unwrap_or(p)))
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Whether a script is exactly one 11ty command: `eleventy`,
 /// `npx @11ty/eleventy` or `node_modules/.bin/eleventy`, after any
 /// `NAME=value` settings (or `cross-env` ones), with its own flags.
@@ -465,10 +502,10 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                         }
                         Some(old) => match eleventy_step(&old) {
                             Some(step) => advice.push(format!(
-                                "scripts.{name} runs 11ty as one step of \"{old}\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.{keep} (to compare with 11ty), then replace `{step}` in scripts.{name} with `{cmd}`."
+                                "scripts.{name} runs 11ty as one step of \"{}\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.{keep} (to compare with 11ty), then replace `{}` in scripts.{name} with `{cmd}`.", shown(&old), shown(step)
                             )),
                             None => advice.push(format!(
-                                "scripts.{name} runs \"{old}\", which isn't an 11ty command, so Brrrty left it alone. Where it runs 11ty, run `{cmd}` instead."
+                                "scripts.{name} runs \"{}\", which isn't an 11ty command, so Brrrty left it alone. Where it runs 11ty, run `{cmd}` instead.", shown(&old)
                             )),
                         },
                         None => advice.push(format!(
@@ -488,7 +525,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                         }
                         if is_eleventy_command(cmd) || eleventy_step(cmd).is_some() {
                             advice.push(format!(
-                                "scripts.{k} runs 11ty (\"{cmd}\"). Brrrty's commands are `brrrty build` and `brrrty serve`, if you want it to run Brrrty."
+                                "scripts.{} runs 11ty (\"{}\"). Brrrty's commands are `brrrty build` and `brrrty serve`, if you want it to run Brrrty.", shown(k), shown(cmd)
                             ));
                         }
                     }
@@ -505,7 +542,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
         Some((k, v)) => {
             if v.as_str() != Some(VERSION) {
                 advice.push(format!(
-                    "{k} already has brrrty at {v}, so Brrrty left it alone. This is brrrty {VERSION}."
+                    "{k} already has brrrty at {}, so Brrrty left it alone. This is brrrty {VERSION}.", shown(&v.to_string())
                 ));
             }
         }
@@ -787,7 +824,7 @@ pub fn run(opts: &Options) -> u8 {
         "Brrrty found an 11ty site in {} ({from}).\n",
         plan.root.display()
     );
-    crate::say!("{}", diff(&plan).trim_end());
+    crate::say!("{}", shown_lines(diff(&plan).trim_end()));
     let write = if opts.dry_run {
         crate::say!("\nDry run: nothing was written.");
         false
@@ -818,7 +855,7 @@ pub fn run(opts: &Options) -> u8 {
         let names: Vec<&str> = plan.changes.iter().map(|c| c.name).collect();
         crate::say!("\nWrote {}.", names.join(" and "));
     }
-    crate::say!("{}", summary(&plan).trim_end());
+    crate::say!("{}", shown_lines(summary(&plan).trim_end()));
     0
 }
 

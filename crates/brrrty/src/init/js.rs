@@ -96,6 +96,10 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
     let mut i = 0;
     let mut out: Vec<Token> = Vec::new();
     let mut nl = false;
+    // For each open `(`: whether it holds the condition of `if`, `while`,
+    // `for` or `with`, after which a `/` could start a regular expression.
+    let mut parens: Vec<bool> = Vec::new();
+    let mut closed_condition = false;
     if src.starts_with("#!") {
         while i < b.len() && b[i] != b'\n' {
             i += 1;
@@ -169,7 +173,7 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
                 i += 1;
             }
             Tok::Ident(src[start..i].to_string())
-        } else if c == b'/' && regex_allowed(out.last()) {
+        } else if c == b'/' && slash(out.last(), closed_condition)? {
             i = regex(b, i)?;
             Tok::Regex
         } else {
@@ -188,6 +192,16 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
                 }
             }
         };
+        closed_condition = false;
+        match tok {
+            Tok::Punct("(") => parens.push(
+                out.last()
+                    .and_then(Token::ident)
+                    .is_some_and(|w| matches!(w, "if" | "while" | "for" | "with")),
+            ),
+            Tok::Punct(")") => closed_condition = parens.pop().unwrap_or(false),
+            _ => {}
+        }
         out.push(Token {
             tok,
             start,
@@ -239,12 +253,28 @@ fn pair_up(toks: &mut [Token]) -> Result<(), String> {
     Ok(())
 }
 
-fn regex_allowed(prev: Option<&Token>) -> bool {
+/// Whether a `/` after `prev` starts a regular expression (`true`) or is
+/// division (`false`). Where that can't be known without parsing the
+/// statement around it, the file is unreadable rather than guessed at.
+fn slash(prev: Option<&Token>, after_condition: bool) -> Result<bool, String> {
+    let unsure = || {
+        Err(
+            "Brrrty can't tell whether a `/` here starts a regular expression or divides"
+                .to_string(),
+        )
+    };
     match prev.map(|t| &t.tok) {
-        None => true,
-        Some(Tok::Ident(k)) => REGEX_AFTER.contains(&k.as_str()),
-        Some(Tok::Punct(p)) => !matches!(*p, ")" | "]" | "}"),
-        Some(_) => false,
+        None => Ok(true),
+        Some(Tok::Ident(k)) => match k.as_str() {
+            "of" | "yield" | "await" | "let" | "async" | "get" | "set" | "static" => unsure(),
+            k if REGEX_AFTER.contains(&k) => Ok(true),
+            _ => Ok(false),
+        },
+        Some(Tok::Punct(")")) if after_condition => unsure(),
+        Some(Tok::Punct(")" | "]")) => Ok(false),
+        Some(Tok::Punct("}" | "++" | "--")) => unsure(),
+        Some(Tok::Punct(_)) => Ok(true),
+        Some(_) => Ok(false),
     }
 }
 
@@ -450,6 +480,10 @@ fn substitution(src: &str, mut j: usize, nest: usize) -> Result<usize, String> {
                 Some(e) => j += e + 4,
                 None => return Err("a /* comment is never closed".into()),
             },
+            // A regular expression could hold a `}` or a quote.
+            Some(b'/') => {
+                return Err("Brrrty can't read a `/` inside a template literal's `${}`".into());
+            }
             Some(_) => j += 1,
         }
     }

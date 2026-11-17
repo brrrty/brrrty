@@ -593,3 +593,19 @@ fn quoted_line_breaks_never_become_code() {
         );
     }
 }
+
+#[test]
+fn script_values_are_printed_escaped() {
+    let src = "{\n  \"scripts\": { \"build\": \"vite\\nbuild \\u001b[31mred\" },\n  \"devDependencies\": { \"@11ty/eleventy\": \"3\" }\n}\n";
+    let dir = site(&[("package.json", src)]);
+    let out = run_in(dir.path(), &["init", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    assert!(
+        text.contains(
+            "scripts.build runs \"vite\\nbuild \\u{1b}[31mred\", which isn't an 11ty command"
+        ),
+        "{text}"
+    );
+}
