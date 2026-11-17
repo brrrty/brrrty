@@ -133,8 +133,16 @@ pub fn options(given: &[(String, Value)]) -> Result<CsvOptions, String> {
     let mut trim = None;
     let mut ltrim = None;
     let mut rtrim = None;
+    let mut seen: Vec<(String, &str)> = Vec::new();
     for (raw_key, v) in given {
         let key = underscore(raw_key);
+        // csv-parse takes the one written last; a Rhai map has no such order.
+        if let Some((_, first)) = seen.iter().find(|(k, _)| *k == key) {
+            return Err(format!(
+                "`{first}` and `{raw_key}` are the same csv-parse option; give it once (csv-parse would take whichever was written last, and a Rhai map doesn't keep that order)"
+            ));
+        }
+        seen.push((key.clone(), raw_key.as_str()));
         match key.as_str() {
             "columns" => match v {
                 Value::Bool(b) => o.columns = *b,
