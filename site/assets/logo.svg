@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Brrrty">
-  <!-- LOGO SLOT, unused for now. Replace this file with Bertie (a turtle with a rocket on
+  <!-- LOGO SLOT, unused for now. Replace this file with Bertie (a tortoise with a rocket on
        his shell), then turn it on in site/_includes/base.njk (see "Logo slot" there). The
        header shows it at 24 by 24 beside the wordmark. Keep it square. -->
-  <rect width="64" height="64" rx="12" fill="#d6411a"/>
+  <rect width="64" height="64" rx="12" fill="#d7141e"/>
 </svg>

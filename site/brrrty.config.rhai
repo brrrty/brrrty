@@ -69,10 +69,8 @@ config.add_filter("prose", |html| {
     regex_replace(out, "</table>", "</table></div>", "g")
 });
 
-// TODO: add config.add_plugin("syntaxhighlight") once Brrrty 0.0.11 is out. In 0.0.10 its
-// language scan counts a highlight tag quoted inside inline code in CHANGELOG.md (built
-// here through changelog.md) as a language that could change any grammar, and refuses
-// every page with a highlighted fence. The fix is in core on another branch.
+// Prism highlighting for Markdown fences, as 11ty's syntaxhighlight plugin does it.
+config.add_plugin("syntaxhighlight");
 
 // Markdown pages are plain Markdown: the docs show template syntax in code.
 #{ markdownTemplateEngine: false, dir: #{ output: "_site" } }
