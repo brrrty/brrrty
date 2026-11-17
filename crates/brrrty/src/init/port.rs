@@ -1599,4 +1599,29 @@ module.exports = function (eleventyConfig) {
             p.text
         );
     }
+
+    #[test]
+    fn escaped_names_port_nothing() {
+        for src in [
+            // Real 11ty writes `./pluginout/`: the key is `immediate`.
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { imm\\u0065diate: true });\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.setOutputDir\\u0065ctory(x);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\");\n  \\u0072eturn\n  { dir: { output: \"x\" } };\n};\n",
+            "\\u006dodule.exports = function (c) { c.addPassthroughCopy(\"a\") };\n",
+            "module.exports = function (\\u0063) { c.addPassthroughCopy(\"a\") };\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert_eq!(p.todos, 1, "{src}\n{}", p.text);
+            assert!(p.text.contains("escape"), "{src}\n{}", p.text);
+        }
+        // An escape inside a string is fine: its value is decoded.
+        let src = "module.exports = function (c) { c.addPassthroughCopy(\"\\u0061\") };\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+    }
 }

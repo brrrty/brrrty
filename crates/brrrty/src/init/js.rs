@@ -172,6 +172,10 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             while i < b.len() && (is_ident_part(b[i]) || b[i] == b'\\') {
                 i += 1;
             }
+            // `\u0065` in a name means `e`: never compare such names as text.
+            if src[start..i].contains('\\') {
+                return Err("a name is written with a `\\` escape".into());
+            }
             Tok::Ident(src[start..i].to_string())
         } else if c == b'/' && slash(out.last(), closed_condition)? {
             i = regex(b, i)?;
