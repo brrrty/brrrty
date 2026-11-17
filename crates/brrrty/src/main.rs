@@ -298,9 +298,16 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     };
     let color = std::io::stderr().is_terminal();
     let mut eleventy = None;
-    let mut temp = None;
-    // Kept for the whole run: it holds the signal thread.
-    let mut _interrupts = None;
+    let mut temp: Option<brrrty::cleanup::TempFolder> = None;
+    // Where a signal is acted on: between steps, here on the main thread, which removes the
+    // temporary folder (dropping it), says so and exits. See `brrrty::cleanup`.
+    macro_rules! stop_point {
+        () => {
+            if let Some(sig) = brrrty::cleanup::stopping() {
+                return stopped(sig, temp.take());
+            }
+        };
+    }
     if args.verify {
         match verify::find(&root) {
             Ok(e) => eleventy = Some(e),
@@ -315,16 +322,11 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         // SAFETY: nothing else runs yet: no thread has started, and the build that reads
         // the variable starts after this.
         unsafe { std::env::set_var("SOURCE_DATE_EPOCH", verify_epoch().to_string()) };
-        // Ctrl-C or SIGTERM stops 11ty, removes the temporary folders and exits 130 or 143.
-        match brrrty::serve::signals::Interrupts::install() {
-            Ok(i) => {
-                i.on_signal(|sig| brrrty::cleanup::stop(sig));
-                _interrupts = Some(i);
-            }
-            Err(e) => {
-                brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
-                return ExitCode::from(1);
-            }
+        // From here, Ctrl-C or SIGTERM stops 11ty, removes the temporary folder and exits
+        // 130 or 143.
+        if let Err(e) = brrrty::cleanup::install_signals() {
+            brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
+            return ExitCode::from(1);
         }
         match brrrty::cleanup::TempFolder::new("brrrty-doctor-") {
             Ok(t) => temp = Some(t),
@@ -350,14 +352,38 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    stop_point!();
     let report = brrrty_core::survey(&opts, &MarkdownIt::new(), temp.is_none());
+    stop_point!();
     let diagnosis = brrrty_core::doctor::diagnose(report);
-    let verified = match (&eleventy, &temp) {
-        (Some(e), Some(t)) => Some(run_verify(e, &root, t.path(), &diagnosis)),
-        _ => None,
-    };
-    // A signal during the builds is ending the process: print nothing more.
-    brrrty::cleanup::halt_if_stopping();
+    let mut verified = None;
+    if let (Some(e), Some(t)) = (&eleventy, &temp) {
+        let shim = t.path().join("freeze-time.cjs");
+        let out = t.path().join("11ty");
+        let ours = t.path().join("brrrty");
+        let ran = std::fs::write(&shim, verify::SHIM)
+            .map_err(|err| format!("Brrrty could not write {}: {err}", shim.display()));
+        stop_point!();
+        let ran = ran.and_then(|()| verify::run_eleventy(e, &root, &out, &shim, verify_epoch()));
+        stop_point!();
+        verified = Some(ran.and_then(|eleventy_time| {
+            // 11ty writes no folder for a site with no output.
+            let _ = std::fs::create_dir_all(&out);
+            let _ = std::fs::create_dir_all(&ours);
+            let report =
+                brrrty_compat::compare_dirs(&out, &ours, &brrrty_compat::AllowList::empty())
+                    .map_err(|err| format!("Brrrty could not compare the two builds: {err}"))?;
+            Ok(verify::Verified {
+                eleventy_version: e.version.clone(),
+                eleventy_time,
+                brrrty_time: diagnosis.report.elapsed,
+                report,
+            })
+        }));
+    }
+    // The last place a signal stops the run. One that comes while the report prints, or
+    // after, lets it finish with its own exit status.
+    stop_point!();
     if args.json {
         let v = verified.as_ref().map(|v| match v {
             Ok(v) => verify::json(v),
@@ -386,34 +412,11 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     }
 }
 
-/// Build with the site's 11ty into `temp`, where Brrrty's build is already, and compare.
-fn run_verify(
-    e: &brrrty::doctor::verify::Eleventy,
-    root: &std::path::Path,
-    temp: &std::path::Path,
-    diagnosis: &brrrty_core::doctor::Diagnosis,
-) -> Result<brrrty::doctor::verify::Verified, String> {
-    use brrrty::doctor::verify;
-    let shim = temp.join("freeze-time.cjs");
-    let out = temp.join("11ty");
-    std::fs::write(&shim, verify::SHIM)
-        .map_err(|err| format!("Brrrty could not write {}: {err}", shim.display()))?;
-    let eleventy_time = verify::run_eleventy(e, root, &out, &shim, verify_epoch())?;
-    // 11ty writes no folder for a site with no output.
-    let _ = std::fs::create_dir_all(&out);
-    let _ = std::fs::create_dir_all(temp.join("brrrty"));
-    let report = brrrty_compat::compare_dirs(
-        &out,
-        &temp.join("brrrty"),
-        &brrrty_compat::AllowList::empty(),
-    )
-    .map_err(|err| format!("Brrrty could not compare the two builds: {err}"))?;
-    Ok(verify::Verified {
-        eleventy_version: e.version.clone(),
-        eleventy_time,
-        brrrty_time: diagnosis.report.elapsed,
-        report,
-    })
+/// Stop after a signal: remove the temporary folder, say so and exit 130 or 143.
+fn stopped(sig: i32, temp: Option<brrrty::cleanup::TempFolder>) -> ExitCode {
+    drop(temp);
+    brrrty::say_err!("Stopped; the temporary folders are removed.");
+    ExitCode::from(u8::try_from(128 + sig).unwrap_or(1))
 }
 
 /// End a session that is not served, printing what went wrong cleaning up.

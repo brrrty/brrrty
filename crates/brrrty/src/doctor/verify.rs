@@ -76,7 +76,7 @@ pub fn find(root: &Path) -> Result<Eleventy, String> {
 
 /// Run 11ty in `root`, writing to `out`, with its clock frozen at `epoch` by
 /// the shim at `shim`. Returns how long it took. It runs in a process group of its own,
-/// which [`crate::cleanup::run`] stops on Ctrl-C.
+/// which a signal kills (see [`crate::cleanup`]); it isn't started once one came.
 pub fn run_eleventy(
     e: &Eleventy,
     root: &Path,
@@ -98,14 +98,13 @@ pub fn run_eleventy(
         .stderr(std::process::Stdio::piped());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let child = cmd
-        .spawn()
-        .map_err(|err| format!("cannot run node: {err}"))?;
-    crate::cleanup::set_child(Some(child.id()));
+    let Some(child) =
+        crate::cleanup::spawn(&mut cmd).map_err(|err| format!("cannot run node: {err}"))?
+    else {
+        return Err("stopped before 11ty started".to_string());
+    };
     let output = child.wait_with_output();
-    // Killed by a signal's cleanup: the signal thread ends the process.
-    crate::cleanup::halt_if_stopping();
-    crate::cleanup::set_child(None);
+    crate::cleanup::child_done();
     let output = output.map_err(|err| format!("cannot run node: {err}"))?;
     let took = start.elapsed();
     if !output.status.success() {

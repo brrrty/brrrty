@@ -299,21 +299,20 @@ fn verify_with_real_eleventy() {
 }
 
 /// A stand-in for 11ty that starts a child of its own, writes both process ids to
-/// `pids` in the site, and waits.
+/// `pids` in the site, writes 3,000 files (so removing the temporary folder takes a
+/// while), waits a little, stops its child and ends.
 #[cfg(unix)]
-fn hanging_eleventy(root: &Path) {
-    // Thousands of files in the temporary folder make removing it take a while, which is
-    // when the main thread used to go on and print the report.
+fn slow_eleventy(root: &Path) {
     let script = "const fs = require('fs'), path = require('path'), cp = require('child_process');\n\
+         const child = cp.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });\n\
+         fs.writeFileSync('pids', process.pid + ' ' + child.pid);\n\
          const out = process.argv.find(a => a.startsWith('--output=')).slice(9);\n\
          for (let i = 0; i < 3000; i++) {\n\
            const d = path.join(out, 'p' + (i % 50));\n\
            fs.mkdirSync(d, { recursive: true });\n\
            fs.writeFileSync(path.join(d, i + '.html'), 'x'.repeat(2000));\n\
          }\n\
-         const child = cp.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });\n\
-         fs.writeFileSync('pids', process.pid + ' ' + child.pid);\n\
-         setTimeout(() => {}, 60000);\n";
+         setTimeout(() => { child.kill('SIGKILL'); }, 300);\n";
     let dir = root.join("node_modules/@11ty/eleventy");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("cmd.cjs"), script).unwrap();
@@ -330,88 +329,120 @@ fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
-/// Signal `brrrty doctor --verify` while 11ty runs, 20 times over, since the outcome
-/// once depended on which thread won a race.
+/// A site big enough that Brrrty's own build takes a moment, with the slow 11ty.
 #[cfg(unix)]
-fn interrupted_verify_cleans_up(signal: i32, code: i32) {
-    if !has_node() {
-        eprintln!("skipped: no node on PATH");
-        return;
+fn interruptible_site() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..1500 {
+        let p = dir.path().join(format!("posts/p{i}.md"));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, format!("# Post {i}\n\nSome *text*.\n")).unwrap();
     }
-    for _ in 0..20 {
-        interrupt_once(signal, code);
-    }
+    slow_eleventy(dir.path());
+    dir
 }
 
+/// One `doctor --verify --yes` run, signalled after `delay` (none when `None`), checked.
+/// Returns how long it took and whether the signal stopped it.
 #[cfg(unix)]
-fn interrupt_once(signal: i32, code: i32) {
+fn signalled_run(
+    dir: &Path,
+    signal: i32,
+    delay: Option<std::time::Duration>,
+) -> (std::time::Duration, bool) {
+    use std::os::unix::process::ExitStatusExt;
     use std::time::{Duration, Instant};
-    let dir = site(&[("a.md", "# A\n")]);
-    hanging_eleventy(dir.path());
     let tmp = tempfile::tempdir().unwrap();
+    let _ = std::fs::remove_file(dir.join("pids"));
+    let start = Instant::now();
     let child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
         .args(["doctor", "--verify", "--yes"])
-        .current_dir(dir.path())
+        .current_dir(dir)
         .env("TMPDIR", tmp.path())
+        .env_remove("SOURCE_DATE_EPOCH")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let pids = dir.path().join("pids");
-    let start = Instant::now();
-    while !std::fs::read_to_string(&pids).is_ok_and(|s| s.contains(' ')) {
-        assert!(
-            start.elapsed() < Duration::from_secs(30),
-            "11ty never started"
-        );
-        std::thread::sleep(Duration::from_millis(50));
+    if let Some(d) = delay {
+        std::thread::sleep(d);
+        // SAFETY: signals the brrrty process this test started.
+        unsafe { libc::kill(child.id() as i32, signal) };
     }
-    let temp_folders = || {
-        std::fs::read_dir(tmp.path())
-            .unwrap()
-            .filter(|e| {
-                e.as_ref()
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("brrrty-doctor-")
-            })
-            .count()
-    };
-    assert_eq!(temp_folders(), 1);
-    // SAFETY: signals the brrrty process this test started.
-    unsafe { libc::kill(child.id() as i32, signal) };
     let out = child.wait_with_output().unwrap();
-    assert_eq!(out.status.code(), Some(code), "{}", stderr(&out));
-    assert_eq!(stdout(&out), "", "no report after a signal");
-    assert!(stderr(&out).ends_with("Stopped; the temporary folders are removed.\n"));
-    assert_eq!(temp_folders(), 0);
-    let ids: Vec<i32> = std::fs::read_to_string(&pids)
-        .unwrap()
-        .split_whitespace()
-        .map(|p| p.parse().unwrap())
-        .collect();
-    let start = Instant::now();
-    while ids.iter().any(|p| alive(*p)) {
-        assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "11ty's processes are still running"
-        );
-        std::thread::sleep(Duration::from_millis(50));
+    let took = start.elapsed();
+    let (so, se) = (stdout(&out), stderr(&out));
+    let said_stopped = se.contains("Stopped");
+    let stopped = out.status.code() == Some(128 + signal);
+    let killed_early = out.status.signal() == Some(signal);
+    let finished = matches!(out.status.code(), Some(0 | 1));
+    let at = format!(
+        "delay {delay:?}: {:?}\nstdout: {so}\nstderr: {se}",
+        out.status
+    );
+    if stopped {
+        assert!(said_stopped && so.is_empty(), "{at}");
+    } else if killed_early {
+        // Before the handler was installed: nothing had started yet.
+        assert!(so.is_empty() && !said_stopped, "{at}");
+    } else {
+        assert!(finished && !said_stopped && !so.is_empty(), "{at}");
     }
+    let left: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(left.is_empty(), "temporary folders left: {left:?}; {at}");
+    if let Ok(pids) = std::fs::read_to_string(dir.join("pids")) {
+        let ids: Vec<i32> = pids
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect();
+        let start = Instant::now();
+        while ids.iter().any(|p| alive(*p)) {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "11ty's processes are still running; {at}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    (took, stopped)
+}
+
+/// Signal `brrrty doctor --verify` at delays spread over a whole run: before and during
+/// Brrrty's build, while 11ty runs, during the comparison and while the report prints. Each
+/// run must either stop cleanly (130 or 143, "Stopped", nothing on stdout) or finish
+/// normally without saying it stopped, and leave no temporary folder or process behind.
+#[cfg(unix)]
+fn interrupted_verify_cleans_up(signal: i32) {
+    if !has_node() {
+        eprintln!("skipped: no node on PATH");
+        return;
+    }
+    let dir = interruptible_site();
+    // The first run warms the caches; the second says how long a run takes.
+    signalled_run(dir.path(), signal, None);
+    let (whole, _) = signalled_run(dir.path(), signal, None);
+    let mut stops = 0;
+    for step in 0..=24 {
+        let (_, stopped) = signalled_run(dir.path(), signal, Some(whole * step / 20));
+        stops += usize::from(stopped);
+    }
+    assert!(stops > 0, "no run was stopped");
 }
 
 #[test]
 #[cfg(unix)]
-fn ctrl_c_during_verify_stops_11ty_and_removes_the_temp_folder() {
-    interrupted_verify_cleans_up(libc::SIGINT, 130);
+fn ctrl_c_during_verify_stops_cleanly_at_any_moment() {
+    interrupted_verify_cleans_up(libc::SIGINT);
 }
 
 #[test]
 #[cfg(unix)]
-fn sigterm_during_verify_stops_11ty_and_removes_the_temp_folder() {
-    interrupted_verify_cleans_up(libc::SIGTERM, 143);
+fn sigterm_during_verify_stops_cleanly_at_any_moment() {
+    interrupted_verify_cleans_up(libc::SIGTERM);
 }
 
 #[test]

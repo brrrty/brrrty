@@ -1,5 +1,4 @@
-//! Ctrl-C and SIGTERM for `brrrty serve`, and for `brrrty doctor --verify`, which only
-//! cleans up and exits (see [`Interrupts::on_signal`]).
+//! Ctrl-C and SIGTERM for `brrrty serve`.
 //!
 //! The first signal asks the session to stop: it finishes a build already running, leaves the
 //! last good build in the output folder, closes the server and removes the staging folder. A
@@ -14,13 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use super::StopHandle;
 
-/// Run on the first signal, on the signal thread.
-type OnSignal = Box<dyn Fn(i32) + Send>;
-
 #[derive(Default)]
 struct State {
     stop: Option<StopHandle>,
-    on_signal: Option<OnSignal>,
     /// The first signal received.
     signal: Option<i32>,
 }
@@ -55,9 +50,6 @@ impl Interrupts {
                         if let Some(h) = &s.stop {
                             h.stop();
                         }
-                        if let Some(f) = &s.on_signal {
-                            f(sig);
-                        }
                     }
                 })?;
         }
@@ -75,16 +67,6 @@ impl Interrupts {
             handle.stop();
         }
         s.stop = Some(handle);
-    }
-
-    /// Run `f` with the signal on the first one, or at once if one came already. It runs on
-    /// the signal thread while the other threads go on, so it may end the process.
-    pub fn on_signal(&self, f: impl Fn(i32) + Send + 'static) {
-        let mut s = self.lock();
-        if let Some(sig) = s.signal {
-            f(sig);
-        }
-        s.on_signal = Some(Box::new(f));
     }
 
     /// Whether a signal has come.

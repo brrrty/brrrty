@@ -1,41 +1,47 @@
-//! What to undo when the process ends early: temporary folders to remove and a child
-//! process group to stop. `brrrty doctor --verify` registers both; Ctrl-C, SIGTERM and the
-//! panic handler call [`run`], which ends the process before any destructor runs.
+//! Stopping `brrrty doctor --verify` on Ctrl-C or SIGTERM, and what to undo when it ends.
+//!
+//! The work is split so no order of events can leak anything:
+//!
+//! - The signal thread only marks the process as stopping and kills the child's process
+//!   group, if one is running, both under one lock. It never prints, removes files or exits.
+//! - A child is spawned under the same lock, and only when no stop is in progress, so a
+//!   signal either finds the child registered and kills it, or comes first and the child is
+//!   never started.
+//! - The main thread owns everything else. It asks [`stopping`] between its steps and, when
+//!   a signal came, drops its [`TempFolder`]s (which removes them), says so and exits.
+//!
+//! The panic handler calls [`run`], which kills the child and removes the folders, since a
+//! panic ends the process before any destructor runs.
 
+use std::io;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI32, Ordering};
 
+/// Whether a stop is in progress, and the child process group that is running.
+#[derive(Default)]
+struct State {
+    /// The first signal received, or 0.
+    stopping: i32,
+    child: Option<u32>,
+}
+
+static STATE: Mutex<State> = Mutex::new(State {
+    stopping: 0,
+    child: None,
+});
 static FOLDERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
-static CHILD: Mutex<Option<u32>> = Mutex::new(None);
-/// The signal that is stopping the process, or 0.
-static STOPPING: AtomicI32 = AtomicI32::new(0);
 
-/// Stop because of `signal`: mark the process as stopping before anything else, so a thread
-/// that wakes when the child is killed knows not to go on, then clean up and exit
-/// `128 + signal`. Called on the signal thread.
-pub fn stop(signal: i32) -> ! {
-    STOPPING.store(signal, Ordering::SeqCst);
-    run();
-    crate::say_err!("Stopped; the temporary folders are removed.");
-    std::process::exit(128 + signal);
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// When a signal is stopping the process, wait for [`stop`] to end it instead of going on.
-/// Call after anything a signal can cut short, such as waiting for the child.
-pub fn halt_if_stopping() {
-    while STOPPING.load(Ordering::SeqCst) != 0 {
-        std::thread::park();
-    }
-}
-
-/// A temporary folder that is removed when it is dropped, and by [`run`] when the process
-/// ends before that.
+/// A temporary folder that is removed when it is dropped, and by [`run`] after a panic.
 pub struct TempFolder(Option<tempfile::TempDir>);
 
 impl TempFolder {
     /// A new folder in the system temp folder whose name starts with `prefix`.
-    pub fn new(prefix: &str) -> std::io::Result<TempFolder> {
+    pub fn new(prefix: &str) -> io::Result<TempFolder> {
         let dir = tempfile::Builder::new().prefix(prefix).tempdir()?;
         lock(&FOLDERS).push(dir.path().to_path_buf());
         Ok(TempFolder(Some(dir)))
@@ -56,27 +62,79 @@ impl Drop for TempFolder {
     }
 }
 
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// The process group of a running child, led by `pid`, which [`run`] stops; `None` once it
-/// has ended.
-pub fn set_child(pid: Option<u32>) {
-    *lock(&CHILD) = pid;
-}
-
-/// Stop the child's process group and remove the temporary folders. Safe to call from any
-/// thread, more than once.
-pub fn run() {
-    #[cfg(unix)]
-    if let Some(pid) = lock(&CHILD).take()
-        && let Ok(pid) = i32::try_from(pid)
-    {
+#[cfg(unix)]
+fn kill_group(pid: u32) {
+    if let Ok(pid) = i32::try_from(pid) {
         // SAFETY: killpg only sends a signal; the group is the child's own.
         unsafe {
             libc::killpg(pid, libc::SIGKILL);
         }
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(_pid: u32) {}
+
+/// What the signal thread does on Ctrl-C or SIGTERM: mark the process as stopping and kill
+/// the running child's process group.
+pub fn signal(sig: i32) {
+    let mut s = lock(&STATE);
+    if s.stopping == 0 {
+        s.stopping = sig;
+    }
+    if let Some(pid) = s.child {
+        kill_group(pid);
+    }
+}
+
+/// The signal stopping the process, if one came.
+pub fn stopping() -> Option<i32> {
+    match lock(&STATE).stopping {
+        0 => None,
+        sig => Some(sig),
+    }
+}
+
+/// Catch Ctrl-C and SIGTERM for the rest of the run, calling [`signal`] for each. Does
+/// nothing outside Unix.
+pub fn install_signals() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM])?;
+        std::thread::Builder::new()
+            .name("brrrty-signals".into())
+            .spawn(move || {
+                for sig in signals.forever() {
+                    signal(sig);
+                }
+            })?;
+    }
+    Ok(())
+}
+
+/// Start `cmd` as the child a signal kills, unless a stop is in progress: then `Ok(None)`,
+/// and nothing is started. Call [`child_done`] once it has ended.
+pub fn spawn(cmd: &mut Command) -> io::Result<Option<Child>> {
+    let mut s = lock(&STATE);
+    if s.stopping != 0 {
+        return Ok(None);
+    }
+    let child = cmd.spawn()?;
+    s.child = Some(child.id());
+    Ok(Some(child))
+}
+
+/// The child started by [`spawn`] has ended.
+pub fn child_done() {
+    lock(&STATE).child = None;
+}
+
+/// Kill the child and remove the temporary folders: for the panic handler, which ends the
+/// process before destructors run.
+pub fn run() {
+    if let Some(pid) = lock(&STATE).child.take() {
+        kill_group(pid);
     }
     for path in lock(&FOLDERS).drain(..) {
         let _ = std::fs::remove_dir_all(path);
