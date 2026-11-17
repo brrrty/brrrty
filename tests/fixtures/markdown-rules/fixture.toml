@@ -1,0 +1,3 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js, which changes 11ty's markdown-it with renderer rules
+# (`amendLibrary("md", ...)`).
