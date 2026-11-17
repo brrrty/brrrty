@@ -279,17 +279,26 @@ A data file (or the config, or a filter) reads files in the project with:
 | `fs.readFileSync(p, 'utf8')` | `read_text(p)`: bytes that aren't UTF-8 become U+FFFD exactly as Node replaces them; a byte order mark is kept |
 | `JSON.parse(fs.readFileSync(p, 'utf8'))`, `import x from './x.json'` | `read_json(p)`: keys in JavaScript's order (integer-like first), a repeated key keeps its first place and its last value; JSON that `JSON.parse` rejects is an error, and so are numbers out of a double's range (`1e400`) and lone surrogate escapes, which `JSON.parse` would accept |
 | `fs.readdirSync(p)` | `read_dir(p)`: names without `.` and `..`, dotfiles included, sorted by their UTF-8 bytes as libuv sorts them (`10.md`, `2.md`, `Z.md`, `_index.md`, `a.md`, `é.md`). That is Node's order on macOS and Linux; on Windows Node gives the file system's order |
-| `fs.readdirSync(p, { recursive: true })` | `read_dir(p, #{ recursive: true })`: the folder's names, then each subfolder's in that order, breadth first, as `sub/name`; a symlink to a folder is listed, not entered. Other options (`withFileTypes`, `encoding`) are refused |
+| `fs.readdirSync(p, { recursive: true })` | `read_dir(p, #{ recursive: true })`: the folder's names, then each subfolder's in that order, breadth first, as `sub/name`. As in Node 26, a symlink to a folder is entered (`link -> real` lists `link/x.md` and `real/x.md`) and a dangling one is just a name. A symlink to a folder outside the project is refused (Node would list it), and so is a loop such as `x/up -> ..` (Node follows it until the path is too long). `recursive` must be `true` or `false`; other options (`withFileTypes`, `encoding`) are refused |
 | `fs.existsSync(p)` | `file_exists(p)` |
 | `parse(text, opts)` from `csv-parse/sync` (7.0.3) | `parse_csv(text, opts)` |
 
 Paths are relative to the project folder, 11ty's working directory, so
 `join(__dirname, 'shop.csv')` in `src/_data/shop.js` is
-`"src/_data/shop.csv"`. A script can't leave the project: an absolute path,
-any `..` component, and a path through a symlink that leads outside are
-errors (even for `file_exists`, which won't probe outside). A file over 16
-MiB is refused before it is read, and `read_dir` stops at 100,000 names.
-Nothing writes. A missing file is an error a `try { } catch { }` catches,
+`"src/_data/shop.csv"`. A script can't leave the project: an absolute path
+and any `..` component are refused before anything is opened, and every path
+is opened relative to a handle on the project folder one component at a
+time (with cap-std: `openat2` with `RESOLVE_BENEATH` on Linux, `openat` with
+`O_NOFOLLOW` elsewhere), following a symlink only when it stays inside. A
+symlink that leads out, including one with an absolute target (even one
+that points back inside), is refused, even for `file_exists`, and a symlink
+swapped in while the build runs can't get around that. Only regular files
+are read: a FIFO, socket or device is refused rather than waited on. A path
+ending in `/` or `/.` needs a folder there, as in Node (`file_exists("a.txt/")`
+is `false`). A file over 16 MiB is refused before it is read (and text over
+16 MiB once invalid UTF-8 is replaced), `read_dir` stops at 100,000 names, and
+`read_json` at 100,000 array items. Nothing writes. The helpers work on macOS
+and Linux; elsewhere they refuse. A missing file is an error a `try { } catch { }` catches,
 like Node's `ENOENT`: `read_text("x.txt"): no such file or directory`.
 
 `parse_csv` is a byte-level port of csv-parse 7.0.3, checked against Node on
@@ -298,7 +307,10 @@ function is refused), `delimiter` (one string), `bom`, `trim`, `ltrim`,
 `rtrim`, `skip_empty_lines`, `relax_column_count`,
 `relax_column_count_less` and `relax_column_count_more`, in snake_case or
 camelCase. Any other csv-parse option is refused by name, and so is a key
-csv-parse doesn't know (it would ignore a typo). csv-parse's quirks are kept:
+csv-parse doesn't know (it would ignore a typo). An option given in both
+spellings (`skip_empty_lines` and `skipEmptyLines`) is refused: csv-parse
+takes whichever was written last, and a Rhai map doesn't keep that order.
+csv-parse's quirks are kept:
 
 - The first line ending (`\r\n`, `\n` or `\r`) decides the record
   delimiter; a different one later stays in the field.
@@ -311,8 +323,12 @@ csv-parse doesn't know (it would ignore a typo). csv-parse's quirks are kept:
   columns length is 3, got 2 on line 4`.
 
 Every path a script reads, lists or checks, found or not, is a dependency:
-`brrrty serve` rebuilds when it changes, wherever it is in the project, and
-when a listed folder gains or loses a name.
+`brrrty serve` rebuilds when it changes, wherever it is in the project
+(`node_modules` and `.git` included, which are otherwise never watched), when
+a listed folder (or any folder a recursive listing entered) gains or loses a
+name, and when a symlink on the way to a read is retargeted. Only the output
+folder is never watched, so a script that reads the output folder isn't
+rebuilt when it changes.
 
 Things to watch when porting a reader:
 

@@ -146,8 +146,8 @@ for file in read_dir("src/_data/notes") {
 #{ products: products, notes: notes }
 ```
 
-- Paths start at the project folder (where `brrrty.config.rhai` is), so `join(__dirname, "list.csv")` in `src/_data/x.js` is `"src/_data/list.csv"`. An absolute path, a `..`, and a symlink that leads outside the project are refused, and nothing writes.
-- `read_text` replaces bytes that aren't UTF-8 as Node does and keeps a byte order mark. `read_dir` lists names in Node's order on macOS and Linux (sorted by their bytes, so `10.md` comes before `2.md` and `Zebra.md` before `apple.md`); `recursive` lists the folder, then each subfolder in turn as `sub/name`.
+- Paths start at the project folder (where `brrrty.config.rhai` is), so `join(__dirname, "list.csv")` in `src/_data/x.js` is `"src/_data/list.csv"`. An absolute path, a `..`, and a symlink that leads outside the project are refused: every path is opened through a handle on the project folder, so not even a symlink swapped in mid-build gets out. Only regular files are read, and nothing writes.
+- `read_text` replaces bytes that aren't UTF-8 as Node does and keeps a byte order mark. `read_dir` lists names in Node's order on macOS and Linux (sorted by their bytes, so `10.md` comes before `2.md` and `Zebra.md` before `apple.md`); `recursive` lists the folder, then each subfolder in turn as `sub/name`, entering symlinked folders as Node 26 does; a symlink that leads outside the project, or a loop, is refused.
 - `parse_csv` is csv-parse 7.0.3, quirks and error messages included, with the options `columns` (`true`), `delimiter`, `bom`, `trim`, `ltrim`, `rtrim`, `skip_empty_lines` and `relax_column_count`. Any other option is refused. With `columns`, each record is an `object()` in the header's order.
 - A file over 16 MB is refused unread. A missing file is an error that `try { ... } catch { ... }` catches, as in JavaScript.
 - `brrrty serve` rebuilds when a file a script read changes, wherever it is in the project.
