@@ -121,7 +121,9 @@ function main() {
 
   const out = path.resolve(values.out);
   fs.rmSync(out, { recursive: true, force: true });
-  const license = path.join(repo, 'LICENSE');
+  // LICENSE, and NOTICE with the licenses of the code Brrrty ports, go in
+  // every package.
+  const legal = ['LICENSE', 'NOTICE'];
   const template = readJson(path.join(npmDir, 'platform', 'package.json'));
   const readme = fs.readFileSync(path.join(npmDir, 'platform', 'README.md'), 'utf8');
 
@@ -138,7 +140,7 @@ function main() {
     manifest.cpu = [cpu];
     writeJson(path.join(dir, 'package.json'), manifest);
     fs.writeFileSync(path.join(dir, 'README.md'), readme.replaceAll('PLATFORM', platform));
-    fs.copyFileSync(license, path.join(dir, 'LICENSE'));
+    for (const f of legal) fs.copyFileSync(path.join(repo, f), path.join(dir, f));
     const bin = path.join(dir, 'bin', 'brrrty');
     fs.copyFileSync(binaries[key], bin);
     fs.chmodSync(bin, 0o755);
@@ -150,7 +152,7 @@ function main() {
   for (const dep of Object.keys(mainPkg.optionalDependencies)) mainPkg.optionalDependencies[dep] = version;
   writeJson(path.join(dir, 'package.json'), mainPkg);
   fs.copyFileSync(path.join(npmDir, 'brrrty', 'README.md'), path.join(dir, 'README.md'));
-  fs.copyFileSync(license, path.join(dir, 'LICENSE'));
+  for (const f of legal) fs.copyFileSync(path.join(repo, f), path.join(dir, f));
   fs.copyFileSync(path.join(npmDir, 'brrrty', 'bin', 'brrrty'), path.join(dir, 'bin', 'brrrty'));
   fs.chmodSync(path.join(dir, 'bin', 'brrrty'), 0o755);
 

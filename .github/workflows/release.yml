@@ -125,7 +125,7 @@ jobs:
         run: |
           name="brrrty-$VERSION-$TARGET"
           mkdir -p "dist/$name"
-          cp "target/$TARGET/release/brrrty" LICENSE README.md "dist/$name/"
+          cp "target/$TARGET/release/brrrty" LICENSE NOTICE README.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
           cat "dist/$name.tar.gz.sha256"

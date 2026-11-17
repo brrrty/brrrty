@@ -12,6 +12,6 @@
   "license": "MIT",
   "os": ["OS"],
   "cpu": ["CPU"],
-  "files": ["bin/"],
+  "files": ["bin/", "NOTICE"],
   "preferUnplugged": true
 }

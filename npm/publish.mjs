@@ -53,6 +53,14 @@ const tarballs = fs
     return { file, name: manifest.name, version: manifest.version };
   });
 
+// Every package must carry the license and the notices of the code it ports.
+for (const t of tarballs) {
+  const files = execFileSync('tar', ['-tzf', t.file], { encoding: 'utf8' }).split('\n');
+  for (const f of ['package/LICENSE', 'package/NOTICE']) {
+    if (!files.includes(f)) fail(`${path.basename(t.file)} has no ${f.slice('package/'.length)}`);
+  }
+}
+
 const main = tarballs.filter((t) => t.name === 'brrrty');
 const platforms = tarballs.filter((t) => t.name.startsWith('@brrrty/')).sort((a, b) => (a.name < b.name ? -1 : 1));
 if (main.length !== 1) fail(`expected one brrrty tarball in ${packs}, found ${main.length}`);
