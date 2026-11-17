@@ -92,7 +92,14 @@ for (const t of [...platforms, main[0]]) {
   if (values['dry-run']) args.push('--dry-run');
   if (values.provenance) args.push('--provenance');
   console.log(`publish: npm ${args.join(' ')}`);
-  const r = spawnSync('npm', args, { stdio: 'inherit' });
+  const r = spawnSync('npm', args, { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' });
+  process.stderr.write(r.stderr ?? '');
+  // Right after a publish, `npm view` can still answer 404 from a cache while
+  // the registry refuses the version as taken: that package is done.
+  if (r.status !== 0 && /cannot publish over (the )?previously published version/i.test(r.stderr ?? '')) {
+    console.log(`publish: ${t.name}@${t.version} is already on npm, skipping`);
+    continue;
+  }
   if (r.status !== 0) {
     fail(`${t.name}@${t.version} failed; nothing after it was published. Run this again to resume.`);
   }
