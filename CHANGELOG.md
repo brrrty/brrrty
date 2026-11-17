@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `brrrty doctor` lists everything that keeps pages from building, without writing anything. A build stops each page at its first problem; doctor keeps going and lists them all: every filter a page, its layouts and its includes use that isn't defined (in every branch), every JavaScript data file they read, a page's own problem that a layout Brrrty can't render hid, and template languages Brrrty doesn't run. Problems are grouped by cause, with the pages and templates each one refuses, every file and line, and a fix. A cause that stops a template's pagination before it makes its pages comes first, and the count says "at least". The verdict reads `N of M pages will build; K blockers, grouped below.` `--json` prints the same as one object. Exit status 0 when every page builds, 1 when something is refused, 2 for usage errors.
+- `brrrty doctor --verify` also builds the site with the project's own 11ty (`node_modules/@11ty/eleventy`) and with Brrrty, in the system temp folder, at one frozen time (`SOURCE_DATE_EPOCH`, or now), and compares every file with `brrrty-compat`. It prints the byte-identical, different, missing and extra counts, the first diffs, both timings and a line to paste: `Your site is byte-compatible on Brrrty: 2,272 files, 0.89 s vs 2.39 s`. It runs the site's JavaScript through 11ty, so it says so first, asks on a terminal and needs `--yes` off one. When Node or 11ty is missing, it says how to install it.
+
 ## 0.0.13 - 2026-11-17
 
 - `brrrty init` sets up an existing 11ty site in one step: `npx brrrty init`. It adds `brrrty` to `devDependencies` at its own version and sets the `build` and `start` scripts to `brrrty build` and `brrrty serve`. Scripts that are just an 11ty command (`eleventy` or `npx @11ty/eleventy`, with flags) are kept as `build:11ty` and `start:11ty`; any other script is left alone, with a note saying what to change, down to which step of a script like `npm run css && eleventy` to swap. The rest of `package.json` keeps its indentation, line endings, key order and byte order mark, and the edit is checked to change nothing else.

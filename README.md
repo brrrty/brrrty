@@ -30,6 +30,18 @@ cargo install brrrty
 
 Release binaries are also attached to each GitHub release.
 
+## `brrrty doctor`
+
+```sh
+brrrty doctor [--json] [--verify [--yes]]
+```
+
+Lists everything that keeps your pages from building, without writing anything: every filter that isn't defined, every JavaScript data file to port, every template language Brrrty doesn't run, grouped by cause with the pages affected and each file and line. A build stops each page at its first problem; doctor lists them all, then a verdict such as `1,180 of 1,224 pages will build; 3 blockers, grouped below.`
+
+`--verify` also builds the site with your project's own 11ty and with Brrrty, in the system temp folder at one frozen time, compares every file, and prints a line to paste: `Your site is byte-compatible on Brrrty: 2,272 files, 0.89 s vs 2.39 s`. It runs your site's JavaScript through 11ty, so it asks first (or needs `--yes` off a terminal). Brrrty itself never runs JavaScript.
+
+Exit status: 0 when every page builds (and, with `--verify`, every file is byte-identical), 1 when something is refused or differs, 2 for usage errors or a missing Node or 11ty.
+
 ## `brrrty serve`
 
 ```sh

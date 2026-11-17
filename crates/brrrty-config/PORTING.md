@@ -2,9 +2,15 @@
 
 A port is authored code. Brrrty checks it the way it checks everything:
 build the site with 11ty and with Brrrty and compare the output
-(`cargo xtask scoreboard`). This guide says what Brrrty guarantees, where
-Rhai is not JavaScript, and which helper to call when you need the
-JavaScript behavior.
+(`brrrty doctor --verify` in a site, `cargo xtask scoreboard` across the
+test sites). This guide says what Brrrty guarantees, where Rhai is not
+JavaScript, and which helper to call when you need the JavaScript
+behavior.
+
+Start with `brrrty doctor`: it lists everything left to port, grouped by
+cause, with every place each one shows up. A build stops each page at its
+first problem; doctor lists them all, so the list of filters and data
+files it gives is the work to do.
 
 ## What Brrrty guarantees
 
@@ -540,6 +546,7 @@ The pages it writes are the same as `brrrty build` writes, and
    `undefined`, `null`, `0`, `""`, non-ASCII text and emoji.
 5. Port every `addPlugin` call (see Plugins); a plugin left out is not
    noticed.
-6. Run `cargo xtask scoreboard`. Every page that builds must be identical to
-   11ty's. A refused page names its reason; fix the port, or the pattern,
-   until it builds.
+6. Run `brrrty doctor` until it has no blockers left, then
+   `brrrty doctor --verify` (or `cargo xtask scoreboard` for the test
+   sites). Every page that builds must be identical to 11ty's. A refused
+   page names its reason; fix the port, or the pattern, until it builds.

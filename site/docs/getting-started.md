@@ -168,6 +168,8 @@ liquid-unknown-filter
 
 A build with any error exits with status 1. Fix the cause, or port the missing piece, and build again.
 
+A build reports each page's first problem only. To see everything that stands in the way at once, grouped by cause (every missing filter, every JavaScript data file to port), run `npx brrrty doctor`. See [`brrrty doctor`](/docs/doctor/).
+
 ## 4. Serve
 
 ```sh
@@ -178,7 +180,13 @@ npm start
 
 ## 5. Check the output against 11ty
 
-Build with both and compare:
+`brrrty doctor --verify` builds with your project's own 11ty and with Brrrty, at one frozen time, compares every file, and prints the result with both timings:
+
+```sh
+npx brrrty doctor --verify
+```
+
+It runs your site's JavaScript through 11ty, so it asks first. See [`brrrty doctor`](/docs/doctor/). To do the same by hand, build with both and compare:
 
 ```sh
 npx @11ty/eleventy --output=_site-11ty
