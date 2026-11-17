@@ -42,6 +42,10 @@ Lists what keeps your pages from building, without writing anything: filters tha
 
 Exit status: 0 when every page builds (and, with `--verify`, every file is byte-identical), 1 when something is refused or differs, 2 for usage errors or a missing Node or 11ty.
 
+## Benchmark
+
+`bench/` builds a generated 1,000-post blog with 11ty and with Brrrty, times both, and checks that every output file is identical. Run it with `node bench/run.mjs`, or from the **Bench** workflow on GitHub; [bench/README.md](bench/README.md) explains how to run and read it.
+
 ## `brrrty serve`
 
 ```sh
