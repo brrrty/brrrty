@@ -3,6 +3,7 @@
 ## 0.0.9 - 2026-11-17
 
 - A build into an empty or new output folder is about 20% faster on macOS. On APFS, many threads creating files under the same folders fight over folder locks, so pages and passthrough files are now written by 4 threads of their own, and passthrough files are copied in parallel on every system. Passthrough copies whose destinations overlap (a file and a folder mapped to one path, or names that differ only by case or Unicode normalization on macOS) still run one at a time in walk order, so the output and the problems reported are the same as before.
+- Passthrough copies keep their source's access and modification times on every system, as 11ty's copy does, so rsync and other deploy tools that compare times no longer re-upload every passthrough file after a build on Linux. On macOS, copies already kept them. Rendered pages get the time they are written, as in 11ty.
 
 ## 0.0.8 - 2026-11-17
 

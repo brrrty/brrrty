@@ -159,10 +159,8 @@ fn a_copy_fails_mid_batch(root: &Path) -> String {
     summary(root, &r)
 }
 
-/// On macOS, copies are APFS clones, which keep the source's modification
-/// time, as 11ty's copy does. On Linux `fs::copy` gives the copy the time it
-/// was made, which is what Brrrty has always done there.
-#[cfg(target_os = "macos")]
+/// Copies keep the source's modification time, as 11ty's copy does, read-only
+/// sources included.
 fn mtimes_are_kept(root: &Path) -> String {
     write(root, "src/index.md", "hi");
     for i in 0..50 {
@@ -176,8 +174,18 @@ fn mtimes_are_kept(root: &Path) -> String {
             .set_modified(when)
             .unwrap();
     }
-    let r = build(&opts(root, &[("assets", None)]), &MarkdownIt::new());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let ro = root.join("assets/f00.txt");
+        fs::set_permissions(&ro, fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    let o = opts(root, &[("assets", None)]);
+    let r = build(&o, &MarkdownIt::new());
     assert!(r.problems.is_empty(), "{:?}", r.problems);
+    // Kept times still read as up to date.
+    let again = build(&o, &MarkdownIt::new());
+    assert_eq!((again.copied, again.unchanged), (0, 50));
     for i in 0..50 {
         let rel = format!("assets/f{i:02}.txt");
         let src = fs::metadata(root.join(&rel)).unwrap().modified().unwrap();
@@ -198,7 +206,6 @@ fn run(name: &str) -> String {
         "case" => names_differing_by_case(&root),
         #[cfg(unix)]
         "fails_mid_batch" => a_copy_fails_mid_batch(&root),
-        #[cfg(target_os = "macos")]
         "mtimes" => mtimes_are_kept(&root),
         _ => panic!("unknown scenario {name}"),
     }
@@ -269,7 +276,6 @@ fn a_copy_failing_mid_batch_matches_one_thread() {
 }
 
 #[test]
-#[cfg(target_os = "macos")]
 fn mtimes_are_kept_on_the_writer_pool() {
     same_either_way("mtimes_are_kept_on_the_writer_pool", "mtimes");
 }

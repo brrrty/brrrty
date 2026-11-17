@@ -478,7 +478,10 @@ fn copy_file(
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| fs::copy(source, dest).map(|_| ()));
     match result {
-        Ok(()) => done.placed = Some((placed, true)),
+        Ok(()) => {
+            keep_times(&meta, dest);
+            done.placed = Some((placed, true));
+        }
         Err(e) => done.problems.push(
             Problem::error(
                 codes::PASSTHROUGH_COPY_FAILED,
@@ -488,6 +491,32 @@ fn copy_file(
         ),
     }
     done
+}
+
+/// Give a copy its source's access and modification times, as 11ty's copy
+/// does (`fs.utimes` after writing), so tools that compare times, like rsync,
+/// see an unchanged file as unchanged. An APFS clone already has them.
+/// Like 11ty, a failure here is ignored: the bytes are in place.
+fn keep_times(source: &fs::Metadata, dest: &Path) {
+    let (Ok(accessed), Ok(modified)) = (source.accessed(), source.modified()) else {
+        return;
+    };
+    if cfg!(target_os = "macos")
+        && fs::metadata(dest)
+            .and_then(|d| d.modified())
+            .is_ok_and(|m| m == modified)
+    {
+        return;
+    }
+    // Read-only is enough to set the times of a file one owns, and works for
+    // a copy of a read-only source.
+    if let Ok(f) = fs::File::open(dest) {
+        let _ = f.set_times(
+            fs::FileTimes::new()
+                .set_accessed(accessed)
+                .set_modified(modified),
+        );
+    }
 }
 
 fn is_up_to_date(source: &fs::Metadata, dest: &Path) -> bool {
