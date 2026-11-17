@@ -34,6 +34,7 @@ use crate::permalink::{Located, Locator, Permalink};
 use crate::plugins::rss::{FeedOptions, FeedTemplate};
 use crate::problem::{Problem, Severity, codes};
 use crate::render::{DataEngine, Engines, Job, Pipeline, body_line, engines_for};
+use crate::survey::{Log, Mode};
 use crate::templates::Langs;
 use brrrty_js::traps::{self, Outcome};
 
@@ -57,6 +58,8 @@ pub struct BuildReport {
     /// The templates, relative to the project folder, that had a page left unwritten because
     /// of a problem, in no particular order.
     pub refused: Vec<PathBuf>,
+    /// What a [`survey`] build recorded; `None` for a plain build.
+    pub survey: Option<crate::survey::Survey>,
 }
 
 /// A page a build wrote.
@@ -221,6 +224,8 @@ struct Shared<'a> {
     data_dir: PathBuf,
     /// Virtual templates (the feeds), by their path in the input folder.
     virtuals: &'a HashMap<PathBuf, FeedOptions>,
+    /// The survey being recorded, in a survey build.
+    survey: Option<&'a Log>,
 }
 
 /// Why a data key has no value.
@@ -455,7 +460,13 @@ fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     let mut blocked = None;
     let loaded = load_page_inner(shared, rel, &mut blocked);
     match (loaded, blocked) {
-        (Err(_), Some(layout)) => Ok(Loaded::LayoutFailed(layout)),
+        (Err(hidden), Some(layout)) => {
+            // The layout is reported for the page; a survey keeps the page's own problem too.
+            if let Some(log) = shared.survey {
+                log.problem(&shared.input_rel.join(rel), &hidden);
+            }
+            Ok(Loaded::LayoutFailed(layout))
+        }
         (other, _) => other,
     }
 }
@@ -571,6 +582,9 @@ fn load_page_inner(
         },
     };
     *blocked = layouts.iter().find_map(|l| l.unrenderable()).cloned();
+    if let Some(log) = shared.survey {
+        log.layouts(&shown, layouts.iter().map(|l| l.shown.clone()).collect());
+    }
 
     // Keys whose value Brrrty can't know are left out, so a page that reads
     // one is caught when it renders.
@@ -646,6 +660,16 @@ fn load_page_inner(
     };
     let (engines, syntax) =
         engines_for(&ext, over, shared.template_engines).map_err(over_problem)?;
+    if let Some(log) = shared.survey {
+        log.lang(
+            &shown,
+            match engines {
+                Engines::Raw => None,
+                Engines::Template(l) => Some(l),
+                Engines::Markdown { pre } => pre,
+            },
+        );
+    }
     let data_engine = DataEngine::new(&ext, over, shared.template_engines).map_err(over_problem)?;
 
     // `page`, in the order 11ty fills it in, after any `page` keys of the
@@ -1464,12 +1488,32 @@ const RENDER_STACK: usize = 16 * 1024 * 1024;
 
 /// Build the site described by `opts`.
 pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildReport {
+    build_with(opts, markdown, Mode::default())
+}
+
+/// Build the site described by `opts` the way `brrrty doctor` looks at it:
+/// the report is what [`build`] reports, plus a [`crate::Survey`] of every
+/// refusal per template, including the ones a plain build stops before
+/// reaching. With `dry_run`, nothing is written: no pages, no passthrough
+/// copies, and nothing is removed from the output folder.
+pub fn survey(opts: &BuildOptions, markdown: &dyn MarkdownRenderer, dry_run: bool) -> BuildReport {
+    build_with(
+        opts,
+        markdown,
+        Mode {
+            survey: true,
+            dry_run,
+        },
+    )
+}
+
+fn build_with(opts: &BuildOptions, markdown: &dyn MarkdownRenderer, mode: Mode) -> BuildReport {
     let start = Instant::now();
     match rayon::ThreadPoolBuilder::new()
         .stack_size(RENDER_STACK)
         .build()
     {
-        Ok(pool) => pool.install(|| build_in_pool(opts, markdown, start)),
+        Ok(pool) => pool.install(|| build_in_pool(opts, markdown, start, mode)),
         Err(e) => {
             let report = BuildReport {
                 written: 0,
@@ -1484,6 +1528,7 @@ pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildRepor
                 passthrough: Vec::new(),
                 complete: false,
                 refused: Vec::new(),
+                survey: None,
             };
             finish(report, opts.strict, start)
         }
@@ -1497,11 +1542,12 @@ fn build_in_pool(
     opts: &BuildOptions,
     markdown: &dyn MarkdownRenderer,
     start: Instant,
+    mode: Mode,
 ) -> BuildReport {
     let mut found = Vec::new();
     loop {
         let mut again = Vec::new();
-        let report = build_once(opts, markdown, start, &found, &mut again);
+        let report = build_once(opts, markdown, start, mode, &found, &mut again);
         if again.is_empty() {
             return report;
         }
@@ -1517,6 +1563,7 @@ fn build_once(
     opts: &BuildOptions,
     markdown: &dyn MarkdownRenderer,
     start: Instant,
+    mode: Mode,
     found: &[crate::plugins::syntaxhighlight::scan::Found],
     again: &mut Vec<crate::plugins::syntaxhighlight::scan::Found>,
 ) -> BuildReport {
@@ -1530,8 +1577,11 @@ fn build_once(
         passthrough: Vec::new(),
         complete: false,
         refused: Vec::new(),
+        survey: None,
     };
     let strict = opts.strict;
+    let log_owned = mode.survey.then(Log::default);
+    let log = log_owned.as_ref();
     let has_error = |r: &BuildReport| r.has_errors();
 
     if let Err(p) = opts.validate() {
@@ -1584,6 +1634,7 @@ fn build_once(
     // A plain build owns the whole output folder, so a serve session's staging folder left
     // there (by a session that was killed) goes. A serve build writes elsewhere and leaves it.
     if opts.write_to.is_none()
+        && !mode.dry_run
         && let Some(p) = remove_serve_staging(&out)
     {
         report.problems.push(p);
@@ -1835,6 +1886,7 @@ fn build_once(
         dir_data: &dir_data,
         data_dir: data_dir.clone(),
         virtuals: &virtuals,
+        survey: log,
     };
 
     let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
@@ -1848,16 +1900,25 @@ fn build_once(
             Loaded::Failed(p) => {
                 unbuilt += 1;
                 report.refused.push(input_rel.join(rel));
+                if let Some(log) = log {
+                    log.problem(&input_rel.join(rel), &p);
+                }
                 report.problems.push(p);
             }
             Loaded::LayoutFailed(p) => {
                 unbuilt += 1;
                 report.refused.push(input_rel.join(rel));
+                if let Some(log) = log {
+                    log.problem(&input_rel.join(rel), &p);
+                }
                 from_layouts.push(p);
             }
             Loaded::DataFailed(p) => {
                 unbuilt += 1;
                 report.refused.push(input_rel.join(rel));
+                if let Some(log) = log {
+                    log.problem(&input_rel.join(rel), &p);
+                }
                 from_data.push(p);
             }
         }
@@ -1989,13 +2050,20 @@ fn build_once(
         poisoned = built.poisoned;
         broken = built.broken;
         for (i, problem) in built.failed {
+            if let (Some(log), Slot::Deferred(d)) = (log, &slots[i]) {
+                log.problem(&d.shown, &problem);
+            }
             match blocking_layout(&slots[i]) {
-                Some(layout) => layout_refusals.push(layout),
+                Some(layout) => {
+                    note_layout(log, &slots[i], &layout);
+                    layout_refusals.push(layout)
+                }
                 None => report.problems.push(problem),
             }
         }
         for i in built.skipped {
             if let Some(layout) = blocking_layout(&slots[i]) {
+                note_layout(log, &slots[i], &layout);
                 layout_refusals.push(layout);
             } else if let Slot::Deferred(d) = &slots[i] {
                 report.problems.push(
@@ -2016,6 +2084,7 @@ fn build_once(
     } else if let Some(why) = &gap {
         for slot in &slots {
             if let Some(layout) = blocking_layout(slot) {
+                note_layout(log, slot, &layout);
                 layout_refusals.push(layout);
             } else if let Slot::Deferred(d) = slot {
                 report.problems.push(
@@ -2185,6 +2254,13 @@ fn build_once(
         .map(|i| -> Ready<'_> {
             let p = &prepared[i];
             if let Some(problem) = unsupported_layout(p) {
+                // A survey also records what the page's content would have been refused for.
+                if let Some(log) = log {
+                    log.problem(&p.source.shown, &problem);
+                    if let Err((hidden, _)) = contents.content(i) {
+                        log.problem(&p.source.shown, &hidden);
+                    }
+                }
                 return Err(Refused::Layout(problem));
             }
             let src = &p.source;
@@ -2203,7 +2279,11 @@ fn build_once(
                     None,
                 ));
             };
-            let content = contents.content(i)?;
+            let content = contents.content(i).inspect_err(|(p, _)| {
+                if let Some(log) = log {
+                    log.problem(shown, p);
+                }
+            })?;
             let guard = traps::install(settled.clone());
             let rendered = pipeline.layouts(&jobs[i].job, content);
             let reads = traps::take_item_reads();
@@ -2213,13 +2293,26 @@ fn build_once(
                 .find(|(_, o)| *o == Outcome::Refused)
                 .and_then(|(id, _)| contents.page_of(*id))
             {
-                return Err(Refused::Page(contents.needs_problem(i, j), Some(j)));
+                let problem = contents.needs_problem(i, j);
+                if let Some(log) = log {
+                    log.problem(shown, &problem);
+                }
+                return Err(Refused::Page(problem, Some(j)));
             }
-            let rendered = rendered.map_err(|p| (p, None))?;
+            let rendered = rendered.map_err(|p| {
+                if let Some(log) = log {
+                    log.problem(shown, &p);
+                }
+                (p, None)
+            })?;
             if let Some(problem) =
                 missing_data_problem(&rendered.undefined, &src.withheld, &data_dir, state)
             {
-                return Err(Refused::Page(problem.with_path(shown), None));
+                let problem = problem.with_path(shown);
+                if let Some(log) = log {
+                    log.problem(shown, &problem);
+                }
+                return Err(Refused::Page(problem, None));
             }
             Ok((i, dest, rendered.html, shown.as_path()))
         })
@@ -2237,6 +2330,9 @@ fn build_once(
             .into_par_iter()
             .map(|r| -> Written {
                 let (i, dest, html, shown) = r?;
+                if mode.dry_run {
+                    return Ok((i, content_hash(html.as_bytes())));
+                }
                 if let Some(parent) = dest.parent() {
                     fs::create_dir_all(parent).map_err(|e| {
                         (
@@ -2331,6 +2427,30 @@ fn build_once(
     refused.extend(report.refused.iter().map(PathBuf::as_path));
     let refused: Vec<PathBuf> = refused.into_iter().map(Path::to_path_buf).collect();
     report.refused = refused;
+    if let Some(log) = log {
+        for (i, p) in prepared.iter().enumerate() {
+            if p.output_rel.is_none() {
+                continue;
+            }
+            if written_pages.contains(&i) {
+                log.written(&p.source.shown);
+            } else {
+                log.refused(&p.source.shown);
+            }
+        }
+        for t in &report.refused {
+            log.refused_at_least_once(t);
+        }
+        // Problems the build reports at a template's own path refused it too.
+        for p in &report.problems {
+            if let Some(path) = &p.path
+                && matches!(p.severity, Severity::Error)
+                && report.refused.contains(path)
+            {
+                log.problem(path, p);
+            }
+        }
+    }
 
     let pages: HashMap<PathBuf, PathBuf> = prepared
         .iter()
@@ -2341,7 +2461,7 @@ fn build_once(
                 .map(|o| (out.join(o), input_rel.join(&p.source.input_path)))
         })
         .collect();
-    let pt = copy_passthrough_avoiding(opts, &pages);
+    let pt = copy_passthrough_avoiding(opts, &pages, mode.dry_run);
     // A passthrough file that replaced a page means that page was not really written.
     report.written = report.written.saturating_sub(pt.overridden.len());
     report
@@ -2352,7 +2472,22 @@ fn build_once(
     report.unchanged = pt.unchanged;
     report.problems.extend(pt.problems);
     report.complete = true;
-    finish(report, strict, start)
+    let js_keys: BTreeMap<String, PathBuf> = shared
+        .withheld
+        .iter()
+        .filter_map(|(k, w)| match w {
+            Withheld::Js(f) => Some((k.clone(), f.clone())),
+            Withheld::Failed => None,
+        })
+        .collect();
+    let mut report = finish(report, strict, start);
+    if let Some(log) = log_owned {
+        report.survey = Some(crate::survey::Survey {
+            templates: log.finish(),
+            js_keys,
+        });
+    }
+    report
 }
 
 /// The problem for a template in a language Brrrty doesn't render yet:
@@ -2379,6 +2514,13 @@ fn blocking_layout(slot: &Slot) -> Option<Problem> {
             .find_map(|l| l.unrenderable())
             .cloned(),
         Slot::Ready(_) => None,
+    }
+}
+
+/// Record in a survey that a layout refused the template in `slot`.
+fn note_layout(log: Option<&Log>, slot: &Slot, layout: &Problem) {
+    if let (Some(log), Slot::Deferred(d)) = (log, slot) {
+        log.problem(&d.shown, layout);
     }
 }
 

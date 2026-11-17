@@ -14,7 +14,7 @@ use crate::problem::{Problem, codes};
 /// Returns `(copied, unchanged, problems)`. A file is `unchanged` when the destination
 /// already has the same length and a modification time at least as new as the source.
 pub fn copy_passthrough(opts: &BuildOptions) -> (usize, usize, Vec<Problem>) {
-    let result = copy_passthrough_avoiding(opts, &HashMap::new());
+    let result = copy_passthrough_avoiding(opts, &HashMap::new(), false);
     (result.copied, result.unchanged, result.problems)
 }
 
@@ -50,9 +50,13 @@ struct Copier<'a> {
 /// Like [`copy_passthrough`], but lets passthrough files override any destination in `pages`
 /// (absolute output path -> template input path): the file wins and a
 /// `passthrough-overrides-page` warning is reported.
+///
+/// With `dry_run`, the entries are checked and walked, and the files that would be copied are
+/// counted, but nothing is copied.
 pub(crate) fn copy_passthrough_avoiding(
     opts: &BuildOptions,
     pages: &HashMap<PathBuf, PathBuf>,
+    dry_run: bool,
 ) -> PassthroughResult {
     let dirs = (|| {
         Ok::<_, Problem>((
@@ -194,7 +198,12 @@ pub(crate) fn copy_passthrough_avoiding(
         }
         collect_entry(&source, &dest, &mut c);
     }
-    copy_planned(&mut c);
+    if dry_run {
+        let dests: HashSet<&PathBuf> = c.plan.iter().map(|(_, d)| d).collect();
+        c.copied = dests.len();
+    } else {
+        copy_planned(&mut c);
+    }
     PassthroughResult {
         copied: c.copied,
         unchanged: c.unchanged,

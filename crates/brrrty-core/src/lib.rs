@@ -29,10 +29,11 @@ pub mod plugins;
 pub mod problem;
 mod render;
 pub mod serve_lock;
+mod survey;
 mod templates;
 mod yaml;
 
-pub use build::{BuildReport, WrittenPage, build, content_hash};
+pub use build::{BuildReport, WrittenPage, build, content_hash, survey};
 pub use discover::{Discovery, discover};
 pub use filters::register_nunjucks_filters;
 pub use frontmatter::split_front_matter;
@@ -47,3 +48,4 @@ pub use passthrough::copy_passthrough;
 pub use permalink::{Permalink, resolve_permalink};
 pub use problem::{Problem, Severity, codes};
 pub use serve_lock::{SERVE_LOCK_FILE, ServeLock, serve_lock_holder};
+pub use survey::{Survey, TemplateSurvey};
