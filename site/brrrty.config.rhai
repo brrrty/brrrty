@@ -3,6 +3,9 @@ config.add_passthrough_copy("assets");
 config.add_passthrough_copy(#{ "assets/favicon.ico": "favicon.ico" });
 config.add_passthrough_copy("CNAME");
 
+// The social card's source, rendered by hand to assets/og.png (see _og/og.html).
+config.ignores.add("_og/**");
+
 // The docs sidebar, in the order each page's front matter gives.
 config.add_collection("docs", |api|
     api.get_filtered_by_tag("docs").sort(|a, b| a.data.order - b.data.order));
