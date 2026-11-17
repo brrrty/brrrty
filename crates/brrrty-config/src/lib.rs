@@ -52,6 +52,10 @@
 //! backreferences (see the `regex` module for the other differences), and
 //! `url_hostname(s)`, `date(ms)`, `to_locale_date_string(d)`.
 //!
+//! Scripts read files in the project with `read_text`, `read_json`,
+//! `read_dir`, `file_exists` and `parse_csv` (csv-parse 7.0.3), confined to
+//! the project folder; see the `files` and `csv` modules.
+//!
 //! ## Plugins
 //!
 //! `config.add_plugin("name", #{ ... })` adds a plugin Brrrty has its own

@@ -266,10 +266,63 @@ the script's own statements don't run.
 - Template and directory data must give a map or `object()`. A value with
   functions in it (a JavaScript `eleventyComputed` of functions) can't be
   data; port the computation into the template or a filter.
-- Not portable yet: data that reads files (`readFileSync`, `import` of a
-  JSON or CSV file), runs commands other than `git rev-parse HEAD` (which
-  is `git_head()`), or imports other modules. There is no
-  `import` or file access in a data script.
+- Not portable yet: data that runs commands other than `git rev-parse
+  HEAD` (which is `git_head()`) or imports other modules. There is no
+  `import` in a data script; files are read with the helpers below.
+
+### Reading files
+
+A data file (or the config, or a filter) reads files in the project with:
+
+| JavaScript | Rhai |
+|---|---|
+| `fs.readFileSync(p, 'utf8')` | `read_text(p)`: bytes that aren't UTF-8 become U+FFFD exactly as Node replaces them; a byte order mark is kept |
+| `JSON.parse(fs.readFileSync(p, 'utf8'))`, `import x from './x.json'` | `read_json(p)`: keys in JavaScript's order (integer-like first), a repeated key keeps its first place and its last value; JSON that `JSON.parse` rejects is an error, and so are numbers out of a double's range (`1e400`) and lone surrogate escapes, which `JSON.parse` would accept |
+| `fs.readdirSync(p)` | `read_dir(p)`: names without `.` and `..`, dotfiles included, sorted by their UTF-8 bytes as libuv sorts them (`10.md`, `2.md`, `Z.md`, `_index.md`, `a.md`, `é.md`). That is Node's order on macOS and Linux; on Windows Node gives the file system's order |
+| `fs.readdirSync(p, { recursive: true })` | `read_dir(p, #{ recursive: true })`: the folder's names, then each subfolder's in that order, breadth first, as `sub/name`; a symlink to a folder is listed, not entered. Other options (`withFileTypes`, `encoding`) are refused |
+| `fs.existsSync(p)` | `file_exists(p)` |
+| `parse(text, opts)` from `csv-parse/sync` (7.0.3) | `parse_csv(text, opts)` |
+
+Paths are relative to the project folder, 11ty's working directory, so
+`join(__dirname, 'shop.csv')` in `src/_data/shop.js` is
+`"src/_data/shop.csv"`. A script can't leave the project: an absolute path,
+any `..` component, and a path through a symlink that leads outside are
+errors (even for `file_exists`, which won't probe outside). A file over 16
+MiB is refused before it is read, and `read_dir` stops at 100,000 names.
+Nothing writes. A missing file is an error a `try { } catch { }` catches,
+like Node's `ENOENT`: `read_text("x.txt"): no such file or directory`.
+
+`parse_csv` is a byte-level port of csv-parse 7.0.3, checked against Node on
+28,044 inputs. It takes the options `columns` (`true` or `false`; a list or a
+function is refused), `delimiter` (one string), `bom`, `trim`, `ltrim`,
+`rtrim`, `skip_empty_lines`, `relax_column_count`,
+`relax_column_count_less` and `relax_column_count_more`, in snake_case or
+camelCase. Any other csv-parse option is refused by name, and so is a key
+csv-parse doesn't know (it would ignore a typo). csv-parse's quirks are kept:
+
+- The first line ending (`\r\n`, `\n` or `\r`) decides the record
+  delimiter; a different one later stays in the field.
+- `trim` drops a byte order mark at the start of a field, so a line of only
+  spaces is empty for `skip_empty_lines`.
+- With `columns`, a repeated header keeps its first place and takes the
+  last value, and integer-like headers come first, as in a JavaScript
+  object.
+- Errors are csv-parse's messages: `parse_csv: Invalid Record Length:
+  columns length is 3, got 2 on line 4`.
+
+Every path a script reads, lists or checks, found or not, is a dependency:
+`brrrty serve` rebuilds when it changes, wherever it is in the project, and
+when a listed folder gains or loses a name.
+
+Things to watch when porting a reader:
+
+- A regular expression with `[\s\S]` is `.` with the `s` flag:
+  `regex_replace(raw, "^---\\n(.*?)\\n---\\n?(.*)$", "$2", "s")`.
+- Rhai's `s.trim()` trims `s` in place and returns nothing: write
+  `s.trim(); x.body = s;`, not `x.body = s.trim();`. It trims Unicode white
+  space, which differs from JavaScript's at U+FEFF and U+0085.
+- A Markdown file rendered with `markdownIt()` defaults is `markdown(s)`;
+  one with `linkify`, `typographer` or a plugin can't be ported yet.
 
 ## Plugins
 

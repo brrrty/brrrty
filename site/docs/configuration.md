@@ -115,7 +115,42 @@ Global data in `_data/name.rhai`, and template and folder data in `page.11tydata
 
 If the script defines `fn data()` or `fn data(global)`, Brrrty calls it the way 11ty calls a function a data file exports, with the config's global data and 11ty's `eleventy` data as the argument, and the rest of the script doesn't run.
 
-Each file runs once per build, on its own, and can't see `config` or read files. A `.rhai` file and a `.json` file for the same key merge, the `.rhai` one winning, and a `.js` file next to a `.rhai` port is ignored. An error refuses only the pages that read that key.
+Each file runs once per build, on its own, and can't see `config`. A `.rhai` file and a `.json` file for the same key merge, the `.rhai` one winning, and a `.js` file next to a `.rhai` port is ignored. An error refuses only the pages that read that key.
+
+## Reading files
+
+Data files and the config can read files in the project, as a JavaScript data file does with `fs` and csv-parse:
+
+| JavaScript | In Rhai |
+|---|---|
+| `fs.readFileSync(path, "utf8")` | `read_text(path)` |
+| `JSON.parse(fs.readFileSync(path, "utf8"))` | `read_json(path)` |
+| `fs.readdirSync(path)` | `read_dir(path)` |
+| `fs.readdirSync(path, { recursive: true })` | `read_dir(path, #{ recursive: true })` |
+| `fs.existsSync(path)` | `file_exists(path)` |
+| `parse(text, options)` from `csv-parse/sync` | `parse_csv(text, options)` |
+
+```rust
+// _data/products.rhai
+let products = parse_csv(read_text("data/products.csv"), #{
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+});
+let notes = [];
+for file in read_dir("src/_data/notes") {
+    if file.ends_with(".md") {
+        notes.push(read_text("src/_data/notes/" + file));
+    }
+}
+#{ products: products, notes: notes }
+```
+
+- Paths start at the project folder (where `brrrty.config.rhai` is), so `join(__dirname, "list.csv")` in `src/_data/x.js` is `"src/_data/list.csv"`. An absolute path, a `..`, and a symlink that leads outside the project are refused, and nothing writes.
+- `read_text` replaces bytes that aren't UTF-8 as Node does and keeps a byte order mark. `read_dir` lists names in Node's order on macOS and Linux (sorted by their bytes, so `10.md` comes before `2.md` and `Zebra.md` before `apple.md`); `recursive` lists the folder, then each subfolder in turn as `sub/name`.
+- `parse_csv` is csv-parse 7.0.3, quirks and error messages included, with the options `columns` (`true`), `delimiter`, `bom`, `trim`, `ltrim`, `rtrim`, `skip_empty_lines` and `relax_column_count`. Any other option is refused. With `columns`, each record is an `object()` in the header's order.
+- A file over 16 MB is refused unread. A missing file is an error that `try { ... } catch { ... }` catches, as in JavaScript.
+- `brrrty serve` rebuilds when a file a script read changes, wherever it is in the project.
 
 ## Plugins
 
@@ -165,6 +200,6 @@ Sorting runs V8's own TimSort, so even a comparator that isn't a consistent orde
 
 ## Limits
 
-A script may run 50 million operations and 10 seconds, nest 64 calls deep, and hold strings up to 16 MB and arrays and maps up to 100,000 items. Past a limit it stops with a problem that points at the file, so a script can't hang the build. There is no `import`, no `eval` and no file access.
+A script may run 50 million operations and 10 seconds, nest 64 calls deep, and hold strings up to 16 MB and arrays and maps up to 100,000 items. Past a limit it stops with a problem that points at the file, so a script can't hang the build. There is no `import` and no `eval`, and files are only read through the helpers above.
 
 The full porting guide, with every edge case, is [PORTING.md](https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md).
