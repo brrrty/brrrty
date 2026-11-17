@@ -171,6 +171,7 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
 | `DateTime.fromJSDate(d, { zone: 'utc' }).toFormat(fmt)` | `luxon_format(d, fmt, "utc")` |
 | `md.render(s \|\| '')` | `markdown(s)` |
 | `md.renderInline(s \|\| '')` | `markdown_inline(s)` |
+| `markdownIt({ linkify: true, typographer: true })`, then `md.linkify.set({ fuzzyLink: true })` and `md.render(s)` | `markdown(s, #{ linkify: true, typographer: true, fuzzy_link: true })` |
 
 - `luxon_format` supports every Luxon token for `en-US`: the field tokens and
   the macro tokens (`D`, `DD`, `t`, `T`, `f`, `F` and their longer forms).
@@ -187,22 +188,30 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   is **off** (11ty's own instance has it on) and the indented code rule is
   **on**. `null`, `()`, `""`, `0` and `false` give `""`, as `s || ''` does;
   any other value that isn't a string is an error, as in markdown-it.
-  They match markdown-it on about 200 pinned cases and on three random 6,000-input
-  runs, apart from the known gaps below; they are not proven identical for every input.
-  Known gaps (each a difference in the Rust port of markdown-it, left for later):
-  an emphasis marker next to an emoji or other symbol (`_a_😀` is `<em>` in
-  markdown-it); a single-column table whose header ends in `|` and whose delimiter
-  row has no pipe; an empty list item right after a blockquote's lazy line; a
-  reference definition with an odd destination (`[x]: /u[x]é`); a table after a
-  blockquote's lazy line; a table indented four spaces; a `<div>` followed by a table;
-  `> <!-- -->`; and input that makes the port panic (for example a strikethrough across
-  a CRLF inside a list item, in a debug build of Brrrty, where the port's integer
-  overflow is checked), which makes the call an error with the panic text. In 11ty's own
-  Markdown (markdown-it 14.3.3, which `.md` pages use), the same port also differs on a
-  fence that runs to the end of the text (it adds a final newline), on an HTML block at
-  the end of the text with no newline, on lines indented four spaces or more that the
-  `code` rule no longer takes, and on some raw-HTML edge cases. A panic there refuses the
-  page with `markdown-render-failed`, and the rest of the site builds.
+- `markdown(s, options)` takes markdown-it's `html`, `linkify` and `typographer`
+  and linkify-it's `fuzzyLink` (as `fuzzy_link`), each `true` or `false`, in a
+  map or an `object()`. Any other key is an error. Linkify is linkify-it 6.1.0
+  (markdown-it 15's), so links without `http://` (`example.com`) need
+  `fuzzy_link: true`, as in JavaScript. The typographer is markdown-it's:
+  `(c)`, `+-`, `...`, `--`, `---`, and smart quotes `“”‘’`. Two inputs are
+  refused instead of guessed at: a run of 1,000 or more characters with no
+  space in a paragraph when `linkify` is on, and a quote right next to an image
+  whose label can't be found in the source. A config that adds a markdown-it
+  plugin or rule to its own instance can't be ported yet.
+- Rendering matches markdown-it on about 300 pinned cases, on 40,000 generated
+  inputs around links and typography with each set of options, and on random
+  inputs, apart from these known gaps in the Rust port of markdown-it (left for
+  later; no page on the test sites has one): a single-column table whose header
+  ends in `|` and whose delimiter row has no pipe; an empty list item right after a
+  blockquote's lazy line; a reference definition with an odd destination
+  (`[x]: /u[x]é`); a table after a blockquote's lazy line; a table indented four
+  spaces; a `<div>` followed by a table; a run of four or more `~` inside text
+  (`~~a~~~~`); and input that makes the port panic (for example a strikethrough
+  across a CRLF inside a list item, in a debug build of Brrrty, where the port's
+  integer overflow is checked), which makes the call an error with the panic text.
+  11ty's own Markdown (markdown-it 14.3.3, which `.md` pages use) has the same
+  gaps. A panic there refuses the page with `markdown-render-failed`, and the rest
+  of the site builds.
 
 ## `object()` and key order
 
@@ -371,8 +380,9 @@ Things to watch when porting a reader:
 - Rhai's `s.trim()` trims `s` in place and returns nothing: write
   `s.trim(); x.body = s;`, not `x.body = s.trim();`. It trims Unicode white
   space, which differs from JavaScript's at U+FEFF and U+0085.
-- A Markdown file rendered with `markdownIt()` defaults is `markdown(s)`;
-  one with `linkify`, `typographer` or a plugin can't be ported yet.
+- A Markdown file rendered with `markdownIt()` defaults is `markdown(s)`, and
+  one with `html`, `linkify` or `typographer` is `markdown(s, options)`; one
+  with a plugin or a rule can't be ported yet.
 
 ## Plugins
 

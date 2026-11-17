@@ -648,6 +648,44 @@ fn markdown_of_a_falsy_value_is_empty_and_of_a_non_string_is_an_error() {
     assert!(err.contains("Input data should be a String"), "{err}");
 }
 
+/// `markdown(s, options)` is `markdownIt({ html, linkify, typographer })` with
+/// `md.linkify.set({ fuzzyLink })`. Expected values are what Node printed (markdown-it 15.0.3).
+#[test]
+fn markdown_takes_markdown_it_options() {
+    let cfg = load(
+        r#"
+config.add_filter("md", |s| markdown(s, #{ linkify: true, typographer: true, fuzzy_link: true }));
+config.add_filter("strict", |s| markdown(s, #{ linkify: true }));
+config.add_filter("raw", |s| { let o = object(); o.html = true; markdown(s, o) });
+config.add_filter("typo", |s| markdown(s, #{ linkfy: true }));
+config.add_filter("notbool", |s| markdown(s, #{ html: 1 }));
+config.add_filter("notmap", |s| markdown(s, true));
+"#,
+    );
+    let json = r#"{"s":"Founded Broadcast.com -- \"the\" (c) https://x.io <b>x</b>"}"#;
+    let r = |f: &str| render(&cfg, &format!("{{{{ s | {f} }}}}"), json);
+    assert_eq!(
+        r("md").unwrap(),
+        "<p>Founded <a href=\"http://Broadcast.com\">Broadcast.com</a> – “the” © <a href=\"https://x.io\">https://x.io</a> &lt;b&gt;x&lt;/b&gt;</p>\n"
+    );
+    assert_eq!(
+        r("strict").unwrap(),
+        "<p>Founded Broadcast.com -- &quot;the&quot; (c) <a href=\"https://x.io\">https://x.io</a> &lt;b&gt;x&lt;/b&gt;</p>\n"
+    );
+    assert_eq!(
+        r("raw").unwrap(),
+        "<p>Founded Broadcast.com -- &quot;the&quot; (c) https://x.io <b>x</b></p>\n"
+    );
+    let e = r("typo").unwrap_err();
+    assert!(e.contains("`linkfy`") && e.contains("fuzzy_link"), "{e}");
+    let e = r("notbool").unwrap_err();
+    assert!(e.contains("`html`") && e.contains("true or false"), "{e}");
+    let e = r("notmap").unwrap_err();
+    assert!(e.contains("options"), "{e}");
+    // A falsy source is still "" with options.
+    assert_eq!(render(&cfg, "{{ n | md }}", r#"{"n":null}"#).unwrap(), "");
+}
+
 fn render_date(cfg: &SiteConfig, tpl: &str, d: Value) -> Result<String, String> {
     let e = engine(cfg);
     let t = e.parse("t.liquid", tpl).map_err(|e| e.to_string())?;

@@ -6,7 +6,8 @@
 
 use std::sync::OnceLock;
 
-use brrrty_markdown::{DefaultMarkdownIt, MarkdownRenderer};
+pub use brrrty_markdown::Options;
+use brrrty_markdown::{ConfiguredMarkdownIt, DefaultMarkdownIt, MarkdownRenderer};
 
 fn instance() -> &'static DefaultMarkdownIt {
     static MD: OnceLock<DefaultMarkdownIt> = OnceLock::new();
@@ -22,4 +23,18 @@ pub fn markdown(s: &str) -> String {
 /// `md.renderInline(s)`.
 pub fn markdown_inline(s: &str) -> String {
     instance().render_inline(s)
+}
+
+/// `markdownIt({ html, linkify, typographer })` with `md.linkify.set({ fuzzyLink })`, then
+/// `md.render(s)`. An error says what Brrrty can't render exactly (see
+/// [`ConfiguredMarkdownIt::render`]).
+pub fn markdown_with(s: &str, options: Options) -> Result<String, String> {
+    static MDS: [OnceLock<ConfiguredMarkdownIt>; 16] = [const { OnceLock::new() }; 16];
+    let index = usize::from(options.html)
+        | usize::from(options.linkify) << 1
+        | usize::from(options.typographer) << 2
+        | usize::from(options.fuzzy_link) << 3;
+    MDS[index]
+        .get_or_init(|| ConfiguredMarkdownIt::new(options))
+        .render(s)
 }

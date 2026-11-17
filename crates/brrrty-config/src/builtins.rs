@@ -12,6 +12,9 @@
 //!   typographer, and indented code blocks on. A falsy `s` (`()`, `null`,
 //!   `""`, `0`, `false`) gives `""`, as `s || ''` does; any other value that
 //!   is not a string is an error, as markdown-it throws.
+//! - `markdown(s, options)` is `markdownIt({ html, linkify, typographer })`
+//!   with `md.linkify.set({ fuzzyLink })`: `options` is a map of booleans with
+//!   any of `html`, `linkify`, `typographer` and `fuzzy_link`.
 
 use brrrty_core::helpers::{luxon, markdown};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString};
@@ -42,6 +45,36 @@ fn source(s: &Dynamic, what: &str) -> Res<Option<String>> {
     }
 }
 
+/// The options map of `markdown(s, options)`.
+fn markdown_options(options: &Dynamic) -> Res<markdown::Options> {
+    let err = |m: String| invalid(format!("markdown: {m}"), rhai::Position::NONE);
+    let v = to_value(options).map_err(|why| err(format!("options: {why}")))?;
+    let brrrty_js::Value::Object(map) = v else {
+        return Err(err(
+            "options must be a map, like #{ linkify: true, typographer: true }".into(),
+        ));
+    };
+    let mut o = markdown::Options::default();
+    for (key, value) in map.iter() {
+        let slot = match key.as_str() {
+            "html" => &mut o.html,
+            "linkify" => &mut o.linkify,
+            "typographer" => &mut o.typographer,
+            "fuzzy_link" => &mut o.fuzzy_link,
+            _ => {
+                return Err(err(format!(
+                    "unknown option `{key}`: Brrrty's markdown-it takes `html`, `linkify`, `typographer` and `fuzzy_link` (linkify-it's `fuzzyLink`)"
+                )));
+            }
+        };
+        let brrrty_js::Value::Bool(b) = value else {
+            return Err(err(format!("option `{key}` must be true or false")));
+        };
+        *slot = *b;
+    }
+    Ok(o)
+}
+
 pub fn register(e: &mut Engine) {
     e.register_fn(
         "luxon_format",
@@ -65,6 +98,14 @@ pub fn register(e: &mut Engine) {
     );
     e.register_fn("markdown", |s: Dynamic| -> Res<String> {
         Ok(source(&s, "markdown")?.map_or_else(String::new, |s| markdown::markdown(&s)))
+    });
+    e.register_fn("markdown", |s: Dynamic, options: Dynamic| -> Res<String> {
+        let options = markdown_options(&options)?;
+        let Some(s) = source(&s, "markdown")? else {
+            return Ok(String::new());
+        };
+        markdown::markdown_with(&s, options)
+            .map_err(|e| invalid(format!("markdown: {e}"), rhai::Position::NONE))
     });
     e.register_fn("markdown_inline", |s: Dynamic| -> Res<String> {
         Ok(source(&s, "markdown_inline")?

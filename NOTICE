@@ -31,8 +31,28 @@ These projects are released under the MIT License. Their notices:
 - LiquidJS 10.30.1: the Liquid tokenizer, parser, tags and standard filters
   Copyright (c) 2016 Jun Yang
 
-- markdown-it 14.3.3 and 15.0.3: Markdown rendering behavior
+- markdown-it 14.3.3 and 15.0.3: Markdown rendering behavior, and its
+  linkify, replacements, smartquotes, backtick, escape and html_inline rules
   Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
+
+- markdown-it.rs 0.6.1 (the `markdown-it` crate): its `emph_pair` emphasis
+  matching, adapted in brrrty-markdown
+  Copyright (c) 2022 Alex Kocharin.
+
+- linkify-it 6.1.0: link detection, its patterns and `test`, `match` and
+  `matchAtStart`
+  Copyright (c) 2015 Vitaly Puzrin.
+
+- mdurl 2.1.0: `parse`, `format`, `encode` and `decode`
+  Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.
+  `parse` is based on Node.js's `url` module:
+  Copyright Joyent, Inc. and other Node contributors.
+
+- punycode.js 2.3.1: `toASCII` and `toUnicode`
+  Copyright Mathias Bynens <https://mathiasbynens.be/>
+
+- uc.micro 2.1.0 and 3.0.0: Unicode character classes
+  Copyright Mathias Bynens <https://mathiasbynens.be/>
 
 - Luxon 3.7.2: the `toFormat` date formatter
   Copyright 2019 JS Foundation and other contributors

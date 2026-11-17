@@ -1,5 +1,5 @@
 //! markdown-it's `normalizeLink`, `normalizeLinkText` and `validateLink` (14.3.3 and 15 are the
-//! same), with what they call: mdurl 2.0's `parse`, `format`, `encode` and `decode`, and
+//! same), with what they call: mdurl 2.1's `parse`, `format`, `encode` and `decode`, and
 //! punycode.js 2.3's `toASCII` and `toUnicode`, ported line by line. The port's own link
 //! formatter only percent-encodes: no punycode for hosts, and link text isn't decoded.
 

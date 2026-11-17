@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `markdown(s, options)` in Rhai is `markdownIt({ html, linkify, typographer })` with `md.linkify.set({ fuzzyLink })`: `markdown(s, #{ linkify: true, typographer: true, fuzzy_link: true })`. Linkify is linkify-it 6.1.0, run on its own patterns, and the typographer is markdown-it 15's replacements and smart quotes; both match markdown-it on 40,000 generated inputs with each set of options. A paragraph with a run of 1,000 or more characters and no space (with linkify), and a quote right next to an image whose label can't be found in the source (with the typographer), are errors instead of guesses. Unknown options are errors.
+- Markdown links normalize as markdown-it's do: a host outside ASCII is punycoded (`[x](http://é.com)` links to `http://xn--9ca.com`), an autolink's text is decoded (`<http://x.y/%C3%A9>` shows `http://x.y/é`), and a URL is parsed with mdurl first (`HTTP://~:8080` gives `HTTP://:8080~`). Brrrty only percent-encoded them.
+- Markdown emphasis next to a symbol follows markdown-it: `_a_😀` is `<em>a</em>😀`, in 11ty's Markdown and in `markdown()`. Each instance uses its own markdown-it's Unicode tables (uc.micro 2.1.0 for 11ty's 14.3.3, 3.0.0 for 15).
+- Code spans follow each markdown-it version's rule: in ``[a`b`c` `` the first two backticks are a code span, as in markdown-it. A backslash before a space leaves the space to the line break after it, so `a\` then a space at the end of a line gives `a\` and a soft break.
+- In 11ty's Markdown, inline HTML follows markdown-it 14.3.3: `<!-->`, `<!--->` and a comment with `--` inside are HTML, and after a comment, processing instruction, declaration or CDATA section that is never closed, no more are taken in the same paragraph. A fence or HTML block that runs to the end of a file with no final newline no longer gets one added.
+
 ## 0.0.16 - 2026-11-17
 
 - In `brrrty.config.rhai`, a constant number inside `${...}` prints as JavaScript prints it, as a variable already did: `${10.0}` and `const PER_PAGE = 10.0; `${PER_PAGE}`` give `10`, not `10.0`, and `${1e21}` gives `1e+21`. Rhai's optimizer folded constants into the string with Rhai's own number formatting; it is now off for config and data scripts.
