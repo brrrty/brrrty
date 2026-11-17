@@ -1,6 +1,6 @@
 [package]
 name = "brrrty"
-version = "0.0.12"
+version = "0.0.13"
 description = "Brrrty, a fast static site generator compatible with Eleventy (11ty) projects."
 edition.workspace = true
 rust-version.workspace = true
@@ -21,10 +21,10 @@ name = "brrrty"
 path = "src/main.rs"
 
 [dependencies]
-brrrty-config = { path = "../brrrty-config", version = "0.0.12" }
-brrrty-core = { path = "../brrrty-core", version = "0.0.12" }
-brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.12" }
-brrrty-serve = { path = "../brrrty-serve", version = "0.0.12" }
+brrrty-config = { path = "../brrrty-config", version = "0.0.13" }
+brrrty-core = { path = "../brrrty-core", version = "0.0.13" }
+brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.13" }
+brrrty-serve = { path = "../brrrty-serve", version = "0.0.13" }
 clap = { version = "4.6.7", features = ["derive"] }
 miette = { version = "7.6.0", features = ["fancy"] }
 # 8.2.2 is newer than two weeks; stay on 8.2.1.
@@ -46,4 +46,4 @@ signal-hook = { version = "=0.4.6", default-features = false, features = ["itera
 libc = "0.2.191"
 tempfile = "3.27.0"
 toml = "1.2.1"
-brrrty-compat = { path = "../brrrty-compat", version = "0.0.12" }
+brrrty-compat = { path = "../brrrty-compat", version = "0.0.13" }
