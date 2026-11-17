@@ -302,7 +302,15 @@ fn verify_with_real_eleventy() {
 /// `pids` in the site, and waits.
 #[cfg(unix)]
 fn hanging_eleventy(root: &Path) {
-    let script = "const fs = require('fs'), cp = require('child_process');\n\
+    // Thousands of files in the temporary folder make removing it take a while, which is
+    // when the main thread used to go on and print the report.
+    let script = "const fs = require('fs'), path = require('path'), cp = require('child_process');\n\
+         const out = process.argv.find(a => a.startsWith('--output=')).slice(9);\n\
+         for (let i = 0; i < 3000; i++) {\n\
+           const d = path.join(out, 'p' + (i % 50));\n\
+           fs.mkdirSync(d, { recursive: true });\n\
+           fs.writeFileSync(path.join(d, i + '.html'), 'x'.repeat(2000));\n\
+         }\n\
          const child = cp.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });\n\
          fs.writeFileSync('pids', process.pid + ' ' + child.pid);\n\
          setTimeout(() => {}, 60000);\n";
