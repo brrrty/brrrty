@@ -57,6 +57,15 @@ fn is_marker_only(line: &str) -> bool {
     (1..=9).contains(&digits) && t.len() == digits + 1 && t.ends_with(['.', ')'])
 }
 
+/// Where the paragraph a blockquote ends with ends.
+fn last_paragraph_end(n: &Node) -> Option<usize> {
+    match n.children.last() {
+        Some(c) if c.is::<Paragraph>() => Some(c.srcmap?.get_byte_offsets().1),
+        Some(c) if c.is::<Blockquote>() => last_paragraph_end(c),
+        _ => None,
+    }
+}
+
 fn ends_in_paragraph(n: &Node) -> bool {
     match n.children.last() {
         Some(c) if c.is::<Paragraph>() => true,
@@ -154,33 +163,146 @@ fn walk_quoted(n: &Node, source: &str, depth: usize, found: &mut Option<String>)
     }
 }
 
-/// What Brrrty can't render exactly in `ast` (parsed from `source`), if anything.
-pub(crate) fn check(ast: &Node, source: &str) -> Result<(), String> {
-    let all = lines(source);
-    if let Some(l) = all.iter().enumerate().find_map(|(i, l)| {
-        let rest = l[prefix(l).len()..].trim_end_matches([' ', '\t']);
-        let next_is_marker = all.get(i + 1).is_some_and(|n| {
-            is_marker_only(&n[n.len() - n.trim_start_matches(['>', ' ', '\t']).len()..])
-        });
-        let next_has_backslash = all.get(i + 1).is_some_and(|n| n.contains('\\'));
-        let after_label = rest.split_once("]:").map_or("", |(_, r)| r);
-        (starts_like_definition(rest)
-            && (after_label.contains('\\')
-                || (rest.ends_with("]:") && (next_is_marker || next_has_backslash))))
-            .then_some(*l)
-    }) {
-        return Err(format!(
-            "a link reference definition with a `\\` in its destination, or one on the next line, which markdown-it and the port read differently: {:?}",
-            l.trim()
-        ));
+/// Each line of `source` with the byte offsets where it starts and ends.
+fn spans(source: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let b = source.as_bytes();
+    let mut start = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\n' || b[i] == b'\r' {
+            out.push((start, i));
+            if b[i] == b'\r' && b.get(i + 1) == Some(&b'\n') {
+                i += 1;
+            }
+            start = i + 1;
+        }
+        i += 1;
     }
-    if let Some(l) = lines(source).into_iter().find(|l| tab_after_quote(l)) {
+    out.push((start, b.len()));
+    out
+}
+
+/// What the block parser made of the source: the ranges its leaf blocks cover (a line in
+/// none of them was taken by a reference definition, or is blank), its code and HTML blocks,
+/// and its blockquotes.
+#[derive(Default)]
+struct Blocks {
+    leaves: Vec<(usize, usize)>,
+    quotes: Vec<(usize, usize)>,
+}
+
+fn is_container(n: &Node) -> bool {
+    use markdown_it::parser::core::Root;
+    use markdown_it::plugins::cmark::block::list::{BulletList, ListItem, OrderedList};
+    n.is::<Root>()
+        || n.is::<Blockquote>()
+        || n.is::<BulletList>()
+        || n.is::<OrderedList>()
+        || n.is::<ListItem>()
+}
+
+fn blocks(ast: &Node) -> Blocks {
+    fn walk(n: &Node, out: &mut Blocks) {
+        let range = n.srcmap.map(|m| m.get_byte_offsets());
+        if n.is::<Blockquote>()
+            && let Some(r) = range
+        {
+            out.quotes.push(r);
+        }
+        if is_container(n) {
+            for c in &n.children {
+                walk(c, out);
+            }
+        } else if let Some(r) = range {
+            out.leaves.push(r);
+        }
+    }
+    let mut out = Blocks::default();
+    walk(ast, &mut out);
+    out
+}
+
+fn touches(ranges: &[(usize, usize)], (a, b): (usize, usize)) -> bool {
+    ranges.iter().any(|&(s, e)| s <= b && e >= a)
+}
+
+/// A reference definition's destination: the first word after `]:`, or of the next line.
+fn destination<'a>(first: &'a str, next: Option<&'a str>) -> Option<&'a str> {
+    let after = first.split_once("]:")?.1;
+    match after.split_whitespace().next() {
+        Some(d) => Some(d),
+        None => next?
+            .trim_start_matches(['>', ' ', '\t'])
+            .split_whitespace()
+            .next(),
+    }
+}
+
+/// What Brrrty can't render exactly in `ast` (parsed from `source`), if anything.
+///
+/// The checks look at what the block parser made: lines inside a code or HTML block, or
+/// a list item's or quote's markers, aren't taken for Markdown they aren't.
+pub(crate) fn check(ast: &Node, source: &str) -> Result<(), String> {
+    use markdown_it::plugins::cmark::block::paragraph::Paragraph;
+    let blocks = blocks(ast);
+    let line_spans = spans(source);
+    let line = |(a, b): (usize, usize)| &source[a..b];
+    // A definition the port took where markdown-it may not: `[label]:` with only a list
+    // marker on the next line, or a destination ending in `\`.
+    let mut found: Option<String> = None;
+    ast.walk(|n, _| {
+        use markdown_it::plugins::cmark::block::reference::Definition;
+        if found.is_some() || !n.is::<Definition>() {
+            return;
+        }
+        let Some(t) = text(n, source) else { return };
+        let ls = lines(t);
+        let first = ls[0].trim_end_matches([' ', '\t']);
+        let next = ls.get(1).map(|l| l.trim_start_matches(['>', ' ', '\t']));
+        if (first.ends_with("]:") && next.is_some_and(is_marker_only))
+            || destination(first, next).is_some_and(|d| d.ends_with('\\'))
+        {
+            found = Some(format!(
+                "a link reference definition whose destination ends in `\\`, or with only a list marker on the next line, which markdown-it and the port read differently: {first:?}"
+            ));
+        }
+    });
+    if let Some(why) = found {
+        return Err(why);
+    }
+    // A paragraph markdown-it takes for a definition: one whose destination ends in `\`.
+    ast.walk(|n, _| {
+        if found.is_some()
+            || !(n.is::<Paragraph>() || n.is::<crate::core_rules::InlineGroup>())
+        {
+            return;
+        }
+        let Some(t) = text(n, source) else { return };
+        let ls = lines(t);
+        if !starts_like_definition(ls[0]) {
+            return;
+        }
+        if destination(ls[0], ls.get(1).copied()).is_some_and(|d| d.ends_with('\\')) {
+            found = Some(format!(
+                "a link reference definition whose destination ends in `\\`, which markdown-it and the port read differently: {:?}",
+                ls[0].trim()
+            ));
+        }
+    });
+    if let Some(why) = found {
+        return Err(why);
+    }
+    // A tab after a quote's `>`, on a line in a blockquote.
+    if let Some(&span) = line_spans
+        .iter()
+        .find(|&&span| touches(&blocks.quotes, span) && tab_after_quote(line(span)))
+    {
         return Err(format!(
             "a tab after a blockquote's `>` (the port counts its columns differently): {:?}",
-            l.trim_end()
+            line(span).trim_end()
         ));
     }
-    let mut found: Option<String> = None;
     walk_quoted(ast, source, 0, &mut found);
     ast.walk(|n, _| {
         if found.is_some() {
@@ -189,6 +311,14 @@ pub(crate) fn check(ast: &Node, source: &str) -> Result<(), String> {
         for pair in n.children.windows(2) {
             let (q, t) = (&pair[0], &pair[1]);
             if !(q.is::<Blockquote>() && t.is::<Table>() && ends_in_paragraph(q)) {
+                continue;
+            }
+            // An empty `>` line after the paragraph ends it, for markdown-it too.
+            let para_end = last_paragraph_end(q);
+            if para_end.is_some_and(|e| {
+                q.srcmap
+                    .is_some_and(|m| source[e..m.get_byte_offsets().1].contains(['\n', '\r']))
+            }) {
                 continue;
             }
             let (Some(qm), Some(tm)) = (q.srcmap, t.srcmap) else { continue };

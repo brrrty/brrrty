@@ -178,6 +178,14 @@ struct JsTable;
 
 impl BlockRule for JsTable {
     fn check(state: &mut BlockState) -> Option<()> {
+        use markdown_it::plugins::cmark::block::list::{BulletList, ListItem, OrderedList};
+        // markdown-it's table ends a paragraph or a reference (`alt`), not a list item.
+        if state.node.is::<BulletList>()
+            || state.node.is::<OrderedList>()
+            || state.node.is::<ListItem>()
+        {
+            return None;
+        }
         header(state).map(|_| ())
     }
 

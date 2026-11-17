@@ -678,16 +678,9 @@ fn fix_end_of_text_in(n: &mut markdown_it::Node, source: &str, marker: Option<ch
     if closed {
         return;
     }
+    // (A last line of only spaces and tabs is gone already: see [`trim_blank_tail`].)
     if fence.content.ends_with('\n') {
         fence.content.pop();
-    }
-    // A last line of only spaces is empty to markdown-it.
-    let tail = fence.content.rfind('\n').map_or(0, |i| i + 1);
-    if fence.content[tail..]
-        .bytes()
-        .all(|b| b == b' ' || b == b'\t')
-    {
-        fence.content.truncate(tail);
     }
 }
 

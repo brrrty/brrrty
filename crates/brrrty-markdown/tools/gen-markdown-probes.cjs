@@ -73,7 +73,10 @@ const ROUND1 = ['[dev server](http://[::1]:8080/)', '<http://[::1]/>', '[x][r]\n
   '- <pre>\n  x\n\n  y\n  </pre>\n', '1. <script>\n   a\n\n   b\n   </script>\n', '- <!-- a\n\n  b -->\n', '<!x<?\n   ', '```\rcode\r```', '```**\r\n\r\n> ```',
   '- ```\n  x\n  ```\n  after', '- ## Step 1\n  Do this.', '- a\n  > q', '- a\n  ***', '1. text\n   ---\n   more', '- a\n  <div>', '- a\n      code',
   '![``a`b``![``a`b```', '> quote\n- item', '| a |\n| --- |\n| b |', '| Name |\n---\n| a |', '``````<div>>   a\\|<div>text\n---', '- _[a](b)- |\r---- ',
-  '[note]: see below', '- a\n  ```\n  b', '```\n\n  x\n     ```'];
+  '[note]: see below', '- a\n  ```\n  b', '```\n\n  x\n     ```',
+  // Fix round 2: what the refusal checks must leave alone (code, HTML, titles, list text).
+  '```\n[A-Za-z]:\\\\Users\n```', '```\n[a-z]:\\w+\n```', '    [A-Z]:\\d+', '```md\n[docs]: C:\\path\\\n```', '```diff\n>\tline\n```', '```\n>\tquoted\n```',
+  '[x]: /u "a \\"b\\" c"\n\n[x]', '12 [a]: b\\c', '- [a]: b\\c', '> a\n> \n| b | c |\n|---|---|', '- \r\n- _~~|\t\n---', '>```x\n>   '];
 const SPACE_CODE = ['`   `', '`    `', '` \n `', 'a `   ` b', '`  `', '` a `'];
 const options = (o, fuzzyLink) => { const m = markdownIt(o); m.linkify.set({ fuzzyLink }); return m; };
 const fuzzy = options({ linkify: true, typographer: true }, true);

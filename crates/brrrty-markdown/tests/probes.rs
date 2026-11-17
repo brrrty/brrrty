@@ -175,6 +175,9 @@ fn block_shapes_the_port_gets_wrong_are_refused() {
         "> a `b\n    c` d",
         ">\t<pre>\n>\tx</pre>",
         ">>* \tx",
+        "[docs]: \n+",
+        "> [x]: /u\"\\\n\tx[x]",
+        "[docs]: \nC:\\path\\\nx [docs]",
     ];
     for s in refused {
         assert!(md.try_render(s).is_err(), "{s:?}");

@@ -207,25 +207,30 @@ every input. Where the port is known to differ, Brrrty refuses instead of
 writing something else: an 11ty page with `markdown-render-failed` (the rest of
 the site builds), and a `markdown()` call with an error. Refused today:
 
-- a line shaped like a link reference definition (`[label]:`) with a `\` in
-  its destination (`[docs]: C:\path\`), or ending in `]:` with only a list
-  marker, or a `\`, on the next line;
+- a link reference definition (one the parser took, or a paragraph that
+  starts like one) whose destination ends in `\` (`[docs]: C:\path\`), or
+  one with only `[label]:` on its line and a list marker alone on the next;
 - inside a blockquote, a lazy line (fewer `>` than the quote) that is only a
   list marker (`> quote` then `-`);
-- a table right after a blockquote's paragraph, with no blank line between;
+- a table right after a blockquote's paragraph, with no line between them (an
+  empty `>` line ends the paragraph, and that is fine);
 - inside a blockquote, a code span or inline HTML that runs across a lazy line
   indented with spaces or tabs;
-- a tab after a blockquote's `>` among a line's leading `>` and list markers
-  (`>\t`, `>> *\t`), anywhere in the text, code blocks included;
+- on a line inside a blockquote, a tab after a `>` among the line's leading
+  `>` and list markers (`>\t`, `>> *\t`);
 - with `linkify`: a run of 1,000 or more characters with no space in a
   paragraph's source, link URLs included;
 - with the typographer: a quote right next to an image whose label can't be
   found in the source.
 
-These checks are a little wider than the differences, so they can refuse text
-markdown-it and Brrrty would write the same way. Known, not refused: a panic in
-the port (none known) makes the call an error with the panic text and refuses
-an 11ty page.
+The checks look at what the block parser made, not at raw lines: text in a
+code block (fenced or indented) or an HTML block outside a blockquote is never
+refused, and neither is a `\` in a definition's title, or text before a
+definition on the same line (`12 [a]: b\c` is a paragraph to both). They are
+still a little wider than the differences, so they can refuse text markdown-it
+and Brrrty would write the same way (most often the tab check). Known, not
+refused: a panic in the port (none known) makes the call an error with the
+panic text and refuses an 11ty page.
 
 ## `object()` and key order
 
