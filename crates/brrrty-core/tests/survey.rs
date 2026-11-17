@@ -294,3 +294,19 @@ fn diagnose_a_site_that_builds() {
     assert_eq!(d.verdict(), "All 2 pages will build.");
     assert!(d.groups.is_empty());
 }
+
+#[test]
+fn a_javascript_template_counts_as_at_least_one_page() {
+    use brrrty_core::doctor::{Cause, diagnose};
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/a.md", "# A\n");
+    write(dir.path(), "src/gen.11ty.js", "export default () => 'x';\n");
+    let d = diagnose(survey(&opts(dir.path()), &MarkdownIt::new(), true));
+    assert_eq!(
+        d.verdict(),
+        "1 of at least 2 pages will build; 1 blocker, grouped below."
+    );
+    assert_eq!(d.groups[0].cause, Cause::TemplateLanguage("11ty.js".into()));
+    assert_eq!(d.groups[0].templates, [PathBuf::from("src/gen.11ty.js")]);
+    assert!(!d.groups[0].pages_exact);
+}

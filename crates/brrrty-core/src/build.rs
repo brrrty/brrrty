@@ -1672,9 +1672,17 @@ fn build_once(
     };
     report.problems.extend(discovery.warnings.iter().cloned());
     for path in &discovery.unsupported {
-        report
-            .problems
-            .push(unsupported_template(&input_rel.join(path)));
+        let shown = input_rel.join(path);
+        let p = unsupported_template(&shown);
+        // A JavaScript template can make any number of pages: a survey counts it as one,
+        // and says there may be more.
+        if let Some(log) = log {
+            log.problem(&shown, &p);
+            log.paginates(&shown);
+            log.stopped(&shown, &p);
+            log.refused_at_least_once(&shown);
+        }
+        report.problems.push(p);
     }
     // 11ty skips these silently unless a plugin adds them; say so once per extension.
     let mut by_ext: std::collections::BTreeMap<String, Vec<&PathBuf>> = Default::default();

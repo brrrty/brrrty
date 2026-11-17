@@ -224,7 +224,7 @@ fn title_and_help(cause: &Cause, first: &Problem) -> (String, Option<String>) {
             format!("`.{ext}` templates"),
             first.help.clone(),
         ),
-        Cause::Other { code, message } => (format!("{code}: {message}"), first.help.clone()),
+        Cause::Other { message, .. } => (message.clone(), first.help.clone()),
         Cause::Follows => (
             "Waiting on the blockers above".to_string(),
             Some("These pages need pages or data that the blockers above refuse; they build once those are fixed.".to_string()),
