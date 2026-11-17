@@ -1,0 +1,13 @@
+<ul>
+{%- for p in shop.products %}
+<li>{{ p.Name }} | {{ p.Price }} | {{ p.Tags }} | {{ p.Note }}</li>
+{%- endfor %}
+</ul>
+{% for n in shop.notes %}{{ n.file }}: {{ n.title }} / {{ n.body }}
+{% endfor %}
+{{ shop.recipes | join: "," }}
+{{ shop.settings | json }}
+{{ shop.products | json }}
+{{ shop.notes | json }}
+{{ shop.raw | json }}
+{{ shop.missing }} {{ shop.hasSettings }} {{ shop.hasOther }}
