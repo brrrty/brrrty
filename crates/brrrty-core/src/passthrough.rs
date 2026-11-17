@@ -201,6 +201,13 @@ pub(crate) fn copy_passthrough_avoiding(
     if dry_run {
         let dests: HashSet<&PathBuf> = c.plan.iter().map(|(_, d)| d).collect();
         c.copied = dests.len();
+        // A file that would replace a page means the page isn't really written. Whether it
+        // is worth a warning depends on the bytes the page would have, so none is given.
+        c.overridden = dests
+            .into_iter()
+            .filter(|d| c.pages.contains_key(*d))
+            .cloned()
+            .collect();
     } else {
         copy_planned(&mut c);
     }

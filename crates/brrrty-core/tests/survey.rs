@@ -105,6 +105,21 @@ fn a_dry_run_writes_nothing() {
 }
 
 #[test]
+fn a_dry_run_counts_pages_a_passthrough_file_replaces() {
+    let dir = masked_site();
+    write(dir.path(), "static/plain/index.html", "copied");
+    let mut o = opts(dir.path());
+    o.config.passthrough = vec![brrrty_core::PassthroughEntry {
+        from: "static/plain".into(),
+        to: Some("plain".into()),
+    }];
+    let dry = survey(&o, &MarkdownIt::new(), true);
+    let real = build(&o, &MarkdownIt::new());
+    assert_eq!(real.written, 0);
+    assert_eq!(dry.written, real.written);
+}
+
+#[test]
 fn a_survey_that_writes_matches_a_build() {
     let dir = masked_site();
     let mut o = opts(dir.path());
