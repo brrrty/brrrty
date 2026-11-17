@@ -257,7 +257,7 @@ impl Shared<'_> {
                     ),
                 )
                 .with_path(&self.data_dir)
-                .with_help("Fix the data file errors reported above."),
+                .following("Fix the data file errors reported above."),
             });
         }
         Ok(())
@@ -1285,7 +1285,7 @@ fn collections_problem(
                 codes::DATA_UNSUPPORTED,
                 format!("this page uses `collections`, but {why}"),
             )
-            .with_help("Fix the problems reported above."),
+            .following("Fix the problems reported above."),
             None => Problem::error(
                 codes::DATA_UNSUPPORTED,
                 "a permalink, `pagination` or computed value reads `collections`, which Brrrty doesn't support there yet",
@@ -1360,7 +1360,7 @@ fn missing_data_problem(
                 data_dir.display()
             ),
         )
-        .with_help("Fix the data file errors reported above."),
+        .following("Fix the data file errors reported above."),
     )
 }
 
@@ -1394,9 +1394,11 @@ fn shared_problems(found: Vec<Problem>, noun: &str) -> Vec<Problem> {
 
 /// Sort by path then code, and in strict mode keep only up to the first error.
 fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport {
+    // A problem another causes comes after it, wherever their paths sort.
     report.problems.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
+        a.follows
+            .cmp(&b.follows)
+            .then_with(|| a.path.cmp(&b.path))
             .then_with(|| a.line.cmp(&b.line))
             .then_with(|| a.code.cmp(b.code))
             .then_with(|| a.message.cmp(&b.message))
@@ -2002,7 +2004,7 @@ fn build_once(
                         "this page paginates a collection, but another template that paginates a collection failed first",
                     )
                     .with_path(&d.shown)
-                    .with_help("Fix the problem reported above."),
+                    .following("Fix the problem reported above."),
                 );
             }
         }
@@ -2022,7 +2024,7 @@ fn build_once(
                         format!("this page paginates a collection, but {why}"),
                     )
                     .with_path(&d.shown)
-                    .with_help("Fix the problems reported above."),
+                    .following("Fix the problems reported above."),
                 );
             }
         }

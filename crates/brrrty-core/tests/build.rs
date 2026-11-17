@@ -488,6 +488,47 @@ fn last_modified_is_the_change_time() {
     assert!(year.starts_with("20"), "{year}");
 }
 
+/// A page that uses data from a `_data` file that failed says to fix the
+/// error "reported above": the data file's error comes first, though
+/// `src/About.md` sorts before `src/_data/site.json`, and in strict mode
+/// it is the one error kept.
+#[test]
+fn a_data_file_error_comes_before_the_pages_it_stops() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/_data/site.json", "{ bad json\n");
+    write(root, "src/About.md", "{{ site.title }}\n");
+    write(root, "src/2024-01-02-post.md", "{{ site.title }}\n");
+    let r = build(&opts(root), &MarkdownIt::new());
+    let paths: Vec<_> = r
+        .problems
+        .iter()
+        .map(|p| (p.path.clone().unwrap(), p.follows))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            (PathBuf::from("src/_data/site.json"), false),
+            (PathBuf::from("src/2024-01-02-post.md"), true),
+            (PathBuf::from("src/About.md"), true),
+        ]
+    );
+    assert_eq!(r.problems[0].code, codes::DATA_FILE_INVALID);
+    assert!(
+        r.problems[1]
+            .help
+            .as_deref()
+            .unwrap()
+            .contains("reported above")
+    );
+
+    let mut strict = opts(root);
+    strict.strict = true;
+    let r = build(&strict, &MarkdownIt::new());
+    assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
+    assert_eq!(r.problems[0].code, codes::DATA_FILE_INVALID);
+}
+
 #[test]
 fn problem_paths_are_root_relative() {
     let t = tempfile::tempdir().unwrap();

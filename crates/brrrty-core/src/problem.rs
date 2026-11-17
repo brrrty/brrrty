@@ -99,6 +99,10 @@ pub struct Problem {
     pub column: Option<usize>,
     pub message: String,
     pub help: Option<String>,
+    /// Caused by another problem the build reports (its help says to fix
+    /// the problems "reported above"): it is listed after every problem
+    /// that isn't, so that it is.
+    pub follows: bool,
 }
 
 impl Problem {
@@ -111,6 +115,7 @@ impl Problem {
             column: None,
             message: message.into(),
             help: None,
+            follows: false,
         }
     }
 
@@ -139,6 +144,14 @@ impl Problem {
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
+        self
+    }
+
+    /// Marks the problem as caused by another one the build reports, with
+    /// `help` saying to fix the problems reported above it.
+    pub fn following(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self.follows = true;
         self
     }
 }

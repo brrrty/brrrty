@@ -568,7 +568,7 @@ impl Contents {
                         "11ty never renders this page's content: it stops the build on another page first".to_string(),
                     ),
                 )
-                .with_help("Fix the problems reported above.");
+                .following("Fix the problems reported above.");
                 (self.at(i, p), None)
             }
         }
