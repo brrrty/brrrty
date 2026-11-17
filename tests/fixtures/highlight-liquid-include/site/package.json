@@ -1,0 +1,8 @@
+{
+  "name": "highlight-liquid-include-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@11ty/eleventy-plugin-syntaxhighlight": "5.0.2"
+  }
+}

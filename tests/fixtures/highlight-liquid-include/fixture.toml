@@ -1,0 +1,16 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js, which adds @11ty/eleventy-plugin-syntaxhighlight 5.0.2
+# with its default options and sets `markdownTemplateEngine: false`.
+#
+# notes.md is Markdown no template language reads, but a.liquid includes it
+# from a `{% liquid %}` tag, and Liquid reads its `{% highlight regex %}`
+# there. 11ty renders a.liquid before b.md, so loading `regex` changes the
+# javascript grammar b.md is highlighted with. Brrrty refuses a.liquid at
+# its first line (d.md's `opencl` changes `c`), so the include never
+# renders: only the source scan can see the include, and b.md is refused.
+# d.md is refused for `opencl`, which Brrrty doesn't have.
+
+[refused]
+"src/a.liquid" = "a/index.html"
+"src/b.md" = "b/index.html"
+"src/d.md" = "d/index.html"

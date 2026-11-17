@@ -431,50 +431,88 @@ fn includes(files: &mut [File], g: &Global) {
     }
 }
 
-/// The files `text`'s include tags (`include`, `render`, `layout`,
-/// `extends`, `import`, `from`) name, given to `name`; false when one names
-/// its file with anything but one string, which could be any file.
+/// The tags that make Liquid or Nunjucks read another file: Liquid's
+/// `include`, `render` and `layout`, and Nunjucks' `include`, `extends`,
+/// `import` and `from`.
+const INCLUDE_TAGS: [&str; 6] = ["include", "render", "layout", "extends", "import", "from"];
+
+/// The name of the tag that starts `tag` (the text after `{%` and its
+/// whitespace control), when it is `name`: followed by anything but a
+/// letter, digit or `_`.
+fn tag_named<'t>(tag: &'t str, name: &str) -> Option<&'t str> {
+    tag.strip_prefix(name)
+        .filter(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+}
+
+/// The text after a `{%` and its whitespace control (`{%-`), spaces and
+/// line breaks included, as both languages read a tag's name.
+fn after_open(rest: &str) -> &str {
+    rest.trim_start_matches('-').trim_start()
+}
+
+/// The files `text`'s include tags ([`INCLUDE_TAGS`]) name, given to
+/// `name`, and those a Liquid `{% liquid %}` tag's `include`, `render` and
+/// `layout` statements name; false when one names its file with anything
+/// but one string, which could be any file.
 fn included(text: &str, name: &mut dyn FnMut(&str)) -> bool {
     let mut rest = text;
     while let Some(at) = rest.find("{%") {
         rest = &rest[at + 2..];
-        let tag = rest.trim_start_matches('-').trim_start();
-        let Some(args) = ["include", "render", "layout", "extends", "import", "from"]
-            .iter()
-            .find_map(|t| tag.strip_prefix(t))
-        else {
+        let tag = after_open(rest);
+        // One statement per line, up to the tag's end.
+        if let Some(body) = tag_named(tag, "liquid") {
+            let Some((body, _)) = body.split_once("%}") else {
+                return false;
+            };
+            for statement in body.lines() {
+                let statement = statement.trim_start();
+                let Some(args) = ["include", "render", "layout"]
+                    .iter()
+                    .find_map(|t| tag_named(statement, t))
+                else {
+                    continue;
+                };
+                match literal(args, true) {
+                    Some(file) => name(file),
+                    None => return false,
+                }
+            }
+            continue;
+        }
+        let Some(args) = INCLUDE_TAGS.iter().find_map(|t| tag_named(tag, t)) else {
             continue;
         };
-        if !(args.starts_with(char::is_whitespace) || args.starts_with(['"', '\''])) {
-            continue;
+        match literal(args, false) {
+            Some(file) => name(file),
+            None => return false,
         }
-        let args = args.trim_start();
-        let Some(q) = args.chars().next().filter(|c| *c == '"' || *c == '\'') else {
-            return false;
-        };
-        let Some(end) = args[1..].find(q) else {
-            return false;
-        };
-        let file = &args[1..1 + end];
-        if file.contains('\\') || file.contains("{{") || file.contains("{%") {
-            return false;
-        }
-        let after = args[2 + end..].trim_start();
-        let word = after
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .next()
-            .unwrap_or("");
-        let plain = after.starts_with("%}")
-            || after.starts_with("-%}")
-            || after.starts_with(',')
-            || ["with", "for", "as", "import", "ignore", "only"].contains(&word)
-            || (!word.is_empty() && after[word.len()..].trim_start().starts_with(':'));
-        if !plain {
-            return false;
-        }
-        name(file);
     }
     true
+}
+
+/// The file an include tag's arguments name, when they start with one
+/// string and go on only as a tag naming its file that way can: to the
+/// tag's end, or (`statement`, in a `{% liquid %}` tag) the line's.
+fn literal(args: &str, statement: bool) -> Option<&str> {
+    let args = args.trim_start();
+    let q = args.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let end = args[1..].find(q)?;
+    let file = &args[1..1 + end];
+    if file.contains('\\') || file.contains("{{") || file.contains("{%") || file.contains('\n') {
+        return None;
+    }
+    let after = args[2 + end..].trim_start();
+    let word = after
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .next()
+        .unwrap_or("");
+    let plain = (statement && after.trim_end().trim_end_matches('-').is_empty())
+        || after.starts_with("%}")
+        || after.starts_with("-%}")
+        || after.starts_with(',')
+        || ["with", "for", "as", "import", "ignore", "only"].contains(&word)
+        || (!word.is_empty() && after[word.len()..].trim_start().starts_with(':'));
+    plain.then_some(file)
 }
 
 fn walk(dir: &Path, skip: &Path, out: &mut Vec<PathBuf>) {
@@ -560,42 +598,51 @@ fn add_word(out: &mut Vec<(usize, String)>, line: usize, word: &str) {
     out.push((line, word));
 }
 
-/// The languages `text`'s `{% highlight %}` tags could load, with their
-/// lines: the first argument of every tag (quotes removed, for Nunjucks).
-/// When Nunjucks may read the text (`nunjucks`), a tag whose arguments
-/// aren't one string could load any language, and so could a tag whose
-/// arguments start on another line.
+/// The languages `text`'s `{% highlight %}` tags could load, with the
+/// line each tag's `{%` is on: the first argument of every tag (quotes
+/// removed, for Nunjucks). Both languages allow spaces and line breaks
+/// after `{%` and inside the tag, so a tag is read across lines. When
+/// Nunjucks may read the text (`nunjucks`), a tag whose arguments aren't
+/// one string could load any language, and so could a tag whose arguments
+/// start on another line.
 fn tags(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
     let mut out = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        let mut rest = line;
-        while let Some(at) = rest.find("{%") {
-            let tag = rest[at + 2..].trim_start_matches('-').trim_start();
-            if let Some(args) = tag.strip_prefix("highlight")
-                && (args.is_empty()
-                    || args.starts_with(char::is_whitespace)
-                    || (nunjucks && args.starts_with(['"', '\''])))
-            {
-                let word = args
-                    .trim_start()
-                    .split(|c: char| c.is_whitespace() || c == '%')
-                    .next()
-                    .unwrap_or("");
-                let word = word.trim_matches(['"', '\'']);
-                if !word.is_empty() {
-                    add_word(&mut out, i + 1, word);
-                }
-                // The arguments go on to another line, or Nunjucks
-                // evaluates them as an expression other than one string:
-                // the language could be any.
-                let cut = word.is_empty() && !args.contains("%}");
-                if cut || (nunjucks && !word.is_empty() && !one_string(args)) {
-                    let written = args.split("%}").next().unwrap_or("");
-                    let written = written.trim().trim_end_matches('-').trim_end();
-                    add_word(&mut out, i + 1, &format!("{{{{ {written} }}}}"));
-                }
-            }
-            rest = &rest[at + 2..];
+    let mut line = 1;
+    let mut counted = 0;
+    let mut rest = text;
+    while let Some(at) = rest.find("{%") {
+        let start = text.len() - rest.len() + at;
+        line += text[counted..start].matches('\n').count();
+        counted = start;
+        rest = &rest[at + 2..];
+        let Some(args) = after_open(rest).strip_prefix("highlight").filter(|a| {
+            a.is_empty()
+                || a.starts_with(char::is_whitespace)
+                || a.starts_with("%}")
+                || a.starts_with("-%}")
+                || (nunjucks && a.starts_with(['"', '\'']))
+        }) else {
+            continue;
+        };
+        // Up to the tag's end, or all that is left.
+        let whole = args;
+        let args = args.split("%}").next().unwrap_or("");
+        let written = args.trim().trim_end_matches('-').trim_end();
+        let lead = &args[..args.len() - args.trim_start().len()];
+        let word = written
+            .split(|c: char| c.is_whitespace() || c == '%')
+            .next()
+            .unwrap_or("");
+        let word = word.trim_matches(['"', '\'']);
+        if !word.is_empty() {
+            add_word(&mut out, line, word);
+        }
+        // The arguments start on another line, or Nunjucks evaluates them
+        // as an expression other than one string: the language could be
+        // any.
+        let cut = lead.contains('\n') || (word.is_empty() && !rest.contains("%}"));
+        if cut || (nunjucks && !word.is_empty() && !one_string(whole)) {
+            add_word(&mut out, line, &format!("{{{{ {written} }}}}"));
         }
     }
     out
@@ -717,14 +764,51 @@ mod tests {
                 assert!(changes(l).is_some_and(|k| k.iter().any(|k| k == "javascript")));
             }
         }
-        // Liquid reads the first word as written; only a tag cut at the
-        // line could be any language, not one without arguments.
+        // Liquid reads the first word as written; only a tag whose
+        // arguments start on another line could be any language, not one
+        // without arguments.
         assert_eq!(
             languages(
-                "{% highlight lang %}\n{% highlight\n{% highlight %}x{% endhighlight %}\n",
+                "{% highlight lang %}\n{% highlight\n  js %}\n{% highlight %}x{% endhighlight %}\n",
                 false
             ),
-            vec![(1, "lang".to_string()), (2, "{{  }}".to_string())]
+            vec![
+                (1, "lang".to_string()),
+                (2, "js".to_string()),
+                (2, "{{ js }}".to_string())
+            ]
+        );
+        // A tag that never ends could be any language.
+        assert_eq!(
+            languages("{% highlight", false),
+            vec![(1, "{{  }}".to_string())]
+        );
+    }
+
+    /// Both languages read a tag's name after line breaks, and its
+    /// arguments across lines: the tag counts, at the line of its `{%`.
+    #[test]
+    fn a_tag_split_across_lines_counts() {
+        for nunjucks in [false, true] {
+            assert_eq!(
+                tags(
+                    "x\n{%\n  highlight regex %}/a/{% endhighlight %}\n",
+                    nunjucks
+                )[0],
+                (2, "regex".to_string()),
+                "{nunjucks}"
+            );
+            // Arguments that start on another line could be any language.
+            assert!(
+                tags("{%-\r\n\thighlight\n\"css-extras\"\n-%}", nunjucks)
+                    .contains(&(1, "{{ \"css-extras\" }}".to_string())),
+                "{nunjucks}"
+            );
+        }
+        // Lines after a split tag keep their numbers.
+        assert_eq!(
+            tags("{%\nhighlight js %}\n\n{% highlight regex %}", false),
+            vec![(1, "js".to_string()), (4, "regex".to_string())]
         );
     }
 
@@ -880,15 +964,36 @@ mod tests {
             ("a.md", "---\nlayout: ../CHANGELOG.md\n---\n"),
             ("a.md", "---\nlayout: \"{{ x }}\"\n---\n"),
             ("a.11tydata.js", "module.exports = { layout: x };"),
+            // A `{% liquid %}` tag's statements include without `{%`.
+            ("a.liquid", "{% liquid include \"CHANGELOG.md\" %}"),
+            (
+                "a.liquid",
+                "{%- liquid\n  assign x = 1\n  render 'changelog.md', y: 2\n-%}",
+            ),
+            ("a.liquid", "{% liquid\n  layout name\n%}"),
+            ("a.liquid", "{% liquid include \"x\" | append: y %}"),
+            ("a.liquid", "{% liquid include \"x.md\""),
+            // Line breaks after `{%` and the tag's name.
+            ("a.njk", "{%\n  include\n  \"../CHANGELOG.md\" %}"),
+            ("a.liquid", "{%-\r\nlayout \"CHANGELOG.md\" %}"),
+            ("a.njk", "{% from\n\"CHANGELOG.md\" import x %}"),
         ] {
             assert!(
                 !found_in(&[changelog, page], None, BOTH, &none).is_empty(),
                 "{page:?}"
             );
         }
-        // Includes in text nothing reads, or naming other files, don't.
+        // Includes in text nothing reads, or naming other files, don't;
+        // nor do tags whose names only start like one.
         for page in [
             ("a.md", "`{% include name %}`"),
+            ("a.md", "`{% liquid include name %}`"),
+            ("a.liquid", "{% liquidish %}{% included x %}{% fromage %}"),
+            (
+                "a.liquid",
+                "{% liquid\n  assign x = 1\n  include 'other.md'\n%}",
+            ),
+            ("a.liquid", "{% liquid echo include %}"),
             ("a.njk", "{% include \"other.md\" %}"),
             ("a.md", "---\nlayout: base.njk\n---\n"),
         ] {
@@ -904,6 +1009,30 @@ mod tests {
             ("notes.txt", "{% include \"CHANGELOG.md\" %}"),
         ];
         assert!(!found_in(&chain, None, BOTH, &none).is_empty());
+    }
+
+    /// The review's repro: a page includes a Markdown file that nothing
+    /// else reads from a `{% liquid %}` tag, and a tag in it loads
+    /// `regex`; and the same tag split after `{%` in the page itself.
+    #[test]
+    fn the_review_repros_count() {
+        let none = Data::new();
+        let notes = (
+            "notes.md",
+            "- `{% highlight regex %}/a/{% endhighlight %}`\n",
+        );
+        let page = (
+            "a.liquid",
+            "{% highlight c %}int x;{% endhighlight %}\n{% liquid include \"notes.md\" %}\n",
+        );
+        assert!(
+            found_in(&[page, notes], None, BOTH, &none).contains(&"src/notes.md:1".to_string())
+        );
+        let page = (
+            "a.liquid",
+            "{% highlight c %}int x;{% endhighlight %}\n{%\n  highlight regex %}/a/{% endhighlight %}\n",
+        );
+        assert_eq!(found_in(&[page], None, BOTH, &none), ["src/a.liquid:2"]);
     }
 
     #[test]
