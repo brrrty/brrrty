@@ -91,6 +91,17 @@ test('arguments pass through unchanged', async () => {
   assert.deepEqual(JSON.parse(r.stdout), args);
 });
 
+test('the binary is told the launcher\'s process id', async () => {
+  const l = launch(['env', 'BRRRTY_LAUNCHER_PID']);
+  const r = await l.done;
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, String(l.child.pid));
+});
+
+test('every catchable terminating signal is forwarded', () => {
+  for (const s of ['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM']) assert.ok(launcher.FORWARDED.includes(s), s);
+});
+
 test('a binary that cannot run is reported', async () => {
   const code = `require(${JSON.stringify(launcherPath)}).run('/nonexistent/brrrty', [])`;
   const child = spawn(process.execPath, ['-e', code]);
@@ -123,6 +134,16 @@ test('a second Ctrl-C later on reaches the binary too', async () => {
   const r = await l.done;
   assert.equal(r.code, 0);
   assert.equal(r.stdout, 'ready\nINT\nINT\n');
+});
+
+test('SIGQUIT reaches the binary, and its death passes through', async () => {
+  const l = launch(['serve']);
+  await l.ready;
+  l.child.kill('SIGQUIT');
+  const r = await l.done;
+  assert.equal(r.stdout, 'ready\nQUIT\n');
+  assert.equal(r.code, null);
+  assert.equal(r.signal, 'SIGQUIT');
 });
 
 test('death by SIGTERM passes through as death by SIGTERM', async () => {

@@ -38,7 +38,7 @@ The Linux binaries are static, so they run on Alpine and on glibc distributions 
 
 On other platforms, build Brrrty from source with `cargo install brrrty`.
 
-The launcher passes arguments, input and output through unchanged and exits with the binary's exit status. Ctrl-C and SIGTERM reach the binary, so `brrrty serve` stops cleanly under `npm run` and `npx`.
+The launcher passes arguments, input and output through unchanged and exits with the binary's exit status. Ctrl-C, Ctrl-\\ and SIGTERM reach the binary, so `brrrty serve` stops cleanly under `npm run` and `npx`, and if the launcher itself is killed, `brrrty serve` stops on its own. Ctrl-Z suspends npm and the launcher but not `brrrty serve`, which keeps serving until you resume and stop it.
 
 ## License
 

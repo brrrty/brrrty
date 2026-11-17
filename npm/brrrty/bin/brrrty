@@ -19,8 +19,15 @@ const PACKAGES = {
   'linux-x64': '@brrrty/linux-x64-musl',
 };
 
-// Signals passed on to the binary.
-const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+// Signals passed on to the binary: every one that would end it and that Node
+// can catch. (Node reserves SIGUSR1 for its debugger. SIGKILL can't be caught,
+// so the binary watches for this process to go away instead; see
+// LAUNCHER_PID_VAR.)
+const FORWARDED = ['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM', 'SIGUSR2', 'SIGALRM'];
+
+// Set to this process's id for the binary, which then stops by itself (as on
+// SIGTERM) once this process is gone, even when it was killed with SIGKILL.
+const LAUNCHER_PID_VAR = 'BRRRTY_LAUNCHER_PID';
 
 // Ctrl-C under `npm run` or `npx` reaches this process twice: once from the
 // terminal and once from npm, which forwards it. Copies of a signal that come
@@ -63,18 +70,21 @@ function binaryPath(platform = process.platform, arch = process.arch, resolve = 
 // Runs the binary, passes signals on, and ends this process the way the
 // binary ended.
 function run(bin, args, { coalesceMs = COALESCE_MS } = {}) {
-  // On Unix the binary gets its own process group, so a Ctrl-C at the
-  // terminal reaches it only through this process and arrives once.
+  // On Unix the binary gets a session of its own (`detached` calls setsid),
+  // so a Ctrl-C at the terminal reaches it only through this process and
+  // arrives once. It has no controlling terminal: it can't open /dev/tty.
   const child = childProcess.spawn(bin, args, {
     stdio: 'inherit',
     detached: process.platform !== 'win32',
+    env: { ...process.env, [LAUNCHER_PID_VAR]: String(process.pid) },
   });
 
   const lastSent = new Map();
   const handlers = new Map();
   for (const signal of FORWARDED) {
     const handler = () => {
-      const now = Date.now();
+      // A monotonic clock, so a wall-clock step can't swallow signals.
+      const now = performance.now();
       const last = lastSent.get(signal);
       if (last !== undefined && now - last < coalesceMs) return;
       lastSent.set(signal, now);
@@ -123,4 +133,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { PACKAGES, LauncherError, binaryPath, run };
+module.exports = { PACKAGES, FORWARDED, LAUNCHER_PID_VAR, LauncherError, binaryPath, run };

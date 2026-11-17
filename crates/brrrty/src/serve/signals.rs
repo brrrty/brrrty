@@ -83,3 +83,41 @@ impl Interrupts {
         }
     }
 }
+
+/// The variable the npm launcher sets to its own process id. The launcher
+/// passes Ctrl-C and other signals on, but nothing can pass on a SIGKILL, and
+/// it starts the binary in a session of its own, so the terminal can't reach
+/// it either: without this, killing the launcher would leave `brrrty serve`
+/// running, holding its port.
+pub const LAUNCHER_PID_VAR: &str = "BRRRTY_LAUNCHER_PID";
+
+/// When started by the npm launcher, stop the way SIGTERM does (cleanly, then
+/// ending by the signal) once the launcher is gone. Call after
+/// [`Interrupts::install`]. Does nothing otherwise.
+pub fn stop_with_launcher() {
+    #[cfg(unix)]
+    {
+        let Some(launcher) = std::env::var(LAUNCHER_PID_VAR)
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+        else {
+            return;
+        };
+        let gone = move || std::os::unix::process::parent_id() != launcher;
+        let stop = || {
+            let _ = signal_hook::low_level::raise(signal_hook::consts::SIGTERM);
+        };
+        // Look every half second: once the launcher is gone, this process is
+        // handed to another parent. (Linux's PR_SET_PDEATHSIG would be quicker,
+        // but it fires again for each of the launcher's threads as they exit,
+        // and a second SIGTERM means "quit now", skipping the clean stop.)
+        let _ = std::thread::Builder::new()
+            .name("brrrty-launcher-watch".into())
+            .spawn(move || {
+                while !gone() {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                stop();
+            });
+    }
+}

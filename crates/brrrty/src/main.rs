@@ -137,6 +137,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    brrrty::serve::signals::stop_with_launcher();
     let settings = Settings {
         flags: Flags {
             input: args.input,

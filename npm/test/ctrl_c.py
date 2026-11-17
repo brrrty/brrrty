@@ -1,12 +1,15 @@
-"""Presses Ctrl-C at a terminal running a command, as a person would.
+"""Presses Ctrl-C (or Ctrl-\\) at a terminal running a command, as a person would.
 
-    python3 npm/test/ctrl_c.py READY_TEXT COMMAND [ARG...]
+    python3 npm/test/ctrl_c.py [--quit] READY_TEXT COMMAND [ARG...]
 
 Runs COMMAND in a new pseudo-terminal, waits until its output shows
 READY_TEXT, types Ctrl-C once, and waits for it to end. Prints the output,
-then exits 0 if COMMAND exited 0 and 1 otherwise. The terminal sends SIGINT to
-every process in its foreground process group, so this checks what a real
-Ctrl-C does under `npm run` and `npx`, where npm also passes the signal on.
+then exits 0 if COMMAND exited 0 and 1 otherwise. With --quit it types
+Ctrl-\\ (SIGQUIT) instead and exits 0 once COMMAND has ended, however it
+ended; a process it left behind on the terminal keeps this waiting until it
+times out. The terminal signals every process in its foreground process
+group, so this checks what a real keypress does under `npm run` and `npx`,
+where npm also passes the signal on.
 """
 
 import os
@@ -17,8 +20,12 @@ import time
 
 
 def main():
-    ready = sys.argv[1].encode()
-    argv = sys.argv[2:]
+    args = sys.argv[1:]
+    quit_key = args[0] == "--quit"
+    if quit_key:
+        args = args[1:]
+    ready = args[0].encode()
+    argv = args[1:]
     pid, fd = pty.fork()
     if pid == 0:
         os.execvp(argv[0], argv)
@@ -28,7 +35,7 @@ def main():
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if not pressed and ready in out:
-            os.write(fd, b"\x03")
+            os.write(fd, b"\x1c" if quit_key else b"\x03")
             pressed = True
         r, _, _ = select.select([fd], [], [], 0.1)
         if r:
@@ -49,9 +56,11 @@ def main():
     sys.stdout.write(out.decode(errors="replace"))
     if os.WIFSIGNALED(status):
         print(f"ctrl_c: ended by signal {os.WTERMSIG(status)}")
-        return 1
+        return 0 if quit_key and pressed else 1
     code = os.WEXITSTATUS(status)
     print(f"ctrl_c: exit {code}")
+    if quit_key:
+        return 0 if pressed else 1
     return 0 if code == 0 and pressed else 1
 
 

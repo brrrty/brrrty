@@ -71,6 +71,30 @@ case $(readlink -f /bin/sh 2>/dev/null || true) in
     ;;
 esac
 
+# Prints the ids of processes whose command line matches the extended regex
+# $1 (pgrep -f where there is one; Debian slim images have none).
+find_procs() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$1" || true
+    return
+  fi
+  for d in /proc/[0-9]*; do
+    [ "${d#/proc/}" != "$$" ] || continue
+    tr '\0' ' ' < "$d/cmdline" 2>/dev/null | grep -Eq "$1" && echo "${d#/proc/}"
+  done
+  true
+}
+
+# Fails unless no `brrrty serve` is running within 5 seconds.
+no_serve_left() {
+  i=0
+  while [ -n "$(find_procs '[@]brrrty/.*/bin/brrrty serve')" ]; do
+    i=$((i + 1))
+    [ "$i" -lt 50 ] || fail "$1 left brrrty serve running"
+    sleep 0.1
+  done
+}
+
 # Starts `npm run serve` in the background and waits for its server line.
 start_serve() {
   rm -f serve.log
@@ -110,9 +134,29 @@ if command -v python3 >/dev/null 2>&1; then
     python3 "$repo/npm/test/ctrl_c.py" "Server at" $cmd > ctrl-c.log 2>&1 || { cat ctrl-c.log; fail "Ctrl-C on $cmd"; }
     pass "Ctrl-C at a terminal on $cmd exits 0"
   done
+  # Ctrl-\ (SIGQUIT) ends everything at once, the binary included.
+  python3 "$repo/npm/test/ctrl_c.py" --quit "Server at" npm run serve > ctrl-c.log 2>&1 || { cat ctrl-c.log; fail "Ctrl-\\ on npm run serve"; }
+  no_serve_left "Ctrl-\\"
+  pass "Ctrl-\\ at a terminal on npm run serve leaves no brrrty serve behind"
 else
-  echo "packages: skipped: Ctrl-C at a terminal (needs python3)"
+  echo "packages: skipped: Ctrl-C and Ctrl-\\ at a terminal (needs python3)"
 fi
+
+# SIGKILL can't be passed on: the binary notices the launcher is gone and
+# stops cleanly by itself.
+start_serve
+launcher=$(find_procs '[.]bin/brrrty serve' | head -n 1)
+[ -n "$launcher" ] || fail "no launcher process found"
+kill -KILL "$launcher"
+wait "$serve_pid" || true
+no_serve_left "SIGKILL to the launcher"
+i=0
+while [ -e _serve/.brrrty-serve ]; do
+  i=$((i + 1))
+  [ "$i" -lt 50 ] || { cat serve.log; ls -la _serve/.brrrty-serve; fail "after SIGKILL to the launcher, _serve/.brrrty-serve is left behind"; }
+  sleep 0.1
+done
+pass "SIGKILL to the launcher: brrrty serve stops cleanly by itself"
 
 # Without the platform package, the launcher says which one is missing. (In
 # a folder of its own, so Node can't find the one installed above.)
@@ -129,7 +173,5 @@ fi
 )
 pass "without @brrrty/$platform, brrrty exits 1 and names the package"
 
-if pgrep -f 'bin/brrrty serve' >/dev/null 2>&1; then
-  fail "a brrrty serve process is still running"
-fi
+no_serve_left "The tests"
 pass "no brrrty process left running"

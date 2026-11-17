@@ -10,6 +10,8 @@ if (mode === 'exit') {
   process.exitCode = Number(rest[0]);
 } else if (mode === 'args') {
   process.stdout.write(JSON.stringify(rest));
+} else if (mode === 'env') {
+  process.stdout.write(String(process.env[rest[0]]));
 } else if (mode === 'serve') {
   // Like `brrrty serve`: the first SIGINT asks for a clean stop that takes a
   // moment; SIGTERM keeps its default action. Every SIGINT is logged.
@@ -21,6 +23,9 @@ if (mode === 'exit') {
       stopping = true;
       setTimeout(() => process.exit(0), stopAfter);
     }
+  });
+  process.once('SIGQUIT', () => {
+    process.stdout.write('QUIT\n', () => process.kill(process.pid, 'SIGQUIT'));
   });
   setInterval(() => {}, 1000);
   process.stdout.write('ready\n');

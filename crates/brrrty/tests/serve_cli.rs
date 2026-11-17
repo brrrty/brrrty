@@ -195,6 +195,34 @@ fn sigterm_stops_cleanly_then_ends_by_the_signal() {
 }
 
 #[test]
+fn started_by_the_npm_launcher_it_stops_cleanly_when_the_launcher_is_gone() {
+    // The launcher names itself in BRRRTY_LAUNCHER_PID. Naming a process that
+    // is not the parent stands in for a launcher killed with SIGKILL.
+    let dir = site(&[("src/index.md", "# Hi\n")]);
+    let serve = Serve::start_with_env(
+        dir.path(),
+        &["--input", "src", "--port", "0"],
+        &[("BRRRTY_LAUNCHER_PID", "999999999")],
+    );
+    // It may stop before it serves; the stop is the clean one either way.
+    let (status, _, err) = serve.wait();
+    assert_eq!(status.signal(), Some(libc::SIGTERM), "{status:?} {err}");
+    assert!(!dir.path().join("_site/.brrrty-serve").exists());
+}
+
+#[test]
+fn without_the_launcher_variable_it_keeps_serving() {
+    let dir = site(&[("src/index.md", "# Hi\n")]);
+    let mut serve = Serve::start(dir.path(), &["--input", "src", "--port", "0"]);
+    let port = serve.port();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(get_ok(port));
+    serve.signal(libc::SIGINT);
+    let (status, _, err) = serve.wait();
+    assert_eq!(status.code(), Some(0), "{status:?} {err}");
+}
+
+#[test]
 fn a_second_ctrl_c_ends_it_at_once() {
     let dir = site(&[("src/index.md", "# Hi\n")]);
     let mut serve = Serve::start(dir.path(), &["--input", "src", "--port", "0"]);
