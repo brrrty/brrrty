@@ -662,19 +662,19 @@ config.add_filter("notbool", |s| markdown(s, #{ html: 1 }));
 config.add_filter("notmap", |s| markdown(s, true));
 "#,
     );
-    let json = r#"{"s":"Founded Broadcast.com -- \"the\" (c) https://x.io <b>x</b>"}"#;
+    let json = r#"{"s":"Founded Example.com -- \"the\" (c) https://x.io <b>x</b>"}"#;
     let r = |f: &str| render(&cfg, &format!("{{{{ s | {f} }}}}"), json);
     assert_eq!(
         r("md").unwrap(),
-        "<p>Founded <a href=\"http://Broadcast.com\">Broadcast.com</a> – “the” © <a href=\"https://x.io\">https://x.io</a> &lt;b&gt;x&lt;/b&gt;</p>\n"
+        "<p>Founded <a href=\"http://Example.com\">Example.com</a> – “the” © <a href=\"https://x.io\">https://x.io</a> &lt;b&gt;x&lt;/b&gt;</p>\n"
     );
     assert_eq!(
         r("strict").unwrap(),
-        "<p>Founded Broadcast.com -- &quot;the&quot; (c) <a href=\"https://x.io\">https://x.io</a> &lt;b&gt;x&lt;/b&gt;</p>\n"
+        "<p>Founded Example.com -- &quot;the&quot; (c) <a href=\"https://x.io\">https://x.io</a> &lt;b&gt;x&lt;/b&gt;</p>\n"
     );
     assert_eq!(
         r("raw").unwrap(),
-        "<p>Founded Broadcast.com -- &quot;the&quot; (c) https://x.io <b>x</b></p>\n"
+        "<p>Founded Example.com -- &quot;the&quot; (c) https://x.io <b>x</b></p>\n"
     );
     let e = r("typo").unwrap_err();
     assert!(e.contains("`linkfy`") && e.contains("fuzzy_link"), "{e}");

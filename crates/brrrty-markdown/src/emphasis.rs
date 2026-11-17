@@ -8,7 +8,6 @@
 
 use std::cmp::min;
 
-use markdown_it::common::sourcemap::SourcePos;
 use markdown_it::generics::inline::emph_pair::{EmphMarker, FragmentsJoin};
 use markdown_it::parser::extset::{MarkdownItExt, NodeExt};
 use markdown_it::parser::inline::builtin::InlineParserRule;
@@ -33,6 +32,39 @@ impl<const MARKER: char> MarkdownItExt for PairConfig<MARKER> {}
 struct OpenersBottom<const MARKER: char>([usize; 6]);
 impl<const MARKER: char> NodeExt for OpenersBottom<MARKER> {}
 
+/// Where a marker or an emphasis node is in the inline text (not the source: the port mixed the
+/// two, which overflowed after a CRLF inside a list item or a blockquote).
+#[derive(Debug, Clone, Copy)]
+struct InlineSpan(usize, usize);
+impl NodeExt for InlineSpan {}
+
+fn span_of(node: &Node) -> InlineSpan {
+    *node
+        .ext
+        .get::<InlineSpan>()
+        .expect("markers and emphasis carry their span")
+}
+
+/// A marker node for the run at `at..end` of the inline text.
+fn marker_node(state: &InlineState, marker: EmphMarker, at: usize, end: usize) -> Node {
+    let mut node = Node::new(marker);
+    node.srcmap = state.get_map(at, end);
+    node.ext.insert(InlineSpan(at, end));
+    node
+}
+
+/// Hands `node` back to the tokenizer so that it ends at `end`: the tokenizer sets its source
+/// map from the length returned.
+fn hand_back(state: &mut InlineState, node: Node, end: usize) -> Option<(Node, usize)> {
+    let start = node
+        .ext
+        .get::<InlineSpan>()
+        .filter(|s| s.1 == end)
+        .map_or(end - 1, |s| s.0);
+    state.pos = start;
+    Some((node, end - start))
+}
+
 /// markdown-it 15's emphasis (`*`, `_`) with its punctuation table.
 pub(crate) fn add_emphasis(md: &mut MarkdownIt, eleventy: bool) {
     md.ext.insert(PunctTable(if eleventy {
@@ -48,7 +80,9 @@ pub(crate) fn add_emphasis(md: &mut MarkdownIt, eleventy: bool) {
 
 /// markdown-it's strikethrough (`~~`). Call after [`add_emphasis`].
 pub(crate) fn add_strikethrough(md: &mut MarkdownIt) {
-    add_with::<'~', 2, true>(md, || Node::new(Strikethrough { marker: '~' }));
+    let pair_config = md.ext.get_or_insert_default::<PairConfig<'~'>>();
+    pair_config.fns[1] = Some(|| Node::new(Strikethrough { marker: '~' }));
+    md.inline.add_rule::<StrikeScanner>();
 }
 
 fn add_with<const MARKER: char, const LENGTH: u8, const CAN_SPLIT_WORD: bool>(
@@ -140,29 +174,111 @@ impl<const MARKER: char, const CAN_SPLIT_WORD: bool> InlineRule
             return None;
         }
         let scanned = scan_delims(state, state.pos, CAN_SPLIT_WORD);
-        let mut node = Node::new(EmphMarker {
+        let marker = EmphMarker {
             marker: MARKER,
             length: scanned.length,
             remaining: scanned.length,
             open: scanned.can_open,
             close: scanned.can_close,
-        });
-        node.srcmap = state.get_map(state.pos, state.pos + scanned.length);
-        node = scan_and_match_delimiters::<MARKER>(state, node);
-        let map = node.srcmap.expect("set above").get_byte_offsets();
-        // Back up to keep the source maps right.
-        state.pos += scanned.length;
-        let token_len = map.1 - map.0;
-        state.pos -= token_len;
-        Some((node, token_len))
+        };
+        let end = state.pos + scanned.length;
+        let node = marker_node(state, marker, state.pos, end);
+        let top = state.node.children.len().saturating_sub(1);
+        let node = scan_and_match_delimiters::<MARKER>(state, node, top);
+        hand_back(state, node, end)
     }
 }
 
+/// markdown-it's strikethrough `tokenize` and `postProcess`. Unlike emphasis, a run of `~` is
+/// a separate `~~` delimiter for each pair (after a lone `~` when the run is odd), and pairs of
+/// one run never match each other. A lone `~` right before a pair that closes moves after it.
+struct StrikeScanner;
+
+impl InlineRule for StrikeScanner {
+    const MARKER: char = '~';
+
+    fn check(_: &mut InlineState) -> Option<usize> {
+        None
+    }
+
+    fn run(state: &mut InlineState) -> Option<(Node, usize)> {
+        use markdown_it::parser::inline::Text;
+        if !state.src[state.pos..state.pos_max].starts_with('~') {
+            return None;
+        }
+        let scanned = scan_delims(state, state.pos, true);
+        let len = scanned.length;
+        if len < 2 {
+            return None;
+        }
+        let start = state.pos;
+        let lone = len % 2 == 1;
+        if lone {
+            let mut t = Node::new(Text {
+                content: "~".into(),
+            });
+            t.srcmap = state.get_map(start, start + 1);
+            state.node.children.push(t);
+        }
+        // A pair's openers are what came before the run (and what earlier pairs closed).
+        let mut top = state.node.children.len();
+        // Leading pairs that closed, while they still do.
+        let mut leading = Some(0usize);
+        for k in 0..len / 2 {
+            let at = start + usize::from(lone) + 2 * k;
+            let marker = EmphMarker {
+                marker: '~',
+                length: 0,
+                remaining: 2,
+                open: scanned.can_open,
+                close: scanned.can_close,
+            };
+            let node = marker_node(state, marker, at, at + 2);
+            let node = scan_and_match_delimiters::<'~'>(state, node, top);
+            let closed = !node.is::<EmphMarker>();
+            if closed {
+                top = state.node.children.len();
+            }
+            match leading {
+                Some(n) if closed => leading = Some(n + 1),
+                Some(n) => {
+                    move_lone(state, lone, n);
+                    leading = None;
+                }
+                None => {}
+            }
+            state.node.children.push(node);
+        }
+        if let Some(n) = leading {
+            move_lone(state, lone, n);
+        }
+        let last = state.node.children.pop().expect("a pair was pushed");
+        hand_back(state, last, start + len)
+    }
+}
+
+/// markdown-it's strikethrough `postProcess`: a lone `~` right before the first `~~` of its run
+/// that closes is swapped with the last of the `s_close` tokens right after it. Here, the `~`
+/// is the last leaf of the innermost of the `n` strikethroughs the run's leading pairs closed,
+/// and moves to right after the outermost one, the last child.
+fn move_lone(state: &mut InlineState, lone: bool, n: usize) {
+    if !lone || n == 0 {
+        return;
+    }
+    let mut node = state.node.children.last_mut().expect("the outermost close");
+    for _ in 1..n {
+        node = node.children.last_mut().expect("the next close in");
+    }
+    let tilde = node.children.pop().expect("the lone `~`");
+    state.node.children.push(tilde);
+}
+
 /// With a closing delimiter just inserted last, finds its openers and moves what is between
-/// into an emphasis node.
+/// into an emphasis node. Openers are looked for below index `top` of the children.
 fn scan_and_match_delimiters<const MARKER: char>(
     state: &mut InlineState,
     mut closer_token: Node,
+    top: usize,
 ) -> Node {
     if state.node.children.is_empty() {
         return closer_token;
@@ -182,7 +298,7 @@ fn scan_and_match_delimiters<const MARKER: char>(
         .get_or_insert_default::<OpenersBottom<MARKER>>();
     let openers_parameter = (closer.open as usize) * 3 + closer.length % 3;
     let min_opener_idx = openers_for_marker.0[openers_parameter];
-    let mut idx = state.node.children.len() - 1;
+    let mut idx = top.min(state.node.children.len());
     let mut new_min_opener_idx = idx;
     while idx > min_opener_idx {
         idx -= 1;
@@ -210,20 +326,20 @@ fn scan_and_match_delimiters<const MARKER: char>(
                 opener.remaining -= marker_len;
                 let mut new_token = marker_fn();
                 new_token.children = state.node.children.split_off(idx + 1);
-                let mut end_map_pos = 0;
-                if let Some(map) = closer_token.srcmap {
-                    let (start, end) = map.get_byte_offsets();
-                    closer_token.srcmap = Some(SourcePos::new(start + marker_len, end));
-                    end_map_pos = start + marker_len;
-                }
-                let mut start_map_pos = 0;
+                // Cut `marker_len` from the start of the closer and the end of the opener.
+                let InlineSpan(cs, ce) = span_of(&closer_token);
+                let end_map_pos = cs + marker_len;
+                closer_token.ext.insert(InlineSpan(end_map_pos, ce));
+                closer_token.srcmap = state.get_map(end_map_pos, ce);
+                let opener_token = state.node.children.last().expect("the opener");
+                let InlineSpan(os, oe) = span_of(opener_token);
+                let start_map_pos = oe - marker_len;
+                let opener_map = state.get_map(os, start_map_pos);
                 let opener_token = state.node.children.last_mut().expect("the opener");
-                if let Some(map) = opener_token.srcmap {
-                    let (start, end) = map.get_byte_offsets();
-                    opener_token.srcmap = Some(SourcePos::new(start, end - marker_len));
-                    start_map_pos = end - marker_len;
-                }
+                opener_token.ext.insert(InlineSpan(os, start_map_pos));
+                opener_token.srcmap = opener_map;
                 new_token.srcmap = state.get_map(start_map_pos, end_map_pos);
+                new_token.ext.insert(InlineSpan(start_map_pos, end_map_pos));
                 if opener.remaining == 0 {
                     state.node.children.pop();
                 }

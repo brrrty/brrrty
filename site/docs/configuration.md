@@ -191,11 +191,14 @@ Values cross into the script as 11ty would give them to a JavaScript filter, and
 | `s.replace(/re/g, r)`, `s.split(/re/)`, `/re/.test(s)` | | `regex_replace(s, pattern, r, "g")`, `regex_split(s, pattern)`, `regex_test(s, pattern)` |
 | `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon) | | `luxon_format(d, fmt, zone)` |
 | `markdownIt().render(s)`, `.renderInline(s)` | | `markdown(s)`, `markdown_inline(s)` |
+| `markdownIt({ linkify: true, typographer: true })`, `md.linkify.set({ fuzzyLink: true })`, `md.render(s)` | | `markdown(s, #{ linkify: true, typographer: true, fuzzy_link: true })` |
 | `execSync("git rev-parse HEAD")` | scripts can't run commands | `git_head()` |
 
 Sorting runs V8's own TimSort, so even a comparator that isn't a consistent ordering gives the order Node gives. Regular expressions accept only syntax that means the same in JavaScript and in Rust: no lookaround and no backreferences, among a few others, and a pattern outside that is an error naming it.
 
 `to_fixed`, `to_locale_string` and `locale_compare` give what Node gives, checked against it on hundreds of thousands of values. `to_fixed` rounds the number's exact binary value, as V8 does: `to_fixed(2.5, 0)` is `"3"`, but `to_fixed(1.005, 2)` is `"1.00"`, because 1.005 is stored as 1.00499999... `to_locale_string(n)` is the `en-US` format: up to three decimals, thousands grouped with commas (`1,234.568`). `locale_compare(a, b)` is the order Node sorts strings in with an English locale: case and accents count only after the letters (`a`, `A`, `b`, `é`, `f`). In Node, `toLocaleString()` and `localeCompare()` without a locale follow the language set in `LC_ALL`, `LC_MESSAGES` or `LANG` (the first that is set). Brrrty matches the `en-US` result, so without a locale they run only when that is `en_US` (such as `en_US.UTF-8`), `C` or `POSIX`, or nothing is set; another language, another locale argument, or options is an error rather than a guess. `locale_compare` also refuses Chinese and Japanese ideographs (Han): Node sorts them by radical and stroke count, from data Brrrty doesn't have.
+
+`markdown(s, options)` takes markdown-it's `html`, `linkify` and `typographer` options and linkify-it's `fuzzyLink` (as `fuzzy_link`), each `true` or `false`; any other option is an error. It is markdown-it 15 with linkify-it 6, so links without `http://` (`example.com`) need `fuzzy_link: true`, as in JavaScript. A markdown-it plugin or rule can't be added yet.
 
 `Math.random()` has no stand-in: a page built from a random number differs on every build, so it can never be the same file as 11ty's. Calling `random()` is an error that says so. If your JavaScript config has a filter that shuffles or picks at random, declare it with `config.add_nondeterministic_filter(name)`: pages that use it aren't written, and the rest of the site builds.
 

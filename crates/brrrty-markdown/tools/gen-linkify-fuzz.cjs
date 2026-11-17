@@ -13,7 +13,7 @@ const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imu
 const pick = (a) => a[Math.floor(rnd() * a.length)];
 const FRAGS = [
   'http://', 'https://', 'HTTP://', 'ftp://', 'mailto:', '//', 'xhttp://', 'http:', 'skype:', ':', '/', '//',
-  'example.com', 'github.com', 'a.b', 'x.y.z', 'Broadcast.com', 'www.', 'sub.example.org', 'ex.co.uk', 'b.c', 'a.io', 'xn--p1ai', 'рф', 'пример.рф', 'é.com', '中文.com',
+  'example.com', 'github.com', 'a.b', 'x.y.z', 'Example.com', 'www.', 'sub.example.org', 'ex.co.uk', 'b.c', 'a.io', 'xn--p1ai', 'рф', 'пример.рф', 'é.com', '中文.com',
   'localhost', '127.0.0.1', '[::1]', '[2001:db8::1]', ':8080', ':99999', ':80',
   '/path', '/a/b', '?q=1', '&b=2', '#frag', '(x)', '[y]', '{z}', '(', ')', '[', ']', '{', '}', '"q"', "'s'", "'", '"',
   '.', '..', '...', ',', ';', '!', '?', '-', '--', '---', '_', '*', '**', '~', '%20', '@', '|', '>', '<', '｜',

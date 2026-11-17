@@ -934,33 +934,20 @@ fn invalid_ignore_line_warns_and_the_build_goes_on() {
     assert!(!root.join("_site/skip").exists());
 }
 
-/// The markdown-it crate panics (an integer overflow, so only in debug builds) on a
-/// strikethrough that spans a CRLF line break inside a list item. That refuses the one page,
-/// with a Problem naming the file, and the site still builds. In a release build the overflow
-/// wraps and the page matches markdown-it 14 (`markdownIt().render(...)` printed by Node).
+/// A strikethrough that spans a CRLF line break inside a list item used to overflow an integer
+/// in the markdown-it port (a panic in debug builds). It renders as markdown-it 14 does
+/// (`markdownIt().render(...)` printed by Node) in every build.
 #[test]
-fn a_markdown_panic_refuses_only_that_page() {
+fn a_strikethrough_across_crlf_in_a_list_renders() {
     let t = tempfile::tempdir().unwrap();
     write(t.path(), "src/ok.md", "# fine\n");
     write(t.path(), "src/bad.md", "2) `~~中\r\n---~~(![i](u)");
     let r = build(&opts(t.path()), &MarkdownIt::new());
-    let bad: Vec<_> = r
-        .problems
-        .iter()
-        .filter(|p| p.code == codes::MARKDOWN_RENDER_FAILED)
-        .collect();
-    if cfg!(debug_assertions) {
-        assert_eq!(bad.len(), 1, "{:?}", r.problems);
-        assert_eq!(bad[0].path.as_deref(), Some(Path::new("src/bad.md")));
-        assert!(bad[0].help.as_deref().unwrap().contains("report"));
-        assert!(!t.path().join("_site/bad/index.html").exists());
-    } else {
-        assert!(r.problems.is_empty(), "{:?}", r.problems);
-        assert_eq!(
-            read(t.path().join("_site/bad/index.html")),
-            "<ol start=\"2\">\n<li>`<s>中\n---</s>(<img src=\"u\" alt=\"i\"></li>\n</ol>\n"
-        );
-    }
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(
+        read(t.path().join("_site/bad/index.html")),
+        "<ol start=\"2\">\n<li>`<s>中\n---</s>(<img src=\"u\" alt=\"i\"></li>\n</ol>\n"
+    );
     assert_eq!(
         read(t.path().join("_site/ok/index.html")),
         "<h1>fine</h1>\n"

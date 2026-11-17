@@ -198,20 +198,17 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   space in a paragraph when `linkify` is on, and a quote right next to an image
   whose label can't be found in the source. A config that adds a markdown-it
   plugin or rule to its own instance can't be ported yet.
-- Rendering matches markdown-it on about 300 pinned cases, on 40,000 generated
+- Rendering matches markdown-it on about 340 pinned cases, on 40,000 generated
   inputs around links and typography with each set of options, and on random
   inputs, apart from these known gaps in the Rust port of markdown-it (left for
   later; no page on the test sites has one): a single-column table whose header
-  ends in `|` and whose delimiter row has no pipe; an empty list item right after a
-  blockquote's lazy line; a reference definition with an odd destination
-  (`[x]: /u[x]é`); a table after a blockquote's lazy line; a table indented four
-  spaces; a `<div>` followed by a table; a run of four or more `~` inside text
-  (`~~a~~~~`); and input that makes the port panic (for example a strikethrough
-  across a CRLF inside a list item, in a debug build of Brrrty, where the port's
-  integer overflow is checked), which makes the call an error with the panic text.
-  11ty's own Markdown (markdown-it 14.3.3, which `.md` pages use) has the same
-  gaps. A panic there refuses the page with `markdown-render-failed`, and the rest
-  of the site builds.
+  ends in `|` and whose delimiter row has no pipe (`![i](u)|` then `---`); an empty
+  list item right after a blockquote's lazy line (`> a` then `- `); a table right
+  after a blockquote's lazy line; and a reference definition with an odd
+  destination (`[x]: /u<div>\\`). 11ty's own Markdown (markdown-it
+  14.3.3, which `.md` pages use) has the same gaps. A panic in the port makes the
+  call an error with the panic text, and refuses an 11ty Markdown page with
+  `markdown-render-failed` while the rest of the site builds.
 
 ## `object()` and key order
 

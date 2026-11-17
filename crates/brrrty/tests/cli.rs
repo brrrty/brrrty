@@ -399,12 +399,13 @@ fn rhai_data_files_work_without_a_config_and_follow_source_date_epoch() {
     );
 }
 
-/// The panic hook stands down inside containment, so a Markdown panic (an integer overflow in
-/// markdown-it, so only in debug builds) refuses its page and the build exits 1, not 101. Many
-/// copies run across the Rayon workers. In a release build the overflow wraps and the page
-/// matches markdown-it 14, printed by Node.
+/// A strikethrough across a CRLF inside a list item used to overflow an integer in the
+/// markdown-it port (a panic in debug builds). It renders as markdown-it 14 does (printed by
+/// Node) in every build, on many pages at once across the Rayon workers. Panic containment for
+/// a page is covered by `script_panics_are_problems_not_crashes` here and by brrrty-core's
+/// `renderer_panics_refuse_their_pages_on_every_thread`.
 #[test]
-fn a_markdown_panic_is_a_page_error_not_a_crash() {
+fn a_strikethrough_across_crlf_in_a_list_renders() {
     let mut files = vec![("src/ok.md".to_string(), "# fine\n".to_string())];
     for i in 0..24 {
         files.push((format!("src/bad{i}.md"), "2) `~~中\r\n---~~(![i](u)".into()));
@@ -416,20 +417,14 @@ fn a_markdown_panic_is_a_page_error_not_a_crash() {
     let t = site(&files);
     let out = run_in(t.path(), &[]);
     let err = stderr(&out);
-    assert!(!err.contains("internal bug"), "{err}");
+    assert_eq!(out.status.code(), Some(0), "{err}");
     assert_eq!(
         std::fs::read_to_string(t.path().join("_site/src/ok/index.html")).unwrap(),
         "<h1>fine</h1>\n"
     );
-    if cfg!(debug_assertions) {
-        assert_eq!(out.status.code(), Some(1), "{err}");
-        assert_eq!(err.matches("markdown-render-failed").count(), 24, "{err}");
-        assert!(err.contains("markdown-it-0.6.1/src/"), "{err}");
-        assert!(!t.path().join("_site/src/bad0").exists());
-    } else {
-        assert_eq!(out.status.code(), Some(0), "{err}");
+    for i in 0..24 {
         assert_eq!(
-            std::fs::read_to_string(t.path().join("_site/src/bad0/index.html")).unwrap(),
+            std::fs::read_to_string(t.path().join(format!("_site/src/bad{i}/index.html"))).unwrap(),
             "<ol start=\"2\">\n<li>`<s>中\n---</s>(<img src=\"u\" alt=\"i\"></li>\n</ol>\n"
         );
     }
