@@ -127,19 +127,30 @@ fn in_rule_range(secs: i64) -> i64 {
     secs - secs.signum() * cycles * CYCLE
 }
 
+/// The local zone as ICU names it (the key `%Z` and the long names are
+/// looked up by; `None` for an empty `TZ`), and its rules.
+struct Local {
+    key: Option<String>,
+    zone: &'static Zone,
+}
+
 /// The local zone, or why it can't be used. Read once per process.
-fn local_zone() -> Result<&'static Zone, &'static str> {
-    static LOCAL: OnceLock<Result<&'static Zone, String>> = OnceLock::new();
+fn local() -> Result<&'static Local, &'static str> {
+    static LOCAL: OnceLock<Result<Local, String>> = OnceLock::new();
     LOCAL
         .get_or_init(|| {
             resolve_local(
                 std::env::var("TZ").ok().as_deref(),
-                std::path::Path::new("/etc/localtime"),
+                std::path::Path::new(LOCALTIME),
+                std::path::Path::new(ZONEINFO),
             )
         })
         .as_ref()
-        .map(|z| *z)
         .map_err(String::as_str)
+}
+
+fn local_zone() -> Result<&'static Zone, &'static str> {
+    local().map(|l| l.zone)
 }
 
 /// Whether local time can be used: `Err` says why not, naming `TZ` or
@@ -149,48 +160,174 @@ pub fn check_local() -> Result<(), String> {
     local_zone().map(|_| ()).map_err(str::to_string)
 }
 
-/// The zone `TZ` names, or `/etc/localtime` when `TZ` is unset, in the
-/// bundled data.
-fn resolve_local(tz: Option<&str>, localtime: &std::path::Path) -> Result<&'static Zone, String> {
-    let utc = || Zone::named("UTC").ok_or_else(|| "the bundled tz data has no UTC".to_string());
-    match tz {
-        Some(raw) => {
-            let name = raw.strip_prefix(':').unwrap_or(raw);
-            if name.is_empty() {
-                // Node treats an empty TZ as UTC.
-                return utc();
-            }
-            let name = match name.strip_prefix('/') {
-                Some(_) => name.split_once("zoneinfo/").map_or("", |(_, z)| z),
-                None => name,
-            };
-            Zone::named(name).ok_or_else(|| {
+/// The name of the local zone as Node's ICU finds it, or why it can't be
+/// told (for a probe or an error message).
+pub fn local_zone_name() -> Result<&'static str, &'static str> {
+    local_zone().map(|z| z.name)
+}
+
+/// ICU's `TZDEFAULT` and `TZZONEINFO` (`putil.cpp`, ICU 78.3), the same on
+/// Linux and macOS.
+const LOCALTIME: &str = "/etc/localtime";
+const ZONEINFO: &str = "/usr/share/zoneinfo";
+
+const SET_TZ: &str = "Set TZ to a zone name such as America/Chicago";
+
+/// ICU's `skipZoneIDPrefix`: `posix/` and `right/` copy the top level.
+fn skip_zone_id_prefix(id: &str) -> &str {
+    id.strip_prefix("posix/")
+        .or_else(|| id.strip_prefix("right/"))
+        .unwrap_or(id)
+}
+
+/// The zone `TZ` names or, when it is unset, the one `/etc/localtime` is,
+/// found as ICU 78.3's `uprv_tzname` finds it, with its rules from the
+/// bundled data:
+///
+/// - `TZ` set: its value without a leading `:` and a `posix/` or `right/`
+///   prefix. An empty `TZ` is UTC, as in Node. A name the bundled data
+///   lacks is refused (Node would fall back to UTC or the system zone).
+/// - `localtime` a symlink: the part of its real path after `/zoneinfo/`,
+///   or of the link's own target when the real path has none or is
+///   `posixrules` (macOS's real path is `/usr/share/zoneinfo.default/...`).
+/// - `localtime` a regular file (a copied zone file, common in Docker
+///   images): the first file under the zoneinfo folder with the same bytes,
+///   searched in directory order as ICU does, skipping `posixrules` and
+///   `localtime`.
+/// - `localtime` missing: UTC.
+fn resolve_local(
+    tz: Option<&str>,
+    localtime: &std::path::Path,
+    zoneinfo: &std::path::Path,
+) -> Result<Local, String> {
+    let utc = |key: Option<String>| {
+        Zone::named("UTC")
+            .map(|zone| Local { key, zone })
+            .ok_or_else(|| "the bundled tz data has no UTC".to_string())
+    };
+    if let Some(raw) = tz {
+        let name = raw.strip_prefix(':').unwrap_or(raw);
+        if name.is_empty() {
+            return utc(None);
+        }
+        let name = match name.strip_prefix('/') {
+            Some(_) => name.split_once("zoneinfo/").map_or("", |(_, z)| z),
+            None => name,
+        };
+        let name = skip_zone_id_prefix(name);
+        return Zone::named(name)
+            .map(|zone| Local {
+                key: Some(name.to_string()),
+                zone,
+            })
+            .ok_or_else(|| {
                 format!(
                     "TZ is `{raw}`, which isn't a time zone in Brrrty's tz data ({TZDATA_VERSION}, Node 26's). \
                      Node would quietly use UTC or the system zone instead. Set TZ to a zone name such as \
                      America/Chicago, or unset it"
                 )
+            });
+    }
+    let named = |name: &str, how: String| {
+        Zone::named(name)
+            .map(|zone| Local {
+                key: Some(name.to_string()),
+                zone,
             })
+            .ok_or_else(|| {
+                format!(
+                    "{how} `{name}`, which isn't a time zone in Brrrty's tz data ({TZDATA_VERSION}). {}",
+                    SET_TZ
+                )
+            })
+    };
+    let meta = match std::fs::symlink_metadata(localtime) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return utc(Some("UTC".into())),
+        Err(e) => {
+            return Err(format!(
+                "can't read {}: {e}. {}",
+                localtime.display(),
+                SET_TZ
+            ));
         }
-        None => match std::fs::read_link(localtime) {
-            Ok(link) => {
-                let link = link.to_string_lossy();
-                let name = link.split_once("zoneinfo/").map_or("", |(_, z)| z);
-                Zone::named(name).ok_or_else(|| {
-                    format!(
-                        "/etc/localtime points to `{link}`, which isn't a time zone in Brrrty's tz data \
-                         ({TZDATA_VERSION}). Set TZ to a zone name such as America/Chicago"
-                    )
-                })
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => utc(),
-            Err(_) => Err(format!(
-                "Brrrty can't tell which time zone {} is (it isn't a link into a zoneinfo folder). \
-                 Set TZ to a zone name such as America/Chicago",
+    };
+    if meta.file_type().is_symlink() {
+        // ICU: `realpath`; if that fails (a broken link), the search below,
+        // which can't read the file either, so ICU guesses from the C
+        // library's abbreviation. Brrrty refuses.
+        let Ok(real) = std::fs::canonicalize(localtime) else {
+            return Err(format!(
+                "{} is a broken link, so Brrrty can't tell its time zone (Node would guess from \
+                 the C library's). {SET_TZ}",
+                localtime.display()
+            ));
+        };
+        let tail = |p: &str| p.split_once("/zoneinfo/").map(|(_, t)| t.to_string());
+        let name = tail(&real.to_string_lossy())
+            .filter(|t| t != "posixrules")
+            .or_else(|| {
+                std::fs::read_link(localtime)
+                    .ok()
+                    .and_then(|p| tail(&p.to_string_lossy()))
+            });
+        return match name {
+            Some(name) => named(
+                skip_zone_id_prefix(&name),
+                format!("{} links to", localtime.display()),
+            ),
+            None => Err(format!(
+                "{} is a link, but not into a zoneinfo folder, so Brrrty can't tell its time zone. {SET_TZ}",
                 localtime.display()
             )),
-        },
+        };
     }
+    let wanted = std::fs::read(localtime)
+        .map_err(|e| format!("can't read {}: {e}. {}", localtime.display(), SET_TZ))?;
+    let mut dir = zoneinfo.to_string_lossy().into_owned();
+    if !dir.ends_with('/') {
+        dir.push('/');
+    }
+    match search_for_tz_file(&dir, dir.len(), &wanted) {
+        Some(name) => named(&name, format!("{} is a copy of", localtime.display())),
+        None => Err(format!(
+            "{} is a file, and no zone in {} has the same bytes, so Brrrty can't tell its time zone \
+             (Node would guess from its abbreviation). {}",
+            localtime.display(),
+            zoneinfo.display(),
+            SET_TZ
+        )),
+    }
+}
+
+/// ICU's `searchForTZFile`: depth first in directory order, the first file
+/// with the same bytes as `wanted`, named from `root_len` on, with a
+/// `posix/` or `right/` prefix skipped. Paths are cut off at `PATH_MAX`,
+/// where `opendir` fails.
+fn search_for_tz_file(dir: &str, root_len: usize, wanted: &[u8]) -> Option<String> {
+    const PATH_MAX: usize = 4096;
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "posixrules" || name == "localtime" {
+            continue;
+        }
+        let path = format!("{dir}{name}");
+        if path.len() + 1 >= PATH_MAX {
+            continue;
+        }
+        if std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+            if let Some(found) = search_for_tz_file(&format!("{path}/"), root_len, wanted) {
+                return Some(found);
+            }
+        } else if std::fs::metadata(&path).is_ok_and(|m| m.len() == wanted.len() as u64)
+            && std::fs::read(&path).is_ok_and(|b| b == wanted)
+        {
+            return Some(skip_zone_id_prefix(&path[root_len.min(path.len())..]).to_string());
+        }
+    }
+    None
 }
 
 /// The UTC offset of `tz` at the instant `ms`, in seconds east.
@@ -331,46 +468,9 @@ pub fn iso_string(ms: f64) -> Option<String> {
     ))
 }
 
-/// The zone the process runs in, as `TZ` or `/etc/localtime` names it.
-/// Read once per process.
+/// The local zone's name as ICU found it, for the id and long names.
 fn local_zone_key() -> Option<&'static str> {
-    use std::sync::OnceLock;
-    static KEY: OnceLock<Option<String>> = OnceLock::new();
-    KEY.get_or_init(|| {
-        zone_key(
-            std::env::var("TZ").ok().as_deref(),
-            std::path::Path::new("/etc/localtime"),
-        )
-    })
-    .as_deref()
-}
-
-/// The zone named by `tz` (the `TZ` variable) or, when it is unset, by the
-/// `localtime` file, as Node finds it:
-///
-/// - `TZ` set: its value without a leading `:`. An empty `TZ` names no
-///   zone.
-/// - `localtime` missing: `UTC`, as in many container images.
-/// - `localtime` a symlink: the part of its target after `zoneinfo/`.
-/// - Otherwise `None`. Node also finds the zone of a `localtime` that is a
-///   copy of a zone file, by searching the zone directory for the same
-///   bytes. Brrrty does not, so it prints the long name as `GMT+01:00`
-///   and gives no `%Z` id. Offsets and times are still right, because they
-///   come from the file itself. Set `TZ` to name the zone. Node does not
-///   read `/etc/timezone`, so neither does Brrrty.
-fn zone_key(tz: Option<&str>, localtime: &std::path::Path) -> Option<String> {
-    if let Some(tz) = tz {
-        let tz = tz.strip_prefix(':').unwrap_or(tz);
-        return (!tz.is_empty()).then(|| tz.to_string());
-    }
-    match std::fs::read_link(localtime) {
-        Ok(link) => {
-            let link = link.to_string_lossy();
-            link.split_once("zoneinfo/").map(|(_, z)| z.to_string())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some("UTC".to_string()),
-        Err(_) => None,
-    }
+    local().ok()?.key.as_deref()
 }
 
 /// Whether `name` is a zone in the tz database, ignoring case.
@@ -537,52 +637,105 @@ mod tests {
         assert_eq!(gmt_offset(0), "GMT+00:00");
     }
 
-    /// Node 26 in a Debian container (`node:26-trixie-slim`, `TZ` unset),
-    /// `Intl.DateTimeFormat().resolvedOptions().timeZone`:
-    /// - no `/etc/localtime`: `UTC`, and `toString` ends `(Coordinated
-    ///   Universal Time)`.
-    /// - `/etc/localtime` linked to `Europe/Paris`: `Europe/Paris`.
-    /// - `/etc/localtime` a copy of `Europe/Paris`: `Europe/Paris`, found by
-    ///   content (not done here: `None`, documented on `zone_key`).
-    /// - no `/etc/localtime` and `/etc/timezone` saying `Europe/Paris`:
-    ///   `UTC`, so `/etc/timezone` is not read.
-    #[test]
-    fn the_local_zone_is_found_as_node_finds_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("localtime");
-        assert_eq!(zone_key(None, &missing).as_deref(), Some("UTC"));
-        std::fs::write(dir.path().join("timezone"), "Europe/Paris\n").unwrap();
-        assert_eq!(zone_key(None, &missing).as_deref(), Some("UTC"));
-
-        let link = dir.path().join("link");
-        std::os::unix::fs::symlink("/usr/share/zoneinfo/Europe/Paris", &link).unwrap();
-        assert_eq!(zone_key(None, &link).as_deref(), Some("Europe/Paris"));
-
-        let copy = dir.path().join("copy");
-        std::fs::write(&copy, b"TZif").unwrap();
-        assert_eq!(zone_key(None, &copy), None);
-
-        // `TZ` wins, without its leading colon. An empty one names nothing.
-        assert_eq!(
-            zone_key(Some(":Asia/Tokyo"), &link).as_deref(),
-            Some("Asia/Tokyo")
-        );
-        assert_eq!(zone_key(Some(""), &missing), None);
+    fn name(
+        tz: Option<&str>,
+        lt: &std::path::Path,
+        zi: &std::path::Path,
+    ) -> Result<String, String> {
+        resolve_local(tz, lt, zi).map(|l| format!("{} {:?}", l.zone.name, l.key))
     }
 
+    /// ICU 78.3's `uprv_tzname`, case by case.
     #[test]
-    fn the_local_zone_comes_from_the_bundled_data_or_is_refused() {
+    fn the_local_zone_is_found_as_icu_finds_it() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("localtime");
-        let name = |tz: Option<&str>, lt: &std::path::Path| resolve_local(tz, lt).map(|z| z.name);
-        assert_eq!(name(None, &missing), Ok("UTC"));
-        assert_eq!(name(Some(""), &missing), Ok("UTC"));
-        assert_eq!(name(Some(":Asia/Tokyo"), &missing), Ok("Asia/Tokyo"));
-        assert_eq!(name(Some("asia/tokyo"), &missing), Ok("Asia/Tokyo"));
-        assert_eq!(name(Some("US/Pacific"), &missing), Ok("US/Pacific"));
+        let zi = dir.path().join("zoneinfo");
+        std::fs::create_dir_all(zi.join("Europe")).unwrap();
+        std::fs::create_dir_all(zi.join("posix/Asia")).unwrap();
+        let berlin = jiff_tzdb::get("Europe/Berlin").unwrap().1;
+        let tokyo = jiff_tzdb::get("Asia/Tokyo").unwrap().1;
+        std::fs::write(zi.join("Europe/Berlin"), berlin).unwrap();
+        std::fs::write(zi.join("posix/Asia/Tokyo"), tokyo).unwrap();
+        // Skipped by name, as ICU skips them.
+        std::fs::write(zi.join("posixrules"), tokyo).unwrap();
+        std::fs::write(zi.join("localtime"), berlin).unwrap();
+
+        // Missing: UTC.
+        let missing = dir.path().join("missing");
+        assert_eq!(name(None, &missing, &zi).unwrap(), "UTC Some(\"UTC\")");
+        // A copy: found by its bytes; a `posix/` prefix is skipped.
+        let copy = dir.path().join("copy");
+        std::fs::write(&copy, berlin).unwrap();
         assert_eq!(
-            name(Some("/usr/share/zoneinfo/Europe/Paris"), &missing),
-            Ok("Europe/Paris")
+            name(None, &copy, &zi).unwrap(),
+            "Europe/Berlin Some(\"Europe/Berlin\")"
+        );
+        std::fs::write(&copy, tokyo).unwrap();
+        assert_eq!(
+            name(None, &copy, &zi).unwrap(),
+            "Asia/Tokyo Some(\"Asia/Tokyo\")"
+        );
+        // A copy of nothing in the folder, or with no folder: refused.
+        std::fs::write(&copy, b"TZif not a zone").unwrap();
+        assert!(name(None, &copy, &zi).unwrap_err().contains("same bytes"));
+        std::fs::write(&copy, berlin).unwrap();
+        assert!(
+            name(None, &copy, &dir.path().join("none"))
+                .unwrap_err()
+                .contains("Set TZ")
+        );
+        // A link: the part of its real path after /zoneinfo/, without posix/.
+        std::fs::create_dir_all(zi.join("posix/Europe")).unwrap();
+        std::fs::write(zi.join("posix/Europe/Paris"), b"x").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(zi.join("posix/Europe/Paris"), &link).unwrap();
+        assert_eq!(
+            name(None, &link, &zi).unwrap(),
+            "Europe/Paris Some(\"Europe/Paris\")"
+        );
+        // A broken link: ICU can't read it either, and guesses; refused.
+        let broken = dir.path().join("broken");
+        std::os::unix::fs::symlink("/nowhere/zoneinfo/posix/Asia/Tokyo", &broken).unwrap();
+        assert!(
+            name(None, &broken, &zi)
+                .unwrap_err()
+                .contains("broken link")
+        );
+        let real = dir.path().join("real");
+        std::os::unix::fs::symlink(zi.join("Europe/Berlin"), &real).unwrap();
+        assert_eq!(
+            name(None, &real, &zi).unwrap(),
+            "Europe/Berlin Some(\"Europe/Berlin\")"
+        );
+        let odd = dir.path().join("odd");
+        std::os::unix::fs::symlink(&copy, &odd).unwrap();
+        assert!(
+            name(None, &odd, &zi)
+                .unwrap_err()
+                .contains("not into a zoneinfo folder")
+        );
+
+        // TZ wins, without its colon or a posix/ prefix; empty is UTC with no id.
+        assert_eq!(
+            name(Some(":Asia/Tokyo"), &link, &zi).unwrap(),
+            "Asia/Tokyo Some(\"Asia/Tokyo\")"
+        );
+        assert_eq!(
+            name(Some("posix/Asia/Tokyo"), &link, &zi).unwrap(),
+            "Asia/Tokyo Some(\"Asia/Tokyo\")"
+        );
+        assert_eq!(
+            name(Some("asia/tokyo"), &link, &zi).unwrap(),
+            "Asia/Tokyo Some(\"asia/tokyo\")"
+        );
+        assert_eq!(
+            name(Some("US/Pacific"), &link, &zi).unwrap(),
+            "US/Pacific Some(\"US/Pacific\")"
+        );
+        assert_eq!(name(Some(""), &link, &zi).unwrap(), "UTC None");
+        assert_eq!(
+            name(Some("/usr/share/zoneinfo/Europe/Paris"), &missing, &zi).unwrap(),
+            "Europe/Paris Some(\"Europe/Paris\")"
         );
         // Typos, stray spaces and POSIX rules: Node would quietly use UTC
         // or the system zone, so Brrrty refuses, naming TZ.
@@ -596,15 +749,14 @@ mod tests {
             "JST-9",
             "/etc/localtime",
         ] {
-            let why = name(Some(bad), &missing).unwrap_err();
+            let why = name(Some(bad), &missing, &zi).unwrap_err();
             assert!(why.contains(&format!("TZ is `{bad}`")), "{why}");
         }
-        let link = dir.path().join("link");
-        std::os::unix::fs::symlink("/var/db/timezone/zoneinfo/America/Edmonton", &link).unwrap();
-        assert_eq!(name(None, &link), Ok("America/Edmonton"));
-        let copy = dir.path().join("copy");
-        std::fs::write(&copy, b"TZif").unwrap();
-        assert!(name(None, &copy).unwrap_err().contains("Set TZ"));
+    }
+
+    #[test]
+    fn the_bundled_tz_data_is_the_release_named() {
+        assert_eq!(jiff_tzdb::VERSION, Some(TZDATA_VERSION));
     }
 
     #[test]
