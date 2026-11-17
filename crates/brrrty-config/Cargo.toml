@@ -17,6 +17,7 @@ brrrty-core = { path = "../brrrty-core", version = "0.0.14" }
 brrrty-liquid = { path = "../brrrty-liquid", version = "0.0.14" }
 brrrty-js = { path = "../brrrty-js", version = "0.0.14" }
 brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.0.14" }
+cap-std = "=4.0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
 indexmap = "2"
 regex = "1.13.1"
@@ -30,3 +31,6 @@ url = "2.5.8"
 brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.14" }
 brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.14" }
 tempfile = "3.27.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -175,15 +175,73 @@ fn read_dir_lists_in_nodes_order() {
     assert_eq!(e, "read_dir(\"d/a.md\"): not a directory");
 }
 
+/// Node 26.2.0 on macOS, `fs.readdirSync("d", { recursive: true })` with
+/// `link -> real` and `dangle -> nothere`: Node stats each name, following
+/// symlinks, and enters a symlinked folder; a dangling one is only a name.
 #[cfg(unix)]
 #[test]
-fn read_dir_lists_a_symlinked_folder_without_entering_it() {
+fn read_dir_enters_a_symlinked_folder_as_node_26_does() {
     let t = tempfile::tempdir().unwrap();
+    write(t.path(), "d/a.txt", "");
     write(t.path(), "d/real/x.md", "");
+    write(t.path(), "d/real/sub/y.md", "");
     std::os::unix::fs::symlink("real", t.path().join("d/link")).unwrap();
+    std::os::unix::fs::symlink("nothere", t.path().join("d/dangle")).unwrap();
+    // `self -> self` can't be followed (ELOOP): Node lists it as a name.
+    std::os::unix::fs::symlink("self", t.path().join("d/self")).unwrap();
+    let (got, reads) = run_in(t.path(), r#"read_dir("d", #{ recursive: true })"#);
     assert_eq!(
-        strings(&run(t.path(), r#"read_dir("d", #{ recursive: true })"#)),
-        ["link", "real", "real/x.md"]
+        strings(&got.unwrap()),
+        [
+            "a.txt",
+            "dangle",
+            "link",
+            "real",
+            "self",
+            "link/sub",
+            "link/x.md",
+            "real/sub",
+            "real/x.md",
+            "link/sub/y.md",
+            "real/sub/y.md"
+        ]
+    );
+    // Every folder entered is a dependency, through the symlink too.
+    for p in ["d", "d/link", "d/link/sub", "d/real", "d/real/sub"] {
+        assert!(reads.contains(&PathBuf::from(p)), "{p} in {reads:?}");
+    }
+}
+
+/// Node enters a symlink that leads out of the project (and lists what is
+/// there): Brrrty can't, so it refuses rather than give fewer names.
+#[cfg(unix)]
+#[test]
+fn read_dir_refuses_a_symlinked_folder_outside_the_project() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "site/d/a.txt", "");
+    write(t.path(), "out/o.md", "");
+    let root = t.path().join("site");
+    std::os::unix::fs::symlink("../../out", root.join("d/away")).unwrap();
+    assert_eq!(strings(&run(&root, r#"read_dir("d")"#)), ["a.txt", "away"]);
+    let e = refused(&root, r#"read_dir("d", #{ recursive: true })"#);
+    assert!(
+        e.contains("`away` is a symlink that leads outside the project folder"),
+        "{e}"
+    );
+}
+
+/// `x/up -> ..`: Node follows it round and round until the path is too long
+/// (66 names on macOS). Brrrty refuses the loop.
+#[cfg(unix)]
+#[test]
+fn read_dir_refuses_a_symlink_loop() {
+    let t = tempfile::tempdir().unwrap();
+    fs::create_dir_all(t.path().join("l/x")).unwrap();
+    std::os::unix::fs::symlink("..", t.path().join("l/x/up")).unwrap();
+    let e = refused(t.path(), r#"read_dir("l", #{ recursive: true })"#);
+    assert!(
+        e.contains("`x/up` leads back into a folder this listing is inside"),
+        "{e}"
     );
 }
 
@@ -387,4 +445,163 @@ fn the_config_reads_files_and_the_build_lists_them() {
         r.reads,
         ["data/extra.txt", "data/names.csv"].map(PathBuf::from)
     );
+}
+
+/// Node: `existsSync("a.txt/")` and `existsSync("a.txt/.")` are false when
+/// `a.txt` is a file, and `readFileSync("a.txt/")` throws ENOTDIR.
+#[test]
+fn a_trailing_slash_needs_a_folder() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "data/a.txt", "x");
+    for (script, want) in [
+        (r#"file_exists("data/a.txt/")"#, false),
+        (r#"file_exists("data/a.txt/.")"#, false),
+        (r#"file_exists("data/")"#, true),
+        (r#"file_exists("data/.")"#, true),
+        (r#"file_exists("data/a.txt")"#, true),
+    ] {
+        assert_eq!(run(t.path(), script), Value::Bool(want), "{script}");
+    }
+    let e = refused(t.path(), r#"read_text("data/a.txt/")"#);
+    assert_eq!(e, "read_text(\"data/a.txt/\"): not a directory");
+}
+
+/// A FIFO with no writer: opening it to read would block forever. It is
+/// refused at once.
+#[cfg(unix)]
+#[test]
+fn a_fifo_is_refused_not_waited_on() {
+    let t = tempfile::tempdir().unwrap();
+    fs::create_dir_all(t.path().join("data")).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(t.path().join("data/fifo"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let started = std::time::Instant::now();
+    let e = refused(t.path(), r#"read_text("data/fifo")"#);
+    assert!(e.contains("not a regular file"), "{e}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+/// The reviewer's repro: a symlink to a folder whose real path is longer
+/// than PATH_MAX. `realpath` fails with ENAMETOOLONG, and the old check took
+/// any failure as "missing" and let the kernel follow the link.
+#[cfg(unix)]
+#[test]
+fn a_path_too_long_to_canonicalize_is_still_confined() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("site");
+    fs::create_dir_all(root.join("data")).unwrap();
+    let seg = "A".repeat(200);
+    let deep = |base: &Path| base.join(&seg).join(&seg).join(&seg);
+    let out = t.path().join("out");
+    let first = deep(&out);
+    fs::create_dir_all(&first).unwrap();
+    // The second level is past PATH_MAX as one path, so make it from a
+    // handle on the first.
+    let rel = format!("{seg}/{seg}/{seg}");
+    let first_dir =
+        cap_std::fs::Dir::open_ambient_dir(&first, cap_std::ambient_authority()).unwrap();
+    first_dir.create_dir_all(&rel).unwrap();
+    first_dir
+        .write(format!("{rel}/secret.txt"), "TOPSECRET\n")
+        .unwrap();
+    std::os::unix::fs::symlink(&rel, out.join("s1")).unwrap();
+    std::os::unix::fs::symlink(&rel, first.join("s2")).unwrap();
+    std::os::unix::fs::symlink(out.join("s1/s2"), root.join("data/x")).unwrap();
+    for script in [
+        r#"read_text("data/x/secret.txt")"#,
+        r#"read_dir("data/x")"#,
+        r#"file_exists("data/x/secret.txt")"#,
+    ] {
+        let e = refused(&root, script);
+        assert!(
+            e.contains("leads outside the project folder"),
+            "{script}: {e}"
+        );
+    }
+}
+
+/// The reviewer's race: one thread flips `data/f` between a file and a
+/// symlink to a file outside while reads run. The old check-then-open read
+/// the outside file 17 times in 4,000; opening through the project's handle
+/// never does.
+#[cfg(unix)]
+#[test]
+fn a_symlink_swapped_in_mid_read_never_reads_outside() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("site");
+    write(&root, "data/inside.txt", "inside");
+    write(t.path(), "secret.txt", "TOPSECRET");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flipper = {
+        let stop = stop.clone();
+        let f = root.join("data/f");
+        let tmp = root.join("data/f.tmp");
+        let outside = t.path().join("secret.txt");
+        std::thread::spawn(move || {
+            let mut link = false;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = fs::remove_file(&tmp);
+                if link {
+                    let _ = std::os::unix::fs::symlink(&outside, &tmp);
+                } else {
+                    let _ = fs::write(&tmp, "inside");
+                }
+                let _ = fs::rename(&tmp, &f);
+                link = !link;
+            }
+        })
+    };
+    let script = r#"
+        let leaked = 0;
+        for i in 0..2000 {
+            try {
+                if read_text("data/f") == "TOPSECRET" { leaked += 1; }
+            } catch { }
+        }
+        leaked
+    "#;
+    let got = run(&root, script);
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    flipper.join().unwrap();
+    assert_eq!(got, Value::Number(0.0));
+}
+
+#[test]
+fn limits_name_the_call_and_the_file() {
+    let t = tempfile::tempdir().unwrap();
+    // 6 MiB of 0xFF is 18 MiB of U+FFFD.
+    write(t.path(), "data/bad.bin", vec![0xffu8; 6 * 1024 * 1024]);
+    let e = refused(t.path(), r#"read_text("data/bad.bin")"#);
+    assert!(
+        e.starts_with("read_text(\"data/bad.bin\"): the text is 18874368 bytes once its invalid UTF-8 is replaced"),
+        "{e}"
+    );
+    let big = format!("[{}0]", "0,".repeat(100_000));
+    write(t.path(), "data/big.json", big);
+    let e = refused(t.path(), r#"read_json("data/big.json")"#);
+    assert!(
+        e.starts_with("read_json(\"data/big.json\"): its arrays hold 100001 items"),
+        "{e}"
+    );
+    write(t.path(), "data/inf.json", "1e400");
+    let e = refused(t.path(), r#"read_json("data/inf.json")"#);
+    assert!(e.contains("JSON.parse would give Infinity"), "{e}");
+}
+
+#[test]
+fn option_values_are_checked() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "d/a.txt", "");
+    // Node: ERR_INVALID_ARG_TYPE.
+    let e = refused(t.path(), r#"read_dir("d", #{ recursive: "false" })"#);
+    assert!(e.contains("`recursive` must be true or false"), "{e}");
+    // csv-parse takes the spelling written last; a Rhai map has no order.
+    let e = refused(
+        t.path(),
+        r#"parse_csv("a\n\nb", #{ skip_empty_lines: true, skipEmptyLines: false })"#,
+    );
+    assert!(e.contains("are the same csv-parse option"), "{e}");
 }
