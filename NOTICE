@@ -80,6 +80,11 @@ These projects are released under the MIT License. Their notices:
 
 - morphdom 2.7.8: patches a page in place on live reload (bundled unchanged)
   Copyright (c) Patrick Steele-Idem <pnidem@gmail.com> (psteeleidem.com)
+- tz-rs 0.7.3: reads the bundled time zone files (compiled in)
+  Copyright (c) 2022 x-hgg-x
+- jiff-tzdb 0.1.7: the time zone database packaged for Rust (compiled in;
+  also released under the Unlicense)
+  Copyright (c) 2015 Andrew Gallant
 
 Each is provided under these terms:
 
@@ -262,6 +267,12 @@ Unicode License V3 (ICU)
 
 - ICU 78.3, as Node 26 ships it: the time zone name tables generated into
   brrrty-js/src/zones.rs and brrrty-core/src/helpers/luxon_zones.rs
+- ICU4X 2.4 (icu_collator, icu_collator_data, icu_properties,
+  icu_properties_data, icu_normalizer, icu_normalizer_data, icu_segmenter,
+  icu_segmenter_data, icu_collections, icu_locale_core, icu_locale_fallback,
+  icu_locale_fallback_data, icu_provider, zerovec, zerotrie, zerofrom,
+  yoke, tinystr, litemap, writeable, potential_utf): compiled in, with
+  their CLDR 49 collation and Unicode 18 character data
 
   UNICODE LICENSE V3
 
@@ -302,3 +313,11 @@ Unicode License V3 (ICU)
   not be used in advertising or otherwise to promote the sale, use or other
   dealings in these Data Files or Software without prior written
   authorization of the copyright holder.
+
+======================================================================
+Public domain
+======================================================================
+
+- The Time Zone Database (tz), release 2026b, https://www.iana.org/time-zones:
+  the zones' offsets and rules, compiled in through jiff-tzdb. The tz
+  database is in the public domain.
