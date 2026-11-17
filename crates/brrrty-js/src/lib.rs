@@ -14,6 +14,8 @@ pub use eleventy::{
     FilterEnv, FilterFn, FilterImpl, REFUSAL_PREFIX, console_format, eleventy_filters,
 };
 pub use loader::{LoadError, Loader};
-pub use number::{is_js_whitespace, js_number_to_string, js_string_to_number};
+pub use number::{
+    is_js_whitespace, js_number_to_string, js_string_to_number, js_to_fixed, js_to_locale_string,
+};
 pub use tz::Tz;
 pub use value::{Value, array_index};

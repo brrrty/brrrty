@@ -1384,54 +1384,9 @@ fn radix_string(n: f64, radix: u32) -> String {
     digits.iter().rev().collect()
 }
 
-/// `Number.prototype.toFixed(f)`: rounds the exact value of the double,
-/// and a tie goes away from zero.
+/// `Number.prototype.toFixed(f)`, V8's: see [`brrrty_js::js_to_fixed`].
 pub(crate) fn to_fixed(x: f64, f: usize) -> String {
-    if x.is_nan() {
-        return "NaN".into();
-    }
-    if x.abs() >= 1e21 {
-        return js_number_to_string(x);
-    }
-    let negative = x < 0.0;
-    let a = x.abs();
-    // Rust prints the exact decimal value; 1100 digits holds every double.
-    let exact = format!("{a:.1100}");
-    let (int, frac) = exact.split_once('.').unwrap_or((&exact, ""));
-    let mut digits: Vec<u8> = int.bytes().chain(frac.bytes().take(f)).collect();
-    let rest = &frac.as_bytes()[f.min(frac.len())..];
-    let round_up = match rest.first() {
-        Some(b) if *b > b'5' => true,
-        Some(b'5') => true,
-        _ => false,
-    };
-    if round_up {
-        let mut i = digits.len();
-        loop {
-            if i == 0 {
-                digits.insert(0, b'1');
-                break;
-            }
-            i -= 1;
-            if digits[i] == b'9' {
-                digits[i] = b'0';
-            } else {
-                digits[i] += 1;
-                break;
-            }
-        }
-    }
-    let int_len = digits.len() - f;
-    let mut out = String::new();
-    if negative {
-        out.push('-');
-    }
-    out.push_str(std::str::from_utf8(&digits[..int_len]).unwrap_or("0"));
-    if f > 0 {
-        out.push('.');
-        out.push_str(std::str::from_utf8(&digits[int_len..]).unwrap_or(""));
-    }
-    out
+    brrrty_js::js_to_fixed(x, f as u32).unwrap_or_default()
 }
 
 fn array_method(this: &Val, name: &str, args: &[Val], ops: Ops) -> R<Val> {
