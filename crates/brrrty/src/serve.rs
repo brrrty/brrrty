@@ -838,35 +838,43 @@ impl Session {
             self.watch_subfolder(&p);
         }
         for p in self.read_folders() {
-            self.watch_subfolder(&p);
+            self.watch_read_folder(&p);
         }
     }
 
     /// Note what the build's scripts read (relative to the project folder) and watch the
     /// folders holding the ones outside the input folder, which nothing else watches.
     fn watch_reads(&mut self, reads: &[PathBuf]) {
-        self.reads = reads
-            .iter()
-            .map(|r| {
-                let p = self.root.join(r);
-                p.canonicalize().unwrap_or(p)
-            })
-            .collect();
-        for p in self.read_folders() {
-            if !self.watched.iter().any(|w| p.starts_with(w)) {
-                self.watch_subfolder(&p);
+        // Each path both as the script gave it and as it resolves, so a change to a symlink
+        // on the way (retargeting `data/current`) counts as well as a change to its target.
+        let mut all = Vec::new();
+        for r in reads {
+            let p = self.root.join(r);
+            if let Ok(real) = p.canonicalize()
+                && real != p
+            {
+                all.push(real);
             }
+            all.push(p);
+        }
+        all.sort();
+        all.dedup();
+        self.reads = all;
+        for p in self.read_folders() {
+            self.watch_read_folder(&p);
         }
     }
 
-    /// The folders to watch for the reads outside the input folder: a listed folder itself,
-    /// else the folder holding the file, or the nearest one above that exists (the project
-    /// folder's own files are seen by its watch).
+    /// The folders to watch for the reads: a listed folder itself, else the folder holding
+    /// the file, or the nearest one above that exists. Folders a watch already covers are
+    /// left out: the input folder's subfolders, and the project and input folders' own
+    /// files, which their shallow watches see. Reads under `node_modules` and `.git` are
+    /// watched too, though nothing else there is.
     fn read_folders(&self) -> Vec<PathBuf> {
         let mut folders: Vec<PathBuf> = self
             .reads
             .iter()
-            .filter(|p| !p.starts_with(&self.input) && p.starts_with(&self.root))
+            .filter(|p| p.starts_with(&self.root) && !self.in_output(p))
             .filter_map(|p| {
                 let mut f = p.as_path();
                 if !f.is_dir() {
@@ -875,12 +883,40 @@ impl Session {
                 while !f.is_dir() {
                     f = f.parent()?;
                 }
-                (f != self.root && f.starts_with(&self.root)).then(|| f.to_path_buf())
+                Some(f.canonicalize().unwrap_or_else(|_| f.to_path_buf()))
             })
+            // A symlink on the way to a read: the folder holding it sees it retargeted.
+            .chain(self.reads.iter().flat_map(|p| {
+                p.ancestors()
+                    .take_while(|a| a.starts_with(&self.root) && *a != self.root)
+                    .filter(|a| {
+                        a.symlink_metadata()
+                            .is_ok_and(|m| m.file_type().is_symlink())
+                    })
+                    .filter_map(|a| a.parent().map(Path::to_path_buf))
+                    .collect::<Vec<_>>()
+            }))
+            .filter(|f| f.starts_with(&self.root) && !self.tops.contains(f))
             .collect();
         folders.sort();
         folders.dedup();
         folders
+    }
+
+    /// Watch a folder holding something a script read, recursively, unless a watch already
+    /// covers it. Only the output folder is never watched.
+    fn watch_read_folder(&mut self, p: &Path) {
+        if self.in_output(p) || self.watched.iter().any(|w| p.starts_with(w)) {
+            return;
+        }
+        if self.watch(p, RecursiveMode::Recursive).is_ok() {
+            self.watched.push(p.to_path_buf());
+        }
+    }
+
+    /// The output folder (staging included), or a folder holding it.
+    fn in_output(&self, p: &Path) -> bool {
+        p.starts_with(&self.output) || (self.output.starts_with(p) && p != self.root)
     }
 
     /// Make the recursive watches on the input folder's subfolders match the disk: forget
@@ -1041,17 +1077,22 @@ impl Session {
 
     /// Whether a change to `p` should start a rebuild.
     fn counts(&self, p: &Path) -> bool {
-        if self.skipped(p) {
+        // Writes into the output folder are the build's own.
+        if p.starts_with(&self.output) {
             return false;
         }
         // A file a script read, one in a folder it listed, or a folder on the way to a file
-        // it looked for and didn't find. Ignore files don't hide these: the script read them.
+        // it looked for and didn't find. Ignore files don't hide these, nor does
+        // `node_modules`: the script read them.
         if self
             .reads
             .iter()
             .any(|r| p.starts_with(r) || (r.starts_with(p) && p != self.root))
         {
             return true;
+        }
+        if self.skipped(p) {
+            return false;
         }
         let root_file = p.parent() == Some(self.root.as_path())
             && p.file_name()

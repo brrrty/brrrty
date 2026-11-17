@@ -208,6 +208,99 @@ fn a_file_a_data_script_reads_rebuilds_wherever_it_is() {
     });
 }
 
+/// A recursive listing of the project folder: a file added in one of its subfolders
+/// outside the input folder rebuilds.
+#[test]
+fn a_recursive_listing_of_the_project_folder_sees_new_files() {
+    let t = site();
+    let root = t.path();
+    write(root, "data/a.md", "");
+    write(
+        root,
+        "src/_data/names.rhai",
+        r#"let out = []; for n in read_dir(".", #{ recursive: true }) { if n.starts_with("data/") { out.push(n); } } out"#,
+    );
+    write(
+        root,
+        "src/index.md",
+        "---\nlayout: base.liquid\n---\n{{ names | join: ',' }}\n",
+    );
+    with_session(root, |live| {
+        assert_eq!(live.page(), "<main><p>data/a.md</p>\n</main>");
+        live.settle();
+        write(live.root, "data/b.md", "");
+        let r = live.next_rebuild();
+        assert!(r.ok);
+        assert_eq!(live.page(), "<main><p>data/a.md,data/b.md</p>\n</main>");
+    });
+}
+
+/// A read under `node_modules`, which serve otherwise never watches.
+#[test]
+fn a_read_under_node_modules_rebuilds() {
+    let t = site();
+    let root = t.path();
+    write(
+        root,
+        "node_modules/x/package.json",
+        r#"{"version": "1.0.0"}"#,
+    );
+    write(
+        root,
+        "src/_data/x.rhai",
+        r#"read_json("node_modules/x/package.json")"#,
+    );
+    write(
+        root,
+        "src/index.md",
+        "---\nlayout: base.liquid\n---\n{{ x.version }}\n",
+    );
+    with_session(root, |live| {
+        assert_eq!(live.page(), "<main><p>1.0.0</p>\n</main>");
+        live.settle();
+        write(
+            live.root,
+            "node_modules/x/package.json",
+            r#"{"version": "2.0.0"}"#,
+        );
+        let r = live.next_rebuild();
+        assert!(r.ok);
+        assert_eq!(live.page(), "<main><p>2.0.0</p>\n</main>");
+    });
+}
+
+/// `data/current -> v1` retargeted to `v2`: the event is on the symlink, not on
+/// anything the build read through it.
+#[cfg(unix)]
+#[test]
+fn retargeting_a_symlink_on_the_way_to_a_read_rebuilds() {
+    let t = site();
+    let root = t.path();
+    write(root, "data/v1/a.txt", "one");
+    write(root, "data/v2/a.txt", "two");
+    std::os::unix::fs::symlink("v1", root.join("data/current")).unwrap();
+    write(
+        root,
+        "src/_data/x.rhai",
+        r#"read_text("data/current/a.txt")"#,
+    );
+    write(
+        root,
+        "src/index.md",
+        "---\nlayout: base.liquid\n---\n{{ x }}\n",
+    );
+    with_session(root, |live| {
+        assert_eq!(live.page(), "<main><p>one</p>\n</main>");
+        live.settle();
+        let tmp = live.root.join("data/next");
+        std::os::unix::fs::symlink("v2", &tmp).unwrap();
+        fs::rename(&tmp, live.root.join("data/current")).unwrap();
+        let r = live.next_rebuild();
+        assert!(r.ok);
+        assert_eq!(live.page(), "<main><p>two</p>\n</main>");
+    });
+}
+
 #[test]
 fn an_include_and_a_stylesheet_rebuild_and_css_alone_is_marked() {
     let t = site();
