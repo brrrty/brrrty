@@ -41,23 +41,27 @@ fn count(n: usize, one: &str, many: &str) -> String {
 }
 
 fn group_text(out: &mut String, n: usize, g: &Group) {
-    let mut head = format!("{n}. {}", g.title);
+    let mut parts = Vec::new();
     if !g.templates.is_empty() {
-        let _ = write!(
-            head,
-            " ({}{}, {})",
+        parts.push(format!(
+            "{}{}, {}",
             if g.pages_exact { "" } else { "at least " },
             count(g.pages, "page", "pages"),
             count(g.templates.len(), "template", "templates")
-        );
+        ));
     }
     if !g.also_templates.is_empty() {
-        let _ = write!(
-            head,
-            "; also blocks {}{} that use its content",
+        parts.push(format!(
+            "{}blocks {}{} that {} its content",
+            if g.templates.is_empty() { "" } else { "also " },
             if g.also_pages_exact { "" } else { "at least " },
             count(g.also_pages, "page", "pages"),
-        );
+            if g.also_pages == 1 { "uses" } else { "use" },
+        ));
+    }
+    let mut head = format!("{n}. {}", g.title);
+    if !parts.is_empty() {
+        let _ = write!(head, " ({})", parts.join("; "));
     }
     let _ = writeln!(out, "{head}");
     for l in g.locations.iter().take(SHOWN_PLACES) {

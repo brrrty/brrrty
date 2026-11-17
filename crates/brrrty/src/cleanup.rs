@@ -4,9 +4,30 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 static FOLDERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 static CHILD: Mutex<Option<u32>> = Mutex::new(None);
+/// The signal that is stopping the process, or 0.
+static STOPPING: AtomicI32 = AtomicI32::new(0);
+
+/// Stop because of `signal`: mark the process as stopping before anything else, so a thread
+/// that wakes when the child is killed knows not to go on, then clean up and exit
+/// `128 + signal`. Called on the signal thread.
+pub fn stop(signal: i32) -> ! {
+    STOPPING.store(signal, Ordering::SeqCst);
+    run();
+    crate::say_err!("Stopped; the temporary folders are removed.");
+    std::process::exit(128 + signal);
+}
+
+/// When a signal is stopping the process, wait for [`stop`] to end it instead of going on.
+/// Call after anything a signal can cut short, such as waiting for the child.
+pub fn halt_if_stopping() {
+    while STOPPING.load(Ordering::SeqCst) != 0 {
+        std::thread::park();
+    }
+}
 
 /// A temporary folder that is removed when it is dropped, and by [`run`] when the process
 /// ends before that.

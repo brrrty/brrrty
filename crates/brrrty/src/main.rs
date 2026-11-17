@@ -318,11 +318,7 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         // Ctrl-C or SIGTERM stops 11ty, removes the temporary folders and exits 130 or 143.
         match brrrty::serve::signals::Interrupts::install() {
             Ok(i) => {
-                i.on_signal(|sig| {
-                    brrrty::cleanup::run();
-                    brrrty::say_err!("Stopped; the temporary folders are removed.");
-                    std::process::exit(128 + sig);
-                });
+                i.on_signal(|sig| brrrty::cleanup::stop(sig));
                 _interrupts = Some(i);
             }
             Err(e) => {
@@ -360,6 +356,8 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         (Some(e), Some(t)) => Some(run_verify(e, &root, t.path(), &diagnosis)),
         _ => None,
     };
+    // A signal during the builds is ending the process: print nothing more.
+    brrrty::cleanup::halt_if_stopping();
     if args.json {
         let v = verified.as_ref().map(|v| match v {
             Ok(v) => verify::json(v),

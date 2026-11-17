@@ -103,6 +103,8 @@ pub fn run_eleventy(
         .map_err(|err| format!("cannot run node: {err}"))?;
     crate::cleanup::set_child(Some(child.id()));
     let output = child.wait_with_output();
+    // Killed by a signal's cleanup: the signal thread ends the process.
+    crate::cleanup::halt_if_stopping();
     crate::cleanup::set_child(None);
     let output = output.map_err(|err| format!("cannot run node: {err}"))?;
     let took = start.elapsed();

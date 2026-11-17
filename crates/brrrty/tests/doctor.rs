@@ -322,22 +322,31 @@ fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
+/// Signal `brrrty doctor --verify` while 11ty runs, 20 times over, since the outcome
+/// once depended on which thread won a race.
 #[cfg(unix)]
 fn interrupted_verify_cleans_up(signal: i32, code: i32) {
-    use std::time::{Duration, Instant};
     if !has_node() {
         eprintln!("skipped: no node on PATH");
         return;
     }
+    for _ in 0..20 {
+        interrupt_once(signal, code);
+    }
+}
+
+#[cfg(unix)]
+fn interrupt_once(signal: i32, code: i32) {
+    use std::time::{Duration, Instant};
     let dir = site(&[("a.md", "# A\n")]);
     hanging_eleventy(dir.path());
     let tmp = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+    let child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
         .args(["doctor", "--verify", "--yes"])
         .current_dir(dir.path())
         .env("TMPDIR", tmp.path())
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
@@ -365,8 +374,10 @@ fn interrupted_verify_cleans_up(signal: i32, code: i32) {
     assert_eq!(temp_folders(), 1);
     // SAFETY: signals the brrrty process this test started.
     unsafe { libc::kill(child.id() as i32, signal) };
-    let status = child.wait().unwrap();
-    assert_eq!(status.code(), Some(code));
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(code), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "", "no report after a signal");
+    assert!(stderr(&out).ends_with("Stopped; the temporary folders are removed.\n"));
     assert_eq!(temp_folders(), 0);
     let ids: Vec<i32> = std::fs::read_to_string(&pids)
         .unwrap()
@@ -419,5 +430,26 @@ fn a_failing_11ty_build_still_prints_the_report() {
             .unwrap()
             .contains("config broke"),
         "{v}"
+    );
+}
+
+#[test]
+fn a_page_that_reads_refused_content_is_listed_under_its_blocker() {
+    let dir = site(&[
+        ("posts/a.njk", "---\ntags: post\n---\n{{ 1 | nope }}\n"),
+        (
+            "index.njk",
+            "{% for p in collections.post %}{{ p.templateContent | safe }}{% endfor %}\n",
+        ),
+    ]);
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert!(
+        text.contains("1. Filter `nope` isn't defined (1 page, 1 template; also blocks 1 page that uses its content)"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("0 of 2 pages will build; 1 blocker, grouped below.\n"),
+        "{text}"
     );
 }
