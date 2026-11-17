@@ -1,0 +1,89 @@
+name: Coverage
+
+on:
+  push:
+    # The badge job pushes to `badges`; that push must never start this workflow again.
+    branches-ignore: [badges]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_LLVM_COV_VERSION: 0.9.1
+  CARGO_LLVM_COV_SHA256: b3f68e625481fed9b16444174f3fa5ebcdbde4a1878803a35eabe2dcefcdc41a
+  # Not counted: the spike and xtask crates (excluded below), tables generated from Node and
+  # the mime package, and in-source test modules.
+  COVERAGE_IGNORE: '(^|/)(spikes|xtask)/|(eleventy_tables|zones|luxon_zones|mime_table|canon_table)\.rs$|/src/(.*/)?tests\.rs$'
+  # A little under what the suite reaches, so run-to-run noise doesn't fail a build.
+  COVERAGE_MIN_LINES: 92
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      lines: ${{ steps.total.outputs.lines }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable, 2026-10-16
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install cargo-llvm-cov
+        run: |
+          url="https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${CARGO_LLVM_COV_VERSION}/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/cargo-llvm-cov.tar.gz" "$url"
+          echo "${CARGO_LLVM_COV_SHA256}  $RUNNER_TEMP/cargo-llvm-cov.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/cargo-llvm-cov.tar.gz" -C "$HOME/.cargo/bin"
+          cargo llvm-cov --version
+      - name: Run the tests with coverage
+        run: cargo llvm-cov --no-report --workspace --exclude brrrty-spike --exclude xtask
+      - name: Report, and fail under the minimum
+        run: |
+          cargo llvm-cov report --ignore-filename-regex "$COVERAGE_IGNORE" \
+            --fail-under-lines "$COVERAGE_MIN_LINES"
+      - id: total
+        name: Line coverage
+        run: |
+          cargo llvm-cov report --ignore-filename-regex "$COVERAGE_IGNORE" \
+            --json --summary-only --output-path target/llvm-cov/summary.json
+          lines=$(jq -r '.data[0].totals.lines.percent' target/llvm-cov/summary.json)
+          lines=$(printf '%.1f' "$lines")
+          echo "lines=$lines" >> "$GITHUB_OUTPUT"
+          echo "Line coverage: $lines%" >> "$GITHUB_STEP_SUMMARY"
+
+  badge:
+    needs: coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: true
+    steps:
+      - name: Publish coverage.json to the badges branch
+        env:
+          LINES: ${{ needs.coverage.outputs.lines }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          color=$(awk -v p="$LINES" 'BEGIN {
+            if (p >= 90) print "brightgreen"; else if (p >= 80) print "green";
+            else if (p >= 70) print "yellowgreen"; else if (p >= 60) print "yellow";
+            else if (p >= 50) print "orange"; else print "red" }')
+          mkdir badges && cd badges
+          git init -q -b badges
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
+            "$LINES" "$color" > coverage.json
+          cat coverage.json
+          git add coverage.json
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "coverage: $LINES% at $GITHUB_SHA"
+          # One orphan commit, replaced each time, so the branch never grows.
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges
