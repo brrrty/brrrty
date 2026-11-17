@@ -1,0 +1,34 @@
+name: macOS
+
+# The same checks as ci.yml, on macOS. Kept apart from ci.yml because GitHub's macOS
+# runners are sometimes unavailable for a long time ("not acquired by Runner"); a run
+# that couldn't get a runner fails here without marking CI red. release.yml also tests
+# the macOS binaries for every release.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: node --test npm/test/launcher.test.mjs

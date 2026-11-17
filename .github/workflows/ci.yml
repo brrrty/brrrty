@@ -3,20 +3,20 @@ name: CI
 on:
   push:
     # Every branch but `badges`, which holds only the coverage badge's JSON (coverage.yml
-    # writes it), and every tag.
+    # writes it). Tags aren't built here: release.yml builds and tests every platform's
+    # binary for a tag.
     branches: ["**", "!badges"]
-    tags: ["**"]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  # Linux only. macOS runs in macos.yml (nightly, on main and on demand), so a GitHub
+  # macOS runner shortage never turns this workflow, or the README's CI badge, red.
   test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
