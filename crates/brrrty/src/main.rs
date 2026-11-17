@@ -299,6 +299,8 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     let color = std::io::stderr().is_terminal();
     let mut eleventy = None;
     let mut temp = None;
+    // Kept for the whole run: it holds the signal thread.
+    let mut _interrupts = None;
     if args.verify {
         match verify::find(&root) {
             Ok(e) => eleventy = Some(e),
@@ -313,7 +315,22 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         // SAFETY: nothing else runs yet: no thread has started, and the build that reads
         // the variable starts after this.
         unsafe { std::env::set_var("SOURCE_DATE_EPOCH", verify_epoch().to_string()) };
-        match tempfile::Builder::new().prefix("brrrty-doctor-").tempdir() {
+        // Ctrl-C or SIGTERM stops 11ty, removes the temporary folders and exits 130 or 143.
+        match brrrty::serve::signals::Interrupts::install() {
+            Ok(i) => {
+                i.on_signal(|sig| {
+                    brrrty::cleanup::run();
+                    brrrty::say_err!("Stopped; the temporary folders are removed.");
+                    std::process::exit(128 + sig);
+                });
+                _interrupts = Some(i);
+            }
+            Err(e) => {
+                brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
+                return ExitCode::from(1);
+            }
+        }
+        match brrrty::cleanup::TempFolder::new("brrrty-doctor-") {
             Ok(t) => temp = Some(t),
             Err(e) => {
                 brrrty::say_err!("Brrrty could not make a folder in the system temp folder: {e}");
@@ -339,62 +356,66 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     };
     let report = brrrty_core::survey(&opts, &MarkdownIt::new(), temp.is_none());
     let diagnosis = brrrty_core::doctor::diagnose(report);
-    let mut verified = None;
-    if let (Some(e), Some(t)) = (&eleventy, &temp) {
-        let shim = t.path().join("freeze-time.cjs");
-        let out = t.path().join("11ty");
-        if let Err(err) = std::fs::write(&shim, verify::SHIM) {
-            brrrty::say_err!("Brrrty could not write {}: {err}", shim.display());
-            return ExitCode::from(1);
-        }
-        let epoch = verify_epoch();
-        let eleventy_time = match verify::run_eleventy(e, &root, &out, &shim, epoch) {
-            Ok(d) => d,
-            Err(why) => {
-                brrrty::say_err!("{why}");
-                return ExitCode::from(1);
-            }
-        };
-        // 11ty writes no folder for a site with no output.
-        let _ = std::fs::create_dir_all(&out);
-        let _ = std::fs::create_dir_all(t.path().join("brrrty"));
-        let compared = brrrty_compat::compare_dirs(
-            &out,
-            &t.path().join("brrrty"),
-            &brrrty_compat::AllowList::empty(),
-        );
-        match compared {
-            Ok(r) => {
-                verified = Some(verify::Verified {
-                    eleventy_version: e.version.clone(),
-                    eleventy_time,
-                    brrrty_time: diagnosis.report.elapsed,
-                    report: r,
-                })
-            }
-            Err(err) => {
-                brrrty::say_err!("Brrrty could not compare the two builds: {err}");
-                return ExitCode::from(1);
-            }
-        }
-    }
+    let verified = match (&eleventy, &temp) {
+        (Some(e), Some(t)) => Some(run_verify(e, &root, t.path(), &diagnosis)),
+        _ => None,
+    };
     if args.json {
-        let v = verified.as_ref().map(verify::json);
+        let v = verified.as_ref().map(|v| match v {
+            Ok(v) => verify::json(v),
+            Err(why) => serde_json::json!({ "error": why }),
+        });
         brrrty::say!("{:#}", doctor::json(&diagnosis, v));
     } else {
         let mut out = doctor::text(&diagnosis);
-        if let Some(v) = &verified {
+        if let Some(Ok(v)) = &verified {
             out.push('\n');
             out.push_str(&verify::text(v));
         }
         let _ = std::io::stdout().lock().write_all(out.as_bytes());
     }
-    let ok = diagnosis.builds() && verified.as_ref().is_none_or(verify::Verified::passes);
+    if let Some(Err(why)) = &verified {
+        brrrty::say_err!("{why}");
+    }
+    let ok = diagnosis.builds()
+        && verified
+            .as_ref()
+            .is_none_or(|v| v.as_ref().is_ok_and(verify::Verified::passes));
     if ok {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
+}
+
+/// Build with the site's 11ty into `temp`, where Brrrty's build is already, and compare.
+fn run_verify(
+    e: &brrrty::doctor::verify::Eleventy,
+    root: &std::path::Path,
+    temp: &std::path::Path,
+    diagnosis: &brrrty_core::doctor::Diagnosis,
+) -> Result<brrrty::doctor::verify::Verified, String> {
+    use brrrty::doctor::verify;
+    let shim = temp.join("freeze-time.cjs");
+    let out = temp.join("11ty");
+    std::fs::write(&shim, verify::SHIM)
+        .map_err(|err| format!("Brrrty could not write {}: {err}", shim.display()))?;
+    let eleventy_time = verify::run_eleventy(e, root, &out, &shim, verify_epoch())?;
+    // 11ty writes no folder for a site with no output.
+    let _ = std::fs::create_dir_all(&out);
+    let _ = std::fs::create_dir_all(temp.join("brrrty"));
+    let report = brrrty_compat::compare_dirs(
+        &out,
+        &temp.join("brrrty"),
+        &brrrty_compat::AllowList::empty(),
+    )
+    .map_err(|err| format!("Brrrty could not compare the two builds: {err}"))?;
+    Ok(verify::Verified {
+        eleventy_version: e.version.clone(),
+        eleventy_time,
+        brrrty_time: diagnosis.report.elapsed,
+        report,
+    })
 }
 
 /// End a session that is not served, printing what went wrong cleaning up.

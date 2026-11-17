@@ -83,6 +83,7 @@ fn json_lists_the_same_groups() {
     let out = run(dir.path(), &["doctor", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     let v: Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(v["schema"], 1);
     assert_eq!(v["builds"], false);
     assert_eq!(v["blockers"], 4);
     assert_eq!(v["pages"]["total"], 1);
@@ -170,6 +171,7 @@ fn fake_eleventy(root: &Path, files: &[(&str, &str)]) {
 #[test]
 fn verify_needs_yes_off_a_terminal() {
     if !has_node() {
+        eprintln!("skipped: no node on PATH");
         return;
     }
     let dir = site(&[("a.md", "# A\n")]);
@@ -184,6 +186,7 @@ fn verify_needs_yes_off_a_terminal() {
 #[test]
 fn verify_proves_byte_compatible_output() {
     if !has_node() {
+        eprintln!("skipped: no node on PATH");
         return;
     }
     let dir = site(&[("a.md", "# A\n"), ("b.md", "# B\n")]);
@@ -209,6 +212,7 @@ fn verify_proves_byte_compatible_output() {
 #[test]
 fn verify_lists_what_differs() {
     if !has_node() {
+        eprintln!("skipped: no node on PATH");
         return;
     }
     let dir = site(&[("a.md", "# A\n"), ("b.md", "# B\n"), ("c.md", "# C\n")]);
@@ -291,5 +295,129 @@ fn verify_with_real_eleventy() {
     assert!(
         text.contains("Your site is byte-compatible on Brrrty: 5 files, "),
         "{text}"
+    );
+}
+
+/// A stand-in for 11ty that starts a child of its own, writes both process ids to
+/// `pids` in the site, and waits.
+#[cfg(unix)]
+fn hanging_eleventy(root: &Path) {
+    let script = "const fs = require('fs'), cp = require('child_process');\n\
+         const child = cp.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });\n\
+         fs.writeFileSync('pids', process.pid + ' ' + child.pid);\n\
+         setTimeout(() => {}, 60000);\n";
+    let dir = root.join("node_modules/@11ty/eleventy");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("cmd.cjs"), script).unwrap();
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{"version":"3.1.8","bin":{"eleventy":"cmd.cjs"}}"#,
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+fn alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(unix)]
+fn interrupted_verify_cleans_up(signal: i32, code: i32) {
+    use std::time::{Duration, Instant};
+    if !has_node() {
+        eprintln!("skipped: no node on PATH");
+        return;
+    }
+    let dir = site(&[("a.md", "# A\n")]);
+    hanging_eleventy(dir.path());
+    let tmp = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .args(["doctor", "--verify", "--yes"])
+        .current_dir(dir.path())
+        .env("TMPDIR", tmp.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pids = dir.path().join("pids");
+    let start = Instant::now();
+    while !std::fs::read_to_string(&pids).is_ok_and(|s| s.contains(' ')) {
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "11ty never started"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let temp_folders = || {
+        std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("brrrty-doctor-")
+            })
+            .count()
+    };
+    assert_eq!(temp_folders(), 1);
+    // SAFETY: signals the brrrty process this test started.
+    unsafe { libc::kill(child.id() as i32, signal) };
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(code));
+    assert_eq!(temp_folders(), 0);
+    let ids: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap()
+        .split_whitespace()
+        .map(|p| p.parse().unwrap())
+        .collect();
+    let start = Instant::now();
+    while ids.iter().any(|p| alive(*p)) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "11ty's processes are still running"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn ctrl_c_during_verify_stops_11ty_and_removes_the_temp_folder() {
+    interrupted_verify_cleans_up(libc::SIGINT, 130);
+}
+
+#[test]
+#[cfg(unix)]
+fn sigterm_during_verify_stops_11ty_and_removes_the_temp_folder() {
+    interrupted_verify_cleans_up(libc::SIGTERM, 143);
+}
+
+#[test]
+fn a_failing_11ty_build_still_prints_the_report() {
+    if !has_node() {
+        eprintln!("skipped: no node on PATH");
+        return;
+    }
+    let dir = site(BLOCKED);
+    let pkg = dir.path().join("node_modules/@11ty/eleventy");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("cmd.cjs"), "throw new Error('config broke');\n").unwrap();
+    std::fs::write(pkg.join("package.json"), r#"{"version":"3.1.8"}"#).unwrap();
+    let out = run(dir.path(), &["doctor", "--verify", "--yes"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stdout(&out).contains("4 blockers"), "{}", stdout(&out));
+    assert!(stderr(&out).contains("config broke"), "{}", stderr(&out));
+    let out = run(dir.path(), &["doctor", "--verify", "--yes", "--json"]);
+    let v: Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(v["blockers"], 4);
+    assert!(
+        v["verify"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("config broke"),
+        "{v}"
     );
 }

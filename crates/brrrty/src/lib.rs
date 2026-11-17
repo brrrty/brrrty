@@ -1,6 +1,7 @@
 //! Support code for the `brrrty` command line tool.
 
 pub mod bug;
+pub mod cleanup;
 pub mod doctor;
 pub mod init;
 pub mod options;

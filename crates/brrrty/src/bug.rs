@@ -100,6 +100,7 @@ pub fn install_panic_hook() {
         }
         let _ = writeln!(err, "Please report it: {url}");
         drop(err);
+        crate::cleanup::run();
         std::process::exit(101);
     }));
 }

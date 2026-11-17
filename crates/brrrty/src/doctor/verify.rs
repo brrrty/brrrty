@@ -41,7 +41,20 @@ pub fn find(root: &Path) -> Result<Eleventy, String> {
         return Err("--verify runs your site's 11ty build, which needs Node.js, and `node` isn't on your PATH. Install Node.js (https://nodejs.org), then run `brrrty doctor --verify` again.".to_string());
     }
     let pkg_dir = root.join("node_modules/@11ty/eleventy");
-    let cmd = pkg_dir.join("cmd.cjs");
+    let pkg: Option<Value> = fs::read_to_string(pkg_dir.join("package.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    // The command the package installs: `cmd.cjs` in 11ty 3, `cmd.js` before.
+    let bin = pkg.as_ref().and_then(|p| match p.get("bin")? {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(o) => o
+            .get("eleventy")
+            .or_else(|| o.values().next())?
+            .as_str()
+            .map(str::to_string),
+        _ => None,
+    });
+    let cmd = pkg_dir.join(bin.as_deref().unwrap_or("cmd.cjs"));
     if !cmd.is_file() {
         let listed = fs::read_to_string(root.join("package.json"))
             .is_ok_and(|s| s.contains("\"@11ty/eleventy\""));
@@ -54,16 +67,16 @@ pub fn find(root: &Path) -> Result<Eleventy, String> {
             "--verify runs your site's own 11ty build, but 11ty isn't installed here (node_modules/@11ty/eleventy is missing). {how}, then run `brrrty doctor --verify` again."
         ));
     }
-    let version = fs::read_to_string(pkg_dir.join("package.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    let version = pkg
+        .as_ref()
         .and_then(|v| v.get("version")?.as_str().map(str::to_string))
         .unwrap_or_else(|| "(unknown version)".to_string());
     Ok(Eleventy { node, cmd, version })
 }
 
 /// Run 11ty in `root`, writing to `out`, with its clock frozen at `epoch` by
-/// the shim at `shim`. Returns how long it took.
+/// the shim at `shim`. Returns how long it took. It runs in a process group of its own,
+/// which [`crate::cleanup::run`] stops on Ctrl-C.
 pub fn run_eleventy(
     e: &Eleventy,
     root: &Path,
@@ -72,16 +85,26 @@ pub fn run_eleventy(
     epoch: u64,
 ) -> Result<Duration, String> {
     let start = Instant::now();
-    let output = Command::new(&e.node)
-        .arg("--require")
+    let mut cmd = Command::new(&e.node);
+    cmd.arg("--require")
         .arg(shim)
         .arg(&e.cmd)
         .arg("--quiet")
         .arg(format!("--output={}", out.display()))
         .env("SOURCE_DATE_EPOCH", epoch.to_string())
         .current_dir(root)
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let child = cmd
+        .spawn()
         .map_err(|err| format!("cannot run node: {err}"))?;
+    crate::cleanup::set_child(Some(child.id()));
+    let output = child.wait_with_output();
+    crate::cleanup::set_child(None);
+    let output = output.map_err(|err| format!("cannot run node: {err}"))?;
     let took = start.elapsed();
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

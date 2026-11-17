@@ -40,6 +40,7 @@ tempfile = "3.27.0"
 [target.'cfg(unix)'.dependencies]
 # `brrrty init` opens package.json and the 11ty config with O_NONBLOCK, so a
 # file swapped for a FIFO can't block it.
+# `brrrty doctor --verify` stops 11ty's whole process group on Ctrl-C.
 libc = "0.2.191"
 # Ctrl-C and SIGTERM for `brrrty serve`.
 signal-hook = { version = "=0.4.6", default-features = false, features = ["iterator"] }

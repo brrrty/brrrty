@@ -51,6 +51,14 @@ fn group_text(out: &mut String, n: usize, g: &Group) {
             count(g.templates.len(), "template", "templates")
         );
     }
+    if !g.also_templates.is_empty() {
+        let _ = write!(
+            head,
+            "; also blocks {}{} that use its content",
+            if g.also_pages_exact { "" } else { "at least " },
+            count(g.also_pages, "page", "pages"),
+        );
+    }
     let _ = writeln!(out, "{head}");
     for l in g.locations.iter().take(SHOWN_PLACES) {
         let _ = writeln!(out, "   {}", location_line(l));
@@ -138,6 +146,12 @@ pub fn json(d: &Diagnosis, verify: Option<Value>) -> Value {
                 "help": g.help,
                 "pages": g.pages,
                 "pages_exact": g.pages_exact,
+                "hides_pages": g.hides_pages,
+                "also_blocks": {
+                    "pages": g.also_pages,
+                    "pages_exact": g.also_pages_exact,
+                    "templates": g.also_templates,
+                },
                 "templates": g.templates,
                 "locations": g.locations.iter().map(|l| json!({
                     "path": l.path,
@@ -149,6 +163,7 @@ pub fn json(d: &Diagnosis, verify: Option<Value>) -> Value {
         })
         .collect();
     json!({
+        "schema": 1,
         "brrrty": env!("CARGO_PKG_VERSION"),
         "verdict": d.verdict(),
         "builds": d.builds(),
