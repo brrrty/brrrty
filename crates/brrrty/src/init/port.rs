@@ -648,6 +648,18 @@ impl<'a> Reader<'a> {
         if self.mentions(p, start + 4, b - 1) {
             return false;
         }
+        // A plugin's options with `immediate` run it outside plugin mode,
+        // where it can change any setting. Only absent options, or a plain
+        // object without that key, are certain.
+        if method == "addPlugin" {
+            let args = js::split_commas(t, start + 4, b - 1);
+            return match args.as_slice() {
+                [_] => true,
+                [_, (x, y)] => js::object_props(t, *x, *y)
+                    .is_some_and(|props| props.iter().all(|p| p.key != "immediate")),
+                _ => false,
+            };
+        }
         if method.ends_with("Directory") {
             let args = js::split_commas(t, start + 4, b - 1);
             return args.len() == 1 && matches!(self.lit(args[0]), Some(Lit::Str(_)));
@@ -1555,6 +1567,31 @@ module.exports = function (eleventyConfig) {
         }
         // Clear cases still read: division after a call, a regex after `(` or `,`.
         let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.split(/,/).length / 2);\n  c.addFilter(\"g\", (s) => `${s}/x`);\n  c.addPassthroughCopy(\"a\");\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+    }
+
+    #[test]
+    fn plugins_run_immediately_port_nothing() {
+        for src in [
+            // Real 11ty writes `./pluginout/`.
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { immediate: true });\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { ...opts });\n  return { dir: { input: \"src\" } };\n};\n",
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, opts);\n  return { dir: { input: \"src\" } };\n};\n",
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { [k]: true });\n};\n",
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, makeOptions());\n};\n",
+            "const h = require(\"@11ty/eleventy-plugin-syntaxhighlight\");\nmodule.exports = function (c) {\n  c.addPlugin(h, { \"immediate\": true });\n  return { dir: { input: \"src\" } };\n};\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert_eq!(p.todos, 1, "{src}\n{}", p.text);
+        }
+        // Plain options without `immediate` still allow a port.
+        let src = "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { size: 2, fn: (x) => x });\n  c.addPassthroughCopy(\"a\");\n};\n";
         let p = port(src, "eleventy.config.js");
         assert!(
             p.text.contains("config.add_passthrough_copy(\"a\");"),
