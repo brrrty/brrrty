@@ -396,6 +396,74 @@ fn without_source_date_epoch_now_is_the_clock() {
     assert!((real - ms).abs() < 60_000.0, "{ms} vs {real}");
 }
 
+#[test]
+fn a_config_path_that_cannot_be_read_is_unreadable() {
+    let t = tempfile::tempdir().unwrap();
+    fs::create_dir(t.path().join(CONFIG_FILE)).unwrap();
+    let mut p = load_with(t.path(), Clock::Fixed(EPOCH_MS)).unwrap_err();
+    assert_eq!(p.len(), 1, "{p:#?}");
+    let p = p.remove(0);
+    assert_eq!(p.code, codes::CONFIG_UNREADABLE);
+    assert_eq!(p.path.as_deref(), Some(Path::new(CONFIG_FILE)));
+    assert!(p.message.starts_with("cannot read"), "{}", p.message);
+}
+
+#[test]
+fn dir_must_be_a_map_and_unknown_folders_are_warned_about() {
+    let p = err(r#"#{ dir: "src" }"#);
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert!(p.message.contains("map of folders"), "{}", p.message);
+
+    let c = ok(r#"#{ dir: #{ input: "src", assets: "static" } }"#);
+    assert_eq!(c.dir.input.as_deref(), Some("src"));
+    assert_eq!(c.problems.len(), 1, "{:#?}", c.problems);
+    let w = &c.problems[0];
+    assert_eq!(w.severity, Severity::Warning);
+    assert_eq!(w.code, codes::CONFIG_UNSUPPORTED);
+    assert!(w.message.contains("dir.assets"), "{}", w.message);
+}
+
+#[test]
+fn a_passthrough_target_must_be_a_string() {
+    let p = err("\nconfig.add_passthrough_copy(#{ \"src/a\": 3 });");
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert_eq!(p.line, Some(2));
+    assert!(p.message.contains("`src/a`"), "{}", p.message);
+    assert!(p.message.contains("must be a string"), "{}", p.message);
+}
+
+#[test]
+fn ignores_can_be_deleted() {
+    let c = ok(r#"
+        config.ignores.add("a");
+        config.ignores.add("b");
+        config.ignores.delete("b");
+        config.ignores.delete("never-added");
+        config.ignores.add("c");
+    "#);
+    assert_eq!(c.ignores, vec!["a", "c"]);
+}
+
+/// A global data function runs after the script: what it throws, and what it returns that
+/// can't be data, are reported at the call that added it.
+#[test]
+fn global_data_functions_that_fail_are_reported() {
+    let p = err("\n\nconfig.add_global_data(\"x\", || throw \"no data today\");");
+    assert_eq!(p.code, codes::CONFIG_ERROR);
+    assert!(p.message.contains("no data today"), "{}", p.message);
+    assert_eq!(p.line, Some(3));
+
+    let p = err("config.add_global_data(\"x\", || #{ f: || 1 });");
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert!(
+        p.message
+            .contains("add_global_data(\"x\", ...): its function returned"),
+        "{}",
+        p.message
+    );
+    assert_eq!(p.line, Some(1));
+}
+
 /// Numbers print as JavaScript prints them. Probed with Node: `"n" + 7.5`, `2 + "x"`,
 /// `String(5)`, `String(0.1 + 0.2)`, `new Date(NaN).getFullYear()`, `"a-b-c".replace(/-/, "+")`, `${1e21}`,
 /// `${10} per page`.
