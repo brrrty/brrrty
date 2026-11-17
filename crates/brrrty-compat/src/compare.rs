@@ -57,10 +57,9 @@ fn files(root: &Path) -> Result<BTreeSet<PathBuf>, CompatError> {
 fn binary_diff(a: &[u8], b: &[u8]) -> Outcome {
     Outcome::Different {
         diff: format!(
-            "binary files differ ({} vs {} {})",
-            a.len(),
-            b.len(),
-            if b.len() == 1 { "byte" } else { "bytes" }
+            "binary files differ ({} vs {})",
+            bytes(a.len()),
+            bytes(b.len())
         ),
     }
 }
@@ -119,4 +118,22 @@ pub fn compare_dirs(
         });
     }
     Ok(CompareReport { results })
+}
+
+/// `1 byte`, `2 bytes`.
+fn bytes(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "byte" } else { "bytes" })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_sizes_say_byte_for_one() {
+        let Outcome::Different { diff } = binary_diff(b"x", b"yz") else {
+            panic!("different");
+        };
+        assert_eq!(diff, "binary files differ (1 byte vs 2 bytes)");
+    }
 }
