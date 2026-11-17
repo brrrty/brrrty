@@ -10,6 +10,7 @@ pub mod contain;
 mod content;
 mod data;
 pub mod discover;
+pub mod doctor;
 pub mod filters;
 pub mod frontmatter;
 pub mod helpers;

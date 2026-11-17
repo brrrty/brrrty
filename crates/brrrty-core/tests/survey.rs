@@ -238,3 +238,51 @@ fn the_scan_lists_every_unknown_liquid_filter_in_a_layout() {
         "{a:#?}"
     );
 }
+
+#[test]
+fn diagnose_groups_every_blocker_by_cause() {
+    use brrrty_core::doctor::{Cause, diagnose};
+    let dir = masked_site();
+    let d = diagnose(survey(&opts(dir.path()), &MarkdownIt::new(), true));
+    assert_eq!(d.building, 1);
+    assert_eq!(d.pages, 3);
+    assert_eq!(d.blockers(), 2);
+    assert_eq!(
+        d.verdict(),
+        "1 of 3 pages will build; 2 blockers, grouped below."
+    );
+    let filter = d
+        .groups
+        .iter()
+        .find(|g| g.cause == Cause::Filter("shout".into()))
+        .unwrap();
+    assert_eq!(filter.pages, 2);
+    assert_eq!(filter.locations.len(), 1);
+    assert_eq!(filter.locations[0].line, Some(1));
+    let js = d
+        .groups
+        .iter()
+        .find(|g| g.cause == Cause::JsData("src/_data/stuff.js".into()))
+        .unwrap();
+    assert_eq!(js.pages, 2);
+    assert_eq!(
+        js.templates,
+        [
+            PathBuf::from("src/pages.liquid"),
+            PathBuf::from("src/reads.liquid")
+        ]
+    );
+    assert!(!d.builds());
+}
+
+#[test]
+fn diagnose_a_site_that_builds() {
+    use brrrty_core::doctor::diagnose;
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/a.md", "# A\n");
+    write(dir.path(), "src/b.md", "# B\n");
+    let d = diagnose(survey(&opts(dir.path()), &MarkdownIt::new(), true));
+    assert!(d.builds());
+    assert_eq!(d.verdict(), "All 2 pages will build.");
+    assert!(d.groups.is_empty());
+}
