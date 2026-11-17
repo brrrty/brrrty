@@ -14,11 +14,13 @@ fn probes() -> Json {
     serde_json::from_str(include_str!("probes/collation.json")).unwrap()
 }
 
-fn sign(o: Ordering) -> char {
-    match o {
-        Ordering::Less => '<',
-        Ordering::Equal => '=',
-        Ordering::Greater => '>',
+/// `<`, `=` or `>`, or `!` when Brrrty refuses the pair.
+fn compare(a: &str, b: &str) -> char {
+    match js_locale_compare(a, b) {
+        Err(_) => '!',
+        Ok(Ordering::Less) => '<',
+        Ok(Ordering::Equal) => '=',
+        Ok(Ordering::Greater) => '>',
     }
 }
 
@@ -91,7 +93,7 @@ fn hand_picked_pairs_match_v8() {
     for c in pairs {
         let (a, b) = (c[0].as_str().unwrap(), c[1].as_str().unwrap());
         let want = c[2].as_str().unwrap().chars().next().unwrap();
-        let got = sign(js_locale_compare(a, b).unwrap());
+        let got = compare(a, b);
         if got != want {
             bad.push(format!(
                 "{a:?}.localeCompare({b:?}): want {want}, got {got}"
@@ -130,7 +132,7 @@ fn fuzzed_pairs_match_v8() {
         let mut h: u32 = 0x811c_9dc5;
         for _ in 0..size {
             let (x, y) = g.pair();
-            h ^= sign(js_locale_compare(&x, &y).unwrap()) as u32;
+            h ^= compare(&x, &y) as u32;
             h = h.wrapping_mul(0x0100_0193);
         }
         if u64::from(h) != want.as_u64().unwrap() {
@@ -141,4 +143,28 @@ fn fuzzed_pairs_match_v8() {
         bad.is_empty(),
         "localeCompare batches differ from V8: {bad:?}"
     );
+}
+
+/// Every code point Brrrty doesn't refuse, sorted alone and with three
+/// suffixes, in the same order as Node sorts them (by the hash of each
+/// order): every neighbouring comparison agrees with Node's.
+#[test]
+fn every_code_point_sorts_as_in_node() {
+    let p = probes();
+    let set: Vec<char> = (0..=0x10_ffff_u32)
+        .filter_map(char::from_u32)
+        .filter(|c| js_locale_compare(&c.to_string(), "").is_ok())
+        .collect();
+    assert_eq!(set.len() as u64, p["sweep_count"].as_u64().unwrap());
+    for case in p["sweep"].as_array().unwrap() {
+        let suffix = case[0].as_str().unwrap();
+        let mut strings: Vec<String> = set.iter().map(|c| format!("{c}{suffix}")).collect();
+        strings.sort_by(|a, b| js_locale_compare(a, b).unwrap());
+        let mut h: u32 = 0x811c_9dc5;
+        for s in &strings {
+            h ^= s.chars().next().unwrap() as u32;
+            h = h.wrapping_mul(0x0100_0193);
+        }
+        assert_eq!(u64::from(h), case[1].as_u64().unwrap(), "suffix {suffix:?}");
+    }
 }

@@ -52,4 +52,7 @@ fn string_locale_compare_is_icus_root_order() {
     );
     let e = render("{{ s.localeCompare(\"x\", \"sv\") }}").unwrap_err();
     assert_eq!(e.kind, ErrorKind::Unsupported, "{e:?}");
+    // Node sorts Han by radical and stroke; refused.
+    let e = render("{{ \"缵\".localeCompare(\"纓\") }}").unwrap_err();
+    assert_eq!(e.kind, ErrorKind::Unsupported, "{e:?}");
 }

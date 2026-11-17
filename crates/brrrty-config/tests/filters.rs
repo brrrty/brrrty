@@ -1564,6 +1564,9 @@ fn locale_compare_is_icus_root_order() {
     assert!(p.message.contains("sv-SE"), "{}", p.message);
     let p = load_err(r#"locale_compare("a\u20C2", "b")"#);
     assert!(p.message.contains("U+20C2"), "{}", p.message);
+    // Node sorts Han by radical and stroke ("﨑" before "嵊"); refused.
+    let p = load_err(r#"locale_compare("﨑", "嵊")"#);
+    assert!(p.message.contains("Han character"), "{}", p.message);
 }
 
 #[test]

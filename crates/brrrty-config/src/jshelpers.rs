@@ -153,7 +153,9 @@ fn to_fixed(x: &Dynamic, digits: &Dynamic) -> Res<String> {
 /// The locales the English helpers take: none, `"en-US"` or `"en"`.
 fn english(locale: &Dynamic, what: &str) -> Res<()> {
     if locale.is_unit() {
-        return Ok(());
+        // No locale: Node's default, from LC_ALL, LC_MESSAGES or LANG.
+        return brrrty_js::locale::check_default_locale()
+            .map_err(|why| invalid(format!("{what}: {why}"), rhai::Position::NONE));
     }
     match locale.clone().into_immutable_string() {
         Ok(s) if s == "en-US" || s == "en" => Ok(()),
@@ -187,10 +189,7 @@ fn locale_compare(a: &Dynamic, b: &Dynamic, locale: &Dynamic) -> Res<rhai::INT> 
     let b = js_string(b)?;
     match brrrty_js::js_locale_compare(&a, &b) {
         Ok(o) => Ok(o as rhai::INT),
-        Err(c) => err(format!(
-            "locale_compare: U+{:04X} is new in Unicode 18, which Node's ICU doesn't have yet, so its order there can't be matched",
-            c as u32
-        )),
+        Err(why) => err(format!("locale_compare: {why}")),
     }
 }
 

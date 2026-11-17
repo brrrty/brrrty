@@ -9,7 +9,8 @@
 // The file has the alphabet the fuzz draws from, hand-picked pairs with
 // their results, and seeded fuzz batches stored as hashes:
 // tests/collation_probes.rs builds the same pairs from the same seeds. A
-// batch's hash is FNV-1a (32-bit) over one byte per pair: `<`, `=` or `>`.
+// batch's hash is FNV-1a (32-bit) over one byte per pair: `<`, `=`, `>`, or
+// `!` for a pair Brrrty refuses.
 
 const BATCH = 1000;
 const BATCHES = 300; // 300,000 pairs
@@ -55,6 +56,60 @@ const alphabet = [
   0xe000, 0xfffd, // private use, replacement
 ];
 
+const NEW_IN_UNICODE_18 = [
+  [0x558, 0x558],
+  [0x58B, 0x58C],
+  [0x5C8, 0x5C9],
+  [0xB53, 0xB54],
+  [0x1ADE, 0x1ADF],
+  [0x1AEC, 0x1AF0],
+  [0x208F, 0x208F],
+  [0x209D, 0x209F],
+  [0x20C2, 0x20C4],
+  [0x2E60, 0x2E63],
+  [0xA7DD, 0xA7DD],
+  [0xA7E2, 0xA7E2],
+  [0xAB6C, 0xAB6D],
+  [0x107BB, 0x107BF],
+  [0x10EC9, 0x10ECF],
+  [0x10ED9, 0x10EEE],
+  [0x10EF0, 0x10EF9],
+  [0x11B0A, 0x11B0A],
+  [0x11DF0, 0x11DF1],
+  [0x1246F, 0x1246F],
+  [0x12475, 0x1247F],
+  [0x12550, 0x12686],
+  [0x18CD6, 0x18CDA],
+  [0x18D1F, 0x18D20],
+  [0x18E00, 0x19191],
+  [0x191A0, 0x191D2],
+  [0x1B123, 0x1B128],
+  [0x1B168, 0x1B168],
+  [0x1CED2, 0x1CED4],
+  [0x1CEDD, 0x1CEDF],
+  [0x1CEF1, 0x1CEFD],
+  [0x1D127, 0x1D128],
+  [0x1D1EB, 0x1D1FF],
+  [0x1D250, 0x1D281],
+  [0x1D6A6, 0x1D6A6],
+  [0x1DB00, 0x1DB1C],
+  [0x1DF1F, 0x1DF24],
+  [0x1DF2B, 0x1DF81],
+  [0x1DF90, 0x1DF96],
+  [0x1DFCD, 0x1DFFF],
+  [0x1F1AE, 0x1F1AE],
+  [0x1F6D9, 0x1F6D9],
+  [0x1F7DA, 0x1F7DB],
+  [0x1F7F1, 0x1F7FF],
+  [0x1FA8B, 0x1FA8D],
+  [0x1FACC, 0x1FACC],
+  [0x1FADD, 0x1FADD],
+  [0x1FAEB, 0x1FAEB],
+  [0x1FAF9, 0x1FAFA],
+  [0x2B81E, 0x2B81E],
+  [0x3D000, 0x3FC3F],
+];
+const isNew = (c) => NEW_IN_UNICODE_18.some(([lo, hi]) => c >= lo && c <= hi);
 const pick = (r) => {
   const v = r();
   return v % 4 !== 0 ? ascii[(v >>> 2) % ascii.length] : alphabet[(v >>> 2) % alphabet.length];
@@ -97,6 +152,9 @@ function batch(b) {
 }
 
 const sign = (n) => (n < 0 ? '<' : n > 0 ? '>' : '=');
+// A pair Brrrty refuses (a Han character, or one new in Unicode 18) is `!`.
+const refused = (s) => [...s].some((ch) => isNew(ch.codePointAt(0)) || /\p{Script=Han}/u.test(ch.normalize('NFKD')));
+const compare = (a, b) => (refused(a) || refused(b) ? '!' : sign(a.localeCompare(b)));
 function fnv(chars) {
   let h = 0x811c9dc5;
   for (const c of chars) {
@@ -119,12 +177,40 @@ const words = [
 ];
 
 const hand = [];
-for (const a of words) for (const b of words) hand.push([a, b, sign(a.localeCompare(b))]);
+for (const a of words) for (const b of words) hand.push([a, b, compare(a, b)]);
+
+// Every code point but surrogates, Han (a Han character, or one whose NFKD
+// has one, is refused) and those new in Unicode 18 (refused too; the ranges
+// are src/collate.rs's NEW_IN_UNICODE_18), sorted with localeCompare, alone
+// and with a suffix. The fixture keeps a hash of
+// each order: Brrrty sorts the same strings, which come out the same only
+// if every comparison agrees with Node's.
+const SWEEP_SUFFIXES = ['', 'a', '\u0308', '-'];
+function sweepSet() {
+  const out = [];
+  for (let c = 0; c <= 0x10ffff; c++) {
+    if (c >= 0xd800 && c <= 0xdfff) continue;
+    const s = String.fromCodePoint(c);
+    if (isNew(c) || /\p{Script=Han}/u.test(s.normalize('NFKD'))) continue;
+    out.push(c);
+  }
+  return out;
+}
+function sweepHash(set, suffix) {
+  const strings = set.map((c) => String.fromCodePoint(c) + suffix);
+  strings.sort((a, b) => a.localeCompare(b));
+  let h = 0x811c9dc5;
+  for (const s of strings) {
+    h ^= s.codePointAt(0);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
 
 const mode = process.argv[2];
 if (mode === 'dump') {
   for (const [a, b] of batch(Number(process.argv[3]))) {
-    console.log(JSON.stringify(a), JSON.stringify(b), sign(a.localeCompare(b)));
+    console.log(JSON.stringify(a), JSON.stringify(b), compare(a, b));
   }
 } else {
   const lines = ['{'];
@@ -136,9 +222,12 @@ if (mode === 'dump') {
   hand.forEach((c, i) => lines.push(`    ${JSON.stringify(c)}${i < hand.length - 1 ? ',' : ''}`));
   lines.push('  ],');
   const hashes = Array.from({ length: BATCHES }, (_, b) =>
-    fnv(batch(b).map(([a, b]) => sign(a.localeCompare(b)))),
+    fnv(batch(b).map(([a, b]) => compare(a, b))),
   );
-  lines.push(`  "batches": ${JSON.stringify(hashes)}`);
+  lines.push(`  "batches": ${JSON.stringify(hashes)},`);
+  const set = sweepSet();
+  lines.push(`  "sweep_count": ${set.length},`);
+  lines.push(`  "sweep": ${JSON.stringify(SWEEP_SUFFIXES.map((x) => [x, sweepHash(set, x)]))}`);
   lines.push('}');
   console.log(lines.join('\n'));
 }

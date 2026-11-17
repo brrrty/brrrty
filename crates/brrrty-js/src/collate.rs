@@ -3,10 +3,19 @@
 //! on, as V8 sets it up.
 //!
 //! The data is icu4x's (CLDR 49, Unicode 18). Node 26 ships ICU 78.3
-//! (CLDR 48, Unicode 17); the two agree on every pair the probes try
-//! (`tests/collation_probes.rs`), but characters new in Unicode 18 are
-//! unassigned in Node and sort differently there, so a string holding one
-//! is refused.
+//! (CLDR 48, Unicode 17). Two kinds of character are refused, because the
+//! order differs:
+//!
+//! - Han ideographs (any character whose compatibility decomposition has
+//!   one: CJK ideographs, compatibility ideographs, Kangxi and CJK
+//!   radicals, `々`). Node's ICU sorts them by radical and stroke count
+//!   from Unihan; icu4x's data sorts them by code point within blocks.
+//!   4,274 adjacent pairs of Node's order of every code point come out the
+//!   other way.
+//! - Characters new in Unicode 18, which Node's ICU leaves unassigned.
+//!
+//! Every other code point sorts as in Node: the review sorted all of them
+//! with Node and checked each neighbouring pair, alone and in 14 contexts.
 
 use std::cmp::Ordering;
 use std::sync::OnceLock;
@@ -94,12 +103,58 @@ fn is_new(c: char) -> bool {
         .is_ok()
 }
 
+/// Why a pair of strings isn't compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollationRefusal {
+    /// A Han character: Node sorts it by radical and stroke.
+    Han(char),
+    /// A character new in Unicode 18, unassigned in Node 26's ICU.
+    Unicode18(char),
+}
+
+impl std::fmt::Display for CollationRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CollationRefusal::Han(c) => write!(
+                f,
+                "`{c}` (U+{:04X}) is a Han character: Node sorts those by radical and stroke count, from data Brrrty doesn't have, so the order can't be matched",
+                *c as u32
+            ),
+            CollationRefusal::Unicode18(c) => write!(
+                f,
+                "U+{:04X} is new in Unicode 18, which Node's ICU doesn't have yet, so its order there can't be matched",
+                *c as u32
+            ),
+        }
+    }
+}
+
+/// Whether `c`, or anything its compatibility decomposition (NFKD) gives,
+/// is in the Han script.
+fn is_han(c: char) -> bool {
+    use icu_properties::CodePointMapData;
+    use icu_properties::props::Script;
+    use unicode_normalization::char::decompose_compatible;
+    if c.is_ascii() {
+        return false;
+    }
+    let script = CodePointMapData::<Script>::new();
+    let mut han = script.get(c) == Script::Han;
+    decompose_compatible(c, |d| han |= script.get(d) == Script::Han);
+    han
+}
+
 /// `a.localeCompare(b)` in Node with an English locale (`en-US`, or `C`):
 /// less, equal or greater, as its -1, 0 or 1. `Err` names a character
-/// Node's ICU doesn't know yet, where the order could differ.
-pub fn js_locale_compare(a: &str, b: &str) -> Result<Ordering, char> {
-    if let Some(c) = a.chars().chain(b.chars()).find(|c| is_new(*c)) {
-        return Err(c);
+/// whose order in Node can't be matched.
+pub fn js_locale_compare(a: &str, b: &str) -> Result<Ordering, CollationRefusal> {
+    for c in a.chars().chain(b.chars()) {
+        if is_new(c) {
+            return Err(CollationRefusal::Unicode18(c));
+        }
+        if is_han(c) {
+            return Err(CollationRefusal::Han(c));
+        }
     }
     Ok(collator().compare(a, b))
 }
@@ -109,10 +164,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn refuses_han_characters_and_their_compatibility_forms() {
+        // Node: "﨑".localeCompare("嵊") is -1, "缵".localeCompare("纓") is -1;
+        // icu4x's data gives 1 for both.
+        for (a, b, c) in [
+            ("﨑", "嵊", '﨑'),
+            ("缵", "纓", '缵'),
+            ("a", "々", '々'),
+            ("⼀", "b", '⼀'), // Kangxi radical one
+            ("x", "⺠", '⺠'), // CJK radical
+            ("㊀", "y", '㊀'), // NFKD gives 一
+        ] {
+            assert_eq!(
+                js_locale_compare(a, b),
+                Err(CollationRefusal::Han(c)),
+                "{a} {b}"
+            );
+        }
+        // Kana, Hangul and the rest still compare.
+        assert!(js_locale_compare("あ", "ア").is_ok());
+        assert!(js_locale_compare("가", "각").is_ok());
+        assert!(js_locale_compare("〇", "z").is_err());
+    }
+
+    #[test]
     fn refuses_characters_node_does_not_know() {
         assert_eq!(js_locale_compare("a", "b"), Ok(Ordering::Less));
-        assert_eq!(js_locale_compare("a\u{20C2}", "b"), Err('\u{20C2}'));
-        assert_eq!(js_locale_compare("a", "\u{3FC3F}"), Err('\u{3FC3F}'));
+        assert_eq!(
+            js_locale_compare("a\u{20C2}", "b"),
+            Err(CollationRefusal::Unicode18('\u{20C2}'))
+        );
+        assert_eq!(
+            js_locale_compare("a", "\u{3FC3F}"),
+            Err(CollationRefusal::Unicode18('\u{3FC3F}'))
+        );
         assert!(js_locale_compare("\u{20C1}", "\u{20C5}").is_ok());
         let mut last = 0;
         for &(lo, hi) in NEW_IN_UNICODE_18 {

@@ -5,13 +5,14 @@ mod collate;
 mod eleventy;
 mod eleventy_tables;
 mod loader;
+pub mod locale;
 mod number;
 pub mod traps;
 pub mod tz;
 mod value;
 mod zones;
 
-pub use collate::js_locale_compare;
+pub use collate::{CollationRefusal, js_locale_compare};
 pub use eleventy::{
     FilterEnv, FilterFn, FilterImpl, REFUSAL_PREFIX, console_format, eleventy_filters,
 };

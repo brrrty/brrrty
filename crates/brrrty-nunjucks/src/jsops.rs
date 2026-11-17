@@ -969,10 +969,7 @@ fn string_method(this: &Val, s: &str, name: &str, args: &[Val], ops: Ops) -> R<V
             english_only(name, &args[args.len().min(1)..])?;
             match brrrty_js::js_locale_compare(s, &that) {
                 Ok(o) => Ok(Val::num(o as i8 as f64)),
-                Err(c) => Err(unsupported(format!(
-                    "`localeCompare()`: U+{:04X} is new in Unicode 18, which Node's ICU doesn't have yet, so its order there can't be matched",
-                    c as u32
-                ))),
+                Err(why) => Err(unsupported(format!("`localeCompare()`: {why}"))),
             }
         }
         "toUpperCase" => Ok(Val::str(s.to_uppercase())),
@@ -1387,6 +1384,11 @@ fn number_method(this: &Val, n: f64, name: &str, args: &[Val], ops: Ops) -> R<Va
 /// other than that (or `"en"`) and any options are refused.
 fn english_only(name: &str, args: &[Val]) -> R<()> {
     let locale = arg(args, 0);
+    if locale.is_undefined() {
+        // No locale: Node's default, from LC_ALL, LC_MESSAGES or LANG.
+        brrrty_js::locale::check_default_locale()
+            .map_err(|why| unsupported(format!("`{name}()` with no locale: {why}")))?;
+    }
     let english = locale.is_undefined()
         || matches!(&locale, Val::V(Value::String(l)) if &**l == "en-US" || &**l == "en");
     if !english {
@@ -1421,7 +1423,7 @@ fn radix_string(n: f64, radix: u32) -> String {
 
 /// `Number.prototype.toFixed(f)`, V8's: see [`brrrty_js::js_to_fixed`].
 pub(crate) fn to_fixed(x: f64, f: usize) -> String {
-    brrrty_js::js_to_fixed(x, f as u32).unwrap_or_default()
+    brrrty_js::js_to_fixed(x, f as u32).expect("callers check the digits are 0-100")
 }
 
 fn array_method(this: &Val, name: &str, args: &[Val], ops: Ops) -> R<Val> {
