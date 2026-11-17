@@ -13,3 +13,11 @@ homepage = "https://brrrty.com"
 # takes about a minute unoptimized.
 [profile.dev.package.brrrty-jsregex]
 opt-level = 3
+
+# Release binaries ship through npm and GitHub Releases: one codegen unit and
+# fat LTO for size and speed, symbols stripped. Panics still unwind, so the bug
+# report handler keeps working and a crash still exits 101.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
