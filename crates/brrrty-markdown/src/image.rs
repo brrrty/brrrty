@@ -13,6 +13,58 @@ use markdown_it::{MarkdownIt, Node};
 pub(crate) struct ImageLabels(pub Vec<usize>);
 impl InlineRootExt for ImageLabels {}
 
+/// The caches of the state an image label was found in, set aside while the label is parsed
+/// with new ones (markdown-it's new state), with where the label starts.
+#[derive(Debug)]
+struct Outer {
+    at: usize,
+    caches: markdown_it::parser::extset::InlineRootExtSet,
+}
+impl InlineRootExt for Outer {}
+
+/// Runs at every position (after the text scanner): at the first rule run in the image label
+/// being parsed, swaps in new caches (the port's link-label cache too, so a link in the label is
+/// scanned again, as in markdown-it's new state). [`ImageLabel`] swaps them back.
+struct FreshLabel;
+
+impl InlineRule for FreshLabel {
+    const MARKER: char = '\0';
+
+    fn check(_: &mut InlineState) -> Option<usize> {
+        None
+    }
+
+    fn run(state: &mut InlineState) -> Option<(Node, usize)> {
+        let &at = state
+            .inline_ext
+            .get::<ImageLabels>()
+            .and_then(|l| l.0.last())?;
+        if state.inline_ext.get::<Outer>().is_some_and(|o| o.at == at) {
+            return None;
+        }
+        let labels = state.inline_ext.remove::<ImageLabels>();
+        let caches = std::mem::take(&mut *state.inline_ext);
+        if let Some(l) = labels {
+            state.inline_ext.insert(l);
+        }
+        state.inline_ext.insert(Outer { at, caches });
+        None
+    }
+}
+
+/// Undoes [`FreshLabel`] for the label at `at`.
+fn swap_back(state: &mut InlineState, at: usize) {
+    if !state.inline_ext.get::<Outer>().is_some_and(|o| o.at == at) {
+        return;
+    }
+    let outer = state.inline_ext.remove::<Outer>().expect("checked above");
+    let labels = state.inline_ext.remove::<ImageLabels>();
+    *state.inline_ext = outer.caches;
+    if let Some(l) = labels {
+        state.inline_ext.insert(l);
+    }
+}
+
 /// Whether the parser is inside an image's label.
 pub(crate) fn in_image(state: &InlineState) -> bool {
     state
@@ -71,6 +123,7 @@ impl InlineRule for ImageLabel {
         // The port adds one for the label.
         state.link_level = -1;
         let found = <Image as InlineRule>::run(state);
+        swap_back(state, label);
         state.link_level = link_level;
         state
             .inline_ext
@@ -94,4 +147,5 @@ impl InlineRule for ImageLabel {
 pub(crate) fn add(md: &mut MarkdownIt) {
     md.inline.add_rule::<ImageLabel>().before::<Image>();
     md.inline.remove_rule::<Image>();
+    md.inline.add_rule::<FreshLabel>().before_all();
 }

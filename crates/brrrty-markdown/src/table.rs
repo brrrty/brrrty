@@ -178,12 +178,11 @@ struct JsTable;
 
 impl BlockRule for JsTable {
     fn check(state: &mut BlockState) -> Option<()> {
-        use markdown_it::plugins::cmark::block::list::{BulletList, ListItem, OrderedList};
-        // markdown-it's table ends a paragraph or a reference (`alt`), not a list item.
-        if state.node.is::<BulletList>()
-            || state.node.is::<OrderedList>()
-            || state.node.is::<ListItem>()
-        {
+        use markdown_it::plugins::cmark::block::list::{BulletList, OrderedList};
+        // markdown-it's table can end a paragraph or a reference (its `alt`), and so it can
+        // interrupt a paragraph inside a list item (where the parser's node is the item). It
+        // isn't one of the list's terminators: the port asks those with the list as its node.
+        if state.node.is::<BulletList>() || state.node.is::<OrderedList>() {
             return None;
         }
         header(state).map(|_| ())

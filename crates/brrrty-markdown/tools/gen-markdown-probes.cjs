@@ -76,7 +76,12 @@ const ROUND1 = ['[dev server](http://[::1]:8080/)', '<http://[::1]/>', '[x][r]\n
   '[note]: see below', '- a\n  ```\n  b', '```\n\n  x\n     ```',
   // Fix round 2: what the refusal checks must leave alone (code, HTML, titles, list text).
   '```\n[A-Za-z]:\\\\Users\n```', '```\n[a-z]:\\w+\n```', '    [A-Z]:\\d+', '```md\n[docs]: C:\\path\\\n```', '```diff\n>\tline\n```', '```\n>\tquoted\n```',
-  '[x]: /u "a \\"b\\" c"\n\n[x]', '12 [a]: b\\c', '- [a]: b\\c', '> a\n> \n| b | c |\n|---|---|', '- \r\n- _~~|\t\n---', '>```x\n>   '];
+  '[x]: /u "a \\"b\\" c"\n\n[x]', '12 [a]: b\\c', '- [a]: b\\c', '> a\n> \n| b | c |\n|---|---|', '- \r\n- _~~|\t\n---', '>```x\n>   ',
+  // Fix round 3: a table interrupting a list item's paragraph, and tabs after `>` that render the same.
+  '1. Steps:\n   | Name | Value |\n   | --- | --- |\n   | x | 1 |', '- item\n  | a | b |\n  |---|---|',
+  '> ```go\n> func f() {\n> \treturn\n> }\n> ```', '> a\n>\tb', '>\t- item', '> - a\n>\t- b', '- >\t<div>',
+  // An image's label parses in a new state: a link in it scans its label again (14.3.3 code spans).
+  '![x ![`a```b`c``][l](v)](u)', '![[`a`c``]](u)', '![x [`a`c``][l]](u)'];
 const SPACE_CODE = ['`   `', '`    `', '` \n `', 'a `   ` b', '`  `', '` a `'];
 const options = (o, fuzzyLink) => { const m = markdownIt(o); m.linkify.set({ fuzzyLink }); return m; };
 const fuzzy = options({ linkify: true, typographer: true }, true);

@@ -214,10 +214,16 @@ the site builds), and a `markdown()` call with an error. Refused today:
   list marker (`> quote` then `-`);
 - a table right after a blockquote's paragraph, with no line between them (an
   empty `>` line ends the paragraph, and that is fine);
-- inside a blockquote, a code span or inline HTML that runs across a lazy line
-  indented with spaces or tabs;
-- on a line inside a blockquote, a tab after a `>` among the line's leading
-  `>` and list markers (`>\t`, `>> *\t`);
+- inside a blockquote, a code span or inline HTML in a paragraph with a lazy
+  line indented with spaces or tabs, or a line with a tab after its `>`;
+- inside a blockquote, a tab after a `>` where markdown-it keeps it as
+  written or counts its columns differently from Brrrty's parser: in an HTML
+  block (`>\t<pre>`, unless the tab starts at a column of 3 modulo 4, and
+  any extra indentation under two or more `>`), in a fenced code block's text
+  (`>\t` or under two or more `>`), and any tab among the markers after a
+  second `>` (`>>\t\tcode`, `>\t>\t* x`). A tab after `>` in a paragraph, a
+  list item or a fence's opening line under one `>` (`> a\n>\tb`,
+  `>\t- item`, `> \treturn` in a fence) renders;
 - with `linkify`: a run of 1,000 or more characters with no space in a
   paragraph's source, link URLs included;
 - with the typographer: a quote right next to an image whose label can't be
@@ -228,7 +234,7 @@ code block (fenced or indented) or an HTML block outside a blockquote is never
 refused, and neither is a `\` in a definition's title, or text before a
 definition on the same line (`12 [a]: b\c` is a paragraph to both). They are
 still a little wider than the differences, so they can refuse text markdown-it
-and Brrrty would write the same way (most often the tab check). Known, not
+and Brrrty would write the same way (most often the tab checks under two `>`). Known, not
 refused: a panic in the port (none known) makes the call an error with the
 panic text and refuses an 11ty page.
 

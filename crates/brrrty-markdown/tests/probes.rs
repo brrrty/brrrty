@@ -173,8 +173,9 @@ fn block_shapes_the_port_gets_wrong_are_refused() {
         "> a\n> b\n2)",
         "> a\n| b | c |\n|---|---|",
         "> a `b\n    c` d",
-        ">\t<pre>\n>\tx</pre>",
-        ">>* \tx",
+        ">\t<pre>\n>\tx</pre>\n\n>>\t\tcode",
+        ">\t>\t* x",
+        ">```go\n>\tb c",
         "[docs]: \n+",
         "> [x]: /u\"\\\n\tx[x]",
         "[docs]: \nC:\\path\\\nx [docs]",
@@ -183,10 +184,14 @@ fn block_shapes_the_port_gets_wrong_are_refused() {
         assert!(md.try_render(s).is_err(), "{s:?}");
         assert!(configured.render(s).is_err(), "{s:?}");
     }
-    for s in refused.iter().filter(|s| !s.starts_with(">\t")) {
+    for s in refused {
         assert!(eleventy.try_render(s).is_err(), "{s:?}");
     }
-    assert!(eleventy.try_render(">\t<pre>\n>\tx</pre>").is_err());
+    // A tab among the markers after a second `>` (the port counts nested columns differently),
+    // and an HTML block after `>\t` (11ty; HTML is off in the default instance).
+    assert!(md.try_render(">>\t\tcode").is_err());
+    assert!(eleventy.try_render(">>\t\tcode").is_err());
+    assert!(eleventy.try_render(">\t<pre>").is_err());
     for s in [
         "> quote\n- item",
         "| a |\n| --- |\n| b |",

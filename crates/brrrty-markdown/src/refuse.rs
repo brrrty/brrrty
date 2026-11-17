@@ -77,14 +77,38 @@ fn ends_in_paragraph(n: &Node) -> bool {
 /// The container markers at the start of a line: `>`, list markers and the spaces and tabs
 /// between them.
 fn prefix(line: &str) -> &str {
-    let end = line
-        .find(|c: char| {
-            !matches!(
-                c,
-                '>' | ' ' | '\t' | '-' | '+' | '*' | '.' | ')' | '0'..='9'
-            )
-        })
-        .unwrap_or(line.len());
+    let b = line.as_bytes();
+    let mut i = 0;
+    let mut end = 0;
+    loop {
+        while i < b.len() && (b[i] == b' ' || b[i] == b'\t') {
+            i += 1;
+        }
+        let marker = match b.get(i) {
+            Some(b'>') => 1,
+            Some(b'-' | b'+' | b'*') => 1,
+            Some(b'0'..=b'9') => {
+                let d = b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+                if d <= 9 && matches!(b.get(i + d), Some(b'.' | b')')) {
+                    d + 1
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        };
+        // A list marker needs a space, a tab or the end after it.
+        if marker == 0
+            || (b[i] != b'>' && !b.get(i + marker).is_none_or(|&c| c == b' ' || c == b'\t'))
+        {
+            break;
+        }
+        i += marker;
+        while i < b.len() && (b[i] == b' ' || b[i] == b'\t') {
+            i += 1;
+        }
+        end = i;
+    }
     &line[..end]
 }
 
@@ -105,6 +129,17 @@ fn quote_markers(line: &str) -> (usize, &str) {
 
 /// Whether `n` (under `depth` blockquotes) is something the port writes differently there.
 fn quoted_difference(n: &Node, source: &str, depth: usize) -> Option<String> {
+    if n.is::<Table>() {
+        let (a, b) = n.srcmap?.get_byte_offsets();
+        let start = source[..a].rfind(['\n', '\r']).map_or(0, |i| i + 1);
+        let lazy = lines(&source[start..b])
+            .iter()
+            .any(|l| quote_markers(l).0 < depth);
+        return lazy.then(|| {
+            "a table on a blockquote's lazy lines, which markdown-it reads as paragraph text"
+                .to_string()
+        });
+    }
     use markdown_it::plugins::cmark::inline::backticks::CodeInline;
     use markdown_it::plugins::html::html_inline::HtmlInline;
     if n.is::<Paragraph>() || n.is::<crate::core_rules::InlineGroup>() {
@@ -129,19 +164,22 @@ fn quoted_difference(n: &Node, source: &str, depth: usize) -> Option<String> {
             let (count, _) = quote_markers(l);
             markers > 2 * count
         });
-        if !lazy_indented {
+        // A tab after a `>` keeps its columns in a span across the line, too.
+        let tabbed = lines(t).iter().skip(1).any(|l| tab_after_quote(l));
+        if !lazy_indented && !tabbed {
             return None;
         }
         let mut spans = false;
         n.walk(|c, _| {
+            // A span's source map can stop at its first line, so with a tab any span counts.
             if (c.is::<CodeInline>() || c.is::<HtmlInline>())
-                && text(c, source).is_some_and(|s| s.contains(['\n', '\r']))
+                && (tabbed || text(c, source).is_some_and(|s| s.contains(['\n', '\r'])))
             {
                 spans = true;
             }
         });
         return spans.then(|| {
-            "a code span or inline HTML across an indented lazy line of a blockquote".to_string()
+            "a code span or inline HTML in a blockquote paragraph with an indented lazy line or a tab after a `>`".to_string()
         });
     }
     None
@@ -190,6 +228,12 @@ fn spans(source: &str) -> Vec<(usize, usize)> {
 struct Blocks {
     leaves: Vec<(usize, usize)>,
     quotes: Vec<(usize, usize)>,
+    /// HTML blocks: their text is kept as written, tabs included.
+    html: Vec<(usize, usize)>,
+    /// Fenced code blocks, without their opening line.
+    fence_bodies: Vec<(usize, usize)>,
+    /// Indented code blocks.
+    code: Vec<(usize, usize)>,
 }
 
 fn is_container(n: &Node) -> bool {
@@ -215,12 +259,30 @@ fn blocks(ast: &Node) -> Blocks {
                 walk(c, out);
             }
         } else if let Some(r) = range {
+            use markdown_it::plugins::cmark::block::code::CodeBlock;
+            use markdown_it::plugins::html::html_block::HtmlBlock;
             out.leaves.push(r);
+            use markdown_it::plugins::cmark::block::fence::CodeFence;
+            if n.is::<HtmlBlock>() {
+                out.html.push(r);
+            } else if n.is::<CodeBlock>() {
+                out.code.push(r);
+            } else if n.is::<CodeFence>() {
+                out.fence_bodies.push((r.0 + 1, r.1));
+            }
         }
     }
     let mut out = Blocks::default();
     walk(ast, &mut out);
     out
+}
+
+/// Whether the line at `a..b` starts inside one of `ranges` (a fence's body, after its
+/// opening line's first character).
+fn touches_body(ranges: &[(usize, usize)], (a, b): (usize, usize)) -> bool {
+    ranges
+        .iter()
+        .any(|&(s, e)| s <= a && e >= b && a > 0 && s < a)
 }
 
 fn touches(ranges: &[(usize, usize)], (a, b): (usize, usize)) -> bool {
@@ -294,10 +356,48 @@ pub(crate) fn check(ast: &Node, source: &str) -> Result<(), String> {
         return Err(why);
     }
     // A tab after a quote's `>`, on a line in a blockquote.
-    if let Some(&span) = line_spans
-        .iter()
-        .find(|&&span| touches(&blocks.quotes, span) && tab_after_quote(line(span)))
-    {
+    if let Some(&span) = line_spans.iter().find(|&&span| {
+        let l = line(span);
+        let p = prefix(l);
+        // Where markdown-it keeps a partly used tab as written, and the port writes
+        // spaces or counts columns differently: an HTML block's or a fence's text after
+        // `>\t` or under two or more `>`, indented code under two or more `>`, and a list
+        // item after a tab between two `>`.
+        let nested = p.matches('>').count() >= 2;
+        let last = p.rfind('>');
+        // The whitespace after the last `>`, and what follows it.
+        let after_last = last.map_or("", |i| &l[i + 1..]);
+        let ws_after =
+            &after_last[..after_last.len() - after_last.trim_start_matches([' ', '\t']).len()];
+        // Under two or more `>`, any tab among the markers after the second one: the port
+        // counts nested columns differently (code, list items, fences, tables).
+        let nested_tab = p
+            .match_indices('>')
+            .nth(1)
+            .is_some_and(|(i, _)| p[i..].contains('\t'));
+        // markdown-it uses a tab right after `>` as its one optional space, and keeps it as
+        // written, unless the tab starts at a column of 3 modulo 4.
+        // Any `>` in the markers (in an HTML block, later ones are text).
+        let kept_tab = p.char_indices().any(|(i, c)| {
+            c == '>'
+                && p[i + 1..].starts_with('\t')
+                && l[..i + 1].chars().fold(0, |col, c| {
+                    if c == '\t' {
+                        col + 4 - col % 4
+                    } else {
+                        col + 1
+                    }
+                }) % 4
+                    != 3
+        });
+        let html_nested_indent = touches(&blocks.html, span) && nested && ws_after.len() >= 2;
+        touches(&blocks.quotes, span)
+            && (tab_after_quote(l) || html_nested_indent)
+            && ((touches(&blocks.html, span)
+                && (kept_tab || (nested && (ws_after.contains('\t') || ws_after.len() >= 2))))
+                || (touches_body(&blocks.fence_bodies, span) && (p.contains(">\t") || nested))
+                || nested_tab)
+    }) {
         return Err(format!(
             "a tab after a blockquote's `>` (the port counts its columns differently): {:?}",
             line(span).trim_end()
@@ -325,7 +425,9 @@ pub(crate) fn check(ast: &Node, source: &str) -> Result<(), String> {
             let between = source
                 .get(qm.get_byte_offsets().1..tm.get_byte_offsets().0)
                 .unwrap_or("");
-            if lines(between).len() <= 2 && between.trim_matches([' ', '\t', '\r', '\n']).is_empty() {
+            if lines(between).len() <= 2
+                && between.trim_matches([' ', '\t', '\r', '\n', '>']).is_empty()
+            {
                 found = Some(
                     "a table right after a blockquote's paragraph, which markdown-it reads as that paragraph's text".into(),
                 );
