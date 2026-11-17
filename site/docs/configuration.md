@@ -161,6 +161,35 @@ for file in read_dir("src/_data/notes") {
 
 The full lists, and the cases each plugin refuses, are in [PORTING.md](https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md#plugins).
 
+## Markdown renderer rules
+
+`config.amend_library("md", |md| ...)` is 11ty's `amendLibrary`: it changes how 11ty's own markdown-it writes your `.md` pages and Markdown layouts. Brrrty runs markdown-it renderer rules for inline tokens (links, images, code, text, emphasis):
+
+```rhai
+fn tag_shop_links(base, tokens, idx, options, env, renderer) {
+    let href = tokens[idx].attr_get("href") ?? "";
+    if href.starts_with("https://shop.example/") {
+        tokens[idx].attr_set("rel", "sponsored nofollow");
+        tokens[idx].attr_set("target", "_blank");
+    }
+    if type_of(base) == "()" {
+        renderer.render_token(tokens, idx, options)
+    } else {
+        base.call(tokens, idx, options, env, renderer)
+    }
+}
+
+config.amend_library("md", |md| {
+    md.renderer.rules.link_open = Fn("tag_shop_links").curry(md.renderer.rules.link_open);
+});
+```
+
+A rule gets markdown-it's five arguments (`self` is `renderer`, since `self` is a reserved word in Rhai) and returns the HTML for that token. Tokens have `attr_get`, `attr_set`, `attr_join`, `attr_index` and `attr_push`, and their fields (`type`, `tag`, `content`, `markup`, `info`, `level`, ...) can be read and set. `renderer.render_token(tokens, idx, options)` is markdown-it's default. Rhai closures can't capture variables, so a rule that wraps the one before it takes it curried, as above.
+
+A data file or filter with its own markdown-it uses `markdown_it(options)`: `let md = markdown_it(#{ linkify: true }); md.renderer.rules.link_open = ...; md.render(text)`.
+
+The tokens and the HTML are markdown-it's, checked against markdown-it 14.3.3 (11ty's) and 15.0.3. What Brrrty can't give a rule exactly is an error that names it, and the page is refused with `markdown-rule-failed`: a rule for a block token (`paragraph_open`, `fence`, ...), reading `env` (the page's data in 11ty), adding or removing tokens, or returning something that isn't a string. The details are in [PORTING.md](https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md#markdown-it-renderer-rules).
+
 ## Rhai is not JavaScript
 
 Values cross into the script as 11ty would give them to a JavaScript filter, and come back out as data. Numbers are floats, `undefined` is `()`, `null` is `null_value()`, and dates are dates. Rhai's own operators aren't changed, so where they differ from JavaScript's, use a helper:

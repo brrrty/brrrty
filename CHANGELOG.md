@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- markdown-it renderer rules in Rhai. `config.amend_library("md", |md| ...)` is 11ty's `amendLibrary`, and its rules apply to every `.md` page and Markdown layout; `markdown_it(options)` makes an instance for data files and filters, rendered with `md.render(s)`. A rule is `md.renderer.rules.link_open = |tokens, idx, options, env, renderer| ...`, with tokens' `attr_get`, `attr_set`, `attr_join`, `attr_index`, `attr_push` and fields, `renderer.render_token`, `renderer.render_attrs` and `escape_html`; markdown-it's own rules (`md.renderer.rules.text`, `image`, ...) can be read and wrapped. Rules run for inline tokens, which Brrrty gives exactly as markdown-it does (checked against markdown-it 14.3.3 and 15.0.3 on generated inputs, with and without rules). A rule for a block token, reading `env` on 11ty's library, changing the token list or the options, or returning something that isn't a string is an error that names it, and a page whose rule fails is refused with `markdown-rule-failed`. `config.set_library` is an error that says it isn't ported.
+
 ## 0.0.17 - 2026-11-17
 
 - `markdown(s, options)` in Rhai is `markdownIt({ html, linkify, typographer })` with `md.linkify.set({ fuzzyLink })`: `markdown(s, #{ linkify: true, typographer: true, fuzzy_link: true })`. Linkify is linkify-it 6.1.0, run on its own patterns, and the typographer is markdown-it 15's replacements and smart quotes; both match markdown-it on 40,000 generated inputs with each set of options. A paragraph with a run of 1,000 or more characters and no space (with linkify), and a quote right next to an image whose label can't be found in the source (with the typographer), are errors instead of guesses. Unknown options are errors.
