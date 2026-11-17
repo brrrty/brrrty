@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.16 - 2026-11-17
 
 - In `brrrty.config.rhai`, a constant number inside `${...}` prints as JavaScript prints it, as a variable already did: `${10.0}` and `const PER_PAGE = 10.0; `${PER_PAGE}`` give `10`, not `10.0`, and `${1e21}` gives `1e+21`. Rhai's optimizer folded constants into the string with Rhai's own number formatting; it is now off for config and data scripts.
 - Rhai scripts get JavaScript's number formatting and string order, each checked against Node: `to_fixed(n, digits)` is V8's `toFixed`, rounding the number's exact value with ties away from zero (`to_fixed(1.005, 2)` is `"1.00"`, `to_fixed(2.5, 0)` is `"3"`); `to_locale_string(n)` is `toLocaleString('en-US')` (`1,234.568`); `locale_compare(a, b)` is `localeCompare` with the `en-US` locale. Other locales and options are refused by name, and so are Han characters, which Node sorts by radical and stroke count.

@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-serve"
-version = "0.0.15"
+version = "0.0.16"
 description = "Local static file server for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
