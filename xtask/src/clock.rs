@@ -33,4 +33,11 @@ mod tests {
         assert_eq!(std::fs::read_to_string(shim_path(root)).unwrap(), SHIM);
         assert!(SHIM.contains("SOURCE_DATE_EPOCH"));
     }
+
+    #[test]
+    fn brrrty_doctor_ships_the_same_shim() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let shipped = root.join("crates/brrrty/src/doctor/freeze-time.cjs");
+        assert_eq!(std::fs::read_to_string(shipped).unwrap(), SHIM);
+    }
 }

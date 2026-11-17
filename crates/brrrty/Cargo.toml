@@ -21,6 +21,7 @@ name = "brrrty"
 path = "src/main.rs"
 
 [dependencies]
+brrrty-compat = { path = "../brrrty-compat", version = "0.0.13" }
 brrrty-config = { path = "../brrrty-config", version = "0.0.13" }
 brrrty-core = { path = "../brrrty-core", version = "0.0.13" }
 brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.13" }
@@ -33,6 +34,8 @@ percent-encoding = "2.3.1"
 # `brrrty init`: reads and edits package.json, and shows its changes as a diff.
 serde_json = { version = "1", features = ["preserve_order"] }
 similar = "3.2.1"
+# `brrrty doctor --verify` builds into the system temp folder.
+tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
 # `brrrty init` opens package.json and the 11ty config with O_NONBLOCK, so a
@@ -44,6 +47,4 @@ signal-hook = { version = "=0.4.6", default-features = false, features = ["itera
 [dev-dependencies]
 # The Chrome test hands Chrome its DevTools pipe (already in the tree through notify).
 libc = "0.2.191"
-tempfile = "3.27.0"
 toml = "1.2.1"
-brrrty-compat = { path = "../brrrty-compat", version = "0.0.13" }

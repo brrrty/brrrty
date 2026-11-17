@@ -1,4 +1,4 @@
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -36,6 +36,8 @@ enum Command {
     Serve(ServeArgs),
     /// Set up an 11ty site to build with Brrrty: package.json and brrrty.config.rhai
     Init(InitArgs),
+    /// List everything that keeps pages from building, without writing anything
+    Doctor(DoctorArgs),
 }
 
 #[derive(Args, Clone)]
@@ -49,6 +51,31 @@ struct InitArgs {
     /// Show the changes as a diff and write nothing
     #[arg(long, conflicts_with = "yes")]
     dry_run: bool,
+}
+
+#[derive(Args, Clone)]
+struct DoctorArgs {
+    /// Print one JSON object instead of the text report
+    #[arg(long)]
+    json: bool,
+    /// Also build the site with its own 11ty and with Brrrty, in the system temp folder, and
+    /// compare every file. This runs your site's JavaScript (through 11ty)
+    #[arg(long)]
+    verify: bool,
+    /// Run 11ty for --verify without asking (needed when not on a terminal)
+    #[arg(long, requires = "verify")]
+    yes: bool,
+    /// Folder with your source files [default: `dir.input` from
+    /// brrrty.config.rhai, or .]
+    #[arg(long)]
+    input: Option<PathBuf>,
+    /// The output folder your build uses, as pages see it [default: `dir.output` from
+    /// brrrty.config.rhai, or _site]. Nothing is written there
+    #[arg(long)]
+    output: Option<PathBuf>,
+    /// File or folder to copy as-is, relative to the current folder (repeatable)
+    #[arg(long)]
+    passthrough: Vec<PathBuf>,
 }
 
 #[derive(Args, Clone)]
@@ -223,6 +250,153 @@ fn run_serve(args: ServeArgs) -> ExitCode {
     }
 }
 
+/// Ask on the terminal before running the site's 11ty, or refuse off one without `--yes`.
+/// `Err` carries the exit code.
+fn confirm_verify(yes: bool) -> Result<(), ExitCode> {
+    brrrty::say_err!(
+        "--verify runs your site's own 11ty build, which runs your site's JavaScript (its config, data files and plugins) with your permissions. Brrrty itself never runs JavaScript."
+    );
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        brrrty::say_err!("Not on a terminal, so Brrrty can't ask: pass --yes to run it.");
+        return Err(ExitCode::from(2));
+    }
+    eprint!("Run it now? [y/N] ");
+    let mut answer = String::new();
+    let _ = std::io::stdin().read_line(&mut answer);
+    if matches!(answer.trim(), "y" | "Y" | "yes" | "Yes") {
+        Ok(())
+    } else {
+        brrrty::say_err!("Not run.");
+        Err(ExitCode::from(2))
+    }
+}
+
+/// The instant both `--verify` builds run at: `SOURCE_DATE_EPOCH` when it is set, else now.
+fn verify_epoch() -> u64 {
+    std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        })
+}
+
+fn run_doctor(args: DoctorArgs) -> ExitCode {
+    use brrrty::doctor::{self, verify};
+
+    let root = match std::env::current_dir() {
+        Ok(r) => r,
+        Err(e) => {
+            brrrty::say_err!("Brrrty could not find the current folder: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let color = std::io::stderr().is_terminal();
+    let mut eleventy = None;
+    let mut temp = None;
+    if args.verify {
+        match verify::find(&root) {
+            Ok(e) => eleventy = Some(e),
+            Err(why) => {
+                brrrty::say_err!("{why}");
+                return ExitCode::from(2);
+            }
+        }
+        if let Err(code) = confirm_verify(args.yes) {
+            return code;
+        }
+        // SAFETY: nothing else runs yet: no thread has started, and the build that reads
+        // the variable starts after this.
+        unsafe { std::env::set_var("SOURCE_DATE_EPOCH", verify_epoch().to_string()) };
+        match tempfile::Builder::new().prefix("brrrty-doctor-").tempdir() {
+            Ok(t) => temp = Some(t),
+            Err(e) => {
+                brrrty::say_err!("Brrrty could not make a folder in the system temp folder: {e}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+    let flags = Flags {
+        input: args.input,
+        output: match &temp {
+            Some(t) => Some(t.path().join("brrrty")),
+            None => args.output,
+        },
+        passthrough: args.passthrough,
+        strict: false,
+    };
+    let opts = match build_options(&root, &flags) {
+        Ok(opts) => opts,
+        Err(problems) => {
+            report::print_problems(&problems, &root, color);
+            return ExitCode::from(1);
+        }
+    };
+    let report = brrrty_core::survey(&opts, &MarkdownIt::new(), temp.is_none());
+    let diagnosis = brrrty_core::doctor::diagnose(report);
+    let mut verified = None;
+    if let (Some(e), Some(t)) = (&eleventy, &temp) {
+        let shim = t.path().join("freeze-time.cjs");
+        let out = t.path().join("11ty");
+        if let Err(err) = std::fs::write(&shim, verify::SHIM) {
+            brrrty::say_err!("Brrrty could not write {}: {err}", shim.display());
+            return ExitCode::from(1);
+        }
+        let epoch = verify_epoch();
+        let eleventy_time = match verify::run_eleventy(e, &root, &out, &shim, epoch) {
+            Ok(d) => d,
+            Err(why) => {
+                brrrty::say_err!("{why}");
+                return ExitCode::from(1);
+            }
+        };
+        // 11ty writes no folder for a site with no output.
+        let _ = std::fs::create_dir_all(&out);
+        let _ = std::fs::create_dir_all(t.path().join("brrrty"));
+        let compared = brrrty_compat::compare_dirs(
+            &out,
+            &t.path().join("brrrty"),
+            &brrrty_compat::AllowList::empty(),
+        );
+        match compared {
+            Ok(r) => {
+                verified = Some(verify::Verified {
+                    eleventy_version: e.version.clone(),
+                    eleventy_time,
+                    brrrty_time: diagnosis.report.elapsed,
+                    report: r,
+                })
+            }
+            Err(err) => {
+                brrrty::say_err!("Brrrty could not compare the two builds: {err}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+    if args.json {
+        let v = verified.as_ref().map(verify::json);
+        brrrty::say!("{:#}", doctor::json(&diagnosis, v));
+    } else {
+        let mut out = doctor::text(&diagnosis);
+        if let Some(v) = &verified {
+            out.push('\n');
+            out.push_str(&verify::text(v));
+        }
+        let _ = std::io::stdout().lock().write_all(out.as_bytes());
+    }
+    let ok = diagnosis.builds() && verified.as_ref().is_none_or(verify::Verified::passes);
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
 /// End a session that is not served, printing what went wrong cleaning up.
 fn end_unserved(session: brrrty::serve::Session, root: &std::path::Path, color: bool) {
     let finished = session.close();
@@ -283,6 +457,7 @@ fn main() -> ExitCode {
         Some(Command::Build(args)) => run_build(args),
         Some(Command::Serve(args)) => run_serve(args),
         Some(Command::Init(args)) => run_init(args),
+        Some(Command::Doctor(args)) => run_doctor(args),
         None => run_build(cli.build),
     }
 }
