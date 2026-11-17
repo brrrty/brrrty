@@ -14,6 +14,7 @@ exclude = ["tools/", "tests/probes.rs", "tests/fuzz.rs", "tests/probes/"]
 
 [dependencies]
 markdown-it = { version = "=0.6.1", default-features = false }
+regex = "1.13.1"
 
 [dev-dependencies]
 serde_json = "1"

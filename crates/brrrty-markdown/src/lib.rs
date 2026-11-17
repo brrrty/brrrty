@@ -118,6 +118,140 @@ fn add_tables(md: &mut markdown_it::MarkdownIt) {
     md.block.add_rule::<PipeTable>().before_all();
 }
 
+/// markdown-it's `html_inline` rule (14.3.3 and 15 are the same). The port follows CommonMark
+/// 0.31's regular expressions; markdown-it scans a comment, processing instruction, declaration
+/// or CDATA section to the first terminator (so `<!-->` and `--` inside are fine), and after one
+/// that is never closed it takes no more of them in the same inline text.
+struct HtmlInline;
+
+/// `skipHtmlSpecial`: an earlier special construct in this inline text wasn't closed.
+#[derive(Debug, Default)]
+struct SkipHtmlSpecial;
+impl markdown_it::parser::extset::InlineRootExt for SkipHtmlSpecial {}
+
+/// JavaScript's `\s`.
+const JS_SPACE_CLASS: &str = r"[\t\n\x0B\x0C\r \u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]";
+
+/// markdown-it's `HTML_OPEN_CLOSE_TAG_RE`. `regex` matches leftmost-first, as a backtracking
+/// engine does.
+fn html_open_close_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        let s = JS_SPACE_CLASS;
+        let attr_value = r#"(?:[^"'=<>`\x00-\x20]+|'[^']*'|"[^"]*")"#;
+        let attribute = format!(r"(?:{s}+[a-zA-Z_:][a-zA-Z0-9:._-]*(?:{s}*={s}*{attr_value})?)");
+        let open_tag = format!(r"<[A-Za-z][A-Za-z0-9\-]*{attribute}*{s}*/?>");
+        let close_tag = format!(r"</[A-Za-z][A-Za-z0-9\-]*{s}*>");
+        regex::Regex::new(&format!("^(?:{open_tag}|{close_tag})")).unwrap()
+    })
+}
+
+fn is_letter(c: Option<u8>) -> bool {
+    c.is_some_and(|c| c.is_ascii_alphabetic())
+}
+
+/// markdown-it's `scanSpecial`: where the construct at `pos` ends, if it does.
+fn scan_special(state: &mut markdown_it::parser::inline::InlineState) -> Option<usize> {
+    let pos = state.pos;
+    let src = state.src.as_bytes();
+    let rest = &state.src[pos..];
+    let (start, terminator) = if let Some(body) = rest.strip_prefix("<!--") {
+        if body.starts_with('>') {
+            return Some(pos + 5);
+        }
+        if body.starts_with("->") {
+            return Some(pos + 6);
+        }
+        (pos + 4, "-->")
+    } else if rest.starts_with("<![CDATA[") {
+        (pos + 9, "]]>")
+    } else if src.get(pos + 1) == Some(&b'?') {
+        (pos + 2, "?>")
+    } else if is_letter(src.get(pos + 2).copied()) {
+        (pos + 3, ">")
+    } else {
+        return None;
+    };
+    if state.inline_ext.get::<SkipHtmlSpecial>().is_some() {
+        return None;
+    }
+    match state.src[start..].find(terminator) {
+        Some(at) => Some(start + at + terminator.len()),
+        None => {
+            state.inline_ext.insert(SkipHtmlSpecial);
+            None
+        }
+    }
+}
+
+/// Where the HTML at `state.pos` ends, as markdown-it's `html_inline` finds it.
+fn scan_html_inline(state: &mut markdown_it::parser::inline::InlineState) -> Option<usize> {
+    let rest = &state.src[state.pos..state.pos_max];
+    let mut units = rest.chars().map(char::len_utf16);
+    // `pos + 2 >= max`: fewer than three UTF-16 units left.
+    if !rest.starts_with('<') || units.by_ref().take(3).sum::<usize>() < 3 {
+        return None;
+    }
+    let ch = rest.as_bytes()[1];
+    if ch == b'!' || ch == b'?' {
+        scan_special(state)
+    } else if ch == b'/' || ch.is_ascii_alphabetic() {
+        html_open_close_re()
+            .find(&state.src[state.pos..])
+            .map(|m| state.pos + m.len())
+    } else {
+        None
+    }
+}
+
+fn is_link_open(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 3
+        && b[0] == b'<'
+        && b[1].eq_ignore_ascii_case(&b'a')
+        && (b[2] == b'>' || s[2..].starts_with(|c: char| crate::js_space(c)))
+}
+
+fn is_link_close(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix("</") else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(['a', 'A']) else {
+        return false;
+    };
+    rest.trim_start_matches(crate::js_space).starts_with('>')
+}
+
+impl markdown_it::parser::inline::InlineRule for HtmlInline {
+    const MARKER: char = '<';
+
+    fn check(state: &mut markdown_it::parser::inline::InlineState) -> Option<usize> {
+        scan_html_inline(state).map(|end| end - state.pos)
+    }
+
+    fn run(
+        state: &mut markdown_it::parser::inline::InlineState,
+    ) -> Option<(markdown_it::Node, usize)> {
+        let end = scan_html_inline(state)?;
+        let content = state.src[state.pos..end].to_string();
+        if is_link_open(&content) {
+            state.link_level += 1;
+        }
+        if is_link_close(&content) {
+            state.link_level -= 1;
+        }
+        let node =
+            markdown_it::Node::new(markdown_it::plugins::html::html_inline::HtmlInline { content });
+        Some((node, end - state.pos))
+    }
+}
+
+/// markdown-it's `html: true`: HTML blocks from the port, inline HTML from [`HtmlInline`].
+fn add_html(md: &mut markdown_it::MarkdownIt) {
+    markdown_it::plugins::html::html_block::add(md);
+    md.inline.add_rule::<HtmlInline>();
+}
+
 /// An empty blockquote is `<blockquote></blockquote>` in markdown-it; the port puts a newline
 /// inside it.
 #[derive(Debug)]
@@ -189,7 +323,7 @@ impl MarkdownIt {
         block::heading::add(&mut md);
         block::lheading::add(&mut md);
         block::paragraph::add(&mut md);
-        markdown_it::plugins::html::add(&mut md);
+        add_html(&mut md);
         markdown_it::plugins::extra::strikethrough::add(&mut md);
         add_tables(&mut md);
         // The port only limits indentation (a line indented 4 or more is
@@ -210,14 +344,16 @@ impl MarkdownRenderer for MarkdownIt {
     fn render(&self, source: &str) -> String {
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast, false);
-        ast.render()
+        let marker = fix_end_of_text(&mut ast, source);
+        render_marked(&ast, marker)
     }
 
     fn render_highlighted(&self, source: &str, highlight: &mut Highlight<'_>) -> String {
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast, false);
+        let marker = fix_end_of_text(&mut ast, source);
         highlight_fences(&mut ast, source, highlight);
-        ast.render()
+        render_marked(&ast, marker)
     }
 }
 
@@ -310,45 +446,80 @@ impl DefaultMarkdownIt {
 
     /// `md.render(source)`.
     fn render_block(&self, source: &str) -> String {
-        use markdown_it::plugins::cmark::block::fence::CodeFence;
         let mut ast = self.block.parse(source);
         fix_tree(&mut ast, true);
-        if !source.ends_with('\n') {
-            // markdown-it leaves the newline off the last line of a fence that runs to the end of
-            // the text; the port adds one.
-            ast.walk_mut(|n, _| {
-                let Some(map) = n.srcmap else { return };
-                let (start, end) = map.get_byte_offsets();
-                let Some(fence) = n.cast_mut::<CodeFence>() else {
-                    return;
-                };
-                if end < source.trim_end_matches([' ', '\t']).len() {
-                    return;
-                }
-                let lines = &source[start..end];
-                let last = lines.rsplit('\n').next().unwrap_or("");
-                let body = last.trim_start_matches([' ', '>', '\t']);
-                let marks = body.chars().take_while(|&c| c == fence.marker).count();
-                let closed = lines.contains('\n')
-                    && marks >= fence.marker_len
-                    && body[marks..].trim_matches([' ', '\t']).is_empty();
-                if closed {
-                    return;
-                }
-                if fence.content.ends_with('\n') {
-                    fence.content.pop();
-                }
-                // A last line of only spaces is empty to markdown-it.
-                let tail = fence.content.rfind('\n').map_or(0, |i| i + 1);
-                if fence.content[tail..]
-                    .bytes()
-                    .all(|b| b == b' ' || b == b'\t')
-                {
-                    fence.content.truncate(tail);
-                }
-            });
+        let marker = fix_end_of_text(&mut ast, source);
+        render_marked(&ast, marker)
+    }
+}
+
+/// markdown-it leaves the newline off the last line of a block that runs to the end of a text
+/// with no final newline: a fence that isn't closed, and an HTML block. The port adds one.
+///
+/// An HTML block is written as it is, so the port's renderer adds a newline after it whatever
+/// its content ends with. Its content ends in a marker instead, and [`render_marked`] takes the
+/// marker out with the newline written after it. Returns the marker, if one was used.
+fn fix_end_of_text(ast: &mut markdown_it::Node, source: &str) -> Option<char> {
+    use markdown_it::plugins::cmark::block::fence::CodeFence;
+    use markdown_it::plugins::html::html_block::HtmlBlock;
+    // markdown-it turns `\r\n` and `\r` into `\n` first.
+    if source.ends_with(['\n', '\r']) {
+        return None;
+    }
+    // A noncharacter the source doesn't have.
+    let marker = ('\u{fdd0}'..='\u{fdef}').find(|&c| !source.contains(c));
+    let mut used = None;
+    ast.walk_mut(|n, _| {
+        let Some(map) = n.srcmap else { return };
+        let (start, end) = map.get_byte_offsets();
+        if let Some(html) = n.cast_mut::<HtmlBlock>() {
+            if let Some(marker) = marker
+                && end >= source.len()
+                && html.content.ends_with('\n')
+            {
+                html.content.pop();
+                html.content.push(marker);
+                used = Some(marker);
+            }
+            return;
         }
-        ast.render()
+        let Some(fence) = n.cast_mut::<CodeFence>() else {
+            return;
+        };
+        if end < source.trim_end_matches([' ', '\t']).len() {
+            return;
+        }
+        let lines = &source[start..end];
+        let last = lines.rsplit('\n').next().unwrap_or("");
+        let body = last.trim_start_matches([' ', '>', '\t']);
+        let marks = body.chars().take_while(|&c| c == fence.marker).count();
+        let closed = lines.contains('\n')
+            && marks >= fence.marker_len
+            && body[marks..].trim_matches([' ', '\t']).is_empty();
+        if closed {
+            return;
+        }
+        if fence.content.ends_with('\n') {
+            fence.content.pop();
+        }
+        // A last line of only spaces is empty to markdown-it.
+        let tail = fence.content.rfind('\n').map_or(0, |i| i + 1);
+        if fence.content[tail..]
+            .bytes()
+            .all(|b| b == b' ' || b == b'\t')
+        {
+            fence.content.truncate(tail);
+        }
+    });
+    used
+}
+
+/// Renders `ast`, taking out `marker` and the newline written after it (see [`fix_end_of_text`]).
+fn render_marked(ast: &markdown_it::Node, marker: Option<char>) -> String {
+    let html = ast.render();
+    match marker {
+        Some(m) => html.replace(&format!("{m}\n"), ""),
+        None => html,
     }
 }
 
@@ -580,6 +751,54 @@ mod tests {
         });
         assert_eq!(out, "```JS\nX\n```\n");
         assert_eq!(calls, 0);
+    }
+
+    /// 11ty's instance (markdown-it 14.3.3): a fence or an HTML block that runs to the end of a
+    /// text with no final newline leaves the newline off its last line. `\r` at the end is a
+    /// newline. Expected values are 14.3.3's `render` in Node.
+    #[test]
+    fn blocks_at_the_end_of_the_text_match_markdown_it_14() {
+        for (src, want) in [
+            ("<div>", "<div>"),
+            ("<div>\nb c[>", "<div>\nb c[>"),
+            ("a\n\n<!-- x", "<p>a</p>\n<!-- x"),
+            ("> <div>", "<blockquote>\n<div></blockquote>\n"),
+            ("- <div>", "<ul>\n<li>\n<div></li>\n</ul>\n"),
+            ("<div>\n", "<div>\n"),
+            ("<div>  ", "<div>  "),
+            ("<div>\r", "<div>\n"),
+            ("<div>\r\n", "<div>\n"),
+            ("\"\n<div>[", "<p>&quot;</p>\n<div>["),
+            ("<div>\n\n", "<div>\n"),
+            (
+                "```js\ncode",
+                "<pre><code class=\"language-js\">code</code></pre>\n",
+            ),
+            ("```\na\n   ", "<pre><code>a\n</code></pre>\n"),
+            (
+                "> ```\n> x",
+                "<blockquote>\n<pre><code>x</code></pre>\n</blockquote>\n",
+            ),
+            ("```\nx\n```", "<pre><code>x\n</code></pre>\n"),
+        ] {
+            assert_eq!(md().render(src), want, "{src:?}");
+        }
+    }
+
+    /// markdown-it's HTML comments in text: `<!-->`, `<!--->` and `--` inside. 14.3.3's output.
+    #[test]
+    fn html_comments_in_text_match_markdown_it() {
+        for (src, want) in [
+            ("a <!--> b\n", "<p>a <!--> b</p>\n"),
+            ("a <!---> b\n", "<p>a <!---> b</p>\n"),
+            ("a <!-- x -- y --> b\n", "<p>a <!-- x -- y --> b</p>\n"),
+            ("a <!-- x --->\n", "<p>a <!-- x ---></p>\n"),
+            ("a <!-- x\ny --> b\n", "<p>a <!-- x\ny --> b</p>\n"),
+            ("a <!-- *x* b\n", "<p>a &lt;!-- <em>x</em> b</p>\n"),
+            ("a <!---x--> b\n", "<p>a <!---x--> b</p>\n"),
+        ] {
+            assert_eq!(md().render(src), want, "{src:?}");
+        }
     }
 
     /// A fence that runs to the end of a text with no final newline: markdown-it leaves the
