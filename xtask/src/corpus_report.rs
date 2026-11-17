@@ -7,6 +7,17 @@ use std::path::Path;
 
 use crate::corpus::{SiteResult, Step};
 
+/// `text` as inline code in a table cell. Backticks inside would end the
+/// code span, so it gets a longer fence; a `|` would end the cell.
+fn cell_code(text: &str) -> String {
+    let text = text.replace('|', "\\|");
+    if text.contains('`') {
+        format!("`` {text} ``")
+    } else {
+        format!("`{text}`")
+    }
+}
+
 /// Causes listed in the fine-grained blocker table.
 const TOP_CAUSES: usize = 40;
 
@@ -160,8 +171,9 @@ pub fn render(results: &[SiteResult]) -> String {
     for (i, (key, a)) in ranked.iter().take(TOP_CAUSES).enumerate() {
         let _ = writeln!(
             out,
-            "| {} | `{key}` | {} | {} | {}{} | {} |",
+            "| {} | {} | {} | {} | {}{} | {} |",
             i + 1,
+            cell_code(key),
             a.title.replace('|', "\\|"),
             a.sites.len(),
             if a.inexact { "at least " } else { "" },
@@ -332,6 +344,13 @@ mod tests {
         assert_eq!(median(&[]), None);
         assert_eq!(speedup(&[100, 100, 100], &[10, 20, 10]), Some(10.0));
         assert!(spread(&[2.0, 8.0]).contains("geometric mean 4.0x"));
+    }
+
+    #[test]
+    fn table_cells_keep_backticks_and_pipes() {
+        assert_eq!(cell_code("a"), "`a`");
+        assert_eq!(cell_code("layout `base`"), "`` layout `base` ``");
+        assert_eq!(cell_code("x | y"), "`x \\| y`");
     }
 
     #[test]
