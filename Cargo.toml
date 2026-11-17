@@ -14,6 +14,19 @@ homepage = "https://brrrty.com"
 [profile.dev.package.brrrty-jsregex]
 opt-level = 3
 
+# The collation sweep test sorts a million strings: optimized collation
+# keeps it to seconds in a debug build.
+[profile.dev.package.icu_collator]
+opt-level = 3
+[profile.dev.package.icu_normalizer]
+opt-level = 3
+[profile.dev.package.icu_properties]
+opt-level = 3
+[profile.dev.package.zerovec]
+opt-level = 3
+[profile.dev.package.brrrty-js]
+opt-level = 3
+
 # Release binaries ship through npm and GitHub Releases: one codegen unit and
 # fat LTO for size and speed, symbols stripped. Panics still unwind, so the bug
 # report handler keeps working and a crash still exits 101.
