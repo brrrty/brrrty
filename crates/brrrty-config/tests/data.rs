@@ -668,3 +668,52 @@ fn git_head_is_the_commit_head_points_at() {
     assert_eq!(got.trim(), format!("<p>{sha} {sha}</p>"));
     drop(t);
 }
+
+#[test]
+fn a_data_file_that_is_not_utf8_is_refused_with_help() {
+    let t = tempfile::tempdir().unwrap();
+    write(
+        t.path(),
+        "src/index.md",
+        "---\npermalink: out.html\n---\n{{ bad }}",
+    );
+    fs::create_dir_all(t.path().join("src/_data")).unwrap();
+    fs::write(t.path().join("src/_data/bad.rhai"), b"#{ a: \"\xff\" }").unwrap();
+    let mut cfg = brrrty_core::ConfigOptions::default();
+    cfg.data = Some(data_runner(Clock::Fixed(NOON_MS), t.path().to_path_buf()));
+    let opts = BuildOptions {
+        root: t.path().to_path_buf(),
+        input: PathBuf::from("src"),
+        output: PathBuf::from("_site"),
+        config: cfg,
+        ..Default::default()
+    };
+    let r = build(&opts, &brrrty_markdown::MarkdownIt::new());
+    let p = r
+        .problems
+        .iter()
+        .find(|p| p.code == codes::DATA_FILE_INVALID)
+        .unwrap_or_else(|| panic!("{:#?}", r.problems));
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/_data/bad.rhai")));
+    assert!(p.message.contains("UTF-8"), "{}", p.message);
+    assert_eq!(p.help.as_deref(), Some("save the file as UTF-8"));
+    assert!(out(&t, "out.html").is_none());
+}
+
+/// 11ty calls an exported data function with one argument, so a `fn data` that wants more is
+/// a mistake worth naming, not a silent `()` for the extra parameters.
+#[test]
+fn a_data_function_with_two_parameters_is_an_error() {
+    let (t, r) = run(
+        &[("src/_data/two.rhai", "fn data(a, b) { #{ x: 1 } }")],
+        "{{ two.x }}",
+    );
+    let p = r
+        .problems
+        .iter()
+        .find(|p| p.code == codes::DATA_RHAI_ERROR)
+        .unwrap_or_else(|| panic!("{:#?}", r.problems));
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/_data/two.rhai")));
+    assert!(p.message.contains("takes 2 parameters"), "{}", p.message);
+    assert!(out(&t, "out.html").is_none());
+}
