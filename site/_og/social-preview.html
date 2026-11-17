@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+  The GitHub repo social preview, assets/brand/social-preview.png (1280x640).
+  Not part of the built site. Bertie is assets/brand/bertie.svg at 16x, placed on
+  whole pixels so every sprite pixel is a crisp 16x16 block. Re-render from site/
+  (Chrome, headless, its own temp profile):
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --user-data-dir="$(mktemp -d)" --hide-scrollbars --window-size=1280,640 --force-device-scale-factor=1 --virtual-time-budget=2000 --screenshot=assets/brand/social-preview.png "file://$PWD/_og/social-preview.html"
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Brrrty social preview</title>
+<link rel="stylesheet" href="../assets/site.css">
+<style>
+/* site.css loads its fonts from /assets/, which file:// can't reach. */
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../assets/fonts/schibsted-grotesk-latin.woff2") format("woff2");
+  font-weight: 400 900;
+}
+
+html, body { width: 1280px; height: 640px; overflow: hidden; }
+body { min-height: 0; display: block; }
+
+.card {
+  position: relative;
+  width: 1280px;
+  height: 640px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* 28x16 sprite at 16x: 448x256, top-left on whole pixels. */
+.bertie {
+  position: absolute;
+  left: 176px;
+  top: 184px;
+  width: 448px;
+  height: 256px;
+  image-rendering: pixelated;
+}
+
+.words {
+  position: absolute;
+  left: 704px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.mark {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+  font-size: 132px;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+.mark::after {
+  content: "";
+  width: 0.34em;
+  height: 0.34em;
+  margin-left: 0.04em;
+  align-self: flex-end;
+  margin-bottom: 0.08em;
+  border-radius: 4px;
+  background: var(--accent);
+}
+.tagline {
+  margin: 28px 0 0;
+  font-size: 46px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--fg-2);
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <img class="bertie" src="../assets/brand/bertie.svg" alt="">
+  <div class="words">
+    <span class="mark">brrrty</span>
+    <p class="tagline">Eleventy, but<br>make it go brrr.</p>
+  </div>
+</div>
+</body>
+</html>
