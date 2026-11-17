@@ -272,8 +272,8 @@ fn diagnose_groups_every_blocker_by_cause() {
         d.groups[0].cause,
         Cause::JsData("src/_data/stuff.js".into())
     );
-    assert!(!d.groups[0].pages_exact);
-    assert!(d.groups[1].pages_exact);
+    assert!(d.groups[0].hides_pages);
+    assert!(!d.groups[1].hides_pages);
     let filter = d
         .groups
         .iter()
@@ -324,4 +324,95 @@ fn a_javascript_template_counts_as_at_least_one_page() {
     assert_eq!(d.groups[0].cause, Cause::TemplateLanguage("11ty.js".into()));
     assert_eq!(d.groups[0].templates, [PathBuf::from("src/gen.11ty.js")]);
     assert!(!d.groups[0].pages_exact);
+}
+
+#[test]
+fn a_group_with_an_uncounted_template_is_never_exact() {
+    use brrrty_core::doctor::{Cause, diagnose};
+    let dir = masked_site();
+    let d = diagnose(survey(&opts(dir.path()), &MarkdownIt::new(), true));
+    let shout = d
+        .groups
+        .iter()
+        .find(|g| g.cause == Cause::Filter("shout".into()))
+        .unwrap();
+    // `pages.liquid` uses the layout too, and its pagination never ran.
+    assert!(!shout.pages_exact);
+    assert!(!shout.hides_pages);
+    let js = d
+        .groups
+        .iter()
+        .find(|g| g.cause == Cause::JsData("src/_data/stuff.js".into()))
+        .unwrap();
+    assert!(js.hides_pages);
+    assert!(!js.pages_exact);
+}
+
+#[test]
+fn a_page_that_needs_refused_content_is_not_a_blocker_of_its_own() {
+    use brrrty_core::doctor::{Cause, diagnose};
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/posts/a.njk",
+        "---\ntags: post\n---\n{{ 1 | nope }}\n",
+    );
+    write(
+        dir.path(),
+        "src/index.njk",
+        "{% for p in collections.post %}{{ p.templateContent | safe }}{% endfor %}\n",
+    );
+    let d = diagnose(survey(&opts(dir.path()), &MarkdownIt::new(), true));
+    assert_eq!(d.blockers(), 1, "{:#?}", d.groups);
+    let g = &d.groups[0];
+    assert_eq!(g.cause, Cause::Filter("nope".into()));
+    assert_eq!(g.templates, [PathBuf::from("src/posts/a.njk")]);
+    assert_eq!(g.also_templates, [PathBuf::from("src/index.njk")]);
+    assert_eq!(g.also_pages, 1);
+    assert_eq!(
+        d.verdict(),
+        "0 of 2 pages will build; 1 blocker, grouped below."
+    );
+}
+
+#[test]
+fn the_scan_reads_permalink_and_computed_data() {
+    use brrrty_core::doctor::{Cause, diagnose};
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "src/_data/more.js", "module.exports = {};\n");
+    write(
+        dir.path(),
+        "src/page.njk",
+        "---\nx: hi\npermalink: \"/{{ x | slugish }}/\"\neleventyComputed:\n  title: \"{{ x | seoTitle }}\"\n  meta:\n    description: \"{{ more.d | seoDesc }}\"\n---\n{{ 1 | nope }}\n",
+    );
+    let d = diagnose(survey(&opts(dir.path()), &MarkdownIt::new(), true));
+    for name in ["slugish", "seoTitle", "seoDesc", "nope"] {
+        assert!(
+            d.groups
+                .iter()
+                .any(|g| g.cause == Cause::Filter(name.into())),
+            "{name} in {:#?}",
+            d.groups
+        );
+    }
+    let desc = d
+        .groups
+        .iter()
+        .find(|g| g.cause == Cause::Filter("seoDesc".into()))
+        .unwrap();
+    assert_eq!(desc.locations[0].line, Some(4));
+    assert!(
+        desc.locations[0]
+            .message
+            .ends_with("in `eleventyComputed.meta.description`"),
+        "{:?}",
+        desc.locations
+    );
+    assert!(
+        d.groups
+            .iter()
+            .any(|g| g.cause == Cause::JsData("src/_data/more.js".into())),
+        "{:#?}",
+        d.groups
+    );
 }

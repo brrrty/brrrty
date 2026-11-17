@@ -47,14 +47,23 @@ pub struct Group {
     pub title: String,
     /// How to fix it.
     pub help: Option<String>,
-    /// Pages refused for it (among others, perhaps).
+    /// Refused pages of the templates it affects. A template can be refused
+    /// for several causes, so groups can share pages.
     pub pages: usize,
-    /// False when it stops a template's pagination before it makes its
-    /// pages, so `pages` counts that template once: the real number is
-    /// higher, and unknown until it is fixed.
+    /// False when one of its templates paginates and its pages were never
+    /// made, so `pages` counts that template once: the real number is
+    /// higher, and unknown until that template's blockers are fixed.
     pub pages_exact: bool,
+    /// It stops a template's pagination before it makes its pages: fixing it
+    /// reveals pages no one can count yet. Such groups come first.
+    pub hides_pages: bool,
     /// The templates of those pages, relative to the project root.
     pub templates: Vec<PathBuf>,
+    /// Pages of other templates that are refused only because they read the
+    /// content of pages it refuses, and those templates.
+    pub also_pages: usize,
+    pub also_pages_exact: bool,
+    pub also_templates: Vec<PathBuf>,
     /// Every place it shows up.
     pub locations: Vec<Location>,
 }
@@ -245,21 +254,64 @@ fn key(
     (p.code, p.path.as_deref(), p.line, p.column, &p.message)
 }
 
-#[derive(Default)]
 struct Building {
     first: Option<Problem>,
     pages: usize,
-    open: bool,
+    exact: bool,
+    hides: bool,
     templates: BTreeSet<PathBuf>,
+    also_pages: usize,
+    also_exact: bool,
+    also: BTreeSet<PathBuf>,
     locations: Vec<Location>,
 }
 
+impl Default for Building {
+    /// Exact until a template that can't be counted joins.
+    fn default() -> Self {
+        Building {
+            first: None,
+            pages: 0,
+            exact: true,
+            hides: false,
+            templates: BTreeSet::new(),
+            also_pages: 0,
+            also_exact: true,
+            also: BTreeSet::new(),
+            locations: Vec::new(),
+        }
+    }
+}
+
+/// The causes of a template's own refusals, following the pages whose content it needs to
+/// theirs. `seen` stops a cycle.
+fn root_causes(
+    survey: &crate::survey::Survey,
+    template: &Path,
+    js_files: &BTreeSet<PathBuf>,
+    seen: &mut BTreeSet<PathBuf>,
+) -> BTreeSet<Cause> {
+    let mut out = BTreeSet::new();
+    if !seen.insert(template.to_path_buf()) {
+        return out;
+    }
+    let Some(t) = survey.templates.get(template) else {
+        return out;
+    };
+    for p in &t.problems {
+        out.extend(
+            causes(p, js_files)
+                .into_iter()
+                .filter(|c| *c != Cause::Follows),
+        );
+    }
+    for (_, needed) in &t.needs {
+        out.extend(root_causes(survey, needed, js_files, seen));
+    }
+    out
+}
+
 /// Group what a survey build found by cause.
-///
-/// # Panics
-///
-/// Never; a report without a survey has no templates to group, and every
-/// error it has is grouped on its own.
 pub fn diagnose(report: BuildReport) -> Diagnosis {
     let empty = crate::survey::Survey::default();
     let survey = report.survey.as_ref().unwrap_or(&empty);
@@ -276,38 +328,66 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
     }
     let mut groups: BTreeMap<Cause, Building> = BTreeMap::new();
     let mut attributed = BTreeSet::new();
-    let mut add = |cause: Cause, p: &Problem, template: Option<(&PathBuf, usize)>| {
-        let g = groups.entry(cause).or_default();
-        if g.first.is_none() {
-            g.first = Some(p.clone());
-        }
-        if let Some((t, pages)) = template
-            && g.templates.insert(t.clone())
-        {
-            g.pages += pages;
-        }
-        g.locations.push(Location {
-            path: p.path.clone(),
-            line: p.line,
-            column: p.column,
-            message: p.message.clone(),
-        });
+    let location = |p: &Problem| Location {
+        path: p.path.clone(),
+        line: p.line,
+        column: p.column,
+        message: p.message.clone(),
     };
     let mut refused_pages = 0;
     let mut pages_exact = true;
-    let mut open: BTreeSet<Cause> = BTreeSet::new();
     for (shown, t) in survey.refused() {
         refused_pages += t.refused;
+        let known = t.pages_known();
+        pages_exact &= known;
+        let mut own: Vec<(Cause, &Problem)> = Vec::new();
         for p in &t.problems {
             attributed.insert(key(p));
             for c in causes(p, &js_files) {
-                add(c, p, Some((shown, t.refused)));
+                own.push((c, p));
             }
         }
-        if !t.pages_known() {
-            pages_exact = false;
-            for p in &t.stopped {
-                open.extend(causes(p, &js_files));
+        // A page refused only because another page's content is missing waits on that
+        // page's blockers. With no blocker to point to, it is a problem of its own.
+        let mut also: BTreeSet<Cause> = BTreeSet::new();
+        for (p, needed) in &t.needs {
+            attributed.insert(key(p));
+            let mut seen = BTreeSet::from([shown.clone()]);
+            let roots = root_causes(survey, needed, &js_files, &mut seen);
+            if roots.is_empty() {
+                for c in causes(p, &js_files) {
+                    own.push((c, p));
+                }
+            } else {
+                also.extend(roots);
+            }
+        }
+        let stoppers: BTreeSet<Cause> = if known {
+            BTreeSet::new()
+        } else {
+            t.stopped
+                .iter()
+                .flat_map(|p| causes(p, &js_files))
+                .collect()
+        };
+        for (c, p) in own {
+            let hides = stoppers.contains(&c);
+            let g = groups.entry(c).or_default();
+            if g.first.is_none() {
+                g.first = Some(p.clone());
+            }
+            if g.templates.insert(shown.clone()) {
+                g.pages += t.refused;
+            }
+            g.exact &= known;
+            g.hides |= hides;
+            g.locations.push(location(p));
+        }
+        for c in also {
+            let g = groups.entry(c).or_default();
+            if !g.templates.contains(shown) && g.also.insert(shown.clone()) {
+                g.also_pages += t.refused;
+                g.also_exact &= known;
             }
         }
     }
@@ -327,33 +407,40 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
             let shared = survey.refused().any(|(_, t)| {
                 t.problems
                     .iter()
+                    .chain(t.needs.iter().map(|(q, _)| q))
                     .any(|q| q.code == p.code && q.path == p.path && q.message == p.message)
             });
             if !refused_template && !shared {
                 for c in causes(p, &js_files) {
-                    add(c, p, None);
+                    let g = groups.entry(c).or_default();
+                    if g.first.is_none() {
+                        g.first = Some(p.clone());
+                    }
+                    g.locations.push(location(p));
                 }
             }
         } else {
             notes.push(p.clone());
         }
     }
-    for c in &open {
-        if let Some(g) = groups.get_mut(c) {
-            g.open = true;
-        }
-    }
     let mut groups: Vec<Group> = groups
         .into_iter()
+        // A cause only pages waiting on content point to, with nothing of its own, has no
+        // problem to show: it can't happen, as roots come from problems.
+        .filter(|(_, b)| b.first.is_some())
         .map(|(cause, b)| {
-            let first = b.first.expect("a group has a problem");
+            let first = b.first.expect("filtered");
             let (title, help) = title_and_help(&cause, &first);
             Group {
                 title,
                 help,
                 pages: b.pages,
-                pages_exact: !b.open,
+                pages_exact: b.exact,
+                hides_pages: b.hides,
                 templates: b.templates.into_iter().collect(),
+                also_pages: b.also_pages,
+                also_pages_exact: b.also_exact,
+                also_templates: b.also.into_iter().collect(),
                 locations: tidy(b.locations),
                 cause,
             }
@@ -363,8 +450,8 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
     groups.sort_by(|a, b| {
         (!a.is_blocker())
             .cmp(&!b.is_blocker())
-            .then(a.pages_exact.cmp(&b.pages_exact))
-            .then(b.pages.cmp(&a.pages))
+            .then(b.hides_pages.cmp(&a.hides_pages))
+            .then((b.pages + b.also_pages).cmp(&(a.pages + a.also_pages)))
             .then(a.title.cmp(&b.title))
     });
     Diagnosis {

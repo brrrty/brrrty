@@ -420,6 +420,30 @@ fn layout_chain(
     }
 }
 
+/// Every string in `value`, with its key path from `path`: the values 11ty renders as
+/// templates under `permalink` and `eleventyComputed`.
+fn template_strings(
+    path: &str,
+    value: &Value,
+    line: Option<usize>,
+    out: &mut Vec<(String, String, Option<usize>)>,
+) {
+    match value {
+        Value::String(s) => out.push((path.to_string(), s.to_string(), line)),
+        Value::Object(o) => {
+            for (k, v) in o.iter() {
+                template_strings(&format!("{path}.{k}"), v, line, out);
+            }
+        }
+        Value::Array(a) => {
+            for (i, v) in a.iter().enumerate() {
+                template_strings(&format!("{path}[{i}]"), v, line, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The problem for `tags` that are neither a string nor a list.
 fn tags_problem(bad: &Value) -> Problem {
     Problem::error(
@@ -685,6 +709,20 @@ fn load_page_inner(
         );
     }
     let data_engine = DataEngine::new(&ext, over, shared.template_engines).map_err(over_problem)?;
+    if let Some(log) = shared.survey {
+        let mut strings = Vec::new();
+        for key in ["permalink", "eleventyComputed"] {
+            if let Some(v) = data.get(key) {
+                let line = if front.contains_key(key) {
+                    key_line(&text, key)
+                } else {
+                    None
+                };
+                template_strings(key, v, line, &mut strings);
+            }
+        }
+        log.data_strings(&shown, data_engine.lang, strings);
+    }
 
     // `page`, in the order 11ty fills it in, after any `page` keys of the
     // page's own.
@@ -2270,6 +2308,12 @@ fn build_once(
     // now have met a language that changes grammars, which the scan didn't
     // see, and then the build is redone instead.
     type Ready<'p> = Result<(usize, PathBuf, String, &'p Path), Refused>;
+    // A survey records a page refused for another page's missing content as needing that
+    // page, not as a blocker of its own.
+    let note = |log: &Log, shown: &Path, p: &Problem, other: Option<usize>| match other {
+        Some(j) => log.needs(shown, p, &prepared[j].source.shown),
+        None => log.problem(shown, p),
+    };
     let ready: Vec<Ready<'_>> = (0..prepared.len())
         .into_par_iter()
         .filter(|&i| writes(&prepared[i]))
@@ -2279,8 +2323,8 @@ fn build_once(
                 // A survey also records what the page's content would have been refused for.
                 if let Some(log) = log {
                     log.problem(&p.source.shown, &problem);
-                    if let Err((hidden, _)) = contents.content(i) {
-                        log.problem(&p.source.shown, &hidden);
+                    if let Err((hidden, other)) = contents.content(i) {
+                        note(log, &p.source.shown, &hidden, other);
                     }
                 }
                 return Err(Refused::Layout(problem));
@@ -2301,9 +2345,9 @@ fn build_once(
                     None,
                 ));
             };
-            let content = contents.content(i).inspect_err(|(p, _)| {
+            let content = contents.content(i).inspect_err(|(p, other)| {
                 if let Some(log) = log {
-                    log.problem(shown, p);
+                    note(log, shown, p, *other);
                 }
             })?;
             let guard = traps::install(settled.clone());
@@ -2317,7 +2361,7 @@ fn build_once(
             {
                 let problem = contents.needs_problem(i, j);
                 if let Some(log) = log {
-                    log.problem(shown, &problem);
+                    note(log, shown, &problem, Some(j));
                 }
                 return Err(Refused::Page(problem, Some(j)));
             }

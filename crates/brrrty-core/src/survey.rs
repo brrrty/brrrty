@@ -43,6 +43,16 @@ pub struct TemplateSurvey {
     /// The problems that stopped it before its pagination made any page:
     /// fixing them reveals pages no one can count yet.
     pub stopped: Vec<Problem>,
+    /// Problems that only say a page needs the content of a page in another
+    /// template (the second item), which was refused for its own reasons.
+    pub needs: Vec<(Problem, PathBuf)>,
+    /// The values 11ty renders as templates from its data: `permalink` and
+    /// every string in `eleventyComputed`, as `(key path, text, line)`, the
+    /// line being that of the top-level key in its front matter when it is
+    /// there.
+    pub(crate) data_strings: Vec<(String, String, Option<usize>)>,
+    /// The language those values render in.
+    pub(crate) data_lang: Option<Lang>,
     /// The template language that reads its body, when `lang_known`.
     pub(crate) lang: Option<Lang>,
     pub(crate) lang_known: bool,
@@ -82,10 +92,33 @@ impl Log {
         f(map.entry(template.to_path_buf()).or_default());
     }
 
+    /// Record that `template` was refused because it needs the content of a page of
+    /// `needed`, with the problem that says so.
+    pub fn needs(&self, template: &Path, p: &Problem, needed: &Path) {
+        self.with(template, |t| {
+            if !t.needs.iter().any(|(q, _)| q == p) {
+                t.needs.push((p.clone(), needed.to_path_buf()));
+            }
+        });
+    }
+
+    /// Record the values 11ty renders from `template`'s data, in `lang`.
+    pub fn data_strings(
+        &self,
+        template: &Path,
+        lang: Option<Lang>,
+        strings: Vec<(String, String, Option<usize>)>,
+    ) {
+        self.with(template, |t| {
+            t.data_lang = lang;
+            t.data_strings = strings;
+        });
+    }
+
     /// Record a problem that refused `template`.
     pub fn problem(&self, template: &Path, p: &Problem) {
         self.with(template, |t| {
-            if !t.problems.contains(p) {
+            if !t.problems.contains(p) && !t.needs.iter().any(|(q, _)| q == p) {
                 t.problems.push(p.clone());
             }
         });

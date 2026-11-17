@@ -90,15 +90,20 @@ impl<'a> Scanner<'a> {
     /// line where the template already has a problem of the same code is
     /// the same finding, and isn't added twice.
     pub fn add_findings(&mut self, templates: &mut BTreeMap<PathBuf, TemplateSurvey>) {
+        let js_files: BTreeSet<PathBuf> = self.js_keys.values().cloned().collect();
         for (shown, t) in templates.iter_mut() {
             if t.refused == 0 {
                 continue;
             }
             for p in self.template(shown, t) {
-                let seen = t
-                    .problems
-                    .iter()
-                    .any(|q| q.code == p.code && q.path == p.path && q.line == p.line);
+                // The build's report of the same thing: same cause, same place.
+                let cause = crate::doctor::causes(&p, &js_files);
+                let seen = t.problems.iter().any(|q| {
+                    q.code == p.code
+                        && q.path == p.path
+                        && q.line == p.line
+                        && crate::doctor::causes(q, &js_files) == cause
+                });
                 if !seen && !t.problems.contains(&p) {
                     t.problems.push(p);
                 }
@@ -123,7 +128,7 @@ impl<'a> Scanner<'a> {
             }
         }
         let mut done: BTreeSet<(PathBuf, Lang)> = BTreeSet::new();
-        let mut out = Vec::new();
+        let mut out = self.data_strings(shown, t);
         while let Some((shown, real, lang, front)) = queue.pop() {
             if !done.insert((shown.clone(), lang)) {
                 continue;
@@ -135,6 +140,70 @@ impl<'a> Scanner<'a> {
             }
         }
         out
+    }
+
+    /// What `permalink` and `eleventyComputed` use: 11ty renders them as templates in
+    /// the page's data language. One that doesn't parse is reported by the build.
+    fn data_strings(&self, shown: &Path, t: &TemplateSurvey) -> Vec<Problem> {
+        let Some(lang) = t.data_lang else {
+            return Vec::new();
+        };
+        let name = shown.display().to_string();
+        let mut out = Vec::new();
+        for (key, text, line) in &t.data_strings {
+            if !crate::templates::has_tags(lang, text) {
+                continue;
+            }
+            let mut found = Found::default();
+            match lang {
+                Lang::Liquid => match self.langs.liquid.parse_unchecked(&name, text) {
+                    Ok(t) => liquid::nodes(&t.nodes, &mut found),
+                    Err(_) => continue,
+                },
+                Lang::Nunjucks => match brrrty_nunjucks::parse(&name, text) {
+                    Ok(t) => nunjucks::nodes(&t.nodes, &mut found),
+                    Err(_) => continue,
+                },
+            }
+            let place = |p: Problem| {
+                let p = p.with_path(shown);
+                match line {
+                    Some(l) => p.at(*l, 1),
+                    None => p,
+                }
+            };
+            for (filter, _, _) in &found.filters {
+                if let Some(p) = self.unknown_filter(lang, filter) {
+                    out.push(place(Problem {
+                        message: format!("{} in `{key}`", p.message),
+                        ..p
+                    }));
+                }
+            }
+            for (var, _, _) in &found.reads {
+                if let Some(file) = self.js_keys.get(var)
+                    && !found.bound.contains(var)
+                {
+                    out.push(place(js_read(var, file, &format!(" in `{key}`"))));
+                }
+            }
+        }
+        out
+    }
+
+    /// The problem for a filter `lang` doesn't have, or `None` when it has it.
+    fn unknown_filter(&self, lang: Lang, filter: &str) -> Option<Problem> {
+        match lang {
+            Lang::Liquid if !self.langs.liquid.has_filter(filter) => Some(Problem::error(
+                codes::LIQUID_UNKNOWN_FILTER,
+                format!("undefined filter: {filter}"),
+            )),
+            Lang::Nunjucks if !self.langs.nunjucks.has_filter(filter) => Some(Problem::error(
+                codes::NUNJUCKS_RENDER,
+                format!("Error: filter not found: {filter}"),
+            )),
+            _ => None,
+        }
     }
 
     fn file(&mut self, shown: &Path, real: &Path, lang: Lang, front: bool) -> Arc<FileScan> {
@@ -196,25 +265,10 @@ impl<'a> Scanner<'a> {
             },
         };
         for (filter, line, column) in &found.filters {
-            let known = match lang {
-                Lang::Liquid => self.langs.liquid.has_filter(filter),
-                Lang::Nunjucks => self.langs.nunjucks.has_filter(filter),
-            };
-            if known {
-                continue;
+            if let Some(p) = self.unknown_filter(lang, filter) {
+                out.problems
+                    .push(p.with_path(shown).at(line + offset, *column));
             }
-            let p = match lang {
-                Lang::Liquid => Problem::error(
-                    codes::LIQUID_UNKNOWN_FILTER,
-                    format!("undefined filter: {filter}"),
-                ),
-                Lang::Nunjucks => Problem::error(
-                    codes::NUNJUCKS_RENDER,
-                    format!("Error: filter not found: {filter}"),
-                ),
-            };
-            out.problems
-                .push(p.with_path(shown).at(line + offset, *column));
         }
         let mut reported = BTreeSet::new();
         for (var, line, column) in &found.reads {
@@ -225,16 +279,9 @@ impl<'a> Scanner<'a> {
                 continue;
             }
             out.problems.push(
-                Problem::error(
-                    codes::DATA_JS_UNSUPPORTED,
-                    format!(
-                        "this template reads `{var}`, which {}, a JavaScript data file, sets",
-                        file.display()
-                    ),
-                )
-                .with_path(shown)
-                .at(line + offset, *column)
-                .with_help(js_help(file)),
+                js_read(var, file, "")
+                    .with_path(shown)
+                    .at(line + offset, *column),
             );
         }
         let loader = match lang {
@@ -259,6 +306,18 @@ impl<'a> Scanner<'a> {
         }
         out
     }
+}
+
+/// The problem for a read of `var`, which the JavaScript data file `file` sets.
+fn js_read(var: &str, file: &Path, suffix: &str) -> Problem {
+    Problem::error(
+        codes::DATA_JS_UNSUPPORTED,
+        format!(
+            "this template reads `{var}`, which {}, a JavaScript data file, sets{suffix}",
+            file.display()
+        ),
+    )
+    .with_help(js_help(file))
 }
 
 mod liquid {
