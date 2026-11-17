@@ -436,53 +436,108 @@ fn includes(files: &mut [File], g: &Global) {
 /// `import` and `from`.
 const INCLUDE_TAGS: [&str; 6] = ["include", "render", "layout", "extends", "import", "from"];
 
-/// The name of the tag that starts `tag` (the text after `{%` and its
-/// whitespace control), when it is `name`: followed by anything but a
-/// letter, digit or `_`.
+/// How deep `{% liquid %}` tags nested as statements are read; deeper ones
+/// could hold anything.
+const MAX_LIQUID_DEPTH: usize = 16;
+
+/// The name of the tag that starts `tag` (a [`Tag`]'s text), when it is
+/// `name`: followed by anything but a letter, digit or `_`.
 fn tag_named<'t>(tag: &'t str, name: &str) -> Option<&'t str> {
     tag.strip_prefix(name)
         .filter(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
 }
 
-/// The text after a `{%` and its whitespace control (`{%-`), spaces and
-/// line breaks included, as both languages read a tag's name.
-fn after_open(rest: &str) -> &str {
-    rest.trim_start_matches('-').trim_start()
+/// One tag as Liquid or Nunjucks reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Tag<'t> {
+    /// 1-based: the line of its `{%`, or of its statement.
+    line: usize,
+    /// From its name to its end: after `{%`, its whitespace control (`-`)
+    /// and any spaces and line breaks, up to `%}` (or the text's end).
+    text: &'t str,
+    /// Whether a `%}` ends it.
+    closed: bool,
+    /// `{% liquid %}` tags nested deeper than [`MAX_LIQUID_DEPTH`]: what
+    /// it holds isn't read, and could be anything.
+    unknown: bool,
 }
 
-/// The files `text`'s include tags ([`INCLUDE_TAGS`]) name, given to
-/// `name`, and those a Liquid `{% liquid %}` tag's `include`, `render` and
-/// `layout` statements name; false when one names its file with anything
-/// but one string, which could be any file.
-fn included(text: &str, name: &mut dyn FnMut(&str)) -> bool {
+/// Every tag in `text`, the one place both scanners ([`tags`] and
+/// [`included`]) find them: each `{%` (`{%-`), and each statement of a
+/// Liquid `{% liquid %}` tag, which Liquid runs as a tag of its own
+/// without `{%`, nested `liquid` statements included. A `{%` inside
+/// another tag counts too: reading more never misses one.
+fn all_tags(text: &str) -> Vec<Tag<'_>> {
+    let mut out = Vec::new();
+    let mut line = 1;
+    let mut counted = 0;
     let mut rest = text;
     while let Some(at) = rest.find("{%") {
+        let start = text.len() - rest.len() + at;
+        line += text[counted..start].matches('\n').count();
+        counted = start;
         rest = &rest[at + 2..];
-        let tag = after_open(rest);
-        // One statement per line, up to the tag's end.
+        let (raw, closed) = match rest.find("%}") {
+            Some(end) => (&rest[..end], true),
+            None => (rest, false),
+        };
+        let tag = raw.trim_start_matches('-').trim_start();
+        out.push(Tag {
+            line,
+            text: tag,
+            closed,
+            unknown: false,
+        });
         if let Some(body) = tag_named(tag, "liquid") {
-            let Some((body, _)) = body.split_once("%}") else {
-                return false;
-            };
-            for statement in body.lines() {
-                let statement = statement.trim_start();
-                let Some(args) = ["include", "render", "layout"]
-                    .iter()
-                    .find_map(|t| tag_named(statement, t))
-                else {
-                    continue;
-                };
-                match literal(args, true) {
-                    Some(file) => name(file),
-                    None => return false,
-                }
-            }
+            let body_line = line + raw[..raw.len() - body.len()].matches('\n').count();
+            statements(body, body_line, 1, &mut out);
+        }
+    }
+    out
+}
+
+/// The statements of a `{% liquid %}` tag's `body`, which starts on line
+/// `line`: one per line, as tags. A `liquid` statement's own statement is
+/// the rest of its line.
+fn statements<'t>(body: &'t str, line: usize, depth: usize, out: &mut Vec<Tag<'t>>) {
+    for (i, statement) in body.split('\n').enumerate() {
+        let text = statement.trim().trim_end_matches('-').trim_end();
+        if text.is_empty() {
             continue;
         }
-        let Some(args) = INCLUDE_TAGS.iter().find_map(|t| tag_named(tag, t)) else {
+        out.push(Tag {
+            line: line + i,
+            text,
+            closed: true,
+            unknown: false,
+        });
+        if let Some(rest) = tag_named(text, "liquid") {
+            if depth >= MAX_LIQUID_DEPTH {
+                out.push(Tag {
+                    line: line + i,
+                    text,
+                    closed: true,
+                    unknown: true,
+                });
+            } else {
+                statements(rest, line + i, depth + 1, out);
+            }
+        }
+    }
+}
+
+/// The files `text`'s include tags ([`INCLUDE_TAGS`], as [`all_tags`]
+/// finds them) name, given to `name`; false when one names its file with
+/// anything but one string, which could be any file.
+fn included(text: &str, name: &mut dyn FnMut(&str)) -> bool {
+    for tag in all_tags(text) {
+        if tag.unknown || (!tag.closed && tag_named(tag.text, "liquid").is_some()) {
+            return false;
+        }
+        let Some(args) = INCLUDE_TAGS.iter().find_map(|t| tag_named(tag.text, t)) else {
             continue;
         };
-        match literal(args, false) {
+        match literal(args).filter(|_| tag.closed) {
             Some(file) => name(file),
             None => return false,
         }
@@ -490,10 +545,10 @@ fn included(text: &str, name: &mut dyn FnMut(&str)) -> bool {
     true
 }
 
-/// The file an include tag's arguments name, when they start with one
-/// string and go on only as a tag naming its file that way can: to the
-/// tag's end, or (`statement`, in a `{% liquid %}` tag) the line's.
-fn literal(args: &str, statement: bool) -> Option<&str> {
+/// The file an include tag's arguments (up to the tag's end) name, when
+/// they start with one string and go on only as a tag naming its file
+/// that way can.
+fn literal(args: &str) -> Option<&str> {
     let args = args.trim_start();
     let q = args.chars().next().filter(|c| *c == '"' || *c == '\'')?;
     let end = args[1..].find(q)?;
@@ -506,9 +561,7 @@ fn literal(args: &str, statement: bool) -> Option<&str> {
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .next()
         .unwrap_or("");
-    let plain = (statement && after.trim_end().trim_end_matches('-').is_empty())
-        || after.starts_with("%}")
-        || after.starts_with("-%}")
+    let plain = after.trim_end().trim_end_matches('-').is_empty()
         || after.starts_with(',')
         || ["with", "for", "as", "import", "ignore", "only"].contains(&word)
         || (!word.is_empty() && after[word.len()..].trim_start().starts_with(':'));
@@ -598,35 +651,28 @@ fn add_word(out: &mut Vec<(usize, String)>, line: usize, word: &str) {
     out.push((line, word));
 }
 
-/// The languages `text`'s `{% highlight %}` tags could load, with the
-/// line each tag's `{%` is on: the first argument of every tag (quotes
-/// removed, for Nunjucks). Both languages allow spaces and line breaks
-/// after `{%` and inside the tag, so a tag is read across lines. When
-/// Nunjucks may read the text (`nunjucks`), a tag whose arguments aren't
-/// one string could load any language, and so could a tag whose arguments
-/// start on another line.
+/// The languages `text`'s `{% highlight %}` tags (as [`all_tags`] finds
+/// them, `highlight` statements of `{% liquid %}` tags included) could
+/// load, with each tag's line: the first argument (quotes removed, for
+/// Nunjucks). When Nunjucks may read the text (`nunjucks`), a tag whose
+/// arguments aren't one string could load any language. So could a tag
+/// whose arguments start on another line, one that never ends, and
+/// `{% liquid %}` tags nested too deep to read.
 fn tags(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
     let mut out = Vec::new();
-    let mut line = 1;
-    let mut counted = 0;
-    let mut rest = text;
-    while let Some(at) = rest.find("{%") {
-        let start = text.len() - rest.len() + at;
-        line += text[counted..start].matches('\n').count();
-        counted = start;
-        rest = &rest[at + 2..];
-        let Some(args) = after_open(rest).strip_prefix("highlight").filter(|a| {
+    for tag in all_tags(text) {
+        if tag.unknown {
+            add_word(&mut out, tag.line, &format!("{{{{ {} }}}}", tag.text));
+            continue;
+        }
+        let Some(args) = tag.text.strip_prefix("highlight").filter(|a| {
             a.is_empty()
                 || a.starts_with(char::is_whitespace)
-                || a.starts_with("%}")
-                || a.starts_with("-%}")
+                || a.trim_start_matches('-').trim().is_empty()
                 || (nunjucks && a.starts_with(['"', '\'']))
         }) else {
             continue;
         };
-        // Up to the tag's end, or all that is left.
-        let whole = args;
-        let args = args.split("%}").next().unwrap_or("");
         let written = args.trim().trim_end_matches('-').trim_end();
         let lead = &args[..args.len() - args.trim_start().len()];
         let word = written
@@ -635,14 +681,11 @@ fn tags(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
             .unwrap_or("");
         let word = word.trim_matches(['"', '\'']);
         if !word.is_empty() {
-            add_word(&mut out, line, word);
+            add_word(&mut out, tag.line, word);
         }
-        // The arguments start on another line, or Nunjucks evaluates them
-        // as an expression other than one string: the language could be
-        // any.
-        let cut = lead.contains('\n') || (word.is_empty() && !rest.contains("%}"));
-        if cut || (nunjucks && !word.is_empty() && !one_string(whole)) {
-            add_word(&mut out, line, &format!("{{{{ {written} }}}}"));
+        let cut = lead.contains('\n') || (word.is_empty() && !tag.closed);
+        if cut || (nunjucks && !word.is_empty() && !one_string(args)) {
+            add_word(&mut out, tag.line, &format!("{{{{ {written} }}}}"));
         }
     }
     out
@@ -657,8 +700,8 @@ fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
     out
 }
 
-/// Whether Nunjucks tag arguments are one string literal without escapes,
-/// up to the tag's end.
+/// Whether Nunjucks tag arguments (up to the tag's end) are one string
+/// literal without escapes.
 fn one_string(args: &str) -> bool {
     let args = args.trim_start();
     let Some(q) = args.chars().next().filter(|c| *c == '"' || *c == '\'') else {
@@ -668,8 +711,8 @@ fn one_string(args: &str) -> bool {
         return false;
     };
     let body = &args[1..1 + end];
-    let after = args[2 + end..].trim_start();
-    !body.contains('\\') && (after.starts_with("%}") || after.starts_with("-%}"))
+    let after = args[2 + end..].trim();
+    !body.contains('\\') && (after.is_empty() || after == "-")
 }
 
 /// markdown-it's backslash escapes: `\` before ASCII punctuation goes.
@@ -1033,6 +1076,69 @@ mod tests {
             "{% highlight c %}int x;{% endhighlight %}\n{%\n  highlight regex %}/a/{% endhighlight %}\n",
         );
         assert_eq!(found_in(&[page], None, BOTH, &none), ["src/a.liquid:2"]);
+    }
+
+    /// Both scanners read their tags from `all_tags`: each `{%`, and each
+    /// statement of a `{% liquid %}` tag, nested ones included.
+    #[test]
+    fn every_tag_is_found_in_one_place() {
+        let text =
+            "a {%- if x -%}\n{% liquid\n  # c\n  liquid include 'n.md'\n\n  echo 1 -%}{%\nendif";
+        let got: Vec<(usize, &str, bool, bool)> = all_tags(text)
+            .iter()
+            .map(|t| (t.line, t.text, t.closed, t.unknown))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (1, "if x -", true, false),
+                (
+                    2,
+                    "liquid\n  # c\n  liquid include 'n.md'\n\n  echo 1 -",
+                    true,
+                    false
+                ),
+                (3, "# c", true, false),
+                (4, "liquid include 'n.md'", true, false),
+                (4, "include 'n.md'", true, false),
+                (6, "echo 1", true, false),
+                (6, "endif", false, false),
+            ]
+        );
+        // Nested past the cap: unknown, which both scanners count as any.
+        let deep = format!(
+            "{{% {}include 'x' %}}",
+            "liquid ".repeat(MAX_LIQUID_DEPTH + 1)
+        );
+        assert!(all_tags(&deep).iter().any(|t| t.unknown));
+        assert!(!included(&deep, &mut |_| {}));
+        assert!(tags(&deep, false).iter().any(|(_, l)| l.starts_with("{{")));
+    }
+
+    /// Re-review 1: a `highlight` statement in a `{% liquid %}` tag, and an
+    /// include in a `liquid` statement nested in one, both count.
+    #[test]
+    fn liquid_statements_are_tags() {
+        let none = Data::new();
+        let page = (
+            "a.liquid",
+            "{% highlight c %}int x;{% endhighlight %}\n{% liquid\nhighlight regex\necho \"/a/\"\nendhighlight\n%}\n",
+        );
+        assert_eq!(found_in(&[page], None, BOTH, &none), ["src/a.liquid:3"]);
+        let notes = (
+            "notes.md",
+            "- `{% highlight regex %}/a/{% endhighlight %}`\n",
+        );
+        let page = (
+            "a.liquid",
+            "{% highlight c %}int x;{% endhighlight %}\n{% liquid\nliquid include \"notes.md\"\n%}\n",
+        );
+        assert!(
+            found_in(&[page, notes], None, BOTH, &none).contains(&"src/notes.md:1".to_string())
+        );
+        // A nested include of a variable could be any file.
+        let page = ("a.liquid", "{% liquid\n  liquid include name\n%}\n");
+        assert!(!found_in(&[page, notes], None, BOTH, &none).is_empty());
     }
 
     #[test]
