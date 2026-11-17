@@ -2,9 +2,18 @@
 layout: base.njk
 description: Brrrty is a static site generator written in Rust. It builds your existing 11ty site, with byte-compatible output, in a fraction of the time.
 ---
-{%- comment -%} The latest release, read from the changelog page at build time. {%- endcomment -%}
+{%- comment -%} The latest release, read from the changelog page at build time: the first heading that isn't "Unreleased". {%- endcomment -%}
 {%- assign changelog = collections.all | where: "url", "/changelog/" | first -%}
-{%- assign release = changelog.templateContent | split: "<h2>" | slice: 1 | first | split: " - " | first -%}
+{%- assign sections = changelog.templateContent | split: "<h2>" -%}
+{%- assign release = "" -%}
+{%- for section in sections offset: 1 -%}
+  {%- if release == "" -%}
+    {%- assign heading = section | split: "</h2>" | first -%}
+    {%- unless heading contains "Unreleased" -%}
+      {%- assign release = heading | split: " - " | first -%}
+    {%- endunless -%}
+  {%- endif -%}
+{%- endfor -%}
 <div class="home">
   <section class="hero" aria-labelledby="claim">
     <div class="hero-main">
@@ -56,6 +65,7 @@ description: Brrrty is a static site generator written in Rust. It builds your e
     <div class="axis" aria-hidden="true"><span style="--i: 0">0</span><span style="--i: 1">1</span><span style="--i: 2">2</span><span style="--i: 3">3</span><span style="--i: 4">4 s</span></div>
     <figcaption>
       <p class="match"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg> 2,272 of 2,272 files match, compared file by file against 11ty&nbsp;3.1.8 output on the GitLab runner.</p>
+      <p class="bench-public">Public benchmark: a generated 2,069-file blog on a GitHub Actions runner builds in 1.31&nbsp;s with Brrrty and 5.89&nbsp;s with 11ty, 4.5&times; faster, every file a match. <a href="https://github.com/brrrty/brrrty/actions/workflows/bench.yml">Run it yourself</a>.</p>
     </figcaption>
   </figure>
 
@@ -106,7 +116,7 @@ config.add_collection("posts", |api|
   <section class="band band-small" aria-labelledby="name">
     <h2 id="name">The name</h2>
     <div class="band-body">
-      <p>Brrr + Eleventy = Brrrty. It's also a nod to Bertie, who holds the Guinness World Record for the fastest tortoise.</p>
+      <p>Brrr + Eleventy = Brrrty, as in "money printer go brrr". It's also a nod to Bertie, who holds the Guinness World Record for the fastest tortoise.</p>
     </div>
   </section>
 

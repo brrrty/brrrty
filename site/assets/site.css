@@ -816,6 +816,17 @@ main { flex: 1; }
 .foot-inner a { color: var(--fg-2); }
 .foot-inner code { font-size: 0.95em; }
 .foot-mark { font-weight: 700; letter-spacing: -0.045em; color: var(--fg); font-size: 1rem; margin-right: auto !important; }
+.foot-wordmark { display: inline-flex; align-items: center; line-height: 1; }
+.foot-wordmark::after {
+  content: "";
+  width: 0.34em;
+  height: 0.34em;
+  margin-left: 0.04em;
+  align-self: flex-end;
+  margin-bottom: 0.08em;
+  border-radius: 1px;
+  background: var(--accent);
+}
 
 @media (max-width: 26rem) {
   .masthead-inner { gap: 0.5rem; }
