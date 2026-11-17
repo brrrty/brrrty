@@ -212,3 +212,55 @@ fn check(json: &str) {
             .join("\n")
     );
 }
+
+/// Escapes and parses the probe corpus doesn't reach. Expected values are what Nunjucks 3.2.4
+/// printed with `autoescape: true` for the same templates and data.
+#[test]
+fn dump_escapes_and_int_signs_match_nunjucks() {
+    let engine = engine();
+    let o = obj(&[
+        ("a", Value::Undefined),
+        (
+            "b",
+            Value::Array(Arc::new(vec![Value::Undefined, Value::Null])),
+        ),
+        ("c", Value::Number(1.0)),
+    ]);
+    let s = Value::String("a\u{8}b\u{c}c\td\ne\"f\\g\u{1}".into());
+    let data = obj(&[("s", s), ("o", o)]);
+    let render = |t: &str| {
+        let t = engine.compile("t", t).unwrap();
+        engine.render(&t, &data, &NoIncludes)
+    };
+    for (t, want) in [
+        ("{{ s | dump | safe }}", r#""a\bb\fc\td\ne\"f\\g\u0001""#),
+        ("{{ o | dump | safe }}", r#"{"b":[null,null],"c":1}"#),
+        ("{{ \"+12\" | int }}", "12"),
+        ("{{ \"0x1F\" | int }}", "0"),
+        ("{{ \"-0x1F\" | int }}", "0"),
+        ("{{ \" 42abc\" | int }}", "42"),
+        ("{{ \"+3.9\" | float }}", "3.9"),
+    ] {
+        assert_eq!(render(t).unwrap(), want, "{t}");
+    }
+}
+
+fn obj(pairs: &[(&str, Value)]) -> Value {
+    Value::Object(Arc::new(
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect(),
+    ))
+}
+
+/// Nunjucks fails with "filter not found: nope"; Brrrty names the filter too.
+#[test]
+fn an_unknown_filter_is_an_error_that_names_it() {
+    let engine = engine();
+    let err = engine
+        .compile("t", "{{ x | nope }}")
+        .and_then(|t| engine.render(&t, &Value::Undefined, &NoIncludes))
+        .unwrap_err();
+    assert!(err.message.contains("nope"), "{err}");
+}

@@ -442,3 +442,51 @@ fn doubling_append_stops_at_the_real_limit() {
     assert!(e.message.contains("512 MiB"), "{e}");
     assert!(e.help.is_some());
 }
+
+// ---- edges the probe corpus doesn't reach -------------------------------------------------
+
+fn render_with(src: &str, data: Value) -> Result<String, brrrty_liquid::LiquidError> {
+    let engine = Engine::new(EngineOptions {
+        strict_filters: true,
+        timezone: Tz::Utc,
+    });
+    engine
+        .parse("t", src)
+        .and_then(|t| engine.render(&t, &data, &NoPartials))
+}
+
+/// LiquidJS 10.30.1 prints `"a\bb\fc\td\ne\"f\\g\u0001"` for both: `JSON.stringify`'s escapes.
+#[test]
+fn json_escapes_control_characters_as_json_stringify_does() {
+    let mut o = BTreeMap::new();
+    o.insert(
+        "s".to_string(),
+        Value::String("a\u{8}b\u{c}c\td\ne\"f\\g\u{1}".into()),
+    );
+    let data = Value::Object(std::sync::Arc::new(o.into_iter().collect()));
+    for t in ["{{ s | json }}", "{{ s | jsonify }}"] {
+        assert_eq!(
+            render_with(t, data.clone()).unwrap(),
+            r#""a\bb\fc\td\ne\"f\\g\u0001""#,
+            "{t}"
+        );
+    }
+}
+
+/// LiquidJS takes any zone `Intl` knows: `{{ 0 | date: "%H:%M", "Europe/Paris" }}` is `01:00`
+/// there. Brrrty can't give that offset yet, so the page is refused rather than written with
+/// the wrong time; a name `Intl` doesn't know fails with LiquidJS's own message, and UTC's
+/// names in any case work.
+#[test]
+fn date_zones_are_utc_refused_or_invalid() {
+    let empty = || Value::Object(Default::default());
+    assert_eq!(
+        render_with("{{ 0 | date: '%H:%M', 'utc' }}", empty()).unwrap(),
+        "00:00"
+    );
+    let e = render_with("{{ 0 | date: '%H:%M', 'Europe/Paris' }}", empty()).unwrap_err();
+    assert!(e.message.contains("`Europe/Paris` is not supported"), "{e}");
+    assert!(e.help.as_deref().unwrap().contains("minutes west of UTC"));
+    let e = render_with("{{ 0 | date: '%H:%M', 'Nowhere/Land' }}", empty()).unwrap_err();
+    assert_eq!(e.message, "Invalid time zone specified: Nowhere/Land");
+}
