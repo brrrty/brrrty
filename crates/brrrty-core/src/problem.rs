@@ -7,6 +7,7 @@ pub mod codes {
     pub const COMPUTED_UNSUPPORTED: &str = "computed-unsupported";
     pub const CONFIG_ERROR: &str = "config-error";
     pub const CONFIG_INVALID: &str = "config-invalid";
+    pub const CONFIG_LATE_CALL: &str = "config-late-call";
     pub const CONFIG_LIMIT: &str = "config-limit";
     pub const CONFIG_SYNTAX: &str = "config-syntax";
     pub const CONFIG_UNREADABLE: &str = "config-unreadable";

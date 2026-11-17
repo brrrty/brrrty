@@ -1473,6 +1473,13 @@ fn shared_problems(found: Vec<Problem>, noun: &str) -> Vec<Problem> {
 
 /// Sort by path then code, and in strict mode keep only up to the first error.
 fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport {
+    sort_problems(&mut report, strict);
+    report.elapsed = start.elapsed();
+    report
+}
+
+/// [`finish`]'s order, and in strict mode only up to the first error.
+fn sort_problems(report: &mut BuildReport, strict: bool) {
     // A problem another causes comes after it, wherever their paths sort.
     report.problems.sort_by(|a, b| {
         a.follows
@@ -1490,8 +1497,6 @@ fn finish(mut report: BuildReport, strict: bool, start: Instant) -> BuildReport 
     {
         report.problems.truncate(i + 1);
     }
-    report.elapsed = start.elapsed();
-    report
 }
 
 /// Remove `<out>/.brrrty-serve`, and nothing else: only that exact name, only directly
@@ -1579,6 +1584,12 @@ fn build_with(opts: &BuildOptions, markdown: &dyn MarkdownRenderer, mode: Mode) 
         Ok(pool) => {
             let mut report = pool.install(|| build_in_pool(opts, markdown, start, mode));
             report.reads = opts.config.reads.paths();
+            // Warnings the config's scripts raised while pages rendered.
+            let late = opts.config.late_problems.all();
+            if !late.is_empty() {
+                report.problems.extend(late);
+                sort_problems(&mut report, opts.strict);
+            }
             report
         }
         Err(e) => {

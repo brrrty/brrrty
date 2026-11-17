@@ -83,6 +83,32 @@ pub struct ConfigOptions {
     pub template_engines: TemplateEngines,
     /// What the config's and the data files' scripts read from the project folder.
     pub reads: FileReads,
+    /// Warnings found while pages render (a `config` call made too late), reported with the
+    /// build's.
+    pub late_problems: LateProblems,
+}
+
+/// Warnings a script raises while pages render, each kept once. Shared by the config's engine
+/// and the build, which adds them to its report.
+#[derive(Debug, Clone, Default)]
+pub struct LateProblems(std::sync::Arc<std::sync::Mutex<Vec<Problem>>>);
+
+impl LateProblems {
+    /// Note `p`, unless the same problem (message and place) is noted already.
+    pub fn add(&self, p: Problem) {
+        let mut v = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !v
+            .iter()
+            .any(|q| q.message == p.message && q.line == p.line && q.column == p.column)
+        {
+            v.push(p);
+        }
+    }
+
+    /// Everything noted so far.
+    pub fn all(&self) -> Vec<Problem> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
 }
 
 /// The files and folders a build's scripts read, listed or checked (found or not), as

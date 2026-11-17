@@ -61,7 +61,7 @@ pub enum Pending {
 }
 
 /// What the script set, in call order.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct State {
     /// Passthrough targets by source as written; `None` copies in place.
     pub passthrough: IndexMap<String, Option<String>>,
@@ -76,9 +76,10 @@ pub struct State {
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
     /// 11ty's markdown-it, once `amend_library("md", ...)` has been called.
     pub markdown_lib: Option<crate::markdown_rules::MdLib>,
-    /// Set once the script has run and what it set was taken: a `config` call after that
-    /// (from a filter or a collection while pages render) would change nothing.
-    pub closed: bool,
+    /// Where a `config` call made once the script has run (from a filter, a collection or a
+    /// global data function) is reported. The state is then a copy of what the script set,
+    /// which such a call changes to no effect, as 11ty's late calls do.
+    pub closed: Option<brrrty_core::LateProblems>,
 }
 
 /// The `config` object.
@@ -94,19 +95,23 @@ fn lock(state: &Arc<Mutex<State>>) -> MutexGuard<'_, State> {
     state.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The state, for a `config` call named `call`; an error once the config has loaded. 11ty
-/// ignores such a call (its engines and copies are set up already); Brrrty says so.
-fn open<'a>(
-    state: &'a Arc<Mutex<State>>,
-    call: &str,
-) -> Result<MutexGuard<'a, State>, Box<EvalAltResult>> {
+/// The state, for a `config` call named `call` at `pos`. Once the config has loaded, 11ty
+/// ignores such a call (its engines and file lists are set up already): Brrrty lets it change
+/// a copy, so it behaves as in 11ty and changes no output, and warns once per place.
+fn open<'a>(state: &'a Arc<Mutex<State>>, call: &str, pos: Position) -> MutexGuard<'a, State> {
     let guard = lock(state);
-    if guard.closed {
-        return Err(runtime(format!(
-            "{call} called while pages render; config can only change while it loads (11ty ignores such a call)"
-        )));
+    if let Some(late) = &guard.closed {
+        let p = brrrty_core::Problem::warning(
+            brrrty_core::codes::CONFIG_LATE_CALL,
+            format!(
+                "{call} was called while pages render, so it was ignored: config can only change while it loads (11ty ignores it too)"
+            ),
+        )
+        .with_path(crate::CONFIG_FILE)
+        .with_help("call it at the top level of brrrty.config.rhai instead");
+        late.add(crate::at(p, pos));
     }
-    Ok(guard)
+    guard
 }
 
 /// A value the script gave that Brrrty can't use, thrown as a Rhai error.
@@ -235,8 +240,11 @@ pub fn engine_for(
 
     e.register_fn(
         "add_passthrough_copy",
-        |c: &mut Config, from: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            open(&c.0, "config.add_passthrough_copy")?
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         from: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            open(&c.0, "config.add_passthrough_copy", ctx.call_position())
                 .passthrough
                 .insert(from.to_string(), None);
             Ok(())
@@ -244,8 +252,11 @@ pub fn engine_for(
     );
     e.register_fn(
         "add_passthrough_copy",
-        |c: &mut Config, map: Map| -> Result<(), Box<EvalAltResult>> {
-            let mut state = open(&c.0, "config.add_passthrough_copy")?;
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         map: Map|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut state = open(&c.0, "config.add_passthrough_copy", ctx.call_position());
             for (from, to) in map {
                 let to = to.into_immutable_string().map_err(|t| {
                     runtime(format!(
@@ -261,8 +272,12 @@ pub fn engine_for(
     );
     e.register_fn(
         "add_filter",
-        |c: &mut Config, name: ImmutableString, f: FnPtr| -> Result<(), Box<EvalAltResult>> {
-            open(&c.0, "config.add_filter")?
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString,
+         f: FnPtr|
+         -> Result<(), Box<EvalAltResult>> {
+            open(&c.0, "config.add_filter", ctx.call_position())
                 .filters
                 .insert(name.to_string(), FilterDef::Fn(f));
             Ok(())
@@ -270,10 +285,17 @@ pub fn engine_for(
     );
     e.register_fn(
         "add_nondeterministic_filter",
-        |c: &mut Config, name: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            open(&c.0, "config.add_nondeterministic_filter")?
-                .filters
-                .insert(name.to_string(), FilterDef::Nondeterministic);
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            open(
+                &c.0,
+                "config.add_nondeterministic_filter",
+                ctx.call_position(),
+            )
+            .filters
+            .insert(name.to_string(), FilterDef::Nondeterministic);
             Ok(())
         },
     );
@@ -296,7 +318,7 @@ pub fn engine_for(
                     pos,
                 ));
             }
-            let mut state = open(&c.0, "config.add_collection")?;
+            let mut state = open(&c.0, "config.add_collection", pos);
             if state.collections.contains_key(name.as_str()) {
                 return Err(invalid(
                     format!(
@@ -316,7 +338,7 @@ pub fn engine_for(
          name: ImmutableString|
          -> Result<(), Box<EvalAltResult>> {
             add_plugin(
-                &mut *open(&c.0, "config.add_plugin")?,
+                &mut open(&c.0, "config.add_plugin", ctx.call_position()),
                 &name,
                 None,
                 ctx.call_position(),
@@ -331,7 +353,7 @@ pub fn engine_for(
          options: Map|
          -> Result<(), Box<EvalAltResult>> {
             add_plugin(
-                &mut *open(&c.0, "config.add_plugin")?,
+                &mut open(&c.0, "config.add_plugin", ctx.call_position()),
                 &name,
                 Some(options),
                 ctx.call_position(),
@@ -352,7 +374,12 @@ pub fn engine_for(
                     "amend_library(\"{name}\", ...): Brrrty only has 11ty's Markdown library, \"md\""
                 )));
             }
-            let md = open(&c.0, "config.amend_library")?
+            let mut state = open(&c.0, "config.amend_library", ctx.call_position());
+            if state.closed.is_some() {
+                // 11ty's library is set up already: ignored, with the warning above.
+                return Ok(());
+            }
+            let md = state
                 .markdown_lib
                 .get_or_insert_with(crate::markdown_rules::MdLib::eleventy)
                 .clone();
@@ -377,8 +404,11 @@ pub fn engine_for(
     e.register_get("ignores", |c: &mut Config| Ignores(c.0.clone()));
     e.register_fn(
         "add",
-        |i: &mut Ignores, glob: ImmutableString| -> Result<(), Box<EvalAltResult>> {
-            open(&i.0, "config.ignores.add")?
+        |ctx: rhai::NativeCallContext,
+         i: &mut Ignores,
+         glob: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            open(&i.0, "config.ignores.add", ctx.call_position())
                 .ignores
                 .insert(glob.to_string());
             Ok(())
@@ -386,8 +416,11 @@ pub fn engine_for(
     );
     e.register_fn(
         "delete",
-        |i: &mut Ignores, glob: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
-            Ok(open(&i.0, "config.ignores.delete")?
+        |ctx: rhai::NativeCallContext,
+         i: &mut Ignores,
+         glob: ImmutableString|
+         -> Result<bool, Box<EvalAltResult>> {
+            Ok(open(&i.0, "config.ignores.delete", ctx.call_position())
                 .ignores
                 .shift_remove(glob.as_str()))
         },
@@ -408,7 +441,7 @@ pub fn engine_for(
                     })?)
                 };
             add_global_data(
-                &mut open(&c.0, "config.add_global_data")?.global_data,
+                &mut open(&c.0, "config.add_global_data", ctx.call_position()).global_data,
                 name.to_string(),
                 pending,
             );

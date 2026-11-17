@@ -196,6 +196,8 @@ pub struct SiteConfig {
     pub markdown_rules: Option<brrrty_core::MarkdownRules>,
     /// What the script read from the project, and its filters and collections read later.
     pub reads: brrrty_core::FileReads,
+    /// Warnings its filters and collections raise while pages render.
+    pub late_problems: brrrty_core::LateProblems,
 }
 
 impl SiteConfig {
@@ -215,6 +217,7 @@ impl SiteConfig {
             feeds: self.feeds.clone(),
             template_engines: self.template_engines,
             reads: self.reads.clone(),
+            late_problems: self.late_problems.clone(),
         }
     }
 }
@@ -338,12 +341,16 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
             .map_err(|e| vec![runtime_problem(*e)])?;
     // Drop the scope before taking the state: nothing else holds it then.
     drop(scope);
+    let late_problems = brrrty_core::LateProblems::default();
     let state = {
         let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
         let taken = std::mem::take(&mut *guard);
-        // A `config` call from here on (a global data function, a filter, a collection) is an
-        // error: what the script set has been taken.
-        guard.closed = true;
+        // A `config` call from here on (a global data function, a filter, a collection)
+        // changes a copy, as 11ty ignores it, and is reported.
+        *guard = api::State {
+            closed: Some(late_problems.clone()),
+            ..taken.clone()
+        };
         taken
     };
     let global_data = api::resolve_global_data(&engine, &ast, state.global_data)
@@ -396,10 +403,11 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         markdown_rules,
         feeds: state.feeds,
         reads,
+        late_problems,
     })
 }
 
-fn at(p: Problem, pos: Position) -> Problem {
+pub(crate) fn at(p: Problem, pos: Position) -> Problem {
     match (pos.line(), pos.position()) {
         (Some(line), Some(col)) => p.at(line, col),
         (Some(line), None) => p.at(line, 1),

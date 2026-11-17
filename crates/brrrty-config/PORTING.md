@@ -127,10 +127,12 @@ panic's text; please report it.
 
 **`config` while pages render.** `config` can only change while the script
 runs. A `config.add_*` or `config.ignores` call after that (from a filter, a
-collection or a global data function that was handed `config`) is an error
-that refuses the page and names the call. 11ty 3.1.8 ignores such a call
-silently: a filter added then is unknown to the templates, a passthrough copy
-isn't made, and an ignore doesn't drop the page.
+collection or a global data function that was handed `config`) is ignored, as
+11ty 3.1.8 ignores it: a filter added then is unknown to the templates, a
+passthrough copy isn't made, and an ignore doesn't drop the page. So the pages
+build as 11ty writes them, and Brrrty warns (`config-late-call`) once for each
+place in the script that makes such a call, where 11ty says nothing. A warning
+never fails a build, `--strict` included.
 
 ## Rhai is not JavaScript
 

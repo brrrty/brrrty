@@ -617,11 +617,12 @@ outer.render("[a](/b)");
     }
 }
 
-/// A `config` call while pages render is an error that refuses the page and names the call.
-/// 11ty 3.1.8 ignores such a call: a filter added then is unknown to the templates, a
-/// passthrough copy isn't made, and an ignore doesn't drop the page.
+/// A `config` call while pages render is ignored, as 11ty 3.1.8 ignores it (a filter added
+/// then is unknown to the templates, a passthrough copy isn't made, an ignore doesn't drop the
+/// page), so every page builds as 11ty writes it; each place that makes one is warned about
+/// once.
 #[test]
-fn config_calls_while_pages_render_are_errors() {
+fn config_calls_while_pages_render_are_ignored_with_a_warning() {
     let script = r#"
 fn late_filter(cfg, v) { cfg.add_filter("late", |x| x); v }
 fn late_copy(cfg, v) { cfg.add_passthrough_copy("src/x.txt"); v }
@@ -635,15 +636,22 @@ config.add_filter("f4", Fn("late_data").curry(config));
     let (t, r) = site(
         script,
         &[
-            ("a.liquid", "{{ 1 | f1 }}"),
+            ("a.liquid", "{{ 1 | f1 }}{{ 2 | f1 }}"),
+            ("a2.liquid", "{{ 3 | f1 }}"),
             ("b.liquid", "{{ 1 | f2 }}"),
             ("c.liquid", "{{ 1 | f3 }}"),
-            ("d.liquid", "{{ 1 | f4 }}"),
-            ("ok.liquid", "fine"),
+            ("d.liquid", "{{ 1 | f4 }}{{ late }}"),
+            ("x.txt", "x"),
+            ("z.md", "z"),
         ],
     );
-    let e = errors(&r);
-    assert_eq!(e.len(), 4, "{e:#?}");
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    let warnings: Vec<&Problem> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::CONFIG_LATE_CALL)
+        .collect();
+    assert_eq!(warnings.len(), 4, "{warnings:#?}");
     for call in [
         "config.add_filter",
         "config.add_passthrough_copy",
@@ -651,12 +659,20 @@ config.add_filter("f4", Fn("late_data").curry(config));
         "config.add_global_data",
     ] {
         assert!(
-            e.iter().any(|p| p.message.contains(&format!(
-                "{call} called while pages render; config can only change while it loads"
-            ))),
-            "{call}: {e:#?}"
+            warnings.iter().any(|p| p.severity == Severity::Warning
+                && p.message.contains(&format!(
+                    "{call} was called while pages render, so it was ignored: config can only change while it loads"
+                ))
+                && p.line.is_some()),
+            "{call}: {warnings:#?}"
         );
     }
-    assert_eq!(out(&t, "ok/index.html").unwrap(), "fine");
-    assert!(out(&t, "a/index.html").is_none());
+    // As 11ty 3.1.8 writes them.
+    assert_eq!(out(&t, "a/index.html").unwrap(), "12");
+    assert_eq!(out(&t, "a2/index.html").unwrap(), "3");
+    assert_eq!(out(&t, "b/index.html").unwrap(), "1");
+    assert_eq!(out(&t, "c/index.html").unwrap(), "1");
+    assert_eq!(out(&t, "d/index.html").unwrap(), "1");
+    assert_eq!(out(&t, "z/index.html").unwrap(), "<p>z</p>\n");
+    assert!(out(&t, "x.txt").is_none());
 }
