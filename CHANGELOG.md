@@ -3,6 +3,12 @@
 ## Unreleased
 
 - In `brrrty.config.rhai`, a constant number inside `${...}` prints as JavaScript prints it, as a variable already did: `${10.0}` and `const PER_PAGE = 10.0; `${PER_PAGE}`` give `10`, not `10.0`, and `${1e21}` gives `1e+21`. Rhai's optimizer folded constants into the string with Rhai's own number formatting; it is now off for config and data scripts.
+- Rhai scripts get JavaScript's number formatting and string order, each checked against Node: `to_fixed(n, digits)` is V8's `toFixed`, rounding the number's exact value with ties away from zero (`to_fixed(1.005, 2)` is `"1.00"`, `to_fixed(2.5, 0)` is `"3"`); `to_locale_string(n)` is `toLocaleString('en-US')` (`1,234.568`); `locale_compare(a, b)` is `localeCompare` in an English locale. Other locales and options are refused by name.
+- Rhai scripts can build local dates as `new Date(y, m, d, h, mi, s, ms)` does: `date(2026, 4, 10)`, with `get_full_year()`, `get_month()`, `get_date()`, `get_day()`, `get_hours()`, `get_minutes()`, `get_seconds()`, `get_milliseconds()`, `get_timezone_offset()` and `to_iso_string()`.
+- `random()` in a Rhai script is an error that explains why: a random value can never match 11ty's output. `config.add_nondeterministic_filter(name)` stays the way to stand in for a filter that shuffles.
+- In Nunjucks templates, a number's `toLocaleString()` and a string's `localeCompare()` run as in Node with the `en-US` locale; another locale or options refuse the page.
+- `String(n)` now prints the even digits when a number is exactly halfway between two shortest forms, as V8 does: `9302184022144.5625` prints `9302184022144.562`, not `...563`. Numbers in templates and Rhai print this way too.
+- Local dates past the year 250,000 or before -250,000 use the time zone's offset (they used UTC's), so their hours and days match Node out to the end of JavaScript's date range.
 
 ## 0.0.15 - 2026-11-17
 

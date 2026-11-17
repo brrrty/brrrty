@@ -175,7 +175,14 @@ Values cross into the script as 11ty would give them to a JavaScript filter, and
 | `JSON.stringify(v)` | | `json_stringify(v)` |
 | `{}` built up key by key | `#{ }` maps sort their keys | `object()`, which keeps insertion order |
 | `arr.sort()`, `arr.sort(fn)` | replaced with JavaScript's | `arr.sort()`, `arr.sort(\|a, b\| ...)`, or `js_sort(arr)` and `js_sort_by(arr, fn)` for a sorted copy |
+| `n.toFixed(digits)` | | `to_fixed(n, digits)`, V8's rounding exactly |
+| `n.toLocaleString("en-US")` | | `to_locale_string(n)` |
+| `a.localeCompare(b)` | | `locale_compare(a, b)` |
+| `Math.random()` | | not available: see below |
 | `new Date(ms)` | | `date(ms)` |
+| `new Date(y, m, d, h, mi, s, ms)` | | `date(y, m, d, h, mi, s, ms)`, from two to seven parts, in the local time zone |
+| `d.getFullYear()`, `d.getMonth()`, `d.getDate()`, `d.getDay()`, `d.getHours()`, ... | | `d.get_full_year()`, `d.get_month()`, `d.get_date()`, `d.get_day()`, `d.get_hours()`, ... (local time) |
+| `d.toISOString()` | | `d.to_iso_string()` |
 | `Date.now()` | | `get_time(now())` |
 | `new Date().getFullYear()` | | `year(now())` |
 | `d.toUTCString()` | | `date_to_utc_string(d)` |
@@ -187,6 +194,12 @@ Values cross into the script as 11ty would give them to a JavaScript filter, and
 | `execSync("git rev-parse HEAD")` | scripts can't run commands | `git_head()` |
 
 Sorting runs V8's own TimSort, so even a comparator that isn't a consistent ordering gives the order Node gives. Regular expressions accept only syntax that means the same in JavaScript and in Rust: no lookaround and no backreferences, among a few others, and a pattern outside that is an error naming it.
+
+`to_fixed`, `to_locale_string` and `locale_compare` give what Node gives, checked against it on hundreds of thousands of values. `to_fixed` rounds the number's exact binary value, as V8 does: `to_fixed(2.5, 0)` is `"3"`, but `to_fixed(1.005, 2)` is `"1.00"`, because 1.005 is stored as 1.00499999... `to_locale_string(n)` is the `en-US` format: up to three decimals, thousands grouped with commas (`1,234.568`). `locale_compare(a, b)` is the order Node sorts strings in with an English locale: case and accents count only after the letters (`a`, `A`, `b`, `é`, `f`). In Node, `toLocaleString()` and `localeCompare()` without a locale follow the computer's language settings, and Brrrty matches the `en-US` result, so another locale, or options, is an error rather than a guess.
+
+`Math.random()` has no stand-in: a page built from a random number differs on every build, so it can never be the same file as 11ty's. Calling `random()` is an error that says so. If your JavaScript config has a filter that shuffles or picks at random, declare it with `config.add_nondeterministic_filter(name)`: pages that use it aren't written, and the rest of the site builds.
+
+Local dates (`date(y, m, d)`, the `get_*` methods) use the time zone in the `TZ` environment variable, or the computer's, as Node does. Build on a machine set to the same zone as your 11ty builds, or set `TZ`.
 
 `object()` has `keys()`, `values()`, `entries()`, `len()`, `contains(k)` and `remove(k)`, and `for k in o` walks its keys in order. `object(map)` copies a map in. Objects that come from Brrrty, such as page data, are `object()`s already, so returning one as it came keeps its order.
 

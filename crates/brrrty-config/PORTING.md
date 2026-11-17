@@ -69,7 +69,14 @@ global::NAME", which refuses the page that used it.)
 only the pages that hit them:
 
 - A filter that uses randomness: declare it with
-  `config.add_nondeterministic_filter("name")`.
+  `config.add_nondeterministic_filter("name")`. There's no `Math.random`:
+  `random()` is an error. A random value can't give 11ty's bytes, and a
+  seeded stand-in would silently differ from 11ty, so Brrrty doesn't offer
+  one.
+- `toLocaleString()` and `localeCompare()` without a locale follow the
+  machine's language in Node (`de_DE` prints `1.234,5`). Brrrty's helpers
+  give the `en-US` result, which is what Node gives with `LANG` or
+  `LC_ALL` set to an English locale, or `C`.
 - Rhai's `timestamp()`, which reads the real clock: it throws an error that
   points to `now()`. Rhai's time functions (`elapsed` and the rest) aren't
   there either.
@@ -114,6 +121,13 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `if (x)` | Only `bool` is allowed | `if truthy(x)` |
 | `x \|\| y` | `\|\|` needs bools | `if truthy(x) { x } else { y }` |
 | `new Date(ts)` | | `date(ts)` takes a number, a date, `()` (invalid) or null (the epoch) |
+| `new Date(y, m, d, h, mi, s, ms)` | | `date(y, m, d, h, mi, s, ms)` with two to seven parts, in the local zone (`TZ`): parts roll over (`date(2026, 12, 0)` is 2026-12-31), fractions are dropped, a year 0-99 is 19xx, a time the clocks skip or repeat resolves as V8 does. Checked against Node in five zones |
+| `d.getFullYear()` ... `d.getMilliseconds()`, `d.getDay()`, `d.getTimezoneOffset()` | | `d.get_full_year()`, `get_month()`, `get_date()`, `get_day()`, `get_hours()`, `get_minutes()`, `get_seconds()`, `get_milliseconds()`, `get_timezone_offset()`: local time; `NaN` for an invalid date |
+| `d.toISOString()` | | `d.to_iso_string()`; an invalid date is an error, as JS throws |
+| `n.toFixed(d)` | | `to_fixed(n, d)` or `n.to_fixed(d)`: V8's exactly. It rounds the double's exact value and a tie goes away from zero (`2.5` gives `"3"`; `1.005` is 1.00499999..., so `to_fixed(1.005, 2)` is `"1.00"`); `1e21` and up print as `String(n)`; `-0` gives `"0.00"`, `-0.0001` gives `"-0.00"`. Digits outside 0-100 are an error (`RangeError`). `n` must be a number, as in JS: convert a string first. Checked against Node on 608,270 cases |
+| `n.toLocaleString('en-US')` | | `to_locale_string(n)` or `to_locale_string(n, "en-US")`: ICU's default format, the shortest digits rounded half up to 3 decimals, grouped by 3 (`1,234.568`, `-0`, `∞`). Any other locale, or options, is an error. Checked against Node on 300,000 values |
+| `a.localeCompare(b)` | | `locale_compare(a, b)`: -1, 0 or 1, ICU's root order (the `en-US` one: `a` < `A` < `á` < `b`). Another locale, or options, is an error, and so is a character new in Unicode 18 (Node 26's ICU is Unicode 17). Checked against Node on 316,129 pairs |
+| `Math.random()` | | not available. `random()` is an error that says why; for a filter that shuffles, use `config.add_nondeterministic_filter(name)` |
 | `new URL(u).hostname` | | `url_hostname(u)`, or `()` when `u` isn't an absolute URL |
 | `d.toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'})` | | `to_locale_date_string(d)` |
 | `Date.now()` | | `get_time(now())` (follows `SOURCE_DATE_EPOCH`) |
