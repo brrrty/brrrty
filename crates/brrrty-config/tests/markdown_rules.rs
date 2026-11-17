@@ -616,3 +616,47 @@ outer.render("[a](/b)");
         assert!(out(&t, "flip/index.html").is_none());
     }
 }
+
+/// A `config` call while pages render is an error that refuses the page and names the call.
+/// 11ty 3.1.8 ignores such a call: a filter added then is unknown to the templates, a
+/// passthrough copy isn't made, and an ignore doesn't drop the page.
+#[test]
+fn config_calls_while_pages_render_are_errors() {
+    let script = r#"
+fn late_filter(cfg, v) { cfg.add_filter("late", |x| x); v }
+fn late_copy(cfg, v) { cfg.add_passthrough_copy("src/x.txt"); v }
+fn late_ignore(cfg, v) { cfg.ignores.add("src/z.md"); v }
+fn late_data(cfg, v) { cfg.add_global_data("late", 1); v }
+config.add_filter("f1", Fn("late_filter").curry(config));
+config.add_filter("f2", Fn("late_copy").curry(config));
+config.add_filter("f3", Fn("late_ignore").curry(config));
+config.add_filter("f4", Fn("late_data").curry(config));
+"#;
+    let (t, r) = site(
+        script,
+        &[
+            ("a.liquid", "{{ 1 | f1 }}"),
+            ("b.liquid", "{{ 1 | f2 }}"),
+            ("c.liquid", "{{ 1 | f3 }}"),
+            ("d.liquid", "{{ 1 | f4 }}"),
+            ("ok.liquid", "fine"),
+        ],
+    );
+    let e = errors(&r);
+    assert_eq!(e.len(), 4, "{e:#?}");
+    for call in [
+        "config.add_filter",
+        "config.add_passthrough_copy",
+        "config.ignores.add",
+        "config.add_global_data",
+    ] {
+        assert!(
+            e.iter().any(|p| p.message.contains(&format!(
+                "{call} called while pages render; config can only change while it loads"
+            ))),
+            "{call}: {e:#?}"
+        );
+    }
+    assert_eq!(out(&t, "ok/index.html").unwrap(), "fine");
+    assert!(out(&t, "a/index.html").is_none());
+}

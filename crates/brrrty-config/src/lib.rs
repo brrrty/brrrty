@@ -338,7 +338,14 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
             .map_err(|e| vec![runtime_problem(*e)])?;
     // Drop the scope before taking the state: nothing else holds it then.
     drop(scope);
-    let state = std::mem::take(&mut *state.lock().unwrap_or_else(|e| e.into_inner()));
+    let state = {
+        let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        let taken = std::mem::take(&mut *guard);
+        // A `config` call from here on (a global data function, a filter, a collection) is an
+        // error: what the script set has been taken.
+        guard.closed = true;
+        taken
+    };
     let global_data = api::resolve_global_data(&engine, &ast, state.global_data)
         .map_err(|e| vec![runtime_problem(*e)])?;
     let mut problems = Vec::new();

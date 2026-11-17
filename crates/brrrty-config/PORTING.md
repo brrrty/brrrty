@@ -125,6 +125,13 @@ that use its data are refused with `data-rhai-error`, and in a filter or
 collection only the pages that use it are refused. The message gives the
 panic's text; please report it.
 
+**`config` while pages render.** `config` can only change while the script
+runs. A `config.add_*` or `config.ignores` call after that (from a filter, a
+collection or a global data function that was handed `config`) is an error
+that refuses the page and names the call. 11ty 3.1.8 ignores such a call
+silently: a filter added then is unknown to the templates, a passthrough copy
+isn't made, and an ignore doesn't drop the page.
+
 ## Rhai is not JavaScript
 
 Brrrty doesn't change Rhai's operators. Where they differ, call a helper.

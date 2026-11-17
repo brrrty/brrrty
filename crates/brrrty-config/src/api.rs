@@ -76,6 +76,9 @@ pub struct State {
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
     /// 11ty's markdown-it, once `amend_library("md", ...)` has been called.
     pub markdown_lib: Option<crate::markdown_rules::MdLib>,
+    /// Set once the script has run and what it set was taken: a `config` call after that
+    /// (from a filter or a collection while pages render) would change nothing.
+    pub closed: bool,
 }
 
 /// The `config` object.
@@ -89,6 +92,21 @@ pub struct Ignores(Arc<Mutex<State>>);
 fn lock(state: &Arc<Mutex<State>>) -> MutexGuard<'_, State> {
     // Nothing panics while holding the lock, but don't make a panic worse.
     state.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The state, for a `config` call named `call`; an error once the config has loaded. 11ty
+/// ignores such a call (its engines and copies are set up already); Brrrty says so.
+fn open<'a>(
+    state: &'a Arc<Mutex<State>>,
+    call: &str,
+) -> Result<MutexGuard<'a, State>, Box<EvalAltResult>> {
+    let guard = lock(state);
+    if guard.closed {
+        return Err(runtime(format!(
+            "{call} called while pages render; config can only change while it loads (11ty ignores such a call)"
+        )));
+    }
+    Ok(guard)
 }
 
 /// A value the script gave that Brrrty can't use, thrown as a Rhai error.
@@ -217,14 +235,17 @@ pub fn engine_for(
 
     e.register_fn(
         "add_passthrough_copy",
-        |c: &mut Config, from: ImmutableString| {
-            lock(&c.0).passthrough.insert(from.to_string(), None);
+        |c: &mut Config, from: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+            open(&c.0, "config.add_passthrough_copy")?
+                .passthrough
+                .insert(from.to_string(), None);
+            Ok(())
         },
     );
     e.register_fn(
         "add_passthrough_copy",
         |c: &mut Config, map: Map| -> Result<(), Box<EvalAltResult>> {
-            let mut state = lock(&c.0);
+            let mut state = open(&c.0, "config.add_passthrough_copy")?;
             for (from, to) in map {
                 let to = to.into_immutable_string().map_err(|t| {
                     runtime(format!(
@@ -240,18 +261,20 @@ pub fn engine_for(
     );
     e.register_fn(
         "add_filter",
-        |c: &mut Config, name: ImmutableString, f: FnPtr| {
-            lock(&c.0)
+        |c: &mut Config, name: ImmutableString, f: FnPtr| -> Result<(), Box<EvalAltResult>> {
+            open(&c.0, "config.add_filter")?
                 .filters
                 .insert(name.to_string(), FilterDef::Fn(f));
+            Ok(())
         },
     );
     e.register_fn(
         "add_nondeterministic_filter",
-        |c: &mut Config, name: ImmutableString| {
-            lock(&c.0)
+        |c: &mut Config, name: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+            open(&c.0, "config.add_nondeterministic_filter")?
                 .filters
                 .insert(name.to_string(), FilterDef::Nondeterministic);
+            Ok(())
         },
     );
     e.register_fn(
@@ -273,7 +296,7 @@ pub fn engine_for(
                     pos,
                 ));
             }
-            let mut state = lock(&c.0);
+            let mut state = open(&c.0, "config.add_collection")?;
             if state.collections.contains_key(name.as_str()) {
                 return Err(invalid(
                     format!(
@@ -292,7 +315,12 @@ pub fn engine_for(
          c: &mut Config,
          name: ImmutableString|
          -> Result<(), Box<EvalAltResult>> {
-            add_plugin(&mut lock(&c.0), &name, None, ctx.call_position())
+            add_plugin(
+                &mut *open(&c.0, "config.add_plugin")?,
+                &name,
+                None,
+                ctx.call_position(),
+            )
         },
     );
     e.register_fn(
@@ -302,7 +330,12 @@ pub fn engine_for(
          name: ImmutableString,
          options: Map|
          -> Result<(), Box<EvalAltResult>> {
-            add_plugin(&mut lock(&c.0), &name, Some(options), ctx.call_position())
+            add_plugin(
+                &mut *open(&c.0, "config.add_plugin")?,
+                &name,
+                Some(options),
+                ctx.call_position(),
+            )
         },
     );
     e.register_fn(
@@ -319,7 +352,7 @@ pub fn engine_for(
                     "amend_library(\"{name}\", ...): Brrrty only has 11ty's Markdown library, \"md\""
                 )));
             }
-            let md = lock(&c.0)
+            let md = open(&c.0, "config.amend_library")?
                 .markdown_lib
                 .get_or_insert_with(crate::markdown_rules::MdLib::eleventy)
                 .clone();
@@ -342,12 +375,23 @@ pub fn engine_for(
     register_text(&mut e);
     crate::builtins::register(&mut e);
     e.register_get("ignores", |c: &mut Config| Ignores(c.0.clone()));
-    e.register_fn("add", |i: &mut Ignores, glob: ImmutableString| {
-        lock(&i.0).ignores.insert(glob.to_string());
-    });
-    e.register_fn("delete", |i: &mut Ignores, glob: ImmutableString| {
-        lock(&i.0).ignores.shift_remove(glob.as_str())
-    });
+    e.register_fn(
+        "add",
+        |i: &mut Ignores, glob: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+            open(&i.0, "config.ignores.add")?
+                .ignores
+                .insert(glob.to_string());
+            Ok(())
+        },
+    );
+    e.register_fn(
+        "delete",
+        |i: &mut Ignores, glob: ImmutableString| -> Result<bool, Box<EvalAltResult>> {
+            Ok(open(&i.0, "config.ignores.delete")?
+                .ignores
+                .shift_remove(glob.as_str()))
+        },
+    );
     e.register_fn(
         "add_global_data",
         |ctx: rhai::NativeCallContext,
@@ -363,7 +407,11 @@ pub fn engine_for(
                         runtime(format!("add_global_data(\"{name}\", ...): {why}"))
                     })?)
                 };
-            add_global_data(&mut lock(&c.0).global_data, name.to_string(), pending);
+            add_global_data(
+                &mut open(&c.0, "config.add_global_data")?.global_data,
+                name.to_string(),
+                pending,
+            );
             Ok(())
         },
     );
