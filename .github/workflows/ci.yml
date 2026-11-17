@@ -2,8 +2,10 @@ name: CI
 
 on:
   push:
-    # `badges` holds only the coverage badge's JSON, written by coverage.yml.
-    branches-ignore: [badges]
+    # Every branch but `badges`, which holds only the coverage badge's JSON (coverage.yml
+    # writes it), and every tag.
+    branches: ["**", "!badges"]
+    tags: ["**"]
   pull_request:
 
 permissions:

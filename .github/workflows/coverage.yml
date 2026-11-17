@@ -1,9 +1,10 @@
 name: Coverage
 
 on:
+  # Main for the badge, and pull requests for the floor: a branch with a pull request runs
+  # once, not twice. The badge job's push to `badges` doesn't match, so it can't loop.
   push:
-    # The badge job pushes to `badges`; that push must never start this workflow again.
-    branches-ignore: [badges]
+    branches: [main]
   pull_request:
 
 permissions:
