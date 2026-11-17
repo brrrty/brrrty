@@ -1,5 +1,12 @@
 # Brrrty
 
+[![CI](https://img.shields.io/github/actions/workflow/status/brrrty/brrrty/ci.yml?branch=main&style=flat&label=CI)](https://github.com/brrrty/brrrty/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/brrrty?style=flat)](https://crates.io/crates/brrrty)
+[![npm](https://img.shields.io/npm/v/brrrty?style=flat)](https://www.npmjs.com/package/brrrty)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/brrrty/brrrty/badges/coverage.json&style=flat)](https://github.com/brrrty/brrrty/actions/workflows/coverage.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat)](https://github.com/brrrty/brrrty/blob/main/LICENSE)
+[![MSRV 1.89](https://img.shields.io/badge/MSRV-1.89-blue?style=flat)](https://github.com/brrrty/brrrty/blob/main/Cargo.toml)
+
 **Eleventy, but make it go brrr.**
 
 Brrrty is a fast, independent static site generator written in Rust that aims to build your existing 11ty site unchanged.
