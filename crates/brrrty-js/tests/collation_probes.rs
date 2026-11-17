@@ -44,7 +44,7 @@ struct Gen<'a> {
 impl Gen<'_> {
     fn pick(&mut self) -> char {
         let v = self.r.next();
-        if v % 4 != 0 {
+        if !v.is_multiple_of(4) {
             self.ascii[((v >> 2) as usize) % self.ascii.len()]
         } else {
             self.alphabet[((v >> 2) as usize) % self.alphabet.len()]

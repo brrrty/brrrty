@@ -103,7 +103,7 @@ fn even_at_tie(x: f64, digits: &str, point: i32) -> Option<String> {
         return None;
     }
     let low: u64 = sig[..k].parse().ok()?;
-    let even = if low % 2 == 0 { low } else { low + 1 };
+    let even = if low.is_multiple_of(2) { low } else { low + 1 };
     let even_text = even.to_string();
     if even_text.len() != k || even_text == digits {
         return None;
@@ -375,7 +375,8 @@ mod tests {
             (f64::MAX, "1.7976931348623157e+308"),
             (-1.5, "-1.5"),
             // Exactly halfway between ...562 and ...563: JS takes the even one.
-            (9302184022144.5625, "9302184022144.562"),
+            // (written as text: the literal has more digits than the double keeps)
+            ("9302184022144.5625".parse().unwrap(), "9302184022144.562"),
             (1234567890123.4565, "1234567890123.4565"),
             (100.0, "100"),
             (1e20, "100000000000000000000"),
