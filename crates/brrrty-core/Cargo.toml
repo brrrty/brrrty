@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-core"
-version = "0.0.16"
+version = "0.0.17"
 description = "Core build pipeline for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
@@ -15,11 +15,11 @@ exclude = ["tools/", "tests/luxon.rs", "tests/probes/luxon.json", "tests/rss.rs"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
-brrrty-js = { path = "../brrrty-js", version = "0.0.16" }
-brrrty-liquid = { path = "../brrrty-liquid", version = "0.0.16" }
-brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.16" }
-brrrty-prism = { path = "../brrrty-prism", version = "0.0.16" }
-brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.16" }
+brrrty-js = { path = "../brrrty-js", version = "0.0.17" }
+brrrty-liquid = { path = "../brrrty-liquid", version = "0.0.17" }
+brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.17" }
+brrrty-prism = { path = "../brrrty-prism", version = "0.0.17" }
+brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.17" }
 globset = "0.4.19"
 ignore = "0.4.34"
 indexmap = "2"

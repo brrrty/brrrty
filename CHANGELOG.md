@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.17 - 2026-11-17
 
 - `markdown(s, options)` in Rhai is `markdownIt({ html, linkify, typographer })` with `md.linkify.set({ fuzzyLink })`: `markdown(s, #{ linkify: true, typographer: true, fuzzy_link: true })`. Linkify is linkify-it 6.1.0, run on its own patterns, and the typographer is markdown-it 15's replacements and smart quotes; both match markdown-it on 40,000 generated inputs with each set of options. A paragraph with a run of 1,000 or more characters and no space (with linkify), and a quote right next to an image whose label can't be found in the source (with the typographer), are errors instead of guesses. Unknown options are errors.
 - Markdown links normalize as markdown-it's do: a host outside ASCII is punycoded (`[x](http://é.com)` links to `http://xn--9ca.com`), an autolink's text is decoded (`<http://x.y/%C3%A9>` shows `http://x.y/é`), and a URL is parsed with mdurl first (`HTTP://~:8080` gives `HTTP://:8080~`). Brrrty only percent-encoded them.
