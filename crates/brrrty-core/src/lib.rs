@@ -3,6 +3,7 @@
 // `Problem` is the crate-wide diagnostic type; boxing it would burden every caller.
 #![allow(clippy::result_large_err)]
 
+mod birth;
 pub mod build;
 mod collections;
 pub mod contain;

@@ -601,7 +601,7 @@ fn load_page_inner(
     };
     let created = meta
         .as_ref()
-        .and_then(|m| m.created().ok())
+        .and_then(|m| crate::birth::created(&full, m))
         .unwrap_or(modified);
     // A page Brrrty can't date is refused on its own: it keeps its place in
     // the order, and only the collections it is in are refused.

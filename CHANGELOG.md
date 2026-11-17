@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- On Linux, a page without a `date` is dated by its file's creation time whatever the C library, as 11ty does. The static musl build used to fall back to the modification time, so a page edited after it was created got a different date (and a different place in date-sorted collections) than in 11ty.
+
 ## 0.0.9 - 2026-11-17
 
 - A build into an empty or new output folder is about 20% faster on macOS. On APFS, many threads creating files under the same folders fight over folder locks, so pages and passthrough files are now written by 4 threads of their own, and passthrough files are copied in parallel on every system. Passthrough copies whose destinations overlap (a file and a folder mapped to one path, or names that differ only by case or Unicode normalization on macOS) still run one at a time in walk order, so the output and the problems reported are the same as before.

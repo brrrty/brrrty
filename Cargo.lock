@@ -254,6 +254,7 @@ dependencies = [
  "globset",
  "ignore",
  "indexmap",
+ "libc",
  "rayon",
  "regex",
  "saphyr-parser",
