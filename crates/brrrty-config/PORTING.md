@@ -77,19 +77,26 @@ only the pages that hit them:
   default locale, which it takes from the first of `LC_ALL`, `LC_MESSAGES`
   and `LANG` that is set (`de_DE` prints `1.234,5`, `en_IN` prints
   `12,34,567.891`, `sv_SE` sorts `ä` after `z`). Brrrty gives the `en-US`
-  result, so these run only when that variable is `en_US` (any codeset,
-  such as `en_US.UTF-8`), `C`, `C.UTF-8` or `POSIX`, or when none is set;
-  any other value (`en_GB`, `en_US@euro`, an empty one) refuses the call,
-  naming the variable. Passing `"en-US"` works everywhere.
+  result, so these run only when that variable is one Node maps to
+  `en-US`: `en_US` (any case, also `en-US` or `en_US_POSIX`), `C`, `c` or
+  `POSIX`, with any codeset (`en_US.UTF-8`, `C.UTF-8`) and no
+  `@modifier`, or when none is set. Any other value (`en_GB`,
+  `en_US@euro`, `C.UTF-8@x`, which Node prints without digit grouping, an
+  empty one) refuses the call, naming the variable. Passing `"en-US"`
+  works everywhere.
 - Local time comes from the tz database Brrrty bundles, release 2026b, the
   one Node 26.2.0 ships (`process.versions.tz`); the operating system's
-  zone files are never read. The zone is the one `TZ` names, or
-  `/etc/localtime` links to. A `TZ` that names no zone in that data (a
-  typo, a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`), or an
-  `/etc/localtime` that is a copy rather than a link, stops the build
-  (`tz-invalid`): Node would quietly fall back to UTC or the system zone.
-  A site built by a different Node version (with other tz data) can differ
-  in zones whose rules changed between the two releases.
+  zone rules are never read. The zone is found as Node's ICU finds it:
+  the one `TZ` names; with `TZ` unset, the one `/etc/localtime` links to
+  (its real path after `/zoneinfo/`, without a `posix/` or `right/`
+  prefix); when `/etc/localtime` is a copied file, as in many Docker
+  images, the first file under `/usr/share/zoneinfo` with the same bytes;
+  and UTC when there is no `/etc/localtime`. A `TZ` that names no zone in
+  the bundled data (a typo, a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`),
+  a broken link, or a copy that matches no zone file stops the build
+  (`tz-invalid`): Node would quietly fall back to UTC or guess from the C
+  library. A site built by a different Node version (with other tz data)
+  can differ in zones whose rules changed between the two releases.
 - Rhai's `timestamp()`, which reads the real clock: it throws an error that
   points to `now()`. Rhai's time functions (`elapsed` and the rest) aren't
   there either.
