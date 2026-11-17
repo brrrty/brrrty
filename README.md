@@ -36,7 +36,7 @@ Release binaries are also attached to each GitHub release.
 brrrty doctor [--json] [--verify [--yes]]
 ```
 
-Lists everything that keeps your pages from building, without writing anything: every filter that isn't defined, every JavaScript data file to port, every template language Brrrty doesn't run, grouped by cause with the pages affected and each file and line. A build stops each page at its first problem; doctor lists them all, then a verdict such as `1,180 of 1,224 pages will build; 3 blockers, grouped below.`
+Lists what keeps your pages from building, without writing anything: filters that aren't defined, JavaScript data files to port, template languages Brrrty doesn't run, grouped by cause with the pages affected and each file and line. A build stops each page at its first problem; doctor also reads each refused page's template, layouts, includes, `permalink` and `eleventyComputed` for the rest, then a verdict such as `1,180 of 1,224 pages will build; 3 blockers, grouped below.`
 
 `--verify` also builds the site with your project's own 11ty and with Brrrty, in the system temp folder at one frozen time, compares every file, and prints a line to paste: `Your site is byte-compatible on Brrrty: 2,272 files, 0.89 s vs 2.39 s`. It runs your site's JavaScript through 11ty, so it asks first (or needs `--yes` off a terminal). Brrrty itself never runs JavaScript.
 

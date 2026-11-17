@@ -7,10 +7,13 @@ test sites). This guide says what Brrrty guarantees, where Rhai is not
 JavaScript, and which helper to call when you need the JavaScript
 behavior.
 
-Start with `brrrty doctor`: it lists everything left to port, grouped by
+Start with `brrrty doctor`: it lists what is left to port, grouped by
 cause, with every place each one shows up. A build stops each page at its
-first problem; doctor lists them all, so the list of filters and data
-files it gives is the work to do.
+first problem; doctor also reads each refused page's template, layouts,
+literal includes, `permalink` and `eleventyComputed` for every filter
+that isn't defined and every JavaScript data file read. Unknown tags
+(shortcodes) are listed one per file, as syntax errors, so run it again
+after porting.
 
 ## What Brrrty guarantees
 
