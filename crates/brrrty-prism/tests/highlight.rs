@@ -91,3 +91,26 @@ fn a_long_run_of_template_parts_is_refused() {
         .join()
         .unwrap();
 }
+
+/// `Prism.languages[name]` as hooks see it: a grammar Prism has, a name a hook set (which wins
+/// over the grammar of that name), nothing for a name Prism doesn't know, and a grammar with no
+/// tokens for what every object has (`Prism.languages.toString` is a function).
+#[test]
+fn all_loaded_looks_names_up_as_prism_languages_does() {
+    use brrrty_prism::Languages;
+    let g = grammars();
+    let js = g.language("javascript").unwrap();
+    let css = g.language("css").unwrap();
+    let plain = g.language("plain").unwrap();
+    let mut langs = AllLoaded::default();
+    assert_eq!(langs.get("javascript").unwrap(), Some(js));
+    assert_eq!(langs.get("no-such-language").unwrap(), None);
+    for key in ["toString", "constructor", "extend", "__proto__"] {
+        assert_eq!(langs.get(key).unwrap(), Some(plain), "{key}");
+    }
+    langs.set("javascript", css);
+    langs.set("custom", js);
+    langs.set("custom", css);
+    assert_eq!(langs.get("javascript").unwrap(), Some(css));
+    assert_eq!(langs.get("custom").unwrap(), Some(css));
+}
