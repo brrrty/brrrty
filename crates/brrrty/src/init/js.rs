@@ -91,7 +91,43 @@ fn is_ident_part(b: u8) -> bool {
 }
 
 /// Split `src` into tokens, or say why it can't be.
+/// JavaScript's line terminators: LF, CR, U+2028 and U+2029.
+pub(crate) fn is_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+/// [`is_line_terminator`] for a byte. Exact once [`unusual_terminator`] has
+/// passed: then the only terminators left are LF and CR (in CR LF), both ASCII.
+fn is_line_break(b: u8) -> bool {
+    is_line_terminator(char::from(b))
+}
+
+/// The first line terminator in `src` other than LF or CR LF: a lone CR,
+/// U+2028 or U+2029. Real configs don't have these, and every place they
+/// could hide code is a place for the reader to get wrong, so a file with
+/// one is not read at all.
+fn unusual_terminator(src: &str) -> Option<&'static str> {
+    let b = src.as_bytes();
+    for (i, c) in src.char_indices() {
+        if !is_line_terminator(c) || c == '\n' {
+            continue;
+        }
+        if c == '\r' && b.get(i + 1) == Some(&b'\n') {
+            continue;
+        }
+        return Some(match c {
+            '\r' => "a carriage return without a line feed",
+            '\u{2028}' => "a U+2028 line separator",
+            _ => "a U+2029 paragraph separator",
+        });
+    }
+    None
+}
+
 pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
+    if let Some(what) = unusual_terminator(src) {
+        return Err(format!("it has {what}, which Brrrty doesn't read"));
+    }
     let b = src.as_bytes();
     let mut i = 0;
     let mut out: Vec<Token> = Vec::new();
@@ -101,13 +137,13 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
     let mut parens: Vec<bool> = Vec::new();
     let mut closed_condition = false;
     if src.starts_with("#!") {
-        while i < b.len() && b[i] != b'\n' {
+        while i < b.len() && !is_line_break(b[i]) {
             i += 1;
         }
     }
     while i < b.len() {
         let c = b[i];
-        if c == b'\n' || c == b'\r' {
+        if is_line_break(c) {
             nl = true;
             i += 1;
             continue;
@@ -135,7 +171,7 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             let Some(end) = src[i + 2..].find("*/") else {
                 return Err("a /* comment is never closed".into());
             };
-            if src[i..i + 2 + end].contains('\n') {
+            if src[i..i + 2 + end].chars().any(is_line_terminator) {
                 nl = true;
             }
             i += end + 4;
@@ -281,14 +317,10 @@ fn slash(prev: Option<&Token>, after_condition: bool) -> Result<bool, String> {
     }
 }
 
-/// Skip a `//` comment at `i`; returns where its line break is. JavaScript
-/// also ends one at CR, U+2028 and U+2029, which aren't read here.
+/// Skip a `//` comment at `i`; returns where its line break is.
 fn line_comment(src: &str, mut i: usize) -> Result<usize, String> {
     let b = src.as_bytes();
-    while i < b.len() && b[i] != b'\n' && b[i] != b'\r' {
-        if b[i..].starts_with(&[0xe2, 0x80, 0xa8]) || b[i..].starts_with(&[0xe2, 0x80, 0xa9]) {
-            return Err("a line separator ends a // comment".into());
-        }
+    while i < b.len() && !is_line_break(b[i]) {
         i += 1;
     }
     Ok(i)
@@ -299,7 +331,8 @@ fn regex(b: &[u8], mut i: usize) -> Result<usize, String> {
     let mut class = false;
     loop {
         match b.get(i) {
-            None | Some(b'\n' | b'\r') => {
+            None => return Err("a regular expression is never closed".into()),
+            Some(&c) if is_line_break(c) => {
                 return Err("a regular expression is never closed".into());
             }
             Some(&c) if c >= 0x80 => {
@@ -335,7 +368,8 @@ fn string(src: &str, i: usize) -> Result<(usize, Option<String>), String> {
     let mut exact = true;
     loop {
         match b.get(j) {
-            None | Some(b'\n') => return Err("a string is never closed".into()),
+            None => return Err("a string is never closed".into()),
+            Some(&c) if is_line_break(c) => return Err("a string is never closed".into()),
             Some(&q) if q == quote => break,
             Some(b'\\') => {
                 let (next, ok) = escape(src, j, &mut units);

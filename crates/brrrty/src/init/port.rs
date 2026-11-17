@@ -74,7 +74,7 @@ struct Setting {
 
 /// Line terminators: JavaScript's, and every one Rhai might end a comment at.
 fn is_terminator(c: char) -> bool {
-    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}' | '\u{85}')
+    js::is_line_terminator(c) || c == '\u{85}'
 }
 
 /// The lines of `src`: CR LF, LF, CR, U+2028, U+2029 and NEL each end one.
@@ -1386,7 +1386,7 @@ module.exports = function (eleventyConfig) {
                 );
             }
             // U+2028 and U+2029 in code make the file one TODO.
-            let want: &[&str] = if nl.starts_with('\u{2028}') || nl.starts_with('\u{2029}') {
+            let want: &[&str] = if nl != "\n" && nl != "\r\n" {
                 &[]
             } else {
                 &["config.add_passthrough_copy(\"a\");"]
@@ -1642,7 +1642,7 @@ module.exports = function (eleventyConfig) {
             assert_eq!(p.todos, 1, "{src:?}\n{}", p.text);
         }
         // A leading BOM, and non-ASCII in strings, templates and comments, still port.
-        let src = "\u{feff}// Café config, ünïcode\u{a0}ok\n/* \u{2028} */\nmodule.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s}—é`);\n  c.addPassthroughCopy(\"bilder/größe\u{a0}x\");\n};\n";
+        let src = "\u{feff}// Café config, ünïcode\u{a0}ok\n/* \u{3000} */\nmodule.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s}—é`);\n  c.addPassthroughCopy(\"bilder/größe\u{a0}x\");\n};\n";
         let p = port(src, "eleventy.config.js");
         assert_eq!(
             live(&p),
@@ -1650,5 +1650,35 @@ module.exports = function (eleventyConfig) {
             "{}",
             p.text
         );
+    }
+
+    #[test]
+    fn unusual_line_terminators_anywhere_port_nothing() {
+        for src in [
+            // R8: a block comment holding only a CR or U+2028 is a line break after `return`.
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\");\n  return /*\r*/ { dir: { output: \"x\" } };\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\");\n  return /*\u{2028}*/ { dir: { output: \"x\" } };\n};\n",
+            // R9: a hashbang line ends at CR too.
+            "#!/usr/bin/env node\rmodule.exports = function (c) { c.setOutputDirectory(x); c.addPassthroughCopy(\"a\") };\n",
+            // A lone CR or a separator anywhere, even in a string or comment.
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\");\n  // ok\r\n  c.addFilter(\"f\", (s) => \"x\\\r\");\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\u{2028}b\");\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\");\n  /* \u{2029} */\n};\n",
+            "\rmodule.exports = function (c) { c.addPassthroughCopy(\"a\") };\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src:?}\n{}", p.text);
+            assert_eq!(p.todos, 1, "{src:?}\n{}", p.text);
+        }
+        // CR LF throughout still ports.
+        let src = "#!/usr/bin/env node\r\n// c\r\nmodule.exports = function (c) {\r\n  /* a\r\n  b */\r\n  c.addPassthroughCopy(\"a\");\r\n  return {\r\n    dir: { input: \"src\" },\r\n  };\r\n};\r\n";
+        let p = port(src, "eleventy.config.js");
+        assert_eq!(p.todos, 0, "{}", p.text);
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+        assert!(p.text.contains("        input: \"src\",\n"), "{}", p.text);
     }
 }
