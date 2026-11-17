@@ -20,10 +20,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Every tool is pinned to a release at least two weeks old.
+  # Every tool is pinned to a release at least two weeks old (cargo-zigbuild
+  # and Zig in .github/scripts/zigbuild-requirements.txt, by hash).
   RUST_TOOLCHAIN: "1.99.1"
-  CARGO_ZIGBUILD_VERSION: "0.24.0"
-  ZIGLANG_VERSION: "0.16.0"
   NODE_VERSION: "24.22.1"
   ALPINE_NODE_IMAGE: node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
 
@@ -99,7 +98,7 @@ jobs:
         if: matrix.musl
         run: |
           python3 -m venv "$RUNNER_TEMP/zigbuild"
-          "$RUNNER_TEMP/zigbuild/bin/pip" install --quiet "cargo-zigbuild==$CARGO_ZIGBUILD_VERSION" "ziglang==$ZIGLANG_VERSION"
+          "$RUNNER_TEMP/zigbuild/bin/pip" install --quiet --require-hashes --only-binary :all: -r .github/scripts/zigbuild-requirements.txt
           echo "$RUNNER_TEMP/zigbuild/bin" >> "$GITHUB_PATH"
       - name: Build
         env:

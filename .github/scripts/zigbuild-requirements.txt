@@ -1,0 +1,9 @@
+# cargo-zigbuild and the Zig it drives, for the musl release builds. Pinned by
+# version and by the hash of each Linux wheel the release runners use
+# (x86_64 and aarch64): pip install --require-hashes -r this file.
+cargo-zigbuild==0.24.0 \
+    --hash=sha256:484412e39e4c6039474535ce97ee75a22bab22d58233056f8ec8a8f9034bb957 \
+    --hash=sha256:6942e4320f7b05d8fb29e0a8ce5670bcbb3d254275100b85b5b7c86552f9a744
+ziglang==0.16.0 \
+    --hash=sha256:9fcda73f62b851dd72a54b710ad40a209896db14cfb13649e62191243556342b \
+    --hash=sha256:e27d409812b11e0fb89ed0200cf2e55b6464d43f9461553104e4a4f9a94a1fd5
