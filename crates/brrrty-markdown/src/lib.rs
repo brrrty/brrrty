@@ -1,5 +1,14 @@
 //! Markdown rendering for Brrrty.
 
+mod backticks;
+mod core_rules;
+mod emphasis;
+mod escape;
+mod linkify;
+mod linkify_re;
+mod mdurl;
+mod uc_micro;
+
 /// Renders Markdown source to an HTML string.
 pub trait MarkdownRenderer: Send + Sync {
     fn render(&self, source: &str) -> String;
@@ -265,32 +274,13 @@ impl markdown_it::NodeValue for EmptyBlockquote {
     }
 }
 
-/// Fixes to the parsed tree where the port's output differs from markdown-it's:
-/// - a blockquote with nothing to show (or only reference definitions) is `<blockquote></blockquote>`;
-/// - a code span of only spaces keeps all its spaces, in markdown-it 15 (`keep_space_only_code`).
-///   11ty's bundled 14.3.3 still strips one space from each end of three or more.
-fn fix_tree(ast: &mut markdown_it::Node, keep_space_only_code: bool) {
-    use markdown_it::parser::inline::Text;
+/// A blockquote with nothing to show (or only reference definitions) is
+/// `<blockquote></blockquote>` in markdown-it.
+fn fix_tree(ast: &mut markdown_it::Node) {
     use markdown_it::plugins::cmark::block::blockquote::Blockquote;
-    use markdown_it::plugins::cmark::inline::backticks::CodeInline;
     ast.walk_mut(|n, _| {
         if n.is::<Blockquote>() && n.children.iter().all(|c| c.render().is_empty()) {
             n.replace(EmptyBlockquote);
-        } else if let (true, Some(code)) = (keep_space_only_code, n.cast::<CodeInline>()) {
-            let marker_len = code.marker_len;
-            let Some(span) = n.srcmap.map(|m| m.get_byte_offsets()) else {
-                return;
-            };
-            let outer = span.1 - span.0;
-            if let Some(text) = n.children.first_mut().and_then(|t| t.cast_mut::<Text>()) {
-                let len = text.content.len();
-                if len > 0
-                    && text.content.bytes().all(|b| b == b' ')
-                    && outer == len + 2 + 2 * marker_len
-                {
-                    text.content = " ".repeat(len + 2);
-                }
-            }
         }
     });
 }
@@ -304,27 +294,11 @@ pub struct MarkdownIt {
 
 impl MarkdownIt {
     pub fn new() -> Self {
-        let mut md = markdown_it::MarkdownIt::new();
+        let mut md = new_parser();
         // `cmark::add` minus `block::code`: 11ty calls `disable("code")`.
-        use markdown_it::plugins::cmark::{block, inline};
-        inline::newline::add(&mut md);
-        inline::escape::add(&mut md);
-        inline::backticks::add(&mut md);
-        inline::emphasis::add(&mut md);
-        inline::link::add(&mut md);
-        inline::image::add(&mut md);
-        inline::autolink::add(&mut md);
-        inline::entity::add(&mut md);
-        block::fence::add(&mut md);
-        block::blockquote::add(&mut md);
-        block::hr::add(&mut md);
-        block::list::add(&mut md);
-        block::reference::add(&mut md);
-        block::heading::add(&mut md);
-        block::lheading::add(&mut md);
-        block::paragraph::add(&mut md);
+        add_commonmark(&mut md, false, true);
         add_html(&mut md);
-        markdown_it::plugins::extra::strikethrough::add(&mut md);
+        emphasis::add_strikethrough(&mut md);
         add_tables(&mut md);
         // The port only limits indentation (a line indented 4 or more is
         // not a list item, a fence, a heading...) when the `code` rule is
@@ -343,14 +317,14 @@ impl Default for MarkdownIt {
 impl MarkdownRenderer for MarkdownIt {
     fn render(&self, source: &str) -> String {
         let mut ast = self.md.parse(source);
-        fix_tree(&mut ast, false);
+        fix_tree(&mut ast);
         let marker = fix_end_of_text(&mut ast, source);
         render_marked(&ast, marker)
     }
 
     fn render_highlighted(&self, source: &str, highlight: &mut Highlight<'_>) -> String {
         let mut ast = self.md.parse(source);
-        fix_tree(&mut ast, false);
+        fix_tree(&mut ast);
         let marker = fix_end_of_text(&mut ast, source);
         highlight_fences(&mut ast, source, highlight);
         render_marked(&ast, marker)
@@ -367,10 +341,42 @@ pub struct DefaultMarkdownIt {
     inline: markdown_it::MarkdownIt,
 }
 
-fn default_parser() -> markdown_it::MarkdownIt {
+/// The port's parser with markdown-it's link functions.
+fn new_parser() -> markdown_it::MarkdownIt {
     let mut md = markdown_it::MarkdownIt::new();
-    markdown_it::plugins::cmark::add(&mut md);
-    markdown_it::plugins::extra::strikethrough::add(&mut md);
+    md.link_formatter = Box::new(mdurl::JsLinkFormatter);
+    md
+}
+
+/// The port's `cmark::add`, in its order, with markdown-it's emphasis (see [`emphasis`]) and,
+/// unless `code`, without the indented code rule. `eleventy` picks 14.3.3's punctuation.
+fn add_commonmark(md: &mut markdown_it::MarkdownIt, code: bool, eleventy: bool) {
+    use markdown_it::plugins::cmark::{block, inline};
+    inline::newline::add(md);
+    escape::add(md);
+    backticks::add(md, eleventy);
+    emphasis::add_emphasis(md, eleventy);
+    inline::link::add(md);
+    inline::image::add(md);
+    inline::autolink::add(md);
+    inline::entity::add(md);
+    if code {
+        block::code::add(md);
+    }
+    block::fence::add(md);
+    block::blockquote::add(md);
+    block::hr::add(md);
+    block::list::add(md);
+    block::reference::add(md);
+    block::heading::add(md);
+    block::lheading::add(md);
+    block::paragraph::add(md);
+}
+
+fn default_parser() -> markdown_it::MarkdownIt {
+    let mut md = new_parser();
+    add_commonmark(&mut md, true, false);
+    emphasis::add_strikethrough(&mut md);
     add_tables(&mut md);
     md
 }
@@ -431,7 +437,7 @@ impl DefaultMarkdownIt {
         padded.push_str(source);
         padded.push(EDGE);
         let mut ast = self.inline.parse(&padded);
-        fix_tree(&mut ast, true);
+        fix_tree(&mut ast);
         ast.walk_mut(|n, _| {
             if n.is::<Softbreak>() {
                 n.replace(RawBreak("\n"));
@@ -447,9 +453,70 @@ impl DefaultMarkdownIt {
     /// `md.render(source)`.
     fn render_block(&self, source: &str) -> String {
         let mut ast = self.block.parse(source);
-        fix_tree(&mut ast, true);
+        fix_tree(&mut ast);
         let marker = fix_end_of_text(&mut ast, source);
         render_marked(&ast, marker)
+    }
+}
+
+/// Options for [`ConfiguredMarkdownIt`]: markdown-it's `html`, `linkify` and `typographer`, and
+/// linkify-it's `fuzzyLink` (`md.linkify.set({ fuzzyLink })`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Options {
+    pub html: bool,
+    pub linkify: bool,
+    pub typographer: bool,
+    /// Links without a schema (`example.com`) when `linkify` is on. linkify-it 6 (markdown-it
+    /// 15's) has it off by default.
+    pub fuzzy_link: bool,
+}
+
+/// markdown-it 15.0.3 set up like `markdownIt({ html, linkify, typographer })` (the `default`
+/// preset, so the indented code rule is on), with linkify-it 6.1.0. Rendering can refuse (see
+/// [`ConfiguredMarkdownIt::render`]).
+pub struct ConfiguredMarkdownIt {
+    md: markdown_it::MarkdownIt,
+    rules: core_rules::Rules,
+    plain: bool,
+}
+
+impl ConfiguredMarkdownIt {
+    pub fn new(options: Options) -> Self {
+        let mut md = new_parser();
+        add_commonmark(&mut md, true, false);
+        if options.html {
+            add_html(&mut md);
+        }
+        emphasis::add_strikethrough(&mut md);
+        add_tables(&mut md);
+        let linkify = options.linkify.then_some(linkify::Linkify {
+            fuzzy_link: options.fuzzy_link,
+        });
+        let plain = linkify.is_none() && !options.typographer;
+        if !plain {
+            core_rules::add(&mut md, linkify);
+        }
+        ConfiguredMarkdownIt {
+            md,
+            rules: core_rules::Rules {
+                linkify,
+                typographer: options.typographer,
+            },
+            plain,
+        }
+    }
+
+    /// `md.render(source)`. An error says what Brrrty can't render exactly: a text linkify can't
+    /// be sure to read as linkify-it does, or a smart quote next to an image whose label can't be
+    /// found in the source.
+    pub fn render(&self, source: &str) -> Result<String, String> {
+        let mut ast = self.md.parse(source);
+        fix_tree(&mut ast);
+        if !self.plain {
+            core_rules::run(&mut ast, &self.md, source, self.rules)?;
+        }
+        let marker = fix_end_of_text(&mut ast, source);
+        Ok(render_marked(&ast, marker))
     }
 }
 

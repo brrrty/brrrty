@@ -47,11 +47,33 @@ const BLOCK = [
   'Term\n: Definition', '* * *', '+ plus', 'a\\\nb', '\\# not heading', '1\\. not list', '[link]( <a b> )', '&#0; &#xD800; &#1234567;',
 ];
 
+// Found by the fuzz runs of Plan 5 and fixed: emphasis next to a symbol, code spans after an
+// unclosed run of backticks, `\ ` before a newline, inline HTML comments, links with a host
+// outside ASCII or escapes in an autolink, blocks at the end of the text.
+const FIXED = ['_a_😀', '😀*![i](u)10.~~😀__*', '__😀_!---__', '[a`b`c`', '[a`http://x.y`(C)`', 'a\\ \nb', 'a\\  \nb',
+  'a <!--> b', 'a <!---> b', 'a <!-- x -- y --> b', '<!-- *x* b', '[x](http://é.com/é)', '<http://xn--p1ai/%C3%A9%2F>', '[x](HTTP://~:8080)',
+  '<div>', '> <div>', '```js\ncode', '`` a ` b ``', '` `` `'];
+// markdownIt({ linkify: true, typographer: true }) with md.linkify.set({ fuzzyLink }), as
+// sites set up their own instance.
+const LINKIFY = [
+  'See http://example.com, or https://example.com/a?b=c&d=e#f.', 'Mail me@example.com or mailto:me@example.com', 'Founded Broadcast.com in 1995.',
+  'Visit www.example.com/path (and github.com/x).', 'Not a link: file.txt, v1.2.3 or e.g. this.', '[label](http://u.v) and http://w.x', '<http://a.b> then http://c.d',
+  '`http://code.x` and ![http://alt.x](u)', 'пример.рф and é.com', 'http://xn--p1ai', '<a href="x">http://inside.a</a> http://out.side', 'a\\_b.com', '\\_b.com',
+  '"Hello," she said. \'Hi\' -- "it\'s" 1990s... (c) (tm) (r) +- ??? !!!! ,,', '"*em*" \'`code`\' "![i](u)"', 'He said "a \'nested\' quote".',
+  '"Shark Tank" (2009--present) -- the "Mr. Wonderful" era... Kevin O\'Leary\'s 5\'11".', '6\'2" tall and "quoted"', '"a\nb"', 'x---y and a - b -- c --- d',
+  '**Mark Cuban** (born 1958) sold [Broadcast.com](https://en.wikipedia.org/wiki/Broadcast.com) to Yahoo! for $5.7 billion... "the deal".',
+];
 const SPACE_CODE = ['`   `', '`    `', '` \n `', 'a `   ` b', '`  `', '` a `'];
+const options = (o, fuzzyLink) => { const m = markdownIt(o); m.linkify.set({ fuzzyLink }); return m; };
+const fuzzy = options({ linkify: true, typographer: true }, true);
+const strict = options({ linkify: true, typographer: true }, false);
+const html = options({ html: true, linkify: true, typographer: true }, true);
 const run = (fn, list) => [...list, ...(list === BLOCK ? FUZZ_BLOCK : FUZZ_INLINE)].map((s) => ({ s, out: fn(s) }));
 process.stdout.write(JSON.stringify({
   markdown_it: '15.0.3',
   render: run((s) => md.render(s), BLOCK),
-  render_eleventy: [...FUZZ_BLOCK, ...SPACE_CODE, 'a', '# h', '> q', '<div>x</div>', '    indented'].map((s) => ({ s, out: eleventy.render(s) })),
+  render_eleventy: [...FUZZ_BLOCK, ...SPACE_CODE, ...FIXED, 'a', '# h', '> q', '<div>x</div>', '    indented'].map((s) => ({ s, out: eleventy.render(s) })),
+  render_fixed: FIXED.map((s) => ({ s, out: md.render(s) })),
+  render_linkify_typographer: LINKIFY.map((s) => ({ s, out: fuzzy.render(s), strict: strict.render(s), html: html.render(s) })),
   render_inline: run((s) => md.renderInline(s), INLINE),
 }, null, 0).replace(/\},\{/g, '},\n{') + '\n');

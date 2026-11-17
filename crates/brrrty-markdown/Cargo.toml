@@ -13,6 +13,7 @@ readme = false
 exclude = ["tools/", "tests/probes.rs", "tests/fuzz.rs", "tests/probes/"]
 
 [dependencies]
+brrrty-prism = { path = "../brrrty-prism", version = "0.0.16" }
 markdown-it = { version = "=0.6.1", default-features = false }
 regex = "1.13.1"
 

@@ -317,6 +317,7 @@ dependencies = [
 name = "brrrty-markdown"
 version = "0.0.16"
 dependencies = [
+ "brrrty-prism",
  "markdown-it",
  "regex",
  "serde_json",
