@@ -73,10 +73,23 @@ only the pages that hit them:
   `random()` is an error. A random value can't give 11ty's bytes, and a
   seeded stand-in would silently differ from 11ty, so Brrrty doesn't offer
   one.
-- `toLocaleString()` and `localeCompare()` without a locale follow the
-  machine's language in Node (`de_DE` prints `1.234,5`). Brrrty's helpers
-  give the `en-US` result, which is what Node gives with `LANG` or
-  `LC_ALL` set to an English locale, or `C`.
+- `toLocaleString()` and `localeCompare()` without a locale follow Node's
+  default locale, which it takes from the first of `LC_ALL`, `LC_MESSAGES`
+  and `LANG` that is set (`de_DE` prints `1.234,5`, `en_IN` prints
+  `12,34,567.891`, `sv_SE` sorts `ä` after `z`). Brrrty gives the `en-US`
+  result, so these run only when that variable is `en_US` (any codeset,
+  such as `en_US.UTF-8`), `C`, `C.UTF-8` or `POSIX`, or when none is set;
+  any other value (`en_GB`, `en_US@euro`, an empty one) refuses the call,
+  naming the variable. Passing `"en-US"` works everywhere.
+- Local time comes from the tz database Brrrty bundles, release 2026b, the
+  one Node 26.2.0 ships (`process.versions.tz`); the operating system's
+  zone files are never read. The zone is the one `TZ` names, or
+  `/etc/localtime` links to. A `TZ` that names no zone in that data (a
+  typo, a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`), or an
+  `/etc/localtime` that is a copy rather than a link, stops the build
+  (`tz-invalid`): Node would quietly fall back to UTC or the system zone.
+  A site built by a different Node version (with other tz data) can differ
+  in zones whose rules changed between the two releases.
 - Rhai's `timestamp()`, which reads the real clock: it throws an error that
   points to `now()`. Rhai's time functions (`elapsed` and the rest) aren't
   there either.
@@ -121,12 +134,12 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `if (x)` | Only `bool` is allowed | `if truthy(x)` |
 | `x \|\| y` | `\|\|` needs bools | `if truthy(x) { x } else { y }` |
 | `new Date(ts)` | | `date(ts)` takes a number, a date, `()` (invalid) or null (the epoch) |
-| `new Date(y, m, d, h, mi, s, ms)` | | `date(y, m, d, h, mi, s, ms)` with two to seven parts, in the local zone (`TZ`): parts roll over (`date(2026, 12, 0)` is 2026-12-31), fractions are dropped, a year 0-99 is 19xx, a time the clocks skip or repeat resolves as V8 does. Checked against Node in five zones |
+| `new Date(y, m, d, h, mi, s, ms)` | | `date(y, m, d, h, mi, s, ms)` with two to seven parts, in the local zone (`TZ`, with Node 26's tz data, below): parts roll over (`date(2026, 12, 0)` is 2026-12-31), fractions are dropped, a year 0-99 is 19xx, a time the clocks skip or repeat resolves as V8 does. Checked against Node in five zones, and every zone's offsets from 1850 to 2045 and beyond |
 | `d.getFullYear()` ... `d.getMilliseconds()`, `d.getDay()`, `d.getTimezoneOffset()` | | `d.get_full_year()`, `get_month()`, `get_date()`, `get_day()`, `get_hours()`, `get_minutes()`, `get_seconds()`, `get_milliseconds()`, `get_timezone_offset()`: local time; `NaN` for an invalid date |
 | `d.toISOString()` | | `d.to_iso_string()`; an invalid date is an error, as JS throws |
 | `n.toFixed(d)` | | `to_fixed(n, d)` or `n.to_fixed(d)`: V8's exactly. It rounds the double's exact value and a tie goes away from zero (`2.5` gives `"3"`; `1.005` is 1.00499999..., so `to_fixed(1.005, 2)` is `"1.00"`); `1e21` and up print as `String(n)`; `-0` gives `"0.00"`, `-0.0001` gives `"-0.00"`. Digits outside 0-100 are an error (`RangeError`). `n` must be a number, as in JS: convert a string first. Checked against Node on 608,270 cases |
 | `n.toLocaleString('en-US')` | | `to_locale_string(n)` or `to_locale_string(n, "en-US")`: ICU's default format, the shortest digits rounded half up to 3 decimals, grouped by 3 (`1,234.568`, `-0`, `∞`). Any other locale, or options, is an error. Checked against Node on 300,000 values |
-| `a.localeCompare(b)` | | `locale_compare(a, b)`: -1, 0 or 1, ICU's root order (the `en-US` one: `a` < `A` < `á` < `b`). Another locale, or options, is an error, and so is a character new in Unicode 18 (Node 26's ICU is Unicode 17). Checked against Node on 316,129 pairs |
+| `a.localeCompare(b)` | | `locale_compare(a, b)`: -1, 0 or 1, ICU's root order (the `en-US` one: `a` < `A` < `á` < `b`). Another locale, or options, is an error. So is a Han character, or one whose compatibility form is Han (Node sorts them by radical and stroke count, from data Brrrty doesn't have), and a character new in Unicode 18 (Node 26's ICU is Unicode 17). Checked against Node on 316,129 pairs and on every other code point, sorted alone and with three suffixes |
 | `Math.random()` | | not available. `random()` is an error that says why; for a filter that shuffles, use `config.add_nondeterministic_filter(name)` |
 | `new URL(u).hostname` | | `url_hostname(u)`, or `()` when `u` isn't an absolute URL |
 | `d.toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'})` | | `to_locale_date_string(d)` |
@@ -160,8 +173,8 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   locale, and any but `en-US` is an error. So are the machine-dependent zones
   (`"local"`, `"system"`, `"default"`), and a zone *name* (`ZZZZ`, `ZZZZZ`,
   `ttt`, `tttt`, `fff`, ...) for an IANA zone before 1970 or at an instant
-  where ICU's name can't be told from the table, and any time from 2100 in a zone with
-  daylight saving (the time zone data has no rules past 2099). JavaScript's
+  where ICU's name can't be told from the table. Offsets come from the
+  bundled tz data (2026b, Node 26's) for every instant. JavaScript's
   `format = 'dd-LLL-yyyy'` default is `format ?? "dd-LLL-yyyy"`.
 - `markdown` and `markdown_inline` are `markdown-it` 15.0.3 with no options, so HTML
   is **off** (11ty's own instance has it on) and the indented code rule is
