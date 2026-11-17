@@ -1,19 +1,40 @@
 ---
 layout: base.njk
 ---
-<div class="wrap docs">
-  <nav class="contents" aria-labelledby="contents-title">
-    <h2 id="contents-title">Contents</h2>
-    <ul>
-      {%- for doc in collections.docs %}
-      <li><a href="{{ doc.url }}"{% if doc.url == page.url %} aria-current="page"{% endif %}>{{ doc.data.title }}</a></li>
-      {%- endfor %}
-    </ul>
+{%- macro doclinks(current) %}
+<p class="nav-group">Documentation</p>
+<ul>
+  <li><a href="/docs/"{% if current == "/docs/" %} aria-current="page"{% endif %}>Overview</a></li>
+  {%- for doc in collections.docs %}
+  <li><a href="{{ doc.url }}"{% if doc.url == current %} aria-current="page"{% endif %}>{{ doc.data.title }}</a></li>
+  {%- endfor %}
+</ul>
+<p class="nav-group">Project</p>
+<ul>
+  <li><a href="/changelog/"{% if current == "/changelog/" %} aria-current="page"{% endif %}>Changelog</a></li>
+  <li><a href="{{ site.repo }}">Repository</a></li>
+  <li><a href="{{ site.repo }}/issues">Issues</a></li>
+</ul>
+{%- endmacro %}
+{%- set body = content | prose %}
+{%- set headings = content | toc %}
+<div class="docs">
+  <nav class="sidebar" aria-label="Docs">
+    {{ doclinks(page.url) }}
   </nav>
+  <details class="docs-menu">
+    <summary><span class="docs-menu-label">Docs</span> <span class="docs-menu-current">{{ title }}</span></summary>
+    <nav aria-label="Docs, compact">{{ doclinks(page.url) }}</nav>
+  </details>
   <article class="prose">
+    {%- if source %}
+    {{ body | safe }}
+    <p class="source">This page is built from <a href="{{ site.repo }}/blob/main/{{ source }}">{{ source }}</a> in the repository each time the site is built.</p>
+    {%- else %}
     <h1>{{ title }}</h1>
     {% if lead %}<p class="lead">{{ lead | safe }}</p>{% endif %}
-    {{ content | safe }}
+    {{ body | safe }}
+    {%- endif %}
     {%- for doc in collections.docs %}{% if doc.url == page.url %}
     {%- set prev = collections.docs[loop.index0 - 1] %}
     {%- set next = collections.docs[loop.index0 + 1] %}
@@ -25,4 +46,14 @@ layout: base.njk
     {%- endif %}
     {%- endif %}{% endfor %}
   </article>
+  {%- if headings | length > 1 %}
+  <nav class="toc" aria-labelledby="toc-title">
+    <p id="toc-title">On this page</p>
+    <ul>
+      {%- for h in headings %}
+      <li class="toc-{{ h.level }}"><a href="#{{ h.id }}">{{ h.html | safe }}</a></li>
+      {%- endfor %}
+    </ul>
+  </nav>
+  {%- endif %}
 </div>

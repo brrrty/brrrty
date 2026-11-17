@@ -128,7 +128,7 @@ Each file runs once per build, on its own, and can't see `config` or read files.
 
 The full lists, and the cases each plugin refuses, are in [PORTING.md](https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md#plugins).
 
-<h2 id="rhai-is-not-javascript">Rhai is not JavaScript</h2>
+## Rhai is not JavaScript
 
 Values cross into the script as 11ty would give them to a JavaScript filter, and come back out as data. Numbers are floats, `undefined` is `()`, `null` is `null_value()`, and dates are dates. Rhai's own operators aren't changed, so where they differ from JavaScript's, use a helper:
 

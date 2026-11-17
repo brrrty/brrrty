@@ -6,7 +6,7 @@ eleventyExcludeFromCollections: true
 ---
 <ul class="index-list">
 {%- for doc in collections.docs %}
-  <li><a href="{{ doc.url }}">{{ doc.data.title }}</a><p>{{ doc.data.summary }}</p></li>
+  <li><a href="{{ doc.url }}"><span class="index-title">{{ doc.data.title }}</span><span class="index-summary">{{ doc.data.summary }}</span></a></li>
 {%- endfor %}
-  <li><a href="/changelog/">Changelog</a><p>What changed in each release, built from the repository's CHANGELOG.md.</p></li>
+  <li><a href="/changelog/"><span class="index-title">Changelog</span><span class="index-summary">What changed in each release, built from the repository's CHANGELOG.md.</span></a></li>
 </ul>

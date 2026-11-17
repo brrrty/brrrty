@@ -1,15 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Brrrty">
-  <!-- PLACEHOLDER LOGO. Replace this file with Bertie (a turtle with a rocket on his shell).
-       It is used as-is for the header mark (36 by 36) and the favicon. Keep it square. -->
-  <style>
-    .disc { fill: #e9eee6; stroke: #8d9c92; }
-    .shell { fill: none; stroke: #865510; }
-    @media (prefers-color-scheme: dark) {
-      .disc { fill: #16231e; stroke: #4f6158; }
-      .shell { stroke: #dda03b; }
-    }
-  </style>
-  <circle class="disc" cx="32" cy="32" r="30" stroke-width="2"/>
-  <path class="shell" stroke-width="3" stroke-linejoin="round" d="M32 14 47.6 23v18L32 50 16.4 41V23z"/>
-  <path class="shell" stroke-width="2" stroke-linejoin="round" d="M32 24.5 39.4 28.8v8.5L32 41.5l-7.4-4.2v-8.5z"/>
+  <!-- LOGO SLOT, unused for now. Replace this file with Bertie (a turtle with a rocket on
+       his shell), then turn it on in site/_includes/base.njk (see "Logo slot" there). The
+       header shows it at 24 by 24 beside the wordmark. Keep it square. -->
+  <rect width="64" height="64" rx="12" fill="#d6411a"/>
 </svg>
