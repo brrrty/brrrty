@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- With the syntax highlighting plugin, a page highlighted in a language that another page could change (a `rust` fence, say) is no longer refused because of `{% highlight %}` text that no template language reads. The check that runs before the build used to count such tags in every file, and treated any file mentioning `njk` as Nunjucks, so a Markdown changelog quoting `{% highlight js 1,3 %}` in inline code, with `markdownTemplateEngine: false`, refused every `rust` page. It now decides what reads each file the way the build does (its extension, its front matter's `templateEngineOverride`, and `markdownTemplateEngine` and `htmlTemplateEngine`, `false` included) and counts a tag only where Liquid or Nunjucks reads it and the plugin gives that language the tag. Where that can't be known before the build (data that could set the override, a file a template could include or name as its layout, data files and `_includes`), it still counts the tag, so a page that 11ty would highlight differently is never written.
+- `date: Last Modified` is the file's change time (`ctime`), as in 11ty, not its modification time. They differ after anything that sets the modification time back or leaves it alone while changing the file's metadata, such as `touch -m`, a restore that keeps times, or `chmod`.
+- When a `_data` file fails, its error now prints before the problems of the pages it stops, which say to fix the error "reported above". Before, a page whose path sorted before the data file (`src/About.md` before `src/_data/site.json`) printed first.
+- The build summary says `Wrote 1 file` and `copied 1 file`, not `1 files`.
+
 ## 0.0.10 - 2026-11-17
 
 - Brrrty is on npm: `npm install --save-dev brrrty`, then `brrrty build` in your scripts. The `brrrty` package is a small launcher that runs a prebuilt binary from `@brrrty/darwin-arm64`, `@brrrty/darwin-x64`, `@brrrty/linux-arm64-musl` or `@brrrty/linux-x64-musl`, whichever npm installed for the platform. No install scripts and no Rust toolchain needed. The Linux binaries are static, so they run on Alpine and glibc distributions alike. Arguments, output and exit codes pass through unchanged, and Ctrl-C under `npm run` or `npx` stops `brrrty serve` cleanly with exit 0. Ctrl-\\ and every other terminating signal Node can catch are passed on too, and `brrrty serve` stops cleanly by itself if the launcher is killed outright, so it never stays behind holding its port.
