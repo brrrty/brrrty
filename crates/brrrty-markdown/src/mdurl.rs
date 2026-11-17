@@ -1,5 +1,5 @@
-//! markdown-it's `normalizeLink`, `normalizeLinkText` and `validateLink` (14.3.3 and 15 are the
-//! same), with what they call: mdurl 2.1's `parse`, `format`, `encode` and `decode`, and
+//! markdown-it's `normalizeLink`, `normalizeLinkText` and `validateLink` (14.3.3's
+//! `normalizeLink` differs, see [`JsLinkFormatter`]), with what they call: mdurl 2.1's `parse`, `format`, `encode` and `decode`, and
 //! punycode.js 2.3's `toASCII` and `toUnicode`, ported line by line. The port's own link
 //! formatter only percent-encodes: no punycode for hosts, and link text isn't decoded.
 
@@ -520,17 +520,22 @@ fn puny_decode(input: &[u16]) -> Result<String, ()> {
         output.insert(i as usize, n);
         i += 1;
     }
-    // `String.fromCodePoint` throws past U+10FFFF; a lone surrogate is written as U+FFFD.
-    output
-        .into_iter()
-        .map(|c| {
-            if c > 0x10FFFF {
-                Err(())
-            } else {
-                Ok(char::from_u32(c).unwrap_or('\u{fffd}'))
+    // `String.fromCodePoint` throws past U+10FFFF. Its UTF-16 joins a high and a low surrogate
+    // next to each other into one character; a lone one is written as U+FFFD.
+    if output.iter().any(|&c| c > 0x10FFFF) {
+        return Err(());
+    }
+    let units: Vec<u16> = output
+        .iter()
+        .flat_map(|&c| {
+            let mut buf = [0u16; 2];
+            match char::from_u32(c) {
+                Some(ch) => ch.encode_utf16(&mut buf).to_vec(),
+                None => vec![c as u16],
             }
         })
-        .collect()
+        .collect();
+    Ok(String::from_utf16_lossy(&units))
 }
 
 /// punycode.js `mapDomain`: an email's name kept, the domain's labels mapped.
@@ -574,9 +579,13 @@ fn recodes_host(u: &Url) -> bool {
     }
 }
 
-/// markdown-it's link functions, as a formatter for the port.
+/// markdown-it's link functions, as a formatter for the port. `v14` is 14.3.3's
+/// `normalizeLink`, which encodes the whole formatted URL (so an IPv6 host's brackets become
+/// `%5B`/`%5D`); 15 encodes each part before formatting.
 #[derive(Debug, Default)]
-pub(crate) struct JsLinkFormatter;
+pub(crate) struct JsLinkFormatter {
+    pub v14: bool,
+}
 
 impl LinkFormatter for JsLinkFormatter {
     fn validate_link(&self, url: &str) -> Option<()> {
@@ -600,6 +609,9 @@ impl LinkFormatter for JsLinkFormatter {
             && let Ok(ascii) = to_ascii(&h)
         {
             u.hostname = Some(ascii);
+        }
+        if self.v14 {
+            return encode(&format(&u));
         }
         for part in [
             &mut u.auth,
@@ -641,7 +653,7 @@ mod tests {
 
     #[test]
     fn links_normalize_as_markdown_it_does() {
-        let f = JsLinkFormatter;
+        let f = JsLinkFormatter::default();
         assert_eq!(
             f.normalize_link("http://é.com/é?x=é#é"),
             "http://xn--9ca.com/%C3%A9?x=%C3%A9#%C3%A9"
@@ -652,6 +664,12 @@ mod tests {
             "http://рф/é%2F"
         );
         assert!(f.validate_link("javascript:x").is_none());
+        let v14 = JsLinkFormatter { v14: true };
+        assert_eq!(
+            v14.normalize_link("http://[::1]:8080/"),
+            "http://%5B::1%5D:8080/"
+        );
+        assert_eq!(f.normalize_link("http://[::1]:8080/"), "http://[::1]:8080/");
         assert!(f.validate_link("data:image/png;base64,x").is_some());
     }
 }

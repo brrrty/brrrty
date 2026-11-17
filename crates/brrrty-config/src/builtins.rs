@@ -97,7 +97,11 @@ pub fn register(e: &mut Engine) {
         },
     );
     e.register_fn("markdown", |s: Dynamic| -> Res<String> {
-        Ok(source(&s, "markdown")?.map_or_else(String::new, |s| markdown::markdown(&s)))
+        match source(&s, "markdown")? {
+            None => Ok(String::new()),
+            Some(s) => markdown::markdown(&s)
+                .map_err(|e| invalid(format!("markdown: {e}"), rhai::Position::NONE)),
+        }
     });
     e.register_fn("markdown", |s: Dynamic, options: Dynamic| -> Res<String> {
         let options = markdown_options(&options)?;

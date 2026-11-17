@@ -420,13 +420,15 @@ impl Pipeline<'_> {
         file: &Path,
         line: Option<usize>,
     ) -> Result<String, Problem> {
-        let render = || {
+        // `Err(Ok(why))` is a construct the Markdown library refuses; `Err(Err(p))` a highlight
+        // problem.
+        let render = || -> Result<String, Result<String, Problem>> {
             let Some(plugin) = self.highlight else {
-                return Ok(self.markdown.render(source));
+                return self.markdown.try_render(source).map_err(Ok);
             };
             let mut page = plugin.page();
             let mut failed = None;
-            let html = self.markdown.render_highlighted(source, &mut |fence| {
+            let html = self.markdown.try_render_highlighted(source, &mut |fence| {
                 if failed.is_some() {
                     return None;
                 }
@@ -446,9 +448,17 @@ impl Pipeline<'_> {
                 }
             });
             match failed {
-                Some(p) => Err(p),
-                None => Ok(html),
+                Some(p) => Err(Err(p)),
+                None => html.map_err(Ok),
             }
+        };
+        let refused = |why: String| {
+            Problem::error(
+                codes::MARKDOWN_RENDER_FAILED,
+                format!("Brrrty can't render this Markdown exactly yet: {why}"),
+            )
+            .with_path(file)
+            .with_help("rewrite the construct named above (or put it in a code block) until Brrrty supports it; markdown-it would render it differently from what Brrrty would write")
         };
         crate::contain::catch(render)
             .map_err(|why| {
@@ -461,6 +471,10 @@ impl Pipeline<'_> {
                     "this is a bug in Brrrty's Markdown library. Changing the Markdown near the construct it chokes on (for example, putting `~~strikethrough~~` or emphasis on one line, or a blank line before a list) usually works around it. Please report the file at https://github.com/brrrty/brrrty/issues",
                 )
             })?
+            .map_err(|e| match e {
+                Ok(why) => refused(why),
+                Err(p) => p,
+            })
     }
 
     fn render(

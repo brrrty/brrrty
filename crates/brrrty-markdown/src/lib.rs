@@ -1,12 +1,17 @@
 //! Markdown rendering for Brrrty.
 
+mod alt;
 mod backticks;
 mod core_rules;
 mod emphasis;
 mod escape;
+mod html_block;
+mod image;
 mod linkify;
 mod linkify_re;
 mod mdurl;
+mod refuse;
+mod table;
 mod uc_micro;
 
 /// Renders Markdown source to an HTML string.
@@ -23,6 +28,22 @@ pub trait MarkdownRenderer: Send + Sync {
     fn render_highlighted(&self, source: &str, highlight: &mut Highlight<'_>) -> String {
         let _ = highlight;
         self.render(source)
+    }
+
+    /// [`MarkdownRenderer::render`], or why Brrrty can't render `source` exactly (a construct
+    /// the port's block rules still get wrong). A renderer that never refuses returns `render`.
+    fn try_render(&self, source: &str) -> Result<String, String> {
+        Ok(self.render(source))
+    }
+
+    /// [`MarkdownRenderer::render_highlighted`], refusing as [`MarkdownRenderer::try_render`]
+    /// does.
+    fn try_render_highlighted(
+        &self,
+        source: &str,
+        highlight: &mut Highlight<'_>,
+    ) -> Result<String, String> {
+        Ok(self.render_highlighted(source, highlight))
     }
 }
 
@@ -102,30 +123,14 @@ fn highlight_fences(ast: &mut markdown_it::Node, source: &str, highlight: &mut H
     });
 }
 
-/// markdown-it's table rule needs a `|` in the header row too, so `a\n|--` is a paragraph. The
-/// port's rule doesn't check that; this wraps it, and is registered where `tables::add` would be.
-struct PipeTable;
-
-impl markdown_it::parser::block::BlockRule for PipeTable {
-    fn check(state: &mut markdown_it::parser::block::BlockState) -> Option<()> {
-        use markdown_it::plugins::extra::tables::TableScanner;
-        state.get_line(state.line).contains('|').then_some(())?;
-        TableScanner::check(state)
-    }
-
-    fn run(
-        state: &mut markdown_it::parser::block::BlockState,
-    ) -> Option<(markdown_it::Node, usize)> {
-        use markdown_it::plugins::extra::tables::TableScanner;
-        state.get_line(state.line).contains('|').then_some(())?;
-        TableScanner::run(state)
-    }
-}
-
 fn add_tables(md: &mut markdown_it::MarkdownIt) {
-    // markdown-it tries `table` before every other block rule.
-    md.block.add_rule::<PipeTable>().before_all();
+    table::add(md);
 }
+
+/// Set on a parser with markdown-it's `html` on.
+#[derive(Debug)]
+pub(crate) struct HtmlOn;
+impl markdown_it::parser::extset::MarkdownItExt for HtmlOn {}
 
 /// markdown-it's `html_inline` rule (14.3.3 and 15 are the same). The port follows CommonMark
 /// 0.31's regular expressions; markdown-it scans a comment, processing instruction, declaration
@@ -135,7 +140,12 @@ struct HtmlInline;
 
 /// `skipHtmlSpecial`: an earlier special construct in this inline text wasn't closed.
 #[derive(Debug, Default)]
-struct SkipHtmlSpecial;
+pub(crate) struct SkipHtmlSpecial;
+
+/// What [`HtmlInline`]'s `check` found at each position.
+#[derive(Debug, Default)]
+pub(crate) struct HtmlMemo(std::collections::HashMap<usize, Option<usize>>);
+impl markdown_it::parser::extset::InlineRootExt for HtmlMemo {}
 impl markdown_it::parser::extset::InlineRootExt for SkipHtmlSpecial {}
 
 /// JavaScript's `\s`.
@@ -184,7 +194,8 @@ fn scan_special(state: &mut markdown_it::parser::inline::InlineState) -> Option<
     if state.inline_ext.get::<SkipHtmlSpecial>().is_some() {
         return None;
     }
-    match state.src[start..].find(terminator) {
+    let end = image::text_end(state);
+    match state.src[start..end].find(terminator) {
         Some(at) => Some(start + at + terminator.len()),
         None => {
             state.inline_ext.insert(SkipHtmlSpecial);
@@ -206,7 +217,7 @@ fn scan_html_inline(state: &mut markdown_it::parser::inline::InlineState) -> Opt
         scan_special(state)
     } else if ch == b'/' || ch.is_ascii_alphabetic() {
         html_open_close_re()
-            .find(&state.src[state.pos..])
+            .find(&state.src[state.pos..image::text_end(state)])
             .map(|m| state.pos + m.len())
     } else {
         None
@@ -235,7 +246,22 @@ impl markdown_it::parser::inline::InlineRule for HtmlInline {
     const MARKER: char = '<';
 
     fn check(state: &mut markdown_it::parser::inline::InlineState) -> Option<usize> {
-        scan_html_inline(state).map(|end| end - state.pos)
+        // `skipToken` caches where it skipped to, so a second scan doesn't run the rule again.
+        let pos = state.pos;
+        if let Some(&seen) = state
+            .inline_ext
+            .get::<HtmlMemo>()
+            .and_then(|m| m.0.get(&pos))
+        {
+            return seen;
+        }
+        let found = scan_html_inline(state).map(|end| end - pos);
+        state
+            .inline_ext
+            .get_or_insert_default::<HtmlMemo>()
+            .0
+            .insert(pos, found);
+        found
     }
 
     fn run(
@@ -257,7 +283,8 @@ impl markdown_it::parser::inline::InlineRule for HtmlInline {
 
 /// markdown-it's `html: true`: HTML blocks from the port, inline HTML from [`HtmlInline`].
 fn add_html(md: &mut markdown_it::MarkdownIt) {
-    markdown_it::plugins::html::html_block::add(md);
+    html_block::add(md);
+    md.ext.insert(HtmlOn);
     md.inline.add_rule::<HtmlInline>();
 }
 
@@ -294,7 +321,7 @@ pub struct MarkdownIt {
 
 impl MarkdownIt {
     pub fn new() -> Self {
-        let mut md = new_parser();
+        let mut md = new_parser_for(true);
         // `cmark::add` minus `block::code`: 11ty calls `disable("code")`.
         add_commonmark(&mut md, false, true);
         add_html(&mut md);
@@ -314,20 +341,51 @@ impl Default for MarkdownIt {
     }
 }
 
-impl MarkdownRenderer for MarkdownIt {
-    fn render(&self, source: &str) -> String {
+impl MarkdownIt {
+    fn finish(
+        &self,
+        source: &str,
+        highlight: Option<&mut Highlight<'_>>,
+        refuse: bool,
+    ) -> Result<String, String> {
+        let source = trim_blank_tail(source);
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast);
-        let marker = fix_end_of_text(&mut ast, source);
-        render_marked(&ast, marker)
+        if refuse {
+            refuse::check(&ast, source)?;
+        }
+        let marker = pick_marker(source);
+        fix_end_of_text(&mut ast, source, marker);
+        if let Some(h) = highlight {
+            highlight_fences(&mut ast, source, h);
+        }
+        fix_tight_blocks(&mut ast, marker);
+        alt::fix_images(&mut ast, false);
+        Ok(render_marked(&ast, marker))
+    }
+}
+
+impl MarkdownRenderer for MarkdownIt {
+    fn render(&self, source: &str) -> String {
+        self.finish(source, None, false)
+            .expect("only refusals fail")
     }
 
     fn render_highlighted(&self, source: &str, highlight: &mut Highlight<'_>) -> String {
-        let mut ast = self.md.parse(source);
-        fix_tree(&mut ast);
-        let marker = fix_end_of_text(&mut ast, source);
-        highlight_fences(&mut ast, source, highlight);
-        render_marked(&ast, marker)
+        self.finish(source, Some(highlight), false)
+            .expect("only refusals fail")
+    }
+
+    fn try_render(&self, source: &str) -> Result<String, String> {
+        self.finish(source, None, true)
+    }
+
+    fn try_render_highlighted(
+        &self,
+        source: &str,
+        highlight: &mut Highlight<'_>,
+    ) -> Result<String, String> {
+        self.finish(source, Some(highlight), true)
     }
 }
 
@@ -341,11 +399,17 @@ pub struct DefaultMarkdownIt {
     inline: markdown_it::MarkdownIt,
 }
 
-/// The port's parser with markdown-it's link functions.
-fn new_parser() -> markdown_it::MarkdownIt {
+/// The port's parser with markdown-it's link functions (14.3.3's when `v14`).
+fn new_parser_for(v14: bool) -> markdown_it::MarkdownIt {
     let mut md = markdown_it::MarkdownIt::new();
-    md.link_formatter = Box::new(mdurl::JsLinkFormatter);
+    md.link_formatter = Box::new(mdurl::JsLinkFormatter { v14 });
+    core_rules::add_wrap(&mut md);
     md
+}
+
+/// [`new_parser_for`] markdown-it 15.
+fn new_parser() -> markdown_it::MarkdownIt {
+    new_parser_for(false)
 }
 
 /// The port's `cmark::add`, in its order, with markdown-it's emphasis (see [`emphasis`]) and,
@@ -358,6 +422,7 @@ fn add_commonmark(md: &mut markdown_it::MarkdownIt, code: bool, eleventy: bool) 
     emphasis::add_emphasis(md, eleventy);
     inline::link::add(md);
     inline::image::add(md);
+    image::add(md);
     inline::autolink::add(md);
     inline::entity::add(md);
     if code {
@@ -438,6 +503,7 @@ impl DefaultMarkdownIt {
         padded.push(EDGE);
         let mut ast = self.inline.parse(&padded);
         fix_tree(&mut ast);
+        alt::fix_images(&mut ast, true);
         ast.walk_mut(|n, _| {
             if n.is::<Softbreak>() {
                 n.replace(RawBreak("\n"));
@@ -450,12 +516,19 @@ impl DefaultMarkdownIt {
         inner.strip_suffix(EDGE).unwrap_or(inner).to_string()
     }
 
-    /// `md.render(source)`.
-    fn render_block(&self, source: &str) -> String {
+    /// `md.render(source)`, refusing when `refuse` (see [`MarkdownRenderer::try_render`]).
+    fn render_block(&self, source: &str, refuse: bool) -> Result<String, String> {
+        let source = trim_blank_tail(source);
         let mut ast = self.block.parse(source);
         fix_tree(&mut ast);
-        let marker = fix_end_of_text(&mut ast, source);
-        render_marked(&ast, marker)
+        if refuse {
+            refuse::check(&ast, source)?;
+        }
+        let marker = pick_marker(source);
+        fix_end_of_text(&mut ast, source, marker);
+        fix_tight_blocks(&mut ast, marker);
+        alt::fix_images(&mut ast, true);
+        Ok(render_marked(&ast, marker))
     }
 }
 
@@ -510,12 +583,17 @@ impl ConfiguredMarkdownIt {
     /// be sure to read as linkify-it does, or a smart quote next to an image whose label can't be
     /// found in the source.
     pub fn render(&self, source: &str) -> Result<String, String> {
+        let source = trim_blank_tail(source);
         let mut ast = self.md.parse(source);
         fix_tree(&mut ast);
+        refuse::check(&ast, source)?;
         if !self.plain {
             core_rules::run(&mut ast, &self.md, source, self.rules)?;
         }
-        let marker = fix_end_of_text(&mut ast, source);
+        let marker = pick_marker(source);
+        fix_end_of_text(&mut ast, source, marker);
+        fix_tight_blocks(&mut ast, marker);
+        alt::fix_images(&mut ast, true);
         Ok(render_marked(&ast, marker))
     }
 }
@@ -526,59 +604,143 @@ impl ConfiguredMarkdownIt {
 /// An HTML block is written as it is, so the port's renderer adds a newline after it whatever
 /// its content ends with. Its content ends in a marker instead, and [`render_marked`] takes the
 /// marker out with the newline written after it. Returns the marker, if one was used.
-fn fix_end_of_text(ast: &mut markdown_it::Node, source: &str) -> Option<char> {
-    use markdown_it::plugins::cmark::block::fence::CodeFence;
-    use markdown_it::plugins::html::html_block::HtmlBlock;
+fn fix_end_of_text(ast: &mut markdown_it::Node, source: &str, marker: Option<char>) {
     // markdown-it turns `\r\n` and `\r` into `\n` first.
     if source.ends_with(['\n', '\r']) {
-        return None;
+        return;
     }
-    // A noncharacter the source doesn't have.
-    let marker = ('\u{fdd0}'..='\u{fdef}').find(|&c| !source.contains(c));
-    let mut used = None;
-    ast.walk_mut(|n, _| {
-        let Some(map) = n.srcmap else { return };
-        let (start, end) = map.get_byte_offsets();
-        if let Some(html) = n.cast_mut::<HtmlBlock>() {
-            if let Some(marker) = marker
-                && end >= source.len()
-                && html.content.ends_with('\n')
-            {
-                html.content.pop();
-                html.content.push(marker);
-                used = Some(marker);
-            }
-            return;
-        }
-        let Some(fence) = n.cast_mut::<CodeFence>() else {
-            return;
-        };
-        if end < source.trim_end_matches([' ', '\t']).len() {
-            return;
-        }
-        let lines = &source[start..end];
-        let last = lines.rsplit('\n').next().unwrap_or("");
-        let body = last.trim_start_matches([' ', '>', '\t']);
-        let marks = body.chars().take_while(|&c| c == fence.marker).count();
-        let closed = lines.contains('\n')
-            && marks >= fence.marker_len
-            && body[marks..].trim_matches([' ', '\t']).is_empty();
-        if closed {
-            return;
-        }
-        if fence.content.ends_with('\n') {
-            fence.content.pop();
-        }
-        // A last line of only spaces is empty to markdown-it.
-        let tail = fence.content.rfind('\n').map_or(0, |i| i + 1);
-        if fence.content[tail..]
-            .bytes()
-            .all(|b| b == b' ' || b == b'\t')
+    fix_end_of_text_in(ast, source, marker, false);
+}
+
+fn fix_end_of_text_in(n: &mut markdown_it::Node, source: &str, marker: Option<char>, quoted: bool) {
+    use markdown_it::plugins::cmark::block::blockquote::Blockquote;
+    use markdown_it::plugins::cmark::block::fence::CodeFence;
+    use markdown_it::plugins::html::html_block::HtmlBlock;
+    let quoted_below = quoted || n.is::<Blockquote>();
+    for c in n.children.iter_mut() {
+        fix_end_of_text_in(c, source, marker, quoted_below);
+    }
+    let Some(map) = n.srcmap else { return };
+    let (start, end) = map.get_byte_offsets();
+    if let Some(html) = n.cast_mut::<HtmlBlock>() {
+        if let Some(marker) = marker
+            && end >= source.len()
+            && html.content.ends_with('\n')
         {
-            fence.content.truncate(tail);
+            html.content.pop();
+            html.content.push(marker);
+        }
+        return;
+    }
+    let Some(fence) = n.cast_mut::<CodeFence>() else {
+        return;
+    };
+    if end < source.trim_end_matches([' ', '\t']).len() {
+        return;
+    }
+    let lines = &source[start..end];
+    let last = lines.rsplit(['\n', '\r']).next().unwrap_or("");
+    // A closing fence's line starts with its containers' markers: `>` only in a blockquote.
+    let body = if quoted {
+        last.trim_start_matches([' ', '>', '\t'])
+    } else {
+        last.trim_start_matches([' ', '\t'])
+    };
+    let marks = body.chars().take_while(|&c| c == fence.marker).count();
+    // A closing fence is indented less than 4 columns past the fence's container; the opening
+    // line's indentation stands in for the container's.
+    let line_start = source[..start].rfind(['\n', '\r']).map_or(0, |i| i + 1);
+    let fence_col = source[line_start..start].chars().fold(0, |col, c| {
+        if c == '\t' {
+            col + 4 - col % 4
+        } else {
+            col + 1
         }
     });
-    used
+    let indent = last
+        .chars()
+        .take_while(|&c| c == ' ' || c == '\t')
+        .fold(0, |col, c| {
+            if c == '\t' {
+                col + 4 - col % 4
+            } else {
+                col + 1
+            }
+        });
+    let closed = lines.contains(['\n', '\r'])
+        && (if fence_col < 4 {
+            indent < 4
+        } else {
+            indent < fence_col + 4
+        })
+        && marks >= fence.marker_len
+        && body[marks..].trim_matches([' ', '\t']).is_empty();
+    if closed {
+        return;
+    }
+    if fence.content.ends_with('\n') {
+        fence.content.pop();
+    }
+    // A last line of only spaces is empty to markdown-it.
+    let tail = fence.content.rfind('\n').map_or(0, |i| i + 1);
+    if fence.content[tail..]
+        .bytes()
+        .all(|b| b == b' ' || b == b'\t')
+    {
+        fence.content.truncate(tail);
+    }
+}
+
+/// A noncharacter `source` doesn't have, for [`render_marked`].
+fn pick_marker(source: &str) -> Option<char> {
+    ('\u{fdd0}'..='\u{fdef}').find(|&c| !source.contains(c))
+}
+
+/// markdown-it never sees a last line of only spaces and tabs with no newline after it (its
+/// line splitter skips the indentation and never reaches the end of the line).
+fn trim_blank_tail(source: &str) -> &str {
+    let cut = source.rfind(['\n', '\r']).map_or(0, |i| i + 1);
+    let tail = &source[cut..];
+    if !tail.is_empty() && tail.bytes().all(|b| b == b' ' || b == b'\t') {
+        &source[..cut]
+    } else {
+        source
+    }
+}
+
+/// Writes `marker` as it is (taken out with the newline after it by [`render_marked`]).
+#[derive(Debug)]
+struct Mark(char);
+
+impl markdown_it::NodeValue for Mark {
+    fn render(&self, _: &markdown_it::Node, fmt: &mut dyn markdown_it::Renderer) {
+        fmt.text_raw(&self.0.to_string());
+    }
+}
+
+/// In a tight list item, markdown-it writes a fence, an indented code block or an HTML block
+/// right after the item's text, with no newline between (their renderers don't add one); the
+/// port's write one.
+fn fix_tight_blocks(ast: &mut markdown_it::Node, marker: Option<char>) {
+    use markdown_it::plugins::cmark::block::code::CodeBlock;
+    use markdown_it::plugins::cmark::block::fence::CodeFence;
+    use markdown_it::plugins::html::html_block::HtmlBlock;
+    let Some(marker) = marker else { return };
+    ast.walk_mut(|n, _| {
+        let len = n.children.len();
+        for i in 0..len.saturating_sub(1) {
+            let next = &n.children[i + 1];
+            let glued = next.is::<CodeFence>()
+                || next.is::<CodeBlock>()
+                || next.is::<HtmlBlock>()
+                || next.is::<Highlighted>();
+            if glued && n.children[i].is::<core_rules::InlineGroup>() {
+                n.children[i]
+                    .children
+                    .push(markdown_it::Node::new(Mark(marker)));
+            }
+        }
+    });
 }
 
 /// Renders `ast`, taking out `marker` and the newline written after it (see [`fix_end_of_text`]).
@@ -599,7 +761,12 @@ impl Default for DefaultMarkdownIt {
 impl MarkdownRenderer for DefaultMarkdownIt {
     /// `md.render(source)`.
     fn render(&self, source: &str) -> String {
-        self.render_block(source)
+        self.render_block(source, false)
+            .expect("only refusals fail")
+    }
+
+    fn try_render(&self, source: &str) -> Result<String, String> {
+        self.render_block(source, true)
     }
 }
 

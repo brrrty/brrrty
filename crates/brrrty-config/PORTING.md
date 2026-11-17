@@ -193,22 +193,39 @@ A config that calls `DateTime.fromJSDate(d, { zone }).toFormat(fmt)` (Luxon
   map or an `object()`. Any other key is an error. Linkify is linkify-it 6.1.0
   (markdown-it 15's), so links without `http://` (`example.com`) need
   `fuzzy_link: true`, as in JavaScript. The typographer is markdown-it's:
-  `(c)`, `+-`, `...`, `--`, `---`, and smart quotes `“”‘’`. Two inputs are
-  refused instead of guessed at: a run of 1,000 or more characters with no
-  space in a paragraph when `linkify` is on, and a quote right next to an image
-  whose label can't be found in the source. A config that adds a markdown-it
+  `(c)`, `+-`, `...`, `--`, `---`, and smart quotes `“”‘’`. markdown-it is
+  15.0.3; a site with 15.0.2 installed differs from it only
+  with `html: true`, on some HTML comments. A config that adds a markdown-it
   plugin or rule to its own instance can't be ported yet.
-- Rendering matches markdown-it on about 340 pinned cases, on 40,000 generated
-  inputs around links and typography with each set of options, and on random
-  inputs, apart from these known gaps in the Rust port of markdown-it (left for
-  later; no page on the test sites has one): a single-column table whose header
-  ends in `|` and whose delimiter row has no pipe (`![i](u)|` then `---`); an empty
-  list item right after a blockquote's lazy line (`> a` then `- `); a table right
-  after a blockquote's lazy line; and a reference definition with an odd
-  destination (`[x]: /u<div>\\`). 11ty's own Markdown (markdown-it
-  14.3.3, which `.md` pages use) has the same gaps. A panic in the port makes the
-  call an error with the panic text, and refuses an 11ty Markdown page with
-  `markdown-render-failed` while the rest of the site builds.
+
+### What Markdown Brrrty refuses
+
+Brrrty renders Markdown with a Rust port of markdown-it, corrected where it
+differed, and checked against markdown-it (14.3.3 for 11ty's `.md` pages,
+15.0.3 for `markdown()`) by differential fuzzing. It isn't proven identical for
+every input. Where the port is known to differ, Brrrty refuses instead of
+writing something else: an 11ty page with `markdown-render-failed` (the rest of
+the site builds), and a `markdown()` call with an error. Refused today:
+
+- a line shaped like a link reference definition (`[label]:`) with a `\` in
+  its destination (`[docs]: C:\path\`), or ending in `]:` with only a list
+  marker, or a `\`, on the next line;
+- inside a blockquote, a lazy line (fewer `>` than the quote) that is only a
+  list marker (`> quote` then `-`);
+- a table right after a blockquote's paragraph, with no blank line between;
+- inside a blockquote, a code span or inline HTML that runs across a lazy line
+  indented with spaces or tabs;
+- a tab after a blockquote's `>` among a line's leading `>` and list markers
+  (`>\t`, `>> *\t`), anywhere in the text, code blocks included;
+- with `linkify`: a run of 1,000 or more characters with no space in a
+  paragraph's source, link URLs included;
+- with the typographer: a quote right next to an image whose label can't be
+  found in the source.
+
+These checks are a little wider than the differences, so they can refuse text
+markdown-it and Brrrty would write the same way. Known, not refused: a panic in
+the port (none known) makes the call an error with the panic text and refuses
+an 11ty page.
 
 ## `object()` and key order
 

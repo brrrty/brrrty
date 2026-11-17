@@ -118,3 +118,81 @@ fn linkify_and_typographer_match_markdown_it() {
     }
     assert!(bad.is_empty(), "{} differ:\n{}", bad.len(), bad.join("\n"));
 }
+
+/// The review's cases, in every instance: 15's `render` and `renderInline`, 11ty's 14.3.3, and
+/// 15 with `html`, `linkify` and the typographer on (`fuzzyLink` on).
+#[test]
+fn round1_cases_match_markdown_it_in_every_instance() {
+    use brrrty_markdown::{ConfiguredMarkdownIt, Options};
+    let v: Value =
+        serde_json::from_str(include_str!("probes/markdown_it.json")).expect("probe file");
+    let md = DefaultMarkdownIt::new();
+    let eleventy = MarkdownIt::new();
+    let html = ConfiguredMarkdownIt::new(Options {
+        html: true,
+        linkify: true,
+        typographer: true,
+        fuzzy_link: true,
+    });
+    let cases = v["render_round1"].as_array().expect("list");
+    assert!(cases.len() >= 30);
+    let mut bad = Vec::new();
+    for c in cases {
+        let s = c["s"].as_str().unwrap();
+        let got = [
+            ("out", md.try_render(s).unwrap()),
+            ("inline", md.render_inline(s)),
+            ("eleventy", eleventy.try_render(s).unwrap()),
+            ("html", html.render(s).unwrap()),
+        ];
+        for (key, got) in got {
+            let want = c[key].as_str().unwrap();
+            if got != want {
+                bad.push(format!("{key} {s:?}\n  want {want:?}\n  got  {got:?}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} differ:\n{}", bad.len(), bad.join("\n"));
+}
+
+/// Shapes the port's block rules still parse differently are refused in every instance, and
+/// their near neighbours that render the same are not.
+#[test]
+fn block_shapes_the_port_gets_wrong_are_refused() {
+    use brrrty_markdown::{ConfiguredMarkdownIt, Options};
+    let md = DefaultMarkdownIt::new();
+    let eleventy = MarkdownIt::new();
+    let configured = ConfiguredMarkdownIt::new(Options {
+        linkify: true,
+        typographer: true,
+        ..Options::default()
+    });
+    let refused = [
+        "[docs]: C:\\path\\\n\n[docs]",
+        "> quote\n-",
+        "> a\n> b\n2)",
+        "> a\n| b | c |\n|---|---|",
+        "> a `b\n    c` d",
+        ">\t<pre>\n>\tx</pre>",
+        ">>* \tx",
+    ];
+    for s in refused {
+        assert!(md.try_render(s).is_err(), "{s:?}");
+        assert!(configured.render(s).is_err(), "{s:?}");
+    }
+    for s in refused.iter().filter(|s| !s.starts_with(">\t")) {
+        assert!(eleventy.try_render(s).is_err(), "{s:?}");
+    }
+    assert!(eleventy.try_render(">\t<pre>\n>\tx</pre>").is_err());
+    for s in [
+        "> quote\n- item",
+        "| a |\n| --- |\n| b |",
+        "[dev server](http://[::1]:8080/)",
+        "> a\n\n| b | c |\n|---|---|",
+        "a `b\n    c` d",
+        "Title\n---",
+    ] {
+        assert!(md.try_render(s).is_ok(), "{s:?}");
+        assert!(eleventy.try_render(s).is_ok(), "{s:?}");
+    }
+}

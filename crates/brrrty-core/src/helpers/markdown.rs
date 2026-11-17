@@ -15,9 +15,9 @@ fn instance() -> &'static DefaultMarkdownIt {
 }
 
 /// `md.render(s)`. The caller maps JavaScript's falsy values (`null`, `undefined`, `""`) to
-/// `""` first, as `s || ''` does.
-pub fn markdown(s: &str) -> String {
-    instance().render(s)
+/// `""` first, as `s || ''` does. An error names a construct Brrrty can't render exactly yet.
+pub fn markdown(s: &str) -> Result<String, String> {
+    instance().try_render(s)
 }
 
 /// `md.renderInline(s)`.

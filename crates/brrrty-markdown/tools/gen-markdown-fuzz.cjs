@@ -27,10 +27,29 @@ const pick = (a) => a[Math.floor(rnd() * a.length)];
 const FRAGS = ['a', 'b c', 'word', '*', '**', '_', '__', '`', '``', ' ', '  ', '\t', '\n', '\n\n', '> ', '>', '- ', '-', '* ', '+ ', '1. ', '2) ', '# ', '## ', '#', '---', '***', '___', '===', '|', '| a | b |', '|--', '|---|---|', ':-:', '```', '~~~', '```js', '    ', '<b>', '</b>', '<div>', '<!--', '-->', '[', ']', '(', ')', '[a](b)', '![i](u)', '<http://x.y>', '&amp;', '&', '<', '>', '\\', '\\*', '~~', '~', '"', "'", ' ', 'é', '中', '😀', '[x]: /u', '[x]', '\r\n', '\r', '1.', '10.', '0.', '    code', 'http://a.b', ':', '!', '#hash'];
 // Around linkify and the typographer.
 const LINKS = ['http://', 'https://', 'HTTP://', 'ftp://', 'mailto:', '//', 'www.', 'example.com', 'github.com/x', 'Example.com', 'a.b', 'x.io', 'пример.рф', 'é.com', 'xn--p1ai', '127.0.0.1', ':8080', '/path', '?q=1&b=2', '#frag', '(x)', '[y]', 'foo@bar.com', 'me@x.co', '@', '.', ',', ';', '!', '?', '*', '_', '%20', '<a href="x">', '</a>', '<http://x.y/z>', '[l](http://u.v)', '[http://in.label](u)', '![http://alt.text](u)', '`http://code.x`', '\\_', '&#58;', '&amp;', '"', '"', "'", "'", '“', "'s", '"q"', "'q'", '(c)', '(C)', '(tm)', '(r)', '+-', '..', '...', '....', '?..', '!!!!', '????', ',,', '--', '---', '----', ' -- ', ' ', '😀', '中'];
-const ALL = options ? FRAGS.concat(LINKS, LINKS) : FRAGS;
+// MARKDOWN_FAMILY=<name> builds inputs from one of these instead, around the constructs the
+// review of Plan 5 found differences in (emphasis, links, alt text, HTML blocks, tight lists,
+// tabs, blockquotes, CRLF, emoji, IDN hosts, and the shapes Brrrty refuses).
+const FAMILIES={
+ emph:['*','_','**','__','***','~~','~','~~~','~~~~','`c`','`` ` ``','`','a','b c','settings_','DEBUG','x_y','[l](u)','[*a*](u)','![i](u)',' ','  ','\n','.','!','(',')','😀','中','-',',','"','\'','\\*','\\_','&amp;','<b>','*a*','_a_','**b**','~~s~~'],
+ links:['[x](',')','<','>','http://','https://','HTTP://','mailto:','//','[::1]','[2001:db8::1]',':8080','/','é.com','xn--p1ai','пример.рф','a@','[IPv6:::1]','example.com','?q=[1]','#x','%5B','%zz',' ','\n','[r]: ','[r]','"t"','foo','ß.de','İ.com','ｅｘ.com'],
+ alt:['![','](u)','](u "t")','a','&amp;','&copy;','&#35;','\\\'','\\*','\\q','`ls -la`','``a`b``','<b>x</b>','<http://x.y>','<a@b.co>','\\\n','  \n','\n','*e*','**s**','~~d~~','[l](v)','![n](w)',' ','http://z.io','"q"','(c)','😀'],
+ html:['- ','1. ','* ','  ','   ','> ','<pre>','</pre>','<script>','</script>','<style>','</style>','<textarea>','</textarea>','<!--','-->','<?','?>','<!X','<!x','>','<![CDATA[',']]>','<div>','</div>','<PRE>','x','y','\n','\n\n','\n  ','\n   ','\t','b'],
+ tight:['- ','1. ','  ','   ','```\n','```','~~~\n','## h','# h','> q','***','---','text','"q"','http://a.b','a.com','(c)','--','...','\n','\n  ','\n   ','<div>','| a |','|---|','*e*'],
+ tabs:['\t','>','> ','- ','* ','1. ','  ','\n','x','`c`','<pre>','```','a b','\t\t','>>','<!--','-->'],
+ quote:['> ','>','\n','  ','    ','`a','b`','<b','>','a','- ','1. ','---','| a |','|---|','*','_','[x]: /u','\n\n','<!x','?>'],
+ mix:['*','_','~~','`','[a](b)','![i](u)','<http://x.y>','http://a.b','a.com','"','\'','--','...','(c)','> ','- ','1. ','```','<div>','<!--','\n','\n\n','  ','\t','|','|---|','&amp;','\\','x','é','😀','# ','[x]: /u','[x]','<b>','</b>'],
+ crlf:['\r\n','\r','\n','*a*','**','_','~~','`c`','> ','- ','1. ','  ','```','<div>','[a](b)','text','a\\','\t','---','===','|','|---|'],
+ emoji:['😀','👍🏽','👨‍👩‍👧','🇺🇸','1️⃣','❤️','✨','*','_','**','__','~~','a','.','!',' ','\u200d','\ufe0f','中'],
+ idn:['[x](http://',')','<http://','>','é','ß','ς','Σ','İ','ı','ﬁ','K','.com','.рф','xn--','xn--p1ai','中文','ｅ','。','．','@','mailto:','a','-','..','😀','http://','/p',' '],
+ shapes:['| Name |','---','| a |','|---|','[docs]: ','C:\\path\\','[docs]','> quote','> a','-','- ','1.','+','| b | c |','|---|---|','\n','\n\n',' ','text','> ','x'],
+};
+const family = process.env.MARKDOWN_FAMILY && FAMILIES[process.env.MARKDOWN_FAMILY];
+if (process.env.MARKDOWN_FAMILY && !family) throw new Error(`no family ${process.env.MARKDOWN_FAMILY}: ${Object.keys(FAMILIES)}`);
+const ALL = family || (options ? FRAGS.concat(LINKS, LINKS) : FRAGS);
 const cases = [];
 for (let i = 0; i < N; i++) {
-  const n = 1 + Math.floor(rnd() * (options ? 12 : 9));
+  const n = 1 + Math.floor(rnd() * (family ? 14 : options ? 12 : 9));
   let s = '';
   for (let j = 0; j < n; j++) s += pick(ALL);
   cases.push(options ? { s, render: md.render(s) } : { s, render: md.render(s), render_inline: md.renderInline(s) });

@@ -25,26 +25,57 @@ use markdown_it::{MarkdownIt, Node, NodeValue, Renderer};
 use crate::linkify::Linkify;
 use crate::uc_micro;
 
-/// The source of an inline block (markdown-it's `inline` token `content`), kept on the block.
+/// The source of an inline block (markdown-it's `inline` token `content`), kept on its
+/// [`InlineGroup`].
 #[derive(Debug)]
-struct InlineSource(String);
+pub(crate) struct InlineSource(pub String);
 impl NodeExt for InlineSource {}
 
-/// Keeps each inline block's source on its block before the inline rules replace it.
-struct KeepInlineSource;
+/// markdown-it's `inline` token: one inline block's nodes, written as they are. The port puts a
+/// tight list item's paragraphs' inline nodes straight into the item, next to its blocks, so
+/// each inline block is wrapped to keep it apart (for the delimiter scopes, linkify and the
+/// typographer).
+#[derive(Debug)]
+pub(crate) struct InlineGroup;
 
-impl CoreRule for KeepInlineSource {
+impl NodeValue for InlineGroup {
+    fn render(&self, node: &Node, fmt: &mut dyn Renderer) {
+        fmt.contents(&node.children);
+    }
+}
+
+/// Wraps each inline block in an [`InlineGroup`] that keeps its source.
+struct WrapInline;
+
+impl CoreRule for WrapInline {
     fn run(root: &mut Node, _: &MarkdownIt) {
         root.walk_mut(|n, _| {
-            let source = n
-                .children
-                .iter()
-                .find_map(|c| c.cast::<InlineRoot>().map(|r| r.content.clone()));
-            if let Some(source) = source {
-                n.ext.insert(InlineSource(source));
+            if n.is::<InlineGroup>() {
+                return;
+            }
+            for child in n.children.iter_mut() {
+                let Some(source) = child.cast::<InlineRoot>().map(|r| r.content.clone()) else {
+                    continue;
+                };
+                let inline = std::mem::replace(child, Node::new(InlineGroup));
+                // Where the inline text is in the source, from its line mapping.
+                child.srcmap = inline.srcmap.or_else(|| {
+                    let root = inline.cast::<InlineRoot>()?;
+                    let &(_, first) = root.mapping.first()?;
+                    let &(dst, src) = root.mapping.last()?;
+                    let end = src + root.content.len().saturating_sub(dst);
+                    Some(markdown_it::common::sourcemap::SourcePos::new(first, end))
+                });
+                child.ext.insert(InlineSource(source));
+                child.children.push(inline);
             }
         });
     }
+}
+
+/// Wraps inline blocks (see [`InlineGroup`]); every parser has it.
+pub(crate) fn add_wrap(md: &mut MarkdownIt) {
+    md.add_rule::<WrapInline>().before::<InlineParserRule>();
 }
 
 /// The linkifier the inline `linkify` rule uses.
@@ -60,8 +91,6 @@ impl RootExt for Refused {}
 /// Sets `md` up for [`run`]: keeps inline sources, and with `linkify` adds markdown-it's inline
 /// `linkify` rule.
 pub(crate) fn add(md: &mut MarkdownIt, linkify: Option<Linkify>) {
-    md.add_rule::<KeepInlineSource>()
-        .before::<InlineParserRule>();
     if let Some(l) = linkify {
         md.ext.insert(LinkifyConfig(l));
         // markdown-it's `linkify` comes right after `text`, before every other inline rule.
@@ -119,7 +148,9 @@ fn scan_linkify(state: &mut InlineState) -> Option<(String, usize, String)> {
         return None;
     }
     let linkify = state.md.ext.get::<LinkifyConfig>()?.0;
-    let units: Vec<u16> = state.src[pos - k..].encode_utf16().collect();
+    let units: Vec<u16> = state.src[pos - k..crate::image::text_end(state)]
+        .encode_utf16()
+        .collect();
     let link = match linkify.match_at_start(&units) {
         Ok(link) => link?,
         Err(e) => {
@@ -179,7 +210,7 @@ pub(crate) fn run(
         if failed.is_some() {
             return;
         }
-        let Some(InlineSource(content)) = block.ext.remove::<InlineSource>() else {
+        let Some(content) = block.ext.get::<InlineSource>().map(|s| s.0.clone()) else {
             return;
         };
         if let Err(e) = run_block(block, &content, md, source, rules) {

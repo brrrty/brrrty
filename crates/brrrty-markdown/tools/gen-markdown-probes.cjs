@@ -64,6 +64,16 @@ const LINKIFY = [
   '"The Show" (2009--present) -- the "Mr. Fixit" era... Pat O\'Brien\'s 5\'11".', '6\'2" tall and "quoted"', '"a\nb"', 'x---y and a - b -- c --- d',
   '**Ada Lovelace** (born 1815) wrote [Note G](https://en.wikipedia.org/wiki/Note_G) for Babbage! See Example.org... "the notes".',
 ];
+// Fix round 1 (from the review): IPv6 hosts (14.3.3 encodes the brackets), emphasis openers
+// after another marker closes, image alt text per version, raw HTML blocks across a blank line
+// in a list item, tight list items with blocks, image labels parsed as their own text.
+const ROUND1 = ['[dev server](http://[::1]:8080/)', '<http://[::1]/>', '[x][r]\n\n[r]: //[2001:db8::1]', '<mailto:a@[IPv6:::1]>', '[x](http://é.com) [y](http://xn--p1ai/) <http://пример.рф>',
+  '*Set `DEBUG` in settings_* then _restart_.', '_Price with [code](u) SAVE10*_ (*terms apply*)', '*b~~*~~x~~', 'I *really~~*~~like~~', '_a`c`d*_*b*', '*a `c` d_* _b_', '*a~~*~~c~~', '**a _b** c_', '~~a *b~~ c*',
+  '![Josh &amp; Ana](a.jpg)', "![Don\\'t](u)", '![a\\\nb](u)', '![a  \nb](u)', '![a <http://x.y> b](u)', '![Output of `ls -la`](a.png)', '![a <b>x</b> c](u)', '![![n &copy;](v) &amp;](u)', '![*a*b](u)',
+  '- <pre>\n  x\n\n  y\n  </pre>\n', '1. <script>\n   a\n\n   b\n   </script>\n', '- <!-- a\n\n  b -->\n', '<!x<?\n   ', '```\rcode\r```', '```**\r\n\r\n> ```',
+  '- ```\n  x\n  ```\n  after', '- ## Step 1\n  Do this.', '- a\n  > q', '- a\n  ***', '1. text\n   ---\n   more', '- a\n  <div>', '- a\n      code',
+  '![``a`b``![``a`b```', '> quote\n- item', '| a |\n| --- |\n| b |', '| Name |\n---\n| a |', '``````<div>>   a\\|<div>text\n---', '- _[a](b)- |\r---- ',
+  '[note]: see below', '- a\n  ```\n  b', '```\n\n  x\n     ```'];
 const SPACE_CODE = ['`   `', '`    `', '` \n `', 'a `   ` b', '`  `', '` a `'];
 const options = (o, fuzzyLink) => { const m = markdownIt(o); m.linkify.set({ fuzzyLink }); return m; };
 const fuzzy = options({ linkify: true, typographer: true }, true);
@@ -75,6 +85,7 @@ process.stdout.write(JSON.stringify({
   render: run((s) => md.render(s), BLOCK),
   render_eleventy: [...FUZZ_BLOCK, ...SPACE_CODE, ...FIXED, 'a', '# h', '> q', '<div>x</div>', '    indented'].map((s) => ({ s, out: eleventy.render(s) })),
   render_fixed: FIXED.map((s) => ({ s, out: md.render(s) })),
+  render_round1: ROUND1.map((s) => ({ s, out: md.render(s), inline: md.renderInline(s), eleventy: eleventy.render(s), html: html.render(s) })),
   render_linkify_typographer: LINKIFY.map((s) => ({ s, out: fuzzy.render(s), strict: strict.render(s), html: html.render(s) })),
   render_inline: run((s) => md.renderInline(s), INLINE),
 }, null, 0).replace(/\},\{/g, '},\n{') + '\n');

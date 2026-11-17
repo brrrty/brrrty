@@ -10,14 +10,30 @@ use markdown_it::{MarkdownIt, Node};
 
 /// `state.backticksScanned` and `state.backticks`.
 #[derive(Debug, Default)]
-struct Scanned {
+pub(crate) struct Scanned {
     /// The inline source (`state.src` can't be read while this is borrowed).
     src: Option<std::sync::Arc<str>>,
     done: bool,
+    /// What `check` found at each position: markdown-it's `skipToken` caches the position it
+    /// skips to (`state.cache`), so a second scan of a label doesn't run the rule again.
+    memo: std::collections::HashMap<usize, Option<usize>>,
     /// Run length to a position (14.3.3: an upper bound for a closer; 15: the last run).
     runs: std::collections::HashMap<usize, usize>,
 }
 impl InlineRootExt for Scanned {}
+
+/// Takes the backtick caches out (an image label starts with none).
+pub(crate) fn take(state: &mut InlineState) -> Option<Scanned> {
+    state.inline_ext.remove::<Scanned>()
+}
+
+/// Puts back what [`take`] took.
+pub(crate) fn restore(state: &mut InlineState, saved: Option<Scanned>) {
+    state.inline_ext.remove::<Scanned>();
+    if let Some(s) = saved {
+        state.inline_ext.insert(s);
+    }
+}
 
 /// The rule's state, with the source.
 fn scanned<'a>(state: &'a mut InlineState) -> (&'a mut Scanned, std::sync::Arc<str>) {
@@ -57,6 +73,7 @@ fn scan_14(state: &mut InlineState) -> Option<Found> {
         return None;
     }
     let max = state.pos_max;
+    let limit = crate::image::text_end(state);
     let (cache, text) = scanned(state);
     let src = text.as_bytes();
     let pos = start + run_len(src, start, max);
@@ -65,7 +82,7 @@ fn scan_14(state: &mut InlineState) -> Option<Found> {
         return Some(Found::Text(opener));
     }
     let mut match_end = pos;
-    while let Some(k) = text[match_end..].find('`') {
+    while let Some(k) = text[match_end..limit].find('`') {
         let match_start = match_end + k;
         match_end = match_start + 1;
         while match_end < max && src[match_end] == b'`' {
@@ -159,10 +176,25 @@ impl<const V15: bool> InlineRule for Backticks<V15> {
     const MARKER: char = '`';
 
     fn check(state: &mut InlineState) -> Option<usize> {
-        match Self::scan(state)? {
-            Found::Code { end, .. } => Some(end - state.pos),
-            Found::Text(len) => Some(len),
+        let pos = state.pos;
+        if let Some(&seen) = state
+            .inline_ext
+            .get::<Scanned>()
+            .and_then(|c| c.memo.get(&pos))
+        {
+            return seen;
         }
+        let found = match Self::scan(state) {
+            None => None,
+            Some(Found::Code { end, .. }) => Some(end - pos),
+            Some(Found::Text(len)) => Some(len),
+        };
+        state
+            .inline_ext
+            .get_or_insert_default::<Scanned>()
+            .memo
+            .insert(pos, found);
+        found
     }
 
     fn run(state: &mut InlineState) -> Option<(Node, usize)> {

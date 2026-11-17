@@ -1,106 +1,81 @@
-//! Emphasis (`*`, `_`, `**`, `__`) and strikethrough (`~~`), from the port's `emph_pair` (the
-//! `markdown-it` crate 0.6.1, MIT, Copyright (c) 2022 Alex Kocharin) with markdown-it's
-//! `scanDelims` in place of the port's.
+//! Emphasis (`*`, `_`) and strikethrough (`~~`) as markdown-it (14.3.3 and 15) does them.
 //!
-//! The port decides whether a run of markers can open or close from Unicode punctuation (`P`)
-//! and Rust's whitespace. markdown-it takes punctuation *or symbols* (uc.micro `P` or `S`, so an
-//! emoji is one) and its own whitespace list. The rest of the matching is the port's, unchanged.
+//! markdown-it tokenizes each marker as a text token and records it in the delimiter list of
+//! its scope (the inline text, or a link's or image's label), then pairs them up after the
+//! whole text is tokenized (`balance_pairs`), turns the pairs into tags (`strikethrough` and
+//! `emphasis` `postProcess`) and joins the text that's left (`fragments_join`). The port matched
+//! as it went, with its own bookkeeping, which differed (and decided "can open" from Unicode `P`
+//! only, where markdown-it takes `P` or `S`, so an emoji counts). This is markdown-it's
+//! pipeline, on each scope's children: a delimiter is a [`Delim`] child, and the list lives on
+//! the scope node until [`BalancePairs`] runs.
 
-use std::cmp::min;
+use std::collections::HashMap;
 
-use markdown_it::generics::inline::emph_pair::{EmphMarker, FragmentsJoin};
+use markdown_it::common::sourcemap::SourcePos;
+use markdown_it::generics::inline::emph_pair::FragmentsJoin;
+use markdown_it::parser::core::CoreRule;
 use markdown_it::parser::extset::{MarkdownItExt, NodeExt};
 use markdown_it::parser::inline::builtin::InlineParserRule;
-use markdown_it::parser::inline::{InlineRule, InlineState};
+use markdown_it::parser::inline::{InlineRule, InlineState, Text};
 use markdown_it::plugins::cmark::inline::emphasis::{Em, Strong};
 use markdown_it::plugins::extra::strikethrough::Strikethrough;
-use markdown_it::{MarkdownIt, Node};
+use markdown_it::{MarkdownIt, Node, NodeValue, Renderer};
 
 /// Which `isPunctChar` table the parser uses (its markdown-it version's uc.micro).
 #[derive(Debug)]
 struct PunctTable(&'static [(u32, u32)]);
 impl MarkdownItExt for PunctTable {}
 
+/// A delimiter's text token. [`BalancePairs`] turns each into a tag or plain text.
+#[derive(Debug)]
+pub(crate) struct Delim {
+    pub content: String,
+}
+
+impl NodeValue for Delim {
+    fn render(&self, _: &Node, fmt: &mut dyn Renderer) {
+        fmt.text(&self.content);
+    }
+}
+
+/// An entry of markdown-it's `state.delimiters`.
+#[derive(Debug, Clone)]
+struct DelimInfo {
+    marker: char,
+    length: usize,
+    /// The child index of its token in the scope.
+    token: usize,
+    end: isize,
+    open: bool,
+    close: bool,
+}
+
+/// A scope's delimiter list.
 #[derive(Debug, Default)]
-struct PairConfig<const MARKER: char> {
-    inserted: bool,
-    fns: [Option<fn() -> Node>; 3],
-}
-impl<const MARKER: char> MarkdownItExt for PairConfig<MARKER> {}
+struct Delimiters(Vec<DelimInfo>);
+impl NodeExt for Delimiters {}
 
-#[derive(Debug, Default)]
-struct OpenersBottom<const MARKER: char>([usize; 6]);
-impl<const MARKER: char> NodeExt for OpenersBottom<MARKER> {}
-
-/// Where a marker or an emphasis node is in the inline text (not the source: the port mixed the
-/// two, which overflowed after a CRLF inside a list item or a blockquote).
-#[derive(Debug, Clone, Copy)]
-struct InlineSpan(usize, usize);
-impl NodeExt for InlineSpan {}
-
-fn span_of(node: &Node) -> InlineSpan {
-    *node
-        .ext
-        .get::<InlineSpan>()
-        .expect("markers and emphasis carry their span")
-}
-
-/// A marker node for the run at `at..end` of the inline text.
-fn marker_node(state: &InlineState, marker: EmphMarker, at: usize, end: usize) -> Node {
-    let mut node = Node::new(marker);
-    node.srcmap = state.get_map(at, end);
-    node.ext.insert(InlineSpan(at, end));
-    node
-}
-
-/// Hands `node` back to the tokenizer so that it ends at `end`: the tokenizer sets its source
-/// map from the length returned.
-fn hand_back(state: &mut InlineState, node: Node, end: usize) -> Option<(Node, usize)> {
-    let start = node
-        .ext
-        .get::<InlineSpan>()
-        .filter(|s| s.1 == end)
-        .map_or(end - 1, |s| s.0);
-    state.pos = start;
-    Some((node, end - start))
-}
-
-/// markdown-it 15's emphasis (`*`, `_`) with its punctuation table.
+/// markdown-it's emphasis (`*`, `_`) with its punctuation table, and `balance_pairs`,
+/// the post-processing and `fragments_join` after the inline parse.
 pub(crate) fn add_emphasis(md: &mut MarkdownIt, eleventy: bool) {
     md.ext.insert(PunctTable(if eleventy {
         crate::uc_micro::PUNCT_OR_SYMBOL_11TY
     } else {
         crate::uc_micro::PUNCT_OR_SYMBOL
     }));
-    add_with::<'*', 1, true>(md, || Node::new(Em { marker: '*' }));
-    add_with::<'_', 1, false>(md, || Node::new(Em { marker: '_' }));
-    add_with::<'*', 2, true>(md, || Node::new(Strong { marker: '*' }));
-    add_with::<'_', 2, false>(md, || Node::new(Strong { marker: '_' }));
+    md.inline.add_rule::<EmphasisScanner<'*'>>();
+    md.inline.add_rule::<EmphasisScanner<'_'>>();
+    if !md.has_rule::<BalancePairs>() {
+        md.add_rule::<BalancePairs>().after::<InlineParserRule>();
+    }
+    if !md.has_rule::<FragmentsJoin>() {
+        md.add_rule::<FragmentsJoin>().after::<BalancePairs>();
+    }
 }
 
 /// markdown-it's strikethrough (`~~`). Call after [`add_emphasis`].
 pub(crate) fn add_strikethrough(md: &mut MarkdownIt) {
-    let pair_config = md.ext.get_or_insert_default::<PairConfig<'~'>>();
-    pair_config.fns[1] = Some(|| Node::new(Strikethrough { marker: '~' }));
     md.inline.add_rule::<StrikeScanner>();
-}
-
-fn add_with<const MARKER: char, const LENGTH: u8, const CAN_SPLIT_WORD: bool>(
-    md: &mut MarkdownIt,
-    f: fn() -> Node,
-) {
-    let pair_config = md.ext.get_or_insert_default::<PairConfig<MARKER>>();
-    pair_config.fns[LENGTH as usize - 1] = Some(f);
-    if !pair_config.inserted {
-        pair_config.inserted = true;
-        md.inline
-            .add_rule::<EmphPairScanner<MARKER, CAN_SPLIT_WORD>>();
-    }
-    if !md.has_rule::<FragmentsJoin>() {
-        md.add_rule::<FragmentsJoin>()
-            .before_all()
-            .after::<InlineParserRule>();
-    }
 }
 
 fn in_table(table: &[(u32, u32)], c: u32) -> bool {
@@ -136,10 +111,15 @@ fn scan_delims(state: &InlineState, start: usize, can_split_word: bool) -> Delim
         .get::<PunctTable>()
         .expect("set by add_emphasis")
         .0;
-    let last_char = state.src[..start]
-        .chars()
-        .next_back()
-        .map_or(0x20, u32::from);
+    // An image's label is its own text to markdown-it, starting at 0.
+    let last_char = if crate::image::label_starts_at(state, start) {
+        0x20
+    } else {
+        state.src[..start]
+            .chars()
+            .next_back()
+            .map_or(0x20, u32::from)
+    };
     let rest = &state.src[start..state.pos_max];
     let marker = rest.chars().next().expect("a marker");
     let length = rest.chars().take_while(|&c| c == marker).count();
@@ -157,14 +137,40 @@ fn scan_delims(state: &InlineState, start: usize, can_split_word: bool) -> Delim
     }
 }
 
-struct EmphPairScanner<const MARKER: char, const CAN_SPLIT_WORD: bool>;
+/// Pushes a delimiter token for the scope, recording it, and returns it unpushed when `last`
+/// (the tokenizer pushes the node a rule returns).
+fn delim(
+    state: &mut InlineState,
+    content: &str,
+    info: DelimInfo,
+    at: usize,
+    last: bool,
+) -> Option<Node> {
+    let mut node = Node::new(Delim {
+        content: content.into(),
+    });
+    node.srcmap = state.get_map(at, at + content.len());
+    let token = state.node.children.len();
+    state
+        .node
+        .ext
+        .get_or_insert_default::<Delimiters>()
+        .0
+        .push(DelimInfo { token, ..info });
+    if last {
+        Some(node)
+    } else {
+        state.node.children.push(node);
+        None
+    }
+}
 
-impl<const MARKER: char, const CAN_SPLIT_WORD: bool> InlineRule
-    for EmphPairScanner<MARKER, CAN_SPLIT_WORD>
-{
+/// markdown-it's `emphasis` tokenize: a text token and a delimiter for each marker.
+struct EmphasisScanner<const MARKER: char>;
+
+impl<const MARKER: char> InlineRule for EmphasisScanner<MARKER> {
     const MARKER: char = MARKER;
 
-    // This rule works on a closing marker, so any rule trying to skip it should see plain text.
     fn check(_: &mut InlineState) -> Option<usize> {
         None
     }
@@ -173,25 +179,34 @@ impl<const MARKER: char, const CAN_SPLIT_WORD: bool> InlineRule
         if !state.src[state.pos..state.pos_max].starts_with(MARKER) {
             return None;
         }
-        let scanned = scan_delims(state, state.pos, CAN_SPLIT_WORD);
-        let marker = EmphMarker {
+        let start = state.pos;
+        let scanned = scan_delims(state, start, MARKER == '*');
+        let info = DelimInfo {
             marker: MARKER,
             length: scanned.length,
-            remaining: scanned.length,
+            token: 0,
+            end: -1,
             open: scanned.can_open,
             close: scanned.can_close,
         };
-        let end = state.pos + scanned.length;
-        let node = marker_node(state, marker, state.pos, end);
-        let top = state.node.children.len().saturating_sub(1);
-        let node = scan_and_match_delimiters::<MARKER>(state, node, top);
-        hand_back(state, node, end)
+        let mut last = None;
+        let mark = MARKER.to_string();
+        for i in 0..scanned.length {
+            last = delim(
+                state,
+                &mark,
+                info.clone(),
+                start + i,
+                i + 1 == scanned.length,
+            );
+        }
+        state.pos = start + scanned.length - 1;
+        Some((last.expect("a run has a marker"), 1))
     }
 }
 
-/// markdown-it's strikethrough `tokenize` and `postProcess`. Unlike emphasis, a run of `~` is
-/// a separate `~~` delimiter for each pair (after a lone `~` when the run is odd), and pairs of
-/// one run never match each other. A lone `~` right before a pair that closes moves after it.
+/// markdown-it's `strikethrough` tokenize: a lone `~` text token when the run is odd, then a
+/// text token and a delimiter (of length 0) for each `~~`.
 struct StrikeScanner;
 
 impl InlineRule for StrikeScanner {
@@ -202,175 +217,268 @@ impl InlineRule for StrikeScanner {
     }
 
     fn run(state: &mut InlineState) -> Option<(Node, usize)> {
-        use markdown_it::parser::inline::Text;
         if !state.src[state.pos..state.pos_max].starts_with('~') {
             return None;
         }
-        let scanned = scan_delims(state, state.pos, true);
+        let start = state.pos;
+        let scanned = scan_delims(state, start, true);
         let len = scanned.length;
         if len < 2 {
             return None;
         }
-        let start = state.pos;
-        let lone = len % 2 == 1;
-        if lone {
+        let mut at = start;
+        if len % 2 == 1 {
             let mut t = Node::new(Text {
                 content: "~".into(),
             });
             t.srcmap = state.get_map(start, start + 1);
             state.node.children.push(t);
+            at += 1;
         }
-        // A pair's openers are what came before the run (and what earlier pairs closed).
-        let mut top = state.node.children.len();
-        // Leading pairs that closed, while they still do.
-        let mut leading = Some(0usize);
-        for k in 0..len / 2 {
-            let at = start + usize::from(lone) + 2 * k;
-            let marker = EmphMarker {
-                marker: '~',
-                length: 0,
-                remaining: 2,
-                open: scanned.can_open,
-                close: scanned.can_close,
-            };
-            let node = marker_node(state, marker, at, at + 2);
-            let node = scan_and_match_delimiters::<'~'>(state, node, top);
-            let closed = !node.is::<EmphMarker>();
-            if closed {
-                top = state.node.children.len();
-            }
-            match leading {
-                Some(n) if closed => leading = Some(n + 1),
-                Some(n) => {
-                    move_lone(state, lone, n);
-                    leading = None;
-                }
-                None => {}
-            }
-            state.node.children.push(node);
+        let info = DelimInfo {
+            marker: '~',
+            length: 0,
+            token: 0,
+            end: -1,
+            open: scanned.can_open,
+            close: scanned.can_close,
+        };
+        let mut last = None;
+        let pairs = len / 2;
+        for k in 0..pairs {
+            last = delim(state, "~~", info.clone(), at + 2 * k, k + 1 == pairs);
         }
-        if let Some(n) = leading {
-            move_lone(state, lone, n);
-        }
-        let last = state.node.children.pop().expect("a pair was pushed");
-        hand_back(state, last, start + len)
+        state.pos = start + len - 2;
+        Some((last.expect("a run has a pair"), 2))
     }
 }
 
-/// markdown-it's strikethrough `postProcess`: a lone `~` right before the first `~~` of its run
-/// that closes is swapped with the last of the `s_close` tokens right after it. Here, the `~`
-/// is the last leaf of the innermost of the `n` strikethroughs the run's leading pairs closed,
-/// and moves to right after the outermost one, the last child.
-fn move_lone(state: &mut InlineState, lone: bool, n: usize) {
-    if !lone || n == 0 {
+/// markdown-it's `processDelimiters` (`balance_pairs`).
+fn process_delimiters(delimiters: &mut [DelimInfo]) {
+    let max = delimiters.len();
+    if max == 0 {
         return;
     }
-    let mut node = state.node.children.last_mut().expect("the outermost close");
-    for _ in 1..n {
-        node = node.children.last_mut().expect("the next close in");
+    let mut openers_bottom: HashMap<char, [isize; 6]> = HashMap::new();
+    let mut header_idx = 0usize;
+    let mut last_token_idx: isize = -2;
+    let mut jumps: Vec<isize> = Vec::with_capacity(max);
+    for closer_idx in 0..max {
+        jumps.push(0);
+        let (marker, token) = (
+            delimiters[closer_idx].marker,
+            delimiters[closer_idx].token as isize,
+        );
+        if delimiters[header_idx].marker != marker || last_token_idx != token - 1 {
+            header_idx = closer_idx;
+        }
+        last_token_idx = token;
+        if !delimiters[closer_idx].close {
+            continue;
+        }
+        let bottoms = openers_bottom.entry(marker).or_insert([-1; 6]);
+        let closer = &delimiters[closer_idx];
+        let slot = if closer.open { 3 } else { 0 } + closer.length % 3;
+        let min_opener_idx = bottoms[slot];
+        let mut opener_idx = header_idx as isize - jumps[header_idx] - 1;
+        let mut new_min_opener_idx = opener_idx;
+        while opener_idx > min_opener_idx {
+            let o = opener_idx as usize;
+            if delimiters[o].marker == marker && delimiters[o].open && delimiters[o].end < 0 {
+                let (opener, closer) = (&delimiters[o], &delimiters[closer_idx]);
+                let odd = (opener.close || closer.open)
+                    && (opener.length + closer.length).is_multiple_of(3)
+                    && (!opener.length.is_multiple_of(3) || !closer.length.is_multiple_of(3));
+                if !odd {
+                    let last_jump = if o > 0 && !delimiters[o - 1].open {
+                        jumps[o - 1] + 1
+                    } else {
+                        0
+                    };
+                    jumps[closer_idx] = closer_idx as isize - opener_idx + last_jump;
+                    jumps[o] = last_jump;
+                    delimiters[closer_idx].open = false;
+                    delimiters[o].end = closer_idx as isize;
+                    delimiters[o].close = false;
+                    new_min_opener_idx = -1;
+                    last_token_idx = -2;
+                    break;
+                }
+            }
+            opener_idx -= jumps[o] + 1;
+        }
+        if new_min_opener_idx != -1 {
+            let closer = &delimiters[closer_idx];
+            let slot = if closer.open { 3 } else { 0 } + closer.length % 3;
+            openers_bottom.get_mut(&marker).expect("inserted above")[slot] = new_min_opener_idx;
+        }
     }
-    let tilde = node.children.pop().expect("the lone `~`");
-    state.node.children.push(tilde);
 }
 
-/// With a closing delimiter just inserted last, finds its openers and moves what is between
-/// into an emphasis node. Openers are looked for below index `top` of the children.
-fn scan_and_match_delimiters<const MARKER: char>(
-    state: &mut InlineState,
-    mut closer_token: Node,
-    top: usize,
-) -> Node {
-    if state.node.children.is_empty() {
-        return closer_token;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tag {
+    Em(char),
+    Strong(char),
+    Strike,
+}
+
+/// A token of a scope after post-processing.
+enum Item {
+    Node(Node),
+    Open(Tag, Option<SourcePos>),
+    Close(Tag, Option<SourcePos>),
+}
+
+impl Item {
+    fn srcmap(&self) -> Option<SourcePos> {
+        match self {
+            Item::Node(n) => n.srcmap,
+            Item::Open(_, m) | Item::Close(_, m) => *m,
+        }
     }
-    let mut closer = closer_token
-        .cast_mut::<EmphMarker>()
-        .expect("an EmphMarker")
-        .clone();
-    if !closer.close {
-        return closer_token;
+
+    fn is_lone_tilde(&self) -> bool {
+        matches!(self, Item::Node(n) if n.cast::<Text>().is_some_and(|t| t.content == "~"))
     }
-    // Lower bounds from earlier failures, per delimiter length modulo 3 and whether this
-    // closer can open.
-    let openers_for_marker = state
-        .node
-        .ext
-        .get_or_insert_default::<OpenersBottom<MARKER>>();
-    let openers_parameter = (closer.open as usize) * 3 + closer.length % 3;
-    let min_opener_idx = openers_for_marker.0[openers_parameter];
-    let mut idx = top.min(state.node.children.len());
-    let mut new_min_opener_idx = idx;
-    while idx > min_opener_idx {
-        idx -= 1;
-        let Some(opener) = state.node.children[idx].cast::<EmphMarker>() else {
+}
+
+/// `balance_pairs`, strikethrough and emphasis `postProcess` on one scope's children.
+fn process_scope(node: &mut Node, mut delimiters: Vec<DelimInfo>) {
+    process_delimiters(&mut delimiters);
+    let mut items: Vec<Item> = std::mem::take(&mut node.children)
+        .into_iter()
+        .map(Item::Node)
+        .collect();
+    let to_open = |items: &mut Vec<Item>, i: usize, tag: Tag| {
+        let m = items[i].srcmap();
+        items[i] = Item::Open(tag, m);
+    };
+    let to_close = |items: &mut Vec<Item>, i: usize, tag: Tag| {
+        let m = items[i].srcmap();
+        items[i] = Item::Close(tag, m);
+    };
+    // strikethrough postProcess.
+    let mut lone = Vec::new();
+    for d in &delimiters {
+        if d.marker != '~' || d.end == -1 {
             continue;
+        }
+        let end = &delimiters[d.end as usize];
+        to_open(&mut items, d.token, Tag::Strike);
+        to_close(&mut items, end.token, Tag::Strike);
+        if end.token > 0 && items[end.token - 1].is_lone_tilde() {
+            lone.push(end.token - 1);
+        }
+    }
+    while let Some(i) = lone.pop() {
+        let mut j = i + 1;
+        while j < items.len() && matches!(items[j], Item::Close(Tag::Strike, _)) {
+            j += 1;
+        }
+        j -= 1;
+        if i != j {
+            items.swap(i, j);
+        }
+    }
+    // emphasis postProcess.
+    let mut i = delimiters.len() as isize - 1;
+    while i >= 0 {
+        let start = &delimiters[i as usize];
+        if (start.marker != '_' && start.marker != '*') || start.end == -1 {
+            i -= 1;
+            continue;
+        }
+        let end_idx = start.end as usize;
+        let end = &delimiters[end_idx];
+        let is_strong = i > 0 && {
+            let prev = &delimiters[i as usize - 1];
+            prev.end == start.end + 1
+                && prev.marker == start.marker
+                && prev.token + 1 == start.token
+                && delimiters[end_idx + 1].token == end.token + 1
         };
-        let mut opener = opener.clone();
-        if opener.open && opener.marker == closer.marker && !is_odd_match(&opener, &closer) {
-            while closer.remaining > 0 && opener.remaining > 0 {
-                let max_marker_len = min(3, min(opener.remaining, closer.remaining));
-                let fns = &state
-                    .md
-                    .ext
-                    .get::<PairConfig<MARKER>>()
-                    .expect("set by add_with")
-                    .fns;
-                let matched = (1..=max_marker_len)
-                    .rev()
-                    .find_map(|len| fns[len - 1].map(|f| (len, f)));
-                // A function only for a longer marker than there is: no match.
-                let Some((marker_len, marker_fn)) = matched else {
-                    break;
-                };
-                closer.remaining -= marker_len;
-                opener.remaining -= marker_len;
-                let mut new_token = marker_fn();
-                new_token.children = state.node.children.split_off(idx + 1);
-                // Cut `marker_len` from the start of the closer and the end of the opener.
-                let InlineSpan(cs, ce) = span_of(&closer_token);
-                let end_map_pos = cs + marker_len;
-                closer_token.ext.insert(InlineSpan(end_map_pos, ce));
-                closer_token.srcmap = state.get_map(end_map_pos, ce);
-                let opener_token = state.node.children.last().expect("the opener");
-                let InlineSpan(os, oe) = span_of(opener_token);
-                let start_map_pos = oe - marker_len;
-                let opener_map = state.get_map(os, start_map_pos);
-                let opener_token = state.node.children.last_mut().expect("the opener");
-                opener_token.ext.insert(InlineSpan(os, start_map_pos));
-                opener_token.srcmap = opener_map;
-                new_token.srcmap = state.get_map(start_map_pos, end_map_pos);
-                new_token.ext.insert(InlineSpan(start_map_pos, end_map_pos));
-                if opener.remaining == 0 {
-                    state.node.children.pop();
+        let tag = if is_strong {
+            Tag::Strong(start.marker)
+        } else {
+            Tag::Em(start.marker)
+        };
+        let (open_tok, close_tok) = (start.token, end.token);
+        to_open(&mut items, open_tok, tag);
+        to_close(&mut items, close_tok, tag);
+        if is_strong {
+            for t in [
+                delimiters[i as usize - 1].token,
+                delimiters[end_idx + 1].token,
+            ] {
+                if let Item::Node(n) = &mut items[t]
+                    && let Some(d) = n.cast_mut::<Delim>()
+                {
+                    d.content.clear();
                 }
-                new_min_opener_idx = 0;
-                state.node.children.push(new_token);
+            }
+            i -= 1;
+        }
+        i -= 1;
+    }
+    // Back to a tree.
+    let mut stack: Vec<(Tag, Option<SourcePos>, Vec<Node>)> = Vec::new();
+    let mut top: Vec<Node> = Vec::new();
+    for item in items {
+        match item {
+            Item::Node(mut n) => {
+                if let Some(d) = n.cast::<Delim>() {
+                    let content = d.content.clone();
+                    n.replace(Text { content });
+                }
+                match stack.last_mut() {
+                    Some(f) => f.2.push(n),
+                    None => top.push(n),
+                }
+            }
+            Item::Open(tag, m) => stack.push((tag, m, Vec::new())),
+            Item::Close(_, m) => {
+                let Some((tag, start, children)) = stack.pop() else {
+                    continue;
+                };
+                let mut n = match tag {
+                    Tag::Em(marker) => Node::new(Em { marker }),
+                    Tag::Strong(marker) => Node::new(Strong { marker }),
+                    Tag::Strike => Node::new(Strikethrough { marker: '~' }),
+                };
+                n.children = children;
+                n.srcmap = match (start, m) {
+                    (Some(a), Some(b)) => Some(SourcePos::new(
+                        a.get_byte_offsets().0,
+                        b.get_byte_offsets().1,
+                    )),
+                    _ => None,
+                };
+                match stack.last_mut() {
+                    Some(f) => f.2.push(n),
+                    None => top.push(n),
+                }
             }
         }
-        if opener.remaining > 0 {
-            state.node.children[idx].replace(opener);
+    }
+    // An open tag left unclosed can't happen; keep its contents if it does.
+    while let Some((_, _, children)) = stack.pop() {
+        match stack.last_mut() {
+            Some(f) => f.2.extend(children),
+            None => top.extend(children),
         }
     }
-    if new_min_opener_idx != 0 {
-        // Keeps the search linear: https://github.com/commonmark/cmark/issues/178
-        let openers_for_marker = state
-            .node
-            .ext
-            .get_or_insert_default::<OpenersBottom<MARKER>>();
-        openers_for_marker.0[openers_parameter] = new_min_opener_idx;
-    }
-    if closer.remaining > 0 {
-        closer_token.replace(closer);
-        closer_token
-    } else {
-        state.node.children.pop().expect("the closer")
-    }
+    node.children = top;
 }
 
-/// The spec's rule of three: when either delimiter can both open and close, the lengths can't
-/// add up to a multiple of 3 unless both are multiples of 3.
-fn is_odd_match(opener: &EmphMarker, closer: &EmphMarker) -> bool {
-    (opener.close || closer.open)
-        && (opener.length + closer.length).is_multiple_of(3)
-        && (!opener.length.is_multiple_of(3) || !closer.length.is_multiple_of(3))
+/// Runs markdown-it's delimiter post-processing on every scope.
+struct BalancePairs;
+
+impl CoreRule for BalancePairs {
+    fn run(root: &mut Node, _: &MarkdownIt) {
+        root.walk_mut(|n, _| {
+            if let Some(Delimiters(d)) = n.ext.remove::<Delimiters>() {
+                process_scope(n, d);
+            }
+        });
+    }
 }
