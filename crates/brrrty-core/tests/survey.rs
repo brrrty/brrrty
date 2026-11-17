@@ -247,10 +247,18 @@ fn diagnose_groups_every_blocker_by_cause() {
     assert_eq!(d.building, 1);
     assert_eq!(d.pages, 3);
     assert_eq!(d.blockers(), 2);
+    // `pages.liquid` paginates the JavaScript data, so its pages can't be counted.
+    assert!(!d.pages_exact);
     assert_eq!(
         d.verdict(),
-        "1 of 3 pages will build; 2 blockers, grouped below."
+        "1 of at least 3 pages will build; 2 blockers, grouped below."
     );
+    assert_eq!(
+        d.groups[0].cause,
+        Cause::JsData("src/_data/stuff.js".into())
+    );
+    assert!(!d.groups[0].pages_exact);
+    assert!(d.groups[1].pages_exact);
     let filter = d
         .groups
         .iter()

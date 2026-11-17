@@ -36,9 +36,24 @@ pub struct TemplateSurvey {
     /// Pages refused. A template refused before it was expanded into pages
     /// counts as one.
     pub refused: usize,
+    /// It has `pagination`.
+    pub paginates: bool,
+    /// Pagination made its pages: [`TemplateSurvey::refused`] counts them.
+    pub expanded: bool,
+    /// The problems that stopped it before its pagination made any page:
+    /// fixing them reveals pages no one can count yet.
+    pub stopped: Vec<Problem>,
     /// The template language that reads its body, when `lang_known`.
     pub(crate) lang: Option<Lang>,
     pub(crate) lang_known: bool,
+}
+
+impl TemplateSurvey {
+    /// Whether [`TemplateSurvey::refused`] counts its pages, not just the
+    /// template: false when pagination never made them.
+    pub fn pages_known(&self) -> bool {
+        !self.paginates || self.expanded
+    }
 }
 
 impl Survey {
@@ -88,11 +103,30 @@ impl Log {
     }
 
     pub fn written(&self, template: &Path) {
-        self.with(template, |t| t.written += 1);
+        self.with(template, |t| {
+            t.written += 1;
+            t.expanded = true;
+        });
     }
 
     pub fn refused(&self, template: &Path) {
-        self.with(template, |t| t.refused += 1);
+        self.with(template, |t| {
+            t.refused += 1;
+            t.expanded = true;
+        });
+    }
+
+    pub fn paginates(&self, template: &Path) {
+        self.with(template, |t| t.paginates = true);
+    }
+
+    /// Record the problem that stopped `template` while it was loading.
+    pub fn stopped(&self, template: &Path, p: &Problem) {
+        self.with(template, |t| {
+            if !t.stopped.contains(p) {
+                t.stopped.push(p.clone());
+            }
+        });
     }
 
     /// Make sure `template` counts as refused, as one page when nothing else

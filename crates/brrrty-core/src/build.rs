@@ -459,6 +459,15 @@ fn source_of(
 fn load_page(shared: &Shared<'_>, rel: &Path) -> Result<Loaded, Problem> {
     let mut blocked = None;
     let loaded = load_page_inner(shared, rel, &mut blocked);
+    if let Some(log) = shared.survey {
+        let shown = shared.input_rel.join(rel);
+        match (&loaded, &blocked) {
+            (Err(p), _) | (Ok(Loaded::DataFailed(p)), _) | (Ok(Loaded::LayoutFailed(p)), None) => {
+                log.stopped(&shown, p)
+            }
+            _ => {}
+        }
+    }
     match (loaded, blocked) {
         (Err(hidden), Some(layout)) => {
             // The layout is reported for the page; a survey keeps the page's own problem too.
@@ -573,6 +582,11 @@ fn load_page_inner(
     layout_data.shift_remove("layout");
 
     let mut data = page_data(&shared.global, &layout_data, &local.data, &front);
+    if let Some(log) = shared.survey
+        && data.contains_key("pagination")
+    {
+        log.paginates(&shown);
+    }
 
     let layouts = match data.get("layout") {
         v if v == data_layout => data_layouts.clone(),

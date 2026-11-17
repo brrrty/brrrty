@@ -49,6 +49,10 @@ pub struct Group {
     pub help: Option<String>,
     /// Pages refused for it (among others, perhaps).
     pub pages: usize,
+    /// False when it stops a template's pagination before it makes its
+    /// pages, so `pages` counts that template once: the real number is
+    /// higher, and unknown until it is fixed.
+    pub pages_exact: bool,
     /// The templates of those pages, relative to the project root.
     pub templates: Vec<PathBuf>,
     /// Every place it shows up.
@@ -70,6 +74,8 @@ pub struct Diagnosis {
     /// Pages the build writes or refuses. A template Brrrty can't expand
     /// into pages counts as one.
     pub pages: usize,
+    /// False when some template couldn't be expanded into its pages.
+    pub pages_exact: bool,
     /// Blockers first, by pages affected; then what follows from them.
     pub groups: Vec<Group>,
     /// Warnings and notes, which stop nothing.
@@ -91,8 +97,14 @@ impl Diagnosis {
 
     /// `N of M pages will build; K blockers, grouped below.`
     pub fn verdict(&self) -> String {
-        let pages =
-            |n: usize| format!("{} {}", thousands(n), if n == 1 { "page" } else { "pages" });
+        let pages = |n: usize| {
+            format!(
+                "{}{} {}",
+                if self.pages_exact { "" } else { "at least " },
+                thousands(n),
+                if n == 1 { "page" } else { "pages" }
+            )
+        };
         if self.builds() {
             return if self.pages == 1 {
                 "The 1 page will build.".to_string()
@@ -237,6 +249,7 @@ fn key(
 struct Building {
     first: Option<Problem>,
     pages: usize,
+    open: bool,
     templates: BTreeSet<PathBuf>,
     locations: Vec<Location>,
 }
@@ -281,12 +294,20 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
         });
     };
     let mut refused_pages = 0;
+    let mut pages_exact = true;
+    let mut open: BTreeSet<Cause> = BTreeSet::new();
     for (shown, t) in survey.refused() {
         refused_pages += t.refused;
         for p in &t.problems {
             attributed.insert(key(p));
             for c in causes(p, &js_files) {
                 add(c, p, Some((shown, t.refused)));
+            }
+        }
+        if !t.pages_known() {
+            pages_exact = false;
+            for p in &t.stopped {
+                open.extend(causes(p, &js_files));
             }
         }
     }
@@ -317,6 +338,11 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
             notes.push(p.clone());
         }
     }
+    for c in &open {
+        if let Some(g) = groups.get_mut(c) {
+            g.open = true;
+        }
+    }
     let mut groups: Vec<Group> = groups
         .into_iter()
         .map(|(cause, b)| {
@@ -326,21 +352,25 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
                 title,
                 help,
                 pages: b.pages,
+                pages_exact: !b.open,
                 templates: b.templates.into_iter().collect(),
                 locations: tidy(b.locations),
                 cause,
             }
         })
         .collect();
+    // Blockers first; among them, the ones hiding pages no one can count yet.
     groups.sort_by(|a, b| {
         (!a.is_blocker())
             .cmp(&!b.is_blocker())
+            .then(a.pages_exact.cmp(&b.pages_exact))
             .then(b.pages.cmp(&a.pages))
             .then(a.title.cmp(&b.title))
     });
     Diagnosis {
         building: report.written,
         pages: report.written + refused_pages,
+        pages_exact,
         groups,
         notes,
         report,
