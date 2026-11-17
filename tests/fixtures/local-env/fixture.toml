@@ -1,0 +1,14 @@
+# Local time and the default locale come from the environment, in 11ty and
+# in Brrrty alike. Both builds run in a half-hour zone that isn't the compat
+# harness's, and with a German locale: local dates come out identical, and
+# the pages that call toLocaleString() or localeCompare() with no locale
+# (which Node formats and sorts in de-DE) are refused rather than guessed.
+# 2026-01-01T12:00:00Z.
+source_date_epoch = 1767268800
+tz = "Asia/Kolkata"
+lang = "de_DE.UTF-8"
+
+[refused]
+"src/number.njk" = "number/index.html"
+"src/sorted.njk" = "sorted/index.html"
+"src/method.njk" = "method/index.html"

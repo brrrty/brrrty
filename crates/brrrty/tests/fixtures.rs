@@ -55,6 +55,11 @@ fn every_fixture_matches_reference_output() {
         if let Some(tz) = cfg.get("tz") {
             cmd.env("TZ", tz.as_str().expect("tz is a zone name"));
         }
+        // And the locale, for toLocaleString() and localeCompare() with no
+        // locale.
+        if let Some(lang) = cfg.get("lang") {
+            cmd.env("LC_ALL", lang.as_str().expect("lang is a locale"));
+        }
         for p in &passthrough {
             cmd.args(["--passthrough", p]);
         }

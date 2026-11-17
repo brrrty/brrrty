@@ -49,6 +49,28 @@ fn time_zone(fixture: &Path) -> Result<Option<String>, String> {
     }
 }
 
+/// A string setting from the fixture's `fixture.toml`, such as `lang`, the
+/// locale (`LC_ALL`) both builds run in.
+fn string_key(fixture: &Path, key: &str) -> Result<Option<String>, String> {
+    let file = fixture.join("fixture.toml");
+    if !file.is_file() {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e| format!("bad {}: {e}", file.display()))?;
+    match table.get(key) {
+        None => Ok(None),
+        Some(toml::Value::String(s)) => Ok(Some(s.clone())),
+        Some(v) => Err(format!(
+            "{}: {key} must be a string, got {v}",
+            file.display()
+        )),
+    }
+}
+
 /// Install a fixture's npm packages (the 11ty plugins its config uses)
 /// from its lock file, when it has dependencies and they aren't installed.
 fn install_packages(site: &Path) -> Result<(), String> {
@@ -136,6 +158,9 @@ pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
         }
         if let Some(tz) = time_zone(&fixture)? {
             cmd.env("TZ", tz);
+        }
+        if let Some(lang) = string_key(&fixture, "lang")? {
+            cmd.env("LC_ALL", lang);
         }
         let out = cmd.output().map_err(|e| format!("cannot run npx: {e}"))?;
         if !out.status.success() {
