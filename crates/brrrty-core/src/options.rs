@@ -78,6 +78,34 @@ pub struct ConfigOptions {
     pub feeds: Vec<crate::plugins::rss::FeedOptions>,
     /// `markdownTemplateEngine` and `htmlTemplateEngine`.
     pub template_engines: TemplateEngines,
+    /// What the config's and the data files' scripts read from the project folder.
+    pub reads: FileReads,
+}
+
+/// The files and folders a build's scripts read, listed or checked (found or not), as
+/// paths relative to the project folder. Shared by the config's engine and every data
+/// file's, so one build's log holds them all; `brrrty serve` rebuilds when one changes.
+#[derive(Debug, Clone, Default)]
+pub struct FileReads(std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<PathBuf>>>);
+
+impl FileReads {
+    /// Note that `path`, relative to the project folder, was read.
+    pub fn add(&self, path: PathBuf) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path);
+    }
+
+    /// Everything noted so far, sorted.
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect()
+    }
 }
 
 /// A template language that runs on a page's text.

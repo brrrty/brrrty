@@ -42,7 +42,11 @@ fn site_with(
         }
         None => Default::default(),
     };
-    cfg.data = Some(data_runner(clock, t.path().to_path_buf()));
+    cfg.data = Some(data_runner(
+        clock,
+        t.path().to_path_buf(),
+        cfg.reads.clone(),
+    ));
     let opts = BuildOptions {
         root: t.path().to_path_buf(),
         input: PathBuf::from("src"),
@@ -646,7 +650,11 @@ fn git_head_is_the_commit_head_points_at() {
         .unwrap()
         .unwrap()
         .build_options();
-    cfg.data = Some(data_runner(Clock::Fixed(NOON_MS), t2.path().to_path_buf()));
+    cfg.data = Some(data_runner(
+        Clock::Fixed(NOON_MS),
+        t2.path().to_path_buf(),
+        cfg.reads.clone(),
+    ));
     let opts = BuildOptions {
         root: t2.path().to_path_buf(),
         input: PathBuf::from("src"),

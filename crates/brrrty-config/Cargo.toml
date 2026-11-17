@@ -22,11 +22,11 @@ indexmap = "2"
 regex = "1.13.1"
 regex-syntax = "0.8.11"
 rhai = { version = "=1.27.0", features = ["sync", "no_closure", "no_time"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 stacker = "0.1.25"
 url = "2.5.8"
 
 [dev-dependencies]
 brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.14" }
 brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.0.14" }
-serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 tempfile = "3.27.0"

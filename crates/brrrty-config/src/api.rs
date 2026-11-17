@@ -145,12 +145,18 @@ pub fn utc_string(ms: f64) -> String {
 
 /// An engine with Brrrty's limits and the config API registered, for a
 /// project at `root`.
-pub fn engine(clock: Clock, root: &Path) -> Engine {
-    engine_for(clock, crate::CONFIG_FILE.to_string(), root)
+pub fn engine(clock: Clock, root: &Path, reads: brrrty_core::FileReads) -> Engine {
+    engine_for(clock, crate::CONFIG_FILE.to_string(), root, reads)
 }
 
-/// [`engine`] for a script called `label` in `debug` output.
-pub fn engine_for(clock: Clock, label: String, root: &Path) -> Engine {
+/// [`engine`] for a script called `label` in `debug` output. What the script reads from the
+/// project goes in `reads`.
+pub fn engine_for(
+    clock: Clock,
+    label: String,
+    root: &Path,
+    reads: brrrty_core::FileReads,
+) -> Engine {
     let mut e = Engine::new();
     e.set_max_operations(MAX_OPERATIONS)
         .set_max_call_levels(MAX_CALL_LEVELS)
@@ -191,6 +197,8 @@ pub fn engine_for(clock: Clock, label: String, root: &Path) -> Engine {
         panic!("deliberate test panic from a script")
     });
 
+    // `fs.readFileSync` and friends, inside the project.
+    crate::files::register(&mut e, root, reads);
     // `execSync("git rev-parse HEAD")`, read from the repository's files.
     let root = root.to_path_buf();
     e.register_fn("git_head", move || -> Result<String, Box<EvalAltResult>> {

@@ -27,6 +27,7 @@ pub fn build_options(root: &Path, flags: &Flags) -> Result<BuildOptions, Vec<Pro
     config.data = Some(brrrty_config::data_runner(
         brrrty_config::Clock::from_env().unwrap_or(brrrty_config::Clock::System),
         root.to_path_buf(),
+        config.reads.clone(),
     ));
     Ok(BuildOptions {
         input: flags

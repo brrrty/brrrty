@@ -60,6 +60,9 @@ pub struct BuildReport {
     pub refused: Vec<PathBuf>,
     /// What a [`survey`] build recorded; `None` for a plain build.
     pub survey: Option<crate::survey::Survey>,
+    /// The files and folders the config and data scripts read, listed or checked, relative
+    /// to the project folder and sorted: what the output depends on besides the sources.
+    pub reads: Vec<PathBuf>,
 }
 
 /// A page a build wrote.
@@ -1565,7 +1568,11 @@ fn build_with(opts: &BuildOptions, markdown: &dyn MarkdownRenderer, mode: Mode) 
         .stack_size(RENDER_STACK)
         .build()
     {
-        Ok(pool) => pool.install(|| build_in_pool(opts, markdown, start, mode)),
+        Ok(pool) => {
+            let mut report = pool.install(|| build_in_pool(opts, markdown, start, mode));
+            report.reads = opts.config.reads.paths();
+            report
+        }
         Err(e) => {
             let report = BuildReport {
                 written: 0,
@@ -1581,6 +1588,7 @@ fn build_with(opts: &BuildOptions, markdown: &dyn MarkdownRenderer, mode: Mode) 
                 complete: false,
                 refused: Vec::new(),
                 survey: None,
+                reads: Vec::new(),
             };
             finish(report, opts.strict, start)
         }
@@ -1630,6 +1638,7 @@ fn build_once(
         complete: false,
         refused: Vec::new(),
         survey: None,
+        reads: Vec::new(),
     };
     let strict = opts.strict;
     let log_owned = mode.survey.then(Log::default);

@@ -116,6 +116,7 @@ mod convert;
 #[doc(hidden)]
 pub mod csv;
 mod data;
+mod files;
 mod filters;
 mod git;
 mod glob;
@@ -186,6 +187,8 @@ pub struct SiteConfig {
     pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
+    /// What the script read from the project, and its filters and collections read later.
+    pub reads: brrrty_core::FileReads,
 }
 
 impl SiteConfig {
@@ -203,6 +206,7 @@ impl SiteConfig {
             syntax_highlight: self.syntax_highlight.clone(),
             feeds: self.feeds.clone(),
             template_engines: self.template_engines,
+            reads: self.reads.clone(),
         }
     }
 }
@@ -308,7 +312,8 @@ pub(crate) const BUG_HELP: &str = "this is a bug in Brrrty, not in your script. 
 /// Run a script and read what it set. Problems have no path yet.
 fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Problem>> {
     api::start_clock();
-    let engine = api::engine(clock, root);
+    let reads = brrrty_core::FileReads::default();
+    let engine = api::engine(clock, root, reads.clone());
     let (config, state) = api::Config::new();
     let mut scope = rhai::Scope::new();
     scope.push("config", config);
@@ -362,6 +367,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         collections,
         syntax_highlight: state.syntax_highlight,
         feeds: state.feeds,
+        reads,
     })
 }
 

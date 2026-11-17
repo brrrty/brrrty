@@ -34,12 +34,23 @@ use crate::convert::{to_dynamic, to_value};
 use crate::{Clock, STACK_SIZE, at, error_parts};
 
 /// The runner a build calls for each `.rhai` data file, in the project at
-/// `root`.
-pub fn data_runner(clock: Clock, root: std::path::PathBuf) -> DataRunner {
-    DataRunner(std::sync::Arc::new(move |req| run_file(req, clock, &root)))
+/// `root`. What the scripts read from the project goes in `reads`.
+pub fn data_runner(
+    clock: Clock,
+    root: std::path::PathBuf,
+    reads: brrrty_core::FileReads,
+) -> DataRunner {
+    DataRunner(std::sync::Arc::new(move |req| {
+        run_file(req, clock, &root, &reads)
+    }))
 }
 
-fn run_file(req: &DataRequest, clock: Clock, root: &std::path::Path) -> Result<Value, Problem> {
+fn run_file(
+    req: &DataRequest,
+    clock: Clock,
+    root: &std::path::Path,
+    reads: &brrrty_core::FileReads,
+) -> Result<Value, Problem> {
     let bytes = std::fs::read(req.file).map_err(|e| {
         Problem::error(
             codes::DATA_FILE_INVALID,
@@ -53,11 +64,12 @@ fn run_file(req: &DataRequest, clock: Clock, root: &std::path::Path) -> Result<V
     let global = req.global.clone();
     let label = req.shown.display().to_string();
     let root = root.to_path_buf();
+    let reads = reads.clone();
     let run = std::thread::Builder::new()
         .name("brrrty-data".into())
         .stack_size(STACK_SIZE)
         .spawn(move || {
-            brrrty_core::contain::catch(|| evaluate(&src, &global, clock, &label, &root))
+            brrrty_core::contain::catch(|| evaluate(&src, &global, clock, &label, &root, reads))
         })
         .map_err(|e| {
             Problem::error(
@@ -86,9 +98,10 @@ pub(crate) fn evaluate(
     clock: Clock,
     label: &str,
     root: &std::path::Path,
+    reads: brrrty_core::FileReads,
 ) -> Result<Value, Problem> {
     crate::api::start_clock();
-    let engine = crate::api::engine_for(clock, label.to_string(), root);
+    let engine = crate::api::engine_for(clock, label.to_string(), root, reads);
     let ast = engine.compile(src).map_err(|e| {
         let help = match &*e.0 {
             rhai::ParseErrorType::VariableUndefined(name) if name == "config" => {
