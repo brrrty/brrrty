@@ -8,6 +8,16 @@ Status: early development. See the [repository](https://github.com/brrrty/brrrty
 
 ## Install
 
+In your 11ty site's folder:
+
+```sh
+npx brrrty init
+```
+
+`brrrty init` adds `brrrty` to `devDependencies`, sets the `build` and `start` scripts, and writes `brrrty.config.rhai` from your 11ty config, with a `// TODO:` for each part it can't port. It shows the changes as a diff and asks first. Then run `npm install` and `npm run build`. See [Getting started](https://brrrty.com/docs/getting-started/).
+
+To set it up by hand instead:
+
 ```sh
 npm install --save-dev brrrty
 ```

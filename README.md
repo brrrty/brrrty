@@ -18,7 +18,7 @@ In an 11ty site's folder, from npm, with a prebuilt binary for macOS (arm64, x64
 npx brrrty init
 ```
 
-`brrrty init` adds `brrrty` to `devDependencies`, sets the `build` and `start` scripts (keeping 11ty's as `build:11ty` and `start:11ty`), and writes `brrrty.config.rhai` from the 11ty config, with a `// TODO:` for each part it can't port. It reads the 11ty config without running it, shows the changes as a diff and asks first (`--yes` skips asking, `--dry-run` writes nothing), and never overwrites a `brrrty.config.rhai`. Then `npm install` and `npm run build`.
+`brrrty init` adds `brrrty` to `devDependencies`, sets the `build` and `start` scripts (keeping ones that are just an 11ty command as `build:11ty` and `start:11ty`), and writes `brrrty.config.rhai` from the 11ty config, with a `// TODO:` for each part it can't port. It reads the 11ty config without running it, shows the changes as a diff and asks first (`--yes` skips asking, `--dry-run` writes nothing), and never overwrites a `brrrty.config.rhai`. Then `npm install` and `npm run build`.
 
 To set it up by hand instead, `npm install --save-dev brrrty`, then `"build": "brrrty build"` in your `package.json` scripts, or `npx brrrty build`. No Rust toolchain or install scripts are needed.
 
