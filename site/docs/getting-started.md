@@ -1,14 +1,37 @@
 ---
 title: Getting started
 order: 1
-summary: Install Brrrty, port an 11ty config to Rhai, build, serve, and check the output against 11ty's.
+summary: Set up Brrrty with npx brrrty init, finish porting the 11ty config to Rhai, build, serve, and check the output against 11ty's.
 description: Install Brrrty and move an existing 11ty site over to it.
 lead: Start from your existing 11ty site. Your templates, Markdown, layouts and JSON data stay as they are. What changes is the config, and any data file written in JavaScript.
 ---
 
-## Install
+## Set it up
 
 With npm, on macOS or Linux (arm64 or x64), in your site's folder:
+
+```sh
+npx brrrty init
+```
+
+`brrrty init` shows what it will change as a diff and asks before writing anything. It changes two files:
+
+- **`package.json`**: adds `brrrty` to `devDependencies`, and sets the scripts `"build": "brrrty build"` and `"start": "brrrty serve"`. A `build` or `start` script that ran 11ty is kept as `build:11ty` or `start:11ty`, so you can still build with 11ty to compare. A script that runs something else is left alone, and `init` says what to change instead. The rest of the file keeps its formatting.
+- **`brrrty.config.rhai`**: written from your 11ty config, which `init` reads without running it. Folders, template engines, passthrough copies and ignores with plain paths, and the syntax highlighting and RSS feed plugins with plain options are ported. Everything else, such as filters, collections and shortcodes, gets a `// TODO:` comment that quotes your JavaScript and links to the docs. `init` never overwrites an existing `brrrty.config.rhai`.
+
+It also lists the JavaScript data files that need a `.rhai` port (step 2 below). It doesn't run `npm install`; run that next, then `npm run build`.
+
+| Flag | What it does |
+|---|---|
+| `--dir <dir>` | The site's folder. Default: the current folder |
+| `--yes` | Write the changes without asking |
+| `--dry-run` | Show the changes and write nothing |
+
+Without a terminal to ask in, as in CI, `init` shows the changes and writes nothing unless you pass `--yes`.
+
+### Setting it up by hand
+
+Instead of `init`, add the package yourself:
 
 ```sh
 npm i -D brrrty
@@ -20,12 +43,12 @@ Then point your scripts at it in `package.json`:
 {
   "scripts": {
     "build": "brrrty build",
-    "serve": "brrrty serve"
+    "start": "brrrty serve"
   }
 }
 ```
 
-and run `npm run build`. The package runs a prebuilt binary for your platform, with no install scripts and no Rust toolchain.
+The package runs a prebuilt binary for your platform, with no install scripts and no Rust toolchain.
 
 Or, with Rust 1.89 or later, install it with Cargo:
 
@@ -52,6 +75,8 @@ my-site/
 Brrrty reads `_includes` and `_data` from the input folder, under those names. A config that moves them elsewhere is refused with a message saying so.
 
 ## 1. Port the config
+
+`brrrty init` ports what it can and leaves a `// TODO:` for the rest. This section is how to finish those by hand.
 
 11ty is configured in JavaScript, which Brrrty doesn't run. Its config is the same calls written in [Rhai](https://rhai.rs), a small scripting language, in a file called `brrrty.config.rhai` at the project root. Method names are 11ty's in snake_case, and `eleventyConfig` is `config`.
 
@@ -146,7 +171,7 @@ A build with any error exits with status 1. Fix the cause, or port the missing p
 ## 4. Serve
 
 ```sh
-npm run serve
+npm start
 ```
 
 `brrrty serve` builds the site, serves it at `http://localhost:8080/`, and rebuilds on every change, with live reload in the browser. See [`brrrty serve`](/docs/serve/).
