@@ -3,7 +3,7 @@
 //! off), with `fuzzyLink` a choice (`md.linkify.set({ fuzzyLink })`).
 //!
 //! The patterns are linkify-it's own (`linkify_re`, dumped from Node), run through
-//! `brrrty_prism::regex`, which matches as JavaScript does (UTF-16 units) or refuses. `test`,
+//! `brrrty_jsregex::backtrack`, which matches as JavaScript does (UTF-16 units) or refuses. `test`,
 //! `match` and `matchAtStart` are ported line by line. Positions are UTF-16 units.
 //!
 //! Two of linkify-it's repetitions are bounded: `{0,1000}` in a bracketed pair of a path and
@@ -14,7 +14,7 @@
 
 use std::sync::OnceLock;
 
-use brrrty_prism::regex::{JsRegex, JsText, translate};
+use brrrty_jsregex::backtrack::{JsRegex, JsText, translate};
 
 use crate::linkify_re as re;
 use crate::uc_micro;
@@ -24,17 +24,6 @@ const MAX_LENGTH: usize = 10_000;
 
 /// The longest run of units with no space or control character linkify can read exactly.
 const MAX_RUN: usize = 1_000;
-
-struct Patterns {
-    schema_search: JsRegex,
-    schema_at_start: JsRegex,
-    fuzzy_link_search: JsRegex,
-    fuzzy_mail_host_search: JsRegex,
-    mail_name_validator: JsRegex,
-    http_validator: JsRegex,
-    relative_proto_validator: JsRegex,
-    mailto_validator: JsRegex,
-}
 
 /// Compiles one of linkify-it's patterns. `g` is how it is run (from a position) and `y` is
 /// matched as `^(?:...)` on the text from that position (the patterns have no lookbehind).
@@ -51,19 +40,34 @@ fn compile((source, flags): (&str, &str)) -> JsRegex {
         .unwrap_or_else(|e| panic!("linkify-it's pattern translates: {}", e.0))
 }
 
-fn patterns() -> &'static Patterns {
-    static P: OnceLock<Patterns> = OnceLock::new();
-    P.get_or_init(|| Patterns {
-        schema_search: compile(re::SCHEMA_SEARCH),
-        schema_at_start: compile(re::SCHEMA_AT_START),
-        fuzzy_link_search: compile(re::FUZZY_LINK_SEARCH),
-        fuzzy_mail_host_search: compile(re::FUZZY_MAIL_HOST_SEARCH),
-        mail_name_validator: compile(re::MAIL_NAME_VALIDATOR),
-        http_validator: compile(re::HTTP_VALIDATOR),
-        relative_proto_validator: compile(re::RELATIVE_PROTO_VALIDATOR),
-        mailto_validator: compile(re::MAILTO_VALIDATOR),
-    })
+/// One of linkify-it's patterns, compiled on first use (each costs tens of milliseconds, and
+/// `fuzzy_link_search` isn't needed with `fuzzyLink` off).
+struct Pattern {
+    source: (&'static str, &'static str),
+    re: OnceLock<JsRegex>,
 }
+
+impl Pattern {
+    const fn new(source: (&'static str, &'static str)) -> Self {
+        Pattern {
+            source,
+            re: OnceLock::new(),
+        }
+    }
+
+    fn get(&self) -> &JsRegex {
+        self.re.get_or_init(|| compile(self.source))
+    }
+}
+
+static SCHEMA_SEARCH: Pattern = Pattern::new(re::SCHEMA_SEARCH);
+static SCHEMA_AT_START: Pattern = Pattern::new(re::SCHEMA_AT_START);
+static FUZZY_LINK_SEARCH: Pattern = Pattern::new(re::FUZZY_LINK_SEARCH);
+static FUZZY_MAIL_HOST_SEARCH: Pattern = Pattern::new(re::FUZZY_MAIL_HOST_SEARCH);
+static MAIL_NAME_VALIDATOR: Pattern = Pattern::new(re::MAIL_NAME_VALIDATOR);
+static HTTP_VALIDATOR: Pattern = Pattern::new(re::HTTP_VALIDATOR);
+static RELATIVE_PROTO_VALIDATOR: Pattern = Pattern::new(re::RELATIVE_PROTO_VALIDATOR);
+static MAILTO_VALIDATOR: Pattern = Pattern::new(re::MAILTO_VALIDATOR);
 
 fn in_table(table: &[(u16, u16)], u: u16) -> bool {
     let i = table.partition_point(|&(_, end)| end < u);
@@ -165,13 +169,12 @@ impl Linkify {
         let Some(schema) = schema_name(schema) else {
             return Ok(0);
         };
-        let p = patterns();
         let end = text.len().min(pos + MAX_LENGTH);
         let tail = JsText::from_units(&text[pos.min(end)..end]);
         let validator = match schema {
-            "http:" | "https:" | "ftp:" => &p.http_validator,
-            "//" => &p.relative_proto_validator,
-            _ => &p.mailto_validator,
+            "http:" | "https:" | "ftp:" => HTTP_VALIDATOR.get(),
+            "//" => RELATIVE_PROTO_VALIDATOR.get(),
+            _ => MAILTO_VALIDATOR.get(),
         };
         let Some(m) = exec(validator, &tail, 0)? else {
             return Ok(0);
@@ -191,10 +194,9 @@ impl Linkify {
             return Ok(false);
         }
         Self::check(text)?;
-        let p = patterns();
         let js = JsText::from_units(text);
         let mut last = 0;
-        while let Some(m) = exec(&p.schema_search, &js, last)? {
+        while let Some(m) = exec(SCHEMA_SEARCH.get(), &js, last)? {
             last = m.end;
             let (a, b) = m.groups[1].expect("group 2 is always set");
             let schema = units_to_string(&text[a..b])?;
@@ -202,15 +204,15 @@ impl Linkify {
                 return Ok(true);
             }
         }
-        if self.fuzzy_link && exec(&p.fuzzy_link_search, &js, 0)?.is_some() {
+        if self.fuzzy_link && exec(FUZZY_LINK_SEARCH.get(), &js, 0)?.is_some() {
             return Ok(true);
         }
         if text.contains(&u16::from(b'@')) {
             let mut last = 0;
-            while let Some(m) = exec(&p.fuzzy_mail_host_search, &js, last)? {
+            while let Some(m) = exec(FUZZY_MAIL_HOST_SEARCH.get(), &js, last)? {
                 last = m.end;
                 let name = JsText::from_units(&text[m.index.saturating_sub(65)..m.index]);
-                if exec(&p.mail_name_validator, &name, 0)?.is_some() {
+                if exec(MAIL_NAME_VALIDATOR.get(), &name, 0)?.is_some() {
                     return Ok(true);
                 }
             }
@@ -254,7 +256,6 @@ impl Linkify {
             return Ok(result);
         }
         Self::check(text)?;
-        let p = patterns();
         let js = JsText::from_units(text);
         let mut schema_last = 0;
         let mut link_last = 0;
@@ -272,7 +273,7 @@ impl Linkify {
             if !email_done && email_candidate.is_none_or(|c| c.index < pos) {
                 mail_last = mail_last.max(scan_from);
                 loop {
-                    let Some(m) = exec(&p.fuzzy_mail_host_search, &js, mail_last)? else {
+                    let Some(m) = exec(FUZZY_MAIL_HOST_SEARCH.get(), &js, mail_last)? else {
                         email_done = true;
                         email_candidate = None;
                         break;
@@ -280,7 +281,7 @@ impl Linkify {
                     mail_last = m.end;
                     let start = m.index.saturating_sub(65);
                     let name = JsText::from_units(&text[start..m.index]);
-                    let Some(n) = exec(&p.mail_name_validator, &name, 0)? else {
+                    let Some(n) = exec(MAIL_NAME_VALIDATOR.get(), &name, 0)? else {
                         continue;
                     };
                     let (a, b) = n.groups[0].expect("group 1 is always set");
@@ -299,7 +300,7 @@ impl Linkify {
             if !link_done && link_candidate.is_none_or(|c| c.index < pos) {
                 link_last = link_last.max(scan_from);
                 loop {
-                    let Some(m) = exec(&p.fuzzy_link_search, &js, link_last)? else {
+                    let Some(m) = exec(FUZZY_LINK_SEARCH.get(), &js, link_last)? else {
                         link_done = true;
                         link_candidate = None;
                         break;
@@ -329,7 +330,7 @@ impl Linkify {
                 loop {
                     if schema_prefix.is_none() {
                         schema_last = schema_last.max(scan_from);
-                        let Some(m) = exec(&p.schema_search, &js, schema_last)? else {
+                        let Some(m) = exec(SCHEMA_SEARCH.get(), &js, schema_last)? else {
                             schema_done = true;
                             break;
                         };
@@ -392,9 +393,8 @@ impl Linkify {
             return Ok(None);
         }
         Self::check(text)?;
-        let p = patterns();
         let js = JsText::from_units(text);
-        let Some(m) = exec(&p.schema_at_start, &js, 0)? else {
+        let Some(m) = exec(SCHEMA_AT_START.get(), &js, 0)? else {
             return Ok(None);
         };
         let (a2, b2) = m.groups[1].expect("group 2 is always set");
@@ -418,7 +418,18 @@ mod tests {
 
     #[test]
     fn every_pattern_translates() {
-        let _ = patterns();
+        for p in [
+            &SCHEMA_SEARCH,
+            &SCHEMA_AT_START,
+            &FUZZY_LINK_SEARCH,
+            &FUZZY_MAIL_HOST_SEARCH,
+            &MAIL_NAME_VALIDATOR,
+            &HTTP_VALIDATOR,
+            &RELATIVE_PROTO_VALIDATOR,
+            &MAILTO_VALIDATOR,
+        ] {
+            let _ = p.get();
+        }
     }
 
     #[test]

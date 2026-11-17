@@ -13,5 +13,7 @@ readme = false
 exclude = ["tools/"]
 
 [dependencies]
+fancy-regex = { version = "=0.20.0", default-features = false, features = ["std", "perf", "unicode", "variable-lookbehinds"] }
 regex = "1.13.1"
+regex-automata = { version = "0.4.18", default-features = false, features = ["std", "syntax", "perf", "unicode", "hybrid", "nfa-thompson"] }
 regex-syntax = "0.8.11"

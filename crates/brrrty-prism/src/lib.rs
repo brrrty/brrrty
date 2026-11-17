@@ -13,7 +13,7 @@
 
 pub mod grammar;
 pub mod highlight;
-pub mod regex;
+pub use brrrty_jsregex::backtrack as regex;
 pub mod stringify;
 pub mod tokenize;
 

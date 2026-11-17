@@ -12,10 +12,12 @@
 //!   the same there, and runs `test`, `replace` and `split` as JavaScript
 //!   does; `brrrty-config`'s scripts and Nunjucks's `r/.../` use it.
 //!
-//! `brrrty-prism` uses the tree to translate Prism's grammars to
-//! `fancy-regex`.
+//! - [`backtrack`] translates a pattern exactly to `fancy-regex` (lookaround,
+//!   backreferences and all) or refuses it, for `brrrty-prism`'s grammars and
+//!   `brrrty-markdown`'s linkify.
 
 pub mod ast;
+pub mod backtrack;
 mod canon_table;
 pub mod classes;
 pub mod lex;

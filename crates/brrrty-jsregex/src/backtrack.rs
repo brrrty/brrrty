@@ -10,7 +10,7 @@
 //! a unit boundary.
 //!
 //! The pattern is parsed as Node parses it without `u` (see
-//! `brrrty_jsregex`), and written out with nothing left to the engine's
+//! [`crate::ast`]), and written out with nothing left to the engine's
 //! defaults: each class is an explicit set of units (`\s`, `\w`, `\d` and
 //! `.` as JavaScript defines them, case folding with `i` done to the set by
 //! JavaScript's Canonicalize), `\b` and `\B` as ASCII lookaround, `^` and `$`
@@ -31,9 +31,9 @@
 //! Backtracking is bounded (see [`BacktrackBudget`]): a match that takes
 //! too many steps is refused, never left to run.
 
-use brrrty_jsregex::ast::{self, Node};
-use brrrty_jsregex::classes;
-use brrrty_jsregex::set::UnitSet;
+use crate::ast::{self, Node};
+use crate::classes;
+use crate::set::UnitSet;
 
 /// Backtracking limits.
 ///
