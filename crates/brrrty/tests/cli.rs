@@ -54,7 +54,7 @@ fn builds_and_prints_summary() {
     let dir = site(&[("src/index.md", "# Hi\n")]);
     let out = run_in(dir.path(), &["build", "--input", "src"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert!(stdout(&out).starts_with("Wrote 1 files, copied 0 files in "));
+    assert!(stdout(&out).starts_with("Wrote 1 file, copied 0 files in "));
     assert!(dir.path().join("_site/index.html").exists());
 }
 

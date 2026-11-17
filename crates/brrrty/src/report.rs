@@ -184,9 +184,8 @@ pub fn render_problem(p: &Problem, root: &Path, color: bool) -> String {
 pub fn print_build(report: &brrrty_core::BuildReport, root: &Path, quiet: bool, color: bool) {
     if !quiet {
         crate::say!(
-            "Wrote {} files, copied {} files in {:.2} seconds (brrrty {})",
-            report.written,
-            report.copied,
+            "{} in {:.2} seconds (brrrty {})",
+            summary(report.written, report.copied),
             report.elapsed.as_secs_f64(),
             env!("CARGO_PKG_VERSION")
         );
@@ -194,6 +193,16 @@ pub fn print_build(report: &brrrty_core::BuildReport, root: &Path, quiet: bool, 
     if !report.problems.is_empty() {
         print_problems(&report.problems, root, color);
     }
+}
+
+/// `Wrote 1 file, copied 2 files`.
+fn summary(written: usize, copied: usize) -> String {
+    let files = |n: usize| if n == 1 { "file" } else { "files" };
+    format!(
+        "Wrote {written} {}, copied {copied} {}",
+        files(written),
+        files(copied)
+    )
 }
 
 /// Print every problem, issue links for unsupported templates, and the counts line.
@@ -255,6 +264,13 @@ fn problems_text(problems: &[Problem], root: &Path, color: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_says_file_for_one() {
+        assert_eq!(summary(1, 0), "Wrote 1 file, copied 0 files");
+        assert_eq!(summary(0, 1), "Wrote 0 files, copied 1 file");
+        assert_eq!(summary(2, 3), "Wrote 2 files, copied 3 files");
+    }
 
     #[test]
     fn locate_skips_a_leading_bom_on_line_one() {

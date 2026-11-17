@@ -157,7 +157,7 @@ fn assert_released(port: u16) {
 fn ctrl_c_stops_cleanly_and_exits_0() {
     let dir = site(&[("src/index.md", "# Hi\n")]);
     let mut serve = Serve::start(dir.path(), &["--input", "src", "--port", "0"]);
-    serve.line_starting("Wrote 1 files, copied 0 files in ");
+    serve.line_starting("Wrote 1 file, copied 0 files in ");
     serve.line_starting("Watching…");
     let port = serve.port();
     assert!(get(port, "/").contains("<h1>Hi</h1>"));

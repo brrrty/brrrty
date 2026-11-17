@@ -56,7 +56,12 @@ fn files(root: &Path) -> Result<BTreeSet<PathBuf>, CompatError> {
 
 fn binary_diff(a: &[u8], b: &[u8]) -> Outcome {
     Outcome::Different {
-        diff: format!("binary files differ ({} vs {} bytes)", a.len(), b.len()),
+        diff: format!(
+            "binary files differ ({} vs {} {})",
+            a.len(),
+            b.len(),
+            if b.len() == 1 { "byte" } else { "bytes" }
+        ),
     }
 }
 

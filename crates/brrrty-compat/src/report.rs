@@ -75,7 +75,9 @@ impl CompareReport {
                     }
                     out.push_str("```\n");
                     if lines.len() > max_diff_lines {
-                        let _ = writeln!(out, "... ({} more lines)", lines.len() - max_diff_lines);
+                        let more = lines.len() - max_diff_lines;
+                        let noun = if more == 1 { "line" } else { "lines" };
+                        let _ = writeln!(out, "... ({more} more {noun})");
                     }
                 }
                 Outcome::Missing => {
