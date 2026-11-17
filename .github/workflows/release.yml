@@ -4,6 +4,10 @@ name: Release
 # packages made from them, attach the binaries to a GitHub Release, then
 # publish the npm packages (platform packages first, then brrrty).
 #
+# GitHub's macOS arm64 runners are often short on capacity, so the release
+# needs only one macOS arm64 job: it builds the aarch64-apple-darwin binary,
+# packs the npm packages and tests them there. Do not add another.
+#
 # Run by hand (workflow_dispatch) it is a dry run: the same builds and tests,
 # then `npm publish --dry-run`. It creates no release and publishes nothing.
 
@@ -30,6 +34,7 @@ jobs:
   version:
     name: Check the version
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -56,6 +61,7 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: version
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: true
       matrix:
@@ -66,9 +72,6 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
             musl: true
-          - target: aarch64-apple-darwin
-            os: macos-15
-            musl: false
           - target: x86_64-apple-darwin
             os: macos-15-intel
             musl: false
@@ -136,11 +139,15 @@ jobs:
             dist/*.tar.gz.sha256
           if-no-files-found: error
 
-  npm-pack:
-    name: Pack the npm packages
+  # The one macOS arm64 job: build, pack every platform's binary into the npm
+  # packages, and test them on this runner.
+  npm-pack-macos-arm64:
+    name: Build, pack and test (macOS arm64)
     needs: [version, build]
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
+    timeout-minutes: 90
     env:
+      TARGET: aarch64-apple-darwin
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -149,6 +156,37 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Install Rust
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "$TARGET"
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          cargo build --locked --release -p brrrty --target "$TARGET"
+          ls -l "target/$TARGET/release/brrrty"
+      - name: Smoke test
+        run: .github/scripts/smoke-binary.sh "target/$TARGET/release/brrrty" "$VERSION"
+      - name: Package
+        run: |
+          name="brrrty-$VERSION-$TARGET"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/brrrty" LICENSE NOTICE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          cat "dist/$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-${{ env.TARGET }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+      # The other platforms' binaries, built by the build job.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: binary-*
@@ -160,6 +198,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           (cd dist && shasum -a 256 -c ./*.sha256)
+          set -- dist/*.tar.gz
+          [ "$#" -eq 4 ] || { echo "expected 4 binaries, found $#: $*"; exit 1; }
           mkdir binaries
           for t in dist/*.tar.gz; do
             name=$(basename "$t" .tar.gz)
@@ -182,11 +222,16 @@ jobs:
           name: npm-packages
           path: packs/*.tgz
           if-no-files-found: error
+      - name: Launcher unit tests
+        run: node --test npm/test/launcher.test.mjs
+      - name: Package tests
+        run: npm/test/packages.sh packs "$VERSION"
 
   npm-test:
     name: Test the npm packages (${{ matrix.name }})
-    needs: [version, npm-pack]
+    needs: [version, npm-pack-macos-arm64]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -197,9 +242,6 @@ jobs:
           - name: linux arm64, glibc and Alpine
             os: ubuntu-24.04-arm
             alpine: true
-          - name: macOS arm64
-            os: macos-15
-            alpine: false
           - name: macOS x64
             os: macos-15-intel
             alpine: false
@@ -230,8 +272,9 @@ jobs:
   release:
     name: GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'brrrty/brrrty'
-    needs: [version, build, npm-test]
+    needs: [version, build, npm-pack-macos-arm64, npm-test]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
@@ -263,8 +306,9 @@ jobs:
   publish:
     name: Publish to npm
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'brrrty/brrrty'
-    needs: [npm-test, release]
+    needs: [npm-pack-macos-arm64, npm-test, release]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write # npm trusted publishing and provenance
