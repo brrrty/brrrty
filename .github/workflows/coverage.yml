@@ -50,6 +50,7 @@ jobs:
       - id: total
         name: Line coverage
         run: |
+          mkdir -p target/llvm-cov
           cargo llvm-cov report --ignore-filename-regex "$COVERAGE_IGNORE" \
             --json --summary-only --output-path target/llvm-cov/summary.json
           lines=$(jq -r '.data[0].totals.lines.percent' target/llvm-cov/summary.json)
