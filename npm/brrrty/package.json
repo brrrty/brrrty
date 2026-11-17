@@ -1,0 +1,27 @@
+{
+  "name": "brrrty",
+  "version": "0.0.0",
+  "description": "Eleventy, but make it go brrr. A fast static site generator, written in Rust, that builds your existing 11ty site.",
+  "keywords": ["static-site", "ssg", "eleventy", "11ty", "site-generator"],
+  "homepage": "https://brrrty.com",
+  "bugs": "https://github.com/brrrty/brrrty/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brrrty/brrrty.git",
+    "directory": "npm/brrrty"
+  },
+  "license": "MIT",
+  "bin": {
+    "brrrty": "bin/brrrty"
+  },
+  "files": ["bin/"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@brrrty/darwin-arm64": "0.0.0",
+    "@brrrty/darwin-x64": "0.0.0",
+    "@brrrty/linux-arm64-musl": "0.0.0",
+    "@brrrty/linux-x64-musl": "0.0.0"
+  }
+}

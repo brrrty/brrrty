@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+'use strict';
+
+// Runs the prebuilt Brrrty binary from the platform package npm installed
+// alongside this one (one of the optionalDependencies). Arguments, stdio and
+// the environment go through unchanged, and the binary's exit status comes
+// back out: the same code, or death by the same signal.
+
+const childProcess = require('child_process');
+const path = require('path');
+
+// `${process.platform}-${process.arch}` to the package with that binary.
+// Linux binaries are static (musl), so one package serves Alpine and glibc
+// distros alike.
+const PACKAGES = {
+  'darwin-arm64': '@brrrty/darwin-arm64',
+  'darwin-x64': '@brrrty/darwin-x64',
+  'linux-arm64': '@brrrty/linux-arm64-musl',
+  'linux-x64': '@brrrty/linux-x64-musl',
+};
+
+// Signals passed on to the binary.
+const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+// Ctrl-C under `npm run` or `npx` reaches this process twice: once from the
+// terminal and once from npm, which forwards it. Copies of a signal that come
+// within this many milliseconds of the last one passed on count as one, so the
+// binary sees one Ctrl-C per keypress (its second Ctrl-C means "quit now").
+const COALESCE_MS = 200;
+
+class LauncherError extends Error {}
+
+function platformKey(platform, arch) {
+  return `${platform}-${arch}`;
+}
+
+// The path of the binary for this platform, or a LauncherError saying why
+// there is none.
+function binaryPath(platform = process.platform, arch = process.arch, resolve = require.resolve) {
+  const key = platformKey(platform, arch);
+  const pkg = PACKAGES[key];
+  if (!pkg) {
+    throw new LauncherError(
+      `brrrty: there is no prebuilt Brrrty binary for ${key}. ` +
+        `Prebuilt binaries cover ${Object.keys(PACKAGES).join(', ')}. ` +
+        'On other platforms, build Brrrty from source with `cargo install brrrty`.',
+    );
+  }
+  let manifest;
+  try {
+    manifest = resolve(`${pkg}/package.json`);
+  } catch {
+    throw new LauncherError(
+      `brrrty: the Brrrty binary for ${key} comes in the package ${pkg}, which is not installed. ` +
+        'npm installs it as an optional dependency of brrrty, so it is left out when optional ' +
+        'dependencies are skipped (--omit=optional, --no-optional) or when the lockfile was ' +
+        `made without it. Reinstall with optional dependencies, or add ${pkg} yourself.`,
+    );
+  }
+  return path.join(path.dirname(manifest), 'bin', 'brrrty');
+}
+
+// Runs the binary, passes signals on, and ends this process the way the
+// binary ended.
+function run(bin, args, { coalesceMs = COALESCE_MS } = {}) {
+  // On Unix the binary gets its own process group, so a Ctrl-C at the
+  // terminal reaches it only through this process and arrives once.
+  const child = childProcess.spawn(bin, args, {
+    stdio: 'inherit',
+    detached: process.platform !== 'win32',
+  });
+
+  const lastSent = new Map();
+  const handlers = new Map();
+  for (const signal of FORWARDED) {
+    const handler = () => {
+      const now = Date.now();
+      const last = lastSent.get(signal);
+      if (last !== undefined && now - last < coalesceMs) return;
+      lastSent.set(signal, now);
+      try {
+        child.kill(signal);
+      } catch {
+        // Already gone; its exit is on the way.
+      }
+    };
+    handlers.set(signal, handler);
+    process.on(signal, handler);
+  }
+
+  child.on('error', (err) => {
+    process.stderr.write(`brrrty: could not run ${bin}: ${err.message}\n`);
+    process.exit(1);
+  });
+
+  child.on('exit', (code, signal) => {
+    for (const [sig, handler] of handlers) process.removeListener(sig, handler);
+    if (signal) {
+      // End by the same signal, so whoever started us sees what we saw.
+      process.kill(process.pid, signal);
+      // Only reached if the signal is ignored or handled elsewhere.
+      const number = require('os').constants.signals[signal] || 0;
+      setTimeout(() => process.exit(128 + number), 100);
+      return;
+    }
+    process.exit(code);
+  });
+}
+
+function main() {
+  let bin;
+  try {
+    bin = binaryPath();
+  } catch (err) {
+    if (!(err instanceof LauncherError)) throw err;
+    process.stderr.write(`${err.message}\n`);
+    process.exit(1);
+  }
+  run(bin, process.argv.slice(2));
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = { PACKAGES, LauncherError, binaryPath, run };

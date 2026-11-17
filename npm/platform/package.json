@@ -1,0 +1,17 @@
+{
+  "name": "@brrrty/PLATFORM",
+  "version": "0.0.0",
+  "description": "The PLATFORM binary for brrrty. Install brrrty, which picks this package for you.",
+  "homepage": "https://brrrty.com",
+  "bugs": "https://github.com/brrrty/brrrty/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brrrty/brrrty.git",
+    "directory": "npm/platform"
+  },
+  "license": "MIT",
+  "os": ["OS"],
+  "cpu": ["CPU"],
+  "files": ["bin/"],
+  "preferUnplugged": true
+}

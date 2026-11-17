@@ -10,6 +10,24 @@ Brrrty exists because Eleventy is great. See NOTICE.
 
 Status: early development. Not ready for real sites yet.
 
+## Install
+
+In a Node project, from npm, with a prebuilt binary for macOS (arm64, x64) or Linux (arm64, x64; static, so Alpine works too):
+
+```sh
+npm install --save-dev brrrty
+```
+
+Then `"build": "brrrty build"` in your `package.json` scripts, or `npx brrrty build`. No Rust toolchain or install scripts are needed.
+
+Anywhere Rust runs:
+
+```sh
+cargo install brrrty
+```
+
+Release binaries are also attached to each GitHub release.
+
 ## `brrrty serve`
 
 ```sh

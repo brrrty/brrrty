@@ -1,10 +1,11 @@
 name: Release
 
-# On a v* tag: build static binaries for every platform, smoke-test them, and
-# attach them to a GitHub Release.
+# On a v* tag: build static binaries for every platform, test them and the npm
+# packages made from them, attach the binaries to a GitHub Release, then
+# publish the npm packages (platform packages first, then brrrty).
 #
 # Run by hand (workflow_dispatch) it is a dry run: the same builds and tests,
-# and no release.
+# then `npm publish --dry-run`. It creates no release and publishes nothing.
 
 on:
   push:
@@ -23,6 +24,7 @@ env:
   RUST_TOOLCHAIN: "1.99.1"
   CARGO_ZIGBUILD_VERSION: "0.24.0"
   ZIGLANG_VERSION: "0.16.0"
+  NODE_VERSION: "24.22.1"
   ALPINE_NODE_IMAGE: node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
 
 jobs:
@@ -35,16 +37,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # A tag must be v<the crates' version>.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # The crates must agree on one version, and a tag must be v<that version>.
       - id: version
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/brrrty/Cargo.toml | head -n 1)
-          if [ "$EVENT" = push ] && [ "$TAG" != "v$version" ]; then
-            echo "::error::The tag $TAG does not match the crates' version $version"
-            exit 1
+          if [ "$EVENT" = push ]; then
+            version=$(node npm/stage.mjs --print-version --tag "$TAG")
+          else
+            version=$(node npm/stage.mjs --print-version)
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -132,10 +137,101 @@ jobs:
             dist/*.tar.gz.sha256
           if-no-files-found: error
 
+  npm-pack:
+    name: Pack the npm packages
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Stage and pack
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          (cd dist && shasum -a 256 -c ./*.sha256)
+          mkdir binaries
+          for t in dist/*.tar.gz; do
+            name=$(basename "$t" .tar.gz)
+            target=${name#"brrrty-$VERSION-"}
+            mkdir -p "binaries/$target"
+            tar -xzf "$t" -C binaries "$name/brrrty"
+            mv "binaries/$name/brrrty" "binaries/$target/brrrty"
+            rmdir "binaries/$name"
+          done
+          if [ "$EVENT" = push ]; then
+            node npm/stage.mjs --binaries binaries --out staged --tag "$TAG"
+          else
+            node npm/stage.mjs --binaries binaries --out staged
+          fi
+          mkdir packs
+          for d in staged/*/; do npm pack "$d" --pack-destination packs; done
+          ls -l packs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-packages
+          path: packs/*.tgz
+          if-no-files-found: error
+
+  npm-test:
+    name: Test the npm packages (${{ matrix.name }})
+    needs: [version, npm-pack]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux x64, glibc and Alpine
+            os: ubuntu-24.04
+            alpine: true
+          - name: linux arm64, glibc and Alpine
+            os: ubuntu-24.04-arm
+            alpine: true
+          - name: macOS arm64
+            os: macos-15
+            alpine: false
+          - name: macOS x64
+            os: macos-15-intel
+            alpine: false
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-packages
+          path: packs
+      - name: Launcher unit tests
+        run: node --test npm/test/launcher.test.mjs
+      - name: Package tests
+        run: npm/test/packages.sh packs "$VERSION"
+      - name: Package tests in Alpine
+        if: matrix.alpine
+        run: docker run --rm -v "$PWD:/w:ro" -w /w "$ALPINE_NODE_IMAGE" sh npm/test/packages.sh packs "$VERSION"
+      - name: Dry-run publish
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: node npm/publish.mjs packs --dry-run
+
   release:
     name: GitHub Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'brrrty/brrrty'
-    needs: [version, build]
+    needs: [version, build, npm-test]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -164,3 +260,30 @@ jobs:
             gh release create "$TAG" dist/*.tar.gz dist/*.tar.gz.sha256 dist/SHA256SUMS \
               --verify-tag --title "$TAG" --notes-file notes.md
           fi
+
+  publish:
+    name: Publish to npm
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'brrrty/brrrty'
+    needs: [npm-test, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-packages
+          path: packs
+      # Platform packages first, then brrrty; anything already on npm at this
+      # version is skipped, so re-running this job after a failure is safe.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node npm/publish.mjs packs --provenance
