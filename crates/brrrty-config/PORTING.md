@@ -222,6 +222,9 @@ renderer)`, or `renderer.render_token(tokens, idx, options)` when `base` is
 `()` (no rule was set). Reading `md.renderer.rules.text` (and `image`,
 `code_inline`, `softbreak`, `hardbreak`, `html_inline`) gives markdown-it's own
 rule, which a wrapper calls the same way. Setting a rule to `()` removes it.
+A closure that captures nothing works as JavaScript's `|| renderToken`:
+`let base = md.renderer.rules.link_open ?? |t, i, o, e, r| r.render_token(t, i, o);`
+then `Fn("my_rule").curry(base)`, with no `()` branch in `my_rule`.
 
 - `amend_library("md", f)` runs `f` on 11ty's own markdown-it as the config
   loads; its rules apply to every `.md` template and Markdown layout, as in
@@ -242,8 +245,21 @@ rule, which a wrapper calls the same way. Setting a rule to `()` removes it.
   `attrs`, `nesting`, `level`, `content`, `markup`, `info`, `block` and
   `hidden` can be read and set, and the renderer sees the change. `map`,
   `meta` and `children` are `()`; reading an `image`'s `children` is an error.
+  A token's `type` can't become a block type (`fence`, `code_block`,
+  `html_block`, ...), and markdown-it's image rule on a token that isn't an
+  image is an error, as markdown-it throws.
   Attribute names and values must be strings (JavaScript would turn a number
   into one).
+- Rules are set while the config or a data file loads. Once pages render,
+  every library is frozen: changing a rule from a filter, a collection or
+  another rule is an error (in 11ty, pages render one at a time in a fixed
+  order; Brrrty renders them in parallel, so such a change would make the
+  output depend on timing). Reading a block type's rule is an error too.
+- `md.render(s)` takes a string only, as markdown-it's `render` throws on
+  anything else; `markdown(s)` keeps the filters' `s || ''`.
+- `amend_library` lowercases the name, as 11ty does (`"MD"` is `"md"`).
+- `renderer.render_token` is markdown-it 14.3.3's on 11ty's library and
+  15.0.3's on `markdown_it()` instances; they differ around hidden tokens.
 - `options` is read-only: `html`, `xhtmlOut`, `breaks`, `linkify`,
   `typographer`, `langPrefix`, `quotes`. Others are errors.
 - `env`: 11ty renders with the page's data as `env`, which rules can't read

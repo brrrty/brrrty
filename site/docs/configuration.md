@@ -172,15 +172,12 @@ fn tag_shop_links(base, tokens, idx, options, env, renderer) {
         tokens[idx].attr_set("rel", "sponsored nofollow");
         tokens[idx].attr_set("target", "_blank");
     }
-    if type_of(base) == "()" {
-        renderer.render_token(tokens, idx, options)
-    } else {
-        base.call(tokens, idx, options, env, renderer)
-    }
+    base.call(tokens, idx, options, env, renderer)
 }
 
 config.amend_library("md", |md| {
-    md.renderer.rules.link_open = Fn("tag_shop_links").curry(md.renderer.rules.link_open);
+    let base = md.renderer.rules.link_open ?? |t, i, o, e, r| r.render_token(t, i, o);
+    md.renderer.rules.link_open = Fn("tag_shop_links").curry(base);
 });
 ```
 
@@ -188,7 +185,7 @@ A rule gets markdown-it's five arguments (`self` is `renderer`, since `self` is 
 
 A data file or filter with its own markdown-it uses `markdown_it(options)`: `let md = markdown_it(#{ linkify: true }); md.renderer.rules.link_open = ...; md.render(text)`.
 
-The tokens and the HTML are markdown-it's, checked against markdown-it 14.3.3 (11ty's) and 15.0.3. What Brrrty can't give a rule exactly is an error that names it, and the page is refused with `markdown-rule-failed`: a rule for a block token (`paragraph_open`, `fence`, ...), reading `env` (the page's data in 11ty), adding or removing tokens, or returning something that isn't a string. The details are in [PORTING.md](https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md#markdown-it-renderer-rules).
+The tokens and the HTML are markdown-it's, checked against markdown-it 14.3.3 (11ty's) and 15.0.3. What Brrrty can't give a rule exactly is an error that names it, and the page is refused with `markdown-rule-failed`: a rule for a block token (`paragraph_open`, `fence`, ...), reading `env` (the page's data in 11ty), adding or removing tokens, changing a token's type to a block type, changing a rule while pages render, or returning something that isn't a string. The details are in [PORTING.md](https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md#markdown-it-renderer-rules).
 
 ## Rhai is not JavaScript
 

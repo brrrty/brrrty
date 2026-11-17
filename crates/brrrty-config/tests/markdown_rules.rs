@@ -47,9 +47,15 @@ fn load_err(script: &str) -> String {
     }
 }
 
+/// A wrapper for the docs' idiom.
+const TAGGED: &str =
+    "fn tagged(base, t, i, o, e, r) { t[i].attr_set(\"rel\", \"x\"); base.call(t, i, o, e, r) }";
+
 /// What `expr` evaluates to, after the differential's rules are defined.
 fn eval(expr: &str) -> Value {
-    let cfg = load(&format!("{RULES}\nconfig.add_global_data(\"r\", {expr});"));
+    let cfg = load(&format!(
+        "{RULES}\n{TAGGED}\nconfig.add_global_data(\"r\", {expr});"
+    ));
     cfg.global_data["r"].clone()
 }
 
@@ -376,4 +382,161 @@ fn rules_fuzz_corpus() {
     }
     println!("{n} cases, {bad} differences, {refused} refused");
     assert_eq!(bad, 0);
+}
+
+/// Review round 1, C1: `renderToken` differs between markdown-it 14.3.3 (11ty's instance) and
+/// 15.0.3 (`markdown_it()`) around hidden tokens. Expected output from both, in Node.
+const HIDING: &str = r#"
+fn hide_prev(t, i, o, e, s) { t[i - 1].hidden = true; t[i].block = true; s.render_token(t, i, o) }
+fn hide_next(t, i, o, e, s) { t[i].block = true; t[i + 1].hidden = true; s.render_token(t, i, o) }
+fn hiding(md) {
+    md.renderer.rules.strong_open = Fn("hide_prev");
+    md.renderer.rules.em_open = Fn("hide_next");
+    md
+}
+"#;
+
+#[test]
+fn render_token_follows_each_markdown_it_version() {
+    let cfg = load(&format!(
+        "{HIDING}\nconfig.amend_library(\"md\", |md| hiding(md));\nconfig.add_global_data(\"r\", hiding(markdown_it()).render(\"a **b** *c* d\"));"
+    ));
+    assert_eq!(
+        s(&cfg.global_data["r"]),
+        "<p>a <strong>\nb</strong> <em>c</em> d</p>\n",
+        "15.0.3"
+    );
+    let rules = cfg.markdown_rules.unwrap().0;
+    assert_eq!(
+        MarkdownIt::new()
+            .try_render_with_rules("a **b** *c* d", None, rules.as_ref())
+            .unwrap(),
+        "<p>a \n<strong>\nb</strong> <em>c</em> d</p>\n",
+        "14.3.3"
+    );
+}
+
+/// Review round 1, C3: a token's type can change to an inline or unknown type (each checked
+/// against markdown-it 14.3.3 and 15.0.3, which agree), never to a block type; and the image
+/// rule on a token that isn't an image is an error, as markdown-it throws.
+#[test]
+fn changing_a_tokens_type() {
+    let cases = [
+        ("code_inline", "<p><em><code>a&lt;b</code></em></p>\n"),
+        ("html_inline", "<p><em>a<b</em></p>\n"),
+        ("softbreak", "<p><em>\n</em></p>\n"),
+        ("hardbreak", "<p><em><br>\n</em></p>\n"),
+        ("foo", "<p><em><x></em></p>\n"),
+        ("inline", "<p><em><x></em></p>\n"),
+        ("text", "<p><em>a&lt;b</em></p>\n"),
+        ("link_close", "<p><em><x></em></p>\n"),
+    ];
+    for (kind, want) in cases {
+        let rule = format!(
+            "|t, i, o, e, s| {{ t[i + 1].type = \"{kind}\"; t[i + 1].tag = \"x\"; s.render_token(t, i, o) }}"
+        );
+        let v = eval(&format!(
+            "{{ let md = markdown_it(); md.renderer.rules.em_open = {rule}; md.render(\"*a<b*\") }}"
+        ));
+        assert_eq!(s(&v), want, "{kind}, 15");
+        let cfg = load(&format!(
+            "config.amend_library(\"md\", |md| {{ md.renderer.rules.em_open = {rule}; }});"
+        ));
+        let got = MarkdownIt::new()
+            .try_render_with_rules("*a<b*", None, cfg.markdown_rules.unwrap().0.as_ref())
+            .unwrap();
+        assert_eq!(got, want, "{kind}, 14.3.3");
+    }
+    for kind in [
+        "fence",
+        "code_block",
+        "html_block",
+        "paragraph_open",
+        "table_open",
+    ] {
+        let e = eval_err(&format!(
+            "{{ let md = markdown_it(); md.renderer.rules.em_open = |t, i, o, e, s| {{ t[i + 1].type = \"{kind}\"; \"\" }}; md.render(\"*a*\") }}"
+        ));
+        assert!(
+            e.contains(&format!("`{kind}` is a block token type")),
+            "{e}"
+        );
+    }
+    let e = eval_err(
+        "{ let md = markdown_it(); md.renderer.rules.em_open = |t, i, o, e, s| { t[i + 1].attr_push([\"alt\", \"x\"]); t[i + 1].type = \"image\"; s.render_token(t, i, o) }; md.render(\"*a<b*\") }",
+    );
+    assert!(e.contains("only an image token has"), "{e}");
+}
+
+/// Review round 1, C2: libraries can't change once pages render, so a rule that tries to is
+/// an error on its page, and every build writes the same pages.
+#[test]
+fn libraries_are_frozen_while_pages_render() {
+    let script = r#"
+fn stamp(t, i, o, e, s) { "MUTATED" }
+fn lo(inner, t, i, o, e, s) {
+    if t[i].attr_get("href") == "/flip" { inner.renderer.rules.text = Fn("stamp"); }
+    s.render_token(t, i, o) + inner.render("x")
+}
+fn install(md) { md.renderer.rules.link_open = Fn("lo").curry(markdown_it()); md }
+fn mutate_own(md, t, i, o, e, s) { md.renderer.rules.text = Fn("stamp"); s.render_token(t, i, o) }
+config.amend_library("md", |md| install(md));
+config.add_filter("tweak", Fn("tweak_filter").curry(markdown_it()));
+fn tweak_filter(md, v) { md.renderer.rules.text = Fn("stamp"); v }
+"#;
+    let mut pages: Vec<(String, String)> = (0..40)
+        .map(|i| (format!("p{i}.md"), format!("[a](/p{i}) b\n")))
+        .collect();
+    pages.push(("flip.md".into(), "[a](/flip)\n".into()));
+    pages.push(("f.liquid".into(), "{{ 'x' | tweak }}".into()));
+    let pages: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let mut first: Option<Vec<String>> = None;
+    for _ in 0..3 {
+        let (t, r) = site(script, &pages);
+        let e = errors(&r);
+        assert_eq!(e.len(), 2, "{e:#?}");
+        assert!(
+            e.iter().any(|p| p.code == codes::MARKDOWN_RULE_FAILED
+                && p.message
+                    .contains("can't be changed from inside a renderer rule")),
+            "{e:#?}"
+        );
+        assert!(
+            e.iter()
+                .any(|p| p.message.contains("can't be changed while pages render")),
+            "{e:#?}"
+        );
+        let outs: Vec<String> = (0..40)
+            .map(|i| out(&t, &format!("p{i}/index.html")).unwrap())
+            .collect();
+        assert!(outs.iter().all(|o| !o.contains("MUTATED")));
+        assert_eq!(outs[0], "<p><a href=\"/p0\"><p>x</p>\na</a> b</p>\n");
+        if let Some(f) = &first {
+            assert_eq!(f, &outs);
+        }
+        first = Some(outs);
+    }
+}
+
+#[test]
+fn review_minors() {
+    // M1: markdown-it's render throws on anything but a string.
+    let e = eval_err("markdown_it().render(())");
+    assert!(e.contains("Input data should be a String"), "{e}");
+    // M2: a block rule can't be read either.
+    let e = eval_err("{ let md = markdown_it(); md.renderer.rules.fence }");
+    assert!(e.contains("`fence` is a block token"), "{e}");
+    // M5: 11ty lowercases the library's name.
+    let cfg = load(&format!(
+        "{AFFILIATE}\nconfig.amend_library(\"MD\", |md| affiliate_link_rule(md));"
+    ));
+    assert!(cfg.markdown_rules.is_some());
+    // M6: a closure that captures nothing stands in for `|| renderToken`.
+    let v = eval(
+        "{ let md = markdown_it(); let base = md.renderer.rules.link_open ?? |t, i, o, e, r| r.render_token(t, i, o); md.renderer.rules.link_open = Fn(\"tagged\").curry(base); md.render(\"[a](b)\") }",
+    );
+    assert_eq!(s(&v), "<p><a href=\"b\" rel=\"x\">a</a></p>\n");
 }
