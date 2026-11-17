@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-markdown"
-version = "0.0.10"
+version = "0.0.11"
 description = "Markdown rendering for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true

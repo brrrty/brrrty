@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.11 - 2026-11-17
 
 - With the syntax highlighting plugin, a page highlighted in a language that another page could change (a `rust` fence, say) is no longer refused because of `{% highlight %}` text that no template language reads. The check that runs before the build used to count such tags in every file, and treated any file mentioning `njk` as Nunjucks, so a Markdown changelog quoting `{% highlight js 1,3 %}` in inline code, with `markdownTemplateEngine: false`, refused every `rust` page. It now decides what reads each file the way the build does (its extension, its front matter's `templateEngineOverride`, and `markdownTemplateEngine` and `htmlTemplateEngine`, `false` included) and counts a tag only where Liquid or Nunjucks reads it and the plugin gives that language the tag. Where that can't be known before the build (data that could set the override, a file a template could include, from an include tag or a `{% liquid %}` tag's statements (nested ones too), or name as its layout, data files and `_includes`), it still counts the tag, so a page that 11ty would highlight differently is never written.
 - A `{% highlight %}` tag with a line break after `{%` or inside its arguments, and a `highlight` statement in a `{% liquid %}` tag, count in that check too, as 11ty runs them. It used to be missed, and when the page with it was refused before reaching it, a page after it could be written with a grammar 11ty had changed.
