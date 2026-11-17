@@ -296,6 +296,8 @@ pub struct Session {
     last_entries: Vec<Entry>,
     retired: Vec<Retired>,
     passthrough: Vec<PathBuf>,
+    /// What the last build's config and data scripts read, listed or checked, as real paths.
+    reads: Vec<PathBuf>,
     rules: Option<IgnoreRules>,
     /// `None` once the session is finishing.
     watcher: Option<RecommendedWatcher>,
@@ -406,6 +408,7 @@ impl Session {
             last_entries: Vec::new(),
             retired: Vec::new(),
             passthrough: Vec::new(),
+            reads: Vec::new(),
             rules: None,
             watcher: Some(watcher),
             tops: Vec::new(),
@@ -724,6 +727,7 @@ impl Session {
         if !served {
             let _ = fs::remove_dir_all(&dir);
         }
+        self.watch_reads(&report.reads);
         let entries = report
             .pages
             .iter()
@@ -833,6 +837,50 @@ impl Session {
         for p in extra {
             self.watch_subfolder(&p);
         }
+        for p in self.read_folders() {
+            self.watch_subfolder(&p);
+        }
+    }
+
+    /// Note what the build's scripts read (relative to the project folder) and watch the
+    /// folders holding the ones outside the input folder, which nothing else watches.
+    fn watch_reads(&mut self, reads: &[PathBuf]) {
+        self.reads = reads
+            .iter()
+            .map(|r| {
+                let p = self.root.join(r);
+                p.canonicalize().unwrap_or(p)
+            })
+            .collect();
+        for p in self.read_folders() {
+            if !self.watched.iter().any(|w| p.starts_with(w)) {
+                self.watch_subfolder(&p);
+            }
+        }
+    }
+
+    /// The folders to watch for the reads outside the input folder: a listed folder itself,
+    /// else the folder holding the file, or the nearest one above that exists (the project
+    /// folder's own files are seen by its watch).
+    fn read_folders(&self) -> Vec<PathBuf> {
+        let mut folders: Vec<PathBuf> = self
+            .reads
+            .iter()
+            .filter(|p| !p.starts_with(&self.input) && p.starts_with(&self.root))
+            .filter_map(|p| {
+                let mut f = p.as_path();
+                if !f.is_dir() {
+                    f = f.parent()?;
+                }
+                while !f.is_dir() {
+                    f = f.parent()?;
+                }
+                (f != self.root && f.starts_with(&self.root)).then(|| f.to_path_buf())
+            })
+            .collect();
+        folders.sort();
+        folders.dedup();
+        folders
     }
 
     /// Make the recursive watches on the input folder's subfolders match the disk: forget
@@ -995,6 +1043,15 @@ impl Session {
     fn counts(&self, p: &Path) -> bool {
         if self.skipped(p) {
             return false;
+        }
+        // A file a script read, one in a folder it listed, or a folder on the way to a file
+        // it looked for and didn't find. Ignore files don't hide these: the script read them.
+        if self
+            .reads
+            .iter()
+            .any(|r| p.starts_with(r) || (r.starts_with(p) && p != self.root))
+        {
+            return true;
         }
         let root_file = p.parent() == Some(self.root.as_path())
             && p.file_name()

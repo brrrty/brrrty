@@ -172,6 +172,43 @@ fn an_edit_rebuilds_and_serves_the_new_bytes() {
 }
 
 #[test]
+fn a_file_a_data_script_reads_rebuilds_wherever_it_is() {
+    let t = site();
+    let root = t.path();
+    write(
+        root,
+        "src/_data/names.rhai",
+        r#"parse_csv(read_text("data/names.csv"), #{ columns: true })"#,
+    );
+    write(root, "data/names.csv", "name\nAda\n");
+    write(root, "src/_data/notes.rhai", r#"read_dir("notes")"#);
+    write(root, "notes/a.md", "");
+    write(
+        root,
+        "src/index.md",
+        "---\nlayout: base.liquid\n---\n{% for n in names %}{{ n.name }} {% endfor %}{{ notes | join: ',' }}\n",
+    );
+    with_session(root, |live| {
+        assert_eq!(live.page(), "<main><p>Ada a.md</p>\n</main>");
+        live.settle();
+        // Outside the input folder, so only the script's read says it matters.
+        write(live.root, "data/names.csv", "name\nGrace\n");
+        let r = live.next_rebuild();
+        assert!(r.ok);
+        assert_eq!(r.changed_paths, vec![PathBuf::from("data/names.csv")]);
+        assert_eq!(live.page(), "<main><p>Grace a.md</p>\n</main>");
+        // A file appearing in a folder a script listed.
+        write(live.root, "notes/b.md", "");
+        let r = live.next_rebuild();
+        assert!(r.ok);
+        assert_eq!(live.page(), "<main><p>Grace a.md,b.md</p>\n</main>");
+        // Anything else outside the input folder still doesn't count.
+        write(live.root, "other/x.txt", "x");
+        live.no_rebuild();
+    });
+}
+
+#[test]
 fn an_include_and_a_stylesheet_rebuild_and_css_alone_is_marked() {
     let t = site();
     with_session(t.path(), |live| {
