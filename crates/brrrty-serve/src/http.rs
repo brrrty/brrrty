@@ -302,4 +302,160 @@ mod tests {
         let leap = UNIX_EPOCH + Duration::from_secs(951_782_400);
         assert_eq!(http_date(leap), "Tue, 29 Feb 2000 00:00:00 GMT");
     }
+
+    fn parse(raw: &[u8]) -> Result<Request, ParseError> {
+        read_request(&mut io::BufReader::new(raw))
+    }
+
+    fn rejected(raw: &[u8]) -> Option<u16> {
+        match parse(raw) {
+            Err(ParseError::Reject(s)) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// RFC 9112 2.2: blank lines before the request line are skipped; bare `\n` ends lines too.
+    #[test]
+    fn blank_lines_before_the_request_are_skipped() {
+        let r = parse(b"\r\n\n\r\nGET /x HTTP/1.1\nHost: a\n\n").unwrap();
+        assert_eq!((r.method.as_str(), r.target.as_str()), ("GET", "/x"));
+        assert_eq!(r.header("host"), Some("a"));
+    }
+
+    #[test]
+    fn a_peer_that_goes_away_is_closed_not_rejected() {
+        for raw in [
+            &b""[..],
+            b"GET / HTTP/1.1",
+            b"GET / HTTP/1.1\r\nHost: a\r\n",
+        ] {
+            assert!(matches!(parse(raw), Err(ParseError::Closed)), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn bad_header_lines_are_400() {
+        assert_eq!(rejected(b"GET / HTTP/1.1\r\nno colon\r\n\r\n"), Some(400));
+        assert_eq!(rejected(b"GET / HTTP/1.1\r\n: empty\r\n\r\n"), Some(400));
+        // Whitespace before the colon is how request smuggling starts (RFC 9112 5.1).
+        assert_eq!(rejected(b"GET / HTTP/1.1\r\nHost : a\r\n\r\n"), Some(400));
+        assert_eq!(rejected(b"G\xffT / HTTP/1.1\r\n\r\n"), Some(400));
+        assert_eq!(rejected(b"G@T / HTTP/1.1\r\n\r\n"), Some(400));
+        assert_eq!(rejected(b"GET  / HTTP/1.1\r\n\r\n"), Some(400));
+    }
+
+    #[test]
+    fn conflicting_lengths_are_400() {
+        let two = b"GET / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 1\r\n\r\n";
+        assert_eq!(rejected(two), Some(400));
+        let both = b"GET / HTTP/1.1\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n";
+        assert_eq!(rejected(both), Some(400));
+        assert_eq!(
+            rejected(b"GET / HTTP/1.1\r\nContent-Length: -1\r\n\r\n"),
+            Some(400)
+        );
+        assert_eq!(
+            rejected(b"GET / HTTP/1.1\r\nContent-Length:\r\n\r\n"),
+            Some(400)
+        );
+    }
+
+    #[test]
+    fn more_than_the_header_limit_is_431() {
+        let mut raw = b"GET / HTTP/1.1\r\n".to_vec();
+        for i in 0..=MAX_HEADERS {
+            raw.extend_from_slice(format!("X-{i}: v\r\n").as_bytes());
+        }
+        raw.extend_from_slice(b"\r\n");
+        assert_eq!(rejected(&raw), Some(431));
+        let mut ok = b"GET / HTTP/1.1\r\n".to_vec();
+        for i in 0..MAX_HEADERS {
+            ok.extend_from_slice(format!("X-{i}: v\r\n").as_bytes());
+        }
+        ok.extend_from_slice(b"\r\n");
+        assert_eq!(parse(&ok).unwrap().headers.len(), MAX_HEADERS);
+    }
+
+    #[test]
+    fn keep_alive_follows_the_version_connection_and_body() {
+        let ka = |raw: &[u8]| parse(raw).unwrap().keep_alive();
+        assert!(ka(b"GET / HTTP/1.1\r\n\r\n"));
+        assert!(!ka(b"GET / HTTP/1.0\r\n\r\n"));
+        assert!(!ka(b"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"));
+        assert!(!ka(b"GET / HTTP/1.1\r\nConnection: Upgrade, CLOSE\r\n\r\n"));
+        assert!(ka(b"GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n"));
+        // The body is never read, so what follows it can't be parsed as the next request.
+        assert!(!ka(b"POST / HTTP/1.1\r\nContent-Length: 3\r\n\r\n"));
+        assert!(!ka(
+            b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n"
+        ));
+    }
+
+    #[test]
+    fn the_path_drops_the_query_and_fragment_and_accepts_absolute_form() {
+        let path = |target: &str| {
+            let raw = format!("GET {target} HTTP/1.1\r\n\r\n");
+            parse(raw.as_bytes()).unwrap().path().map(str::to_string)
+        };
+        assert_eq!(path("/a/b?c=d#e").as_deref(), Some("/a/b"));
+        assert_eq!(path("http://localhost:8080/x?y").as_deref(), Some("/x"));
+        assert_eq!(path("https://h/p#f").as_deref(), Some("/p"));
+        assert_eq!(path("http://localhost"), None);
+        assert_eq!(path("*"), None);
+        assert_eq!(path("ftp://h/p"), None);
+    }
+
+    #[test]
+    fn responses_strip_line_breaks_from_header_values() {
+        let mut out = Vec::new();
+        let resp = Response::new(301)
+            .header("Location", "/a\r\nSet-Cookie: x=1")
+            .body(b"hi".to_vec());
+        write_response(&mut out, resp, false, false).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.starts_with("HTTP/1.1 301 Moved Permanently\r\n"),
+            "{text}"
+        );
+        assert!(text.contains("Location: /aSet-Cookie: x=1\r\n"), "{text}");
+        assert!(text.contains("Content-Length: 2\r\nDate: "), "{text}");
+        assert!(text.contains("Connection: close\r\n\r\nhi"), "{text}");
+    }
+
+    #[test]
+    fn head_responses_keep_the_length_but_send_no_body() {
+        let mut out = Vec::new();
+        let resp = Response::new(200).body(b"hello".to_vec());
+        write_response(&mut out, resp, true, true).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Content-Length: 5\r\n"), "{text}");
+        assert!(
+            text.contains("Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"),
+            "{text}"
+        );
+        assert!(text.ends_with("\r\n\r\n"), "{text}");
+    }
+
+    #[test]
+    fn a_file_that_shrinks_mid_send_is_an_error() {
+        let mut out = Vec::new();
+        let short: Box<dyn Read + Send> = Box::new(io::Cursor::new(b"abc".to_vec()));
+        let resp = Response {
+            status: 200,
+            headers: Vec::new(),
+            body: Body::Stream(short, 10),
+        };
+        let e = write_response(&mut out, resp, false, false).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn every_status_sent_has_its_reason() {
+        for s in [
+            200, 206, 301, 400, 403, 404, 408, 416, 426, 431, 500, 503, 505,
+        ] {
+            assert_ne!(reason(s), "Unknown", "{s}");
+        }
+        assert_eq!(reason(299), "Unknown");
+    }
 }

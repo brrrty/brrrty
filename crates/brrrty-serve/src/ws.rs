@@ -392,4 +392,106 @@ mod tests {
         assert_eq!(&big[..2], &[0x81, 127]);
         assert_eq!(u64::from_be_bytes(big[2..10].try_into().unwrap()), 70_000);
     }
+
+    /// A frame as a browser sends it: masked, with the length in the form its size needs.
+    fn client_frame(first: u8, payload: &[u8]) -> Vec<u8> {
+        let mask = [0x37, 0xfa, 0x21, 0x3d];
+        let mut out = vec![first];
+        match payload.len() {
+            n @ 0..=125 => out.push(0x80 | n as u8),
+            n @ 126..=0xffff => {
+                out.push(0x80 | 126);
+                out.extend_from_slice(&(n as u16).to_be_bytes());
+            }
+            n => {
+                out.push(0x80 | 127);
+                out.extend_from_slice(&(n as u64).to_be_bytes());
+            }
+        }
+        out.extend_from_slice(&mask);
+        out.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
+        out
+    }
+
+    fn read(bytes: &[u8]) -> Result<(bool, u8, Vec<u8>), Option<u16>> {
+        read_frame(&mut std::io::Cursor::new(bytes))
+    }
+
+    #[test]
+    fn masked_frames_of_every_length_form_are_unmasked() {
+        // RFC 6455 5.7's masked "Hello".
+        let hello = [
+            0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58,
+        ];
+        assert_eq!(read(&hello), Ok((true, 0x1, b"Hello".to_vec())));
+        let mid: Vec<u8> = (0..300u32).map(|i| i as u8).collect();
+        assert_eq!(
+            read(&client_frame(0x02, &mid)),
+            Ok((false, 0x2, mid.clone()))
+        );
+        let big = vec![b'x'; MAX_FRAME as usize];
+        assert_eq!(
+            read(&client_frame(0x82, &big)),
+            Ok((true, 0x2, big.clone()))
+        );
+        assert_eq!(read(&client_frame(0x89, b"")), Ok((true, 0x9, Vec::new())));
+    }
+
+    #[test]
+    fn protocol_violations_get_1002() {
+        // Reserved opcodes, data and control.
+        assert_eq!(read(&client_frame(0x83, b"x")), Err(Some(1002)));
+        assert_eq!(read(&client_frame(0x8b, b"x")), Err(Some(1002)));
+        // A fragmented ping, and a ping over 125 bytes.
+        assert_eq!(read(&client_frame(0x09, b"x")), Err(Some(1002)));
+        assert_eq!(read(&client_frame(0x89, &[0; 126])), Err(Some(1002)));
+        // A reserved bit with no extension agreed.
+        assert_eq!(read(&client_frame(0xc1, b"x")), Err(Some(1002)));
+        // An unmasked frame.
+        assert_eq!(read(&[0x81, 0x01, b'x']), Err(Some(1002)));
+    }
+
+    #[test]
+    fn oversized_frames_get_1009_before_anything_is_read() {
+        let mut head = vec![0x82, 0x80 | 127];
+        head.extend_from_slice(&(MAX_FRAME + 1).to_be_bytes());
+        assert_eq!(read(&head), Err(Some(1009)));
+    }
+
+    #[test]
+    fn a_frame_cut_short_closes_without_a_code() {
+        let whole = client_frame(0x81, &[b'y'; 300]);
+        for cut in [0, 1, 3, 6, whole.len() - 1] {
+            assert_eq!(read(&whole[..cut]), Err(None), "cut at {cut}");
+        }
+    }
+
+    fn upgrade(extra: &str) -> Result<String, u16> {
+        let raw = format!(
+            "GET /.reload HTTP/1.1\r\nHost: localhost:8080\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Version: 13\r\n{extra}\r\n"
+        );
+        let req = crate::http::read_request(&mut std::io::BufReader::new(raw.as_bytes()))
+            .map_err(|_| 0u16)?;
+        check_upgrade(&req).map(str::to_string)
+    }
+
+    #[test]
+    fn upgrades_need_the_handshake_headers_and_a_matching_origin() {
+        let key = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+        assert_eq!(upgrade(key).as_deref(), Ok("dGhlIHNhbXBsZSBub25jZQ=="));
+        assert!(upgrade(&format!("{key}Origin: http://localhost:8080\r\n")).is_ok());
+        assert!(upgrade(&format!("{key}Origin: https://LOCALHOST:8080\r\n")).is_ok());
+        assert_eq!(upgrade(""), Err(400));
+        assert_eq!(
+            upgrade(&format!("{key}Origin: http://evil.example\r\n")),
+            Err(403)
+        );
+        assert_eq!(
+            upgrade(&format!("{key}Origin: http://localhost:8081\r\n")),
+            Err(403)
+        );
+        let raw = "GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 8\r\nSec-WebSocket-Key: a\r\n\r\n";
+        let req = crate::http::read_request(&mut std::io::BufReader::new(raw.as_bytes())).unwrap();
+        assert_eq!(check_upgrade(&req), Err(426));
+    }
 }

@@ -1008,6 +1008,33 @@ mod tests {
         assert_eq!(parse_range("bytes=4-2", 10), RangeOutcome::Full);
     }
 
+    /// RFC 9110 14.1.2: a suffix range longer than the file is the whole file as a 206, a zero
+    /// suffix (or any suffix of an empty file) can't be satisfied, and a header that isn't a
+    /// valid single range is ignored.
+    #[test]
+    fn range_edge_cases() {
+        assert_eq!(parse_range("bytes=-50", 10), RangeOutcome::Bytes(0, 9));
+        assert_eq!(parse_range("bytes=-0", 10), RangeOutcome::Unsatisfiable);
+        assert_eq!(parse_range("bytes=-1", 0), RangeOutcome::Unsatisfiable);
+        assert_eq!(parse_range("bytes=0-", 0), RangeOutcome::Unsatisfiable);
+        assert_eq!(
+            parse_range("  bytes= 2 - 3 ", 10),
+            RangeOutcome::Bytes(2, 3)
+        );
+        assert_eq!(parse_range("bytes=9-9", 10), RangeOutcome::Bytes(9, 9));
+        for ignored in [
+            "bytes=-",
+            "bytes=",
+            "bytes=5",
+            "bytes=a-2",
+            "bytes=1-b",
+            "bytes=-x",
+            "bytes=99999999999999999999-",
+        ] {
+            assert_eq!(parse_range(ignored, 10), RangeOutcome::Full, "{ignored}");
+        }
+    }
+
     #[test]
     fn accept_errors_back_off_to_a_cap() {
         assert_eq!(accept_backoff(1), Duration::from_millis(10));
@@ -1049,5 +1076,6 @@ mod tests {
     #[test]
     fn error_page_text_is_escaped() {
         assert_eq!(escape_for_page("/<a>&\"é"), "/&lt;a&gt;&amp;&quot;%C3%A9");
+        assert_eq!(escape_for_page("it's"), "it&#39;s");
     }
 }
