@@ -17,7 +17,8 @@ mod uc_micro;
 
 pub use rules::{
     LANG_PREFIX, NoRules, QUOTES, RenderError, RenderOptions, RenderRules, Token, escape_html,
-    has_default_rule, is_block_type, render_attrs, render_default, render_token,
+    has_default_rule, is_block_type, neighbors, render_attrs, render_default,
+    render_default_between, render_token, render_token_between, skippable,
 };
 
 /// Renders Markdown source to an HTML string.

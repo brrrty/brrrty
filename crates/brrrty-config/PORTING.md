@@ -254,7 +254,9 @@ then `Fn("my_rule").curry(base)`, with no `()` branch in `my_rule`.
   every library is frozen: changing a rule from a filter, a collection or
   another rule is an error (in 11ty, pages render one at a time in a fixed
   order; Brrrty renders them in parallel, so such a change would make the
-  output depend on timing). Reading a block type's rule is an error too.
+  output depend on timing). An instance a filter, collection or rule makes
+  for itself (`markdown_it()` inside the function) belongs to that call, so
+  its rules can be set there. Reading a block type's rule is an error too.
 - `md.render(s)` takes a string only, as markdown-it's `render` throws on
   anything else; `markdown(s)` keeps the filters' `s || ''`.
 - `amend_library` lowercases the name, as 11ty does (`"MD"` is `"md"`).

@@ -43,6 +43,9 @@ enum Kind {
 struct LibState {
     kind: Kind,
     rules: IndexMap<String, FnPtr>,
+    /// Made while pages render (in a filter, a collection or a rule): only that call can reach
+    /// it, so its rules can change.
+    private: bool,
 }
 
 /// A markdown-it instance as a script sees it (`md`).
@@ -59,9 +62,12 @@ pub struct MdRules(Arc<Mutex<LibState>>);
 
 impl MdLib {
     fn new(kind: Kind) -> MdLib {
+        let loading = LOADING.with(|c| c.get()) > 0;
+        let in_rule = IN_RULE.with(|c| c.get()) > 0;
         MdLib(Arc::new(Mutex::new(LibState {
             kind,
             rules: IndexMap::new(),
+            private: !loading || in_rule,
         })))
     }
 
@@ -106,7 +112,7 @@ pub fn loading<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// Libraries are frozen outside a script's top level, and inside a rule: a filter, a
+/// Libraries made while a script's top level runs are frozen after it, and inside a rule: a filter, a
 /// collection or a rule that changed one would make pages depend on the order they render in,
 /// which 11ty's single thread never does.
 fn check_unfrozen(kind: &str) -> Res<()> {
@@ -154,7 +160,9 @@ fn set_rule(state: &mut LibState, kind: &str, rule: Dynamic) -> Res<()> {
     if brrrty_markdown::is_block_type(kind) {
         return block_rule_error(kind);
     }
-    check_unfrozen(kind)?;
+    if !state.private {
+        check_unfrozen(kind)?;
+    }
     if rule.is_unit() {
         state.rules.shift_remove(kind);
         return Ok(());
@@ -276,17 +284,26 @@ fn token_at(tokens: &Tokens, idx: INT, what: &str) -> Res<TokenRef> {
     )
 }
 
-fn snapshot(tokens: &Tokens) -> Vec<Token> {
-    tokens.0.iter().map(|t| lock(&t.0).clone()).collect()
+/// The neighbors markdown-it's `renderToken` looks at around `idx`, copied: only those, so a
+/// rule's call costs the same however long the list is.
+fn neighbors(tokens: &Tokens, idx: usize, v15: bool) -> (Option<Token>, Option<Token>) {
+    let (prev, next) = brrrty_markdown::neighbors(tokens.0.len(), idx, v15, |i| {
+        brrrty_markdown::skippable(&lock(&tokens.0[i].0))
+    });
+    let get = |i: usize| lock(&tokens.0[i].0).clone();
+    (prev.map(get), next.map(get))
 }
 
 /// `renderToken(tokens, idx, options)`.
 fn render_token(tokens: &Tokens, idx: INT, options: &RenderOptions) -> Res<String> {
-    token_at(tokens, idx, "render_token")?;
+    let at = token_at(tokens, idx, "render_token")?;
     let i = usize::try_from(idx).unwrap_or(0);
-    Ok(brrrty_markdown::render_token(
-        &snapshot(tokens),
-        i,
+    let (prev, next) = neighbors(tokens, i, options.v15);
+    let token = lock(&at.0).clone();
+    Ok(brrrty_markdown::render_token_between(
+        prev.as_ref(),
+        &token,
+        next.as_ref(),
         options.xhtml_out,
         options.v15,
     ))
@@ -294,10 +311,12 @@ fn render_token(tokens: &Tokens, idx: INT, options: &RenderOptions) -> Res<Strin
 
 /// markdown-it's default rule for `tokens[idx]` (`renderToken` for a type without one).
 fn render_default(tokens: &Tokens, idx: usize, options: &RenderOptions) -> Result<String, String> {
-    let mut all = snapshot(tokens);
-    let out = brrrty_markdown::render_default(&mut all, idx, options)?;
+    let (prev, next) = neighbors(tokens, idx, options.v15);
+    let mut token = lock(&tokens.0[idx].0).clone();
+    let out =
+        brrrty_markdown::render_default_between(prev.as_ref(), &mut token, next.as_ref(), options)?;
     // The image rule sets the token's `alt`.
-    *lock(&tokens.0[idx].0) = all.swap_remove(idx);
+    *lock(&tokens.0[idx].0) = token;
     Ok(out)
 }
 

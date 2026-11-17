@@ -207,21 +207,54 @@ pub fn render_attrs(token: &Token) -> String {
     out
 }
 
+/// Which tokens `renderToken` looks at around `idx` in a list of `len`: the one before and the
+/// one after, or with markdown-it 15 (`v15`) the nearest ones that aren't hidden with
+/// `nesting` 0 (`skippable(i)` tells). Looks no further than it must.
+pub fn neighbors(
+    len: usize,
+    idx: usize,
+    v15: bool,
+    skippable: impl Fn(usize) -> bool,
+) -> (Option<usize>, Option<usize>) {
+    if !v15 {
+        return (idx.checked_sub(1), (idx + 1 < len).then_some(idx + 1));
+    }
+    let prev = (0..idx).rev().find(|&i| !skippable(i));
+    let next = (idx + 1..len).find(|&i| !skippable(i));
+    (prev, next)
+}
+
+/// Whether markdown-it 15's `renderToken` looks past `t`.
+pub fn skippable(t: &Token) -> bool {
+    t.hidden && t.nesting == 0
+}
+
 /// `renderToken(tokens, idx, options)`: 14.3.3's, or 15's when `v15`. 15 looks past hidden
 /// tokens with `nesting` 0 on both sides, and writes the newline before a block token only
 /// after a hidden closing token.
 pub fn render_token(tokens: &[Token], idx: usize, xhtml_out: bool, v15: bool) -> String {
-    let token = &tokens[idx];
+    let (prev, next) = neighbors(tokens.len(), idx, v15, |i| skippable(&tokens[i]));
+    render_token_between(
+        prev.map(|i| &tokens[i]),
+        &tokens[idx],
+        next.map(|i| &tokens[i]),
+        xhtml_out,
+        v15,
+    )
+}
+
+/// [`render_token`] given the neighbors [`neighbors`] picks.
+pub fn render_token_between(
+    prev: Option<&Token>,
+    token: &Token,
+    next: Option<&Token>,
+    xhtml_out: bool,
+    v15: bool,
+) -> String {
     if token.hidden {
         return String::new();
     }
-    let skip = |t: &Token| v15 && t.hidden && t.nesting == 0;
     let mut out = String::new();
-    let prev = if v15 {
-        tokens[..idx].iter().rev().find(|t| !skip(t))
-    } else {
-        idx.checked_sub(1).map(|i| &tokens[i])
-    };
     let lf_before = prev.is_some_and(|p| p.hidden && (!v15 || p.nesting == -1));
     if token.block && token.nesting != -1 && lf_before {
         out.push('\n');
@@ -235,7 +268,6 @@ pub fn render_token(tokens: &[Token], idx: usize, xhtml_out: bool, v15: bool) ->
     let mut need_lf = false;
     if token.block {
         need_lf = true;
-        let next = tokens[idx + 1..].iter().find(|t| !skip(t));
         if token.nesting == 1
             && let Some(next) = next
         {
@@ -258,12 +290,31 @@ pub fn render_default(
     idx: usize,
     options: &RenderOptions,
 ) -> Result<String, String> {
+    let (prev, next) = neighbors(tokens.len(), idx, options.v15, |i| skippable(&tokens[i]));
+    let mut token = tokens[idx].clone();
+    let out = render_default_between(
+        prev.map(|i| &tokens[i]),
+        &mut token,
+        next.map(|i| &tokens[i]),
+        options,
+    );
+    tokens[idx] = token;
+    out
+}
+
+/// [`render_default`] given the neighbors [`neighbors`] picks; the image rule sets `token`'s
+/// `alt`.
+pub fn render_default_between(
+    prev: Option<&Token>,
+    token: &mut Token,
+    next: Option<&Token>,
+    options: &RenderOptions,
+) -> Result<String, String> {
     let br = if options.xhtml_out {
         "<br />\n"
     } else {
         "<br>\n"
     };
-    let token = &tokens[idx];
     Ok(match token.kind.as_str() {
         "code_inline" => format!(
             "<code{}>{}</code>",
@@ -295,9 +346,9 @@ pub fn render_default(
                             .into(),
                     );
                 };
-                tokens[idx].attrs.as_mut().expect("has attrs")[i].1 = alt;
+                token.attrs.as_mut().expect("has attrs")[i].1 = alt;
             }
-            render_token(tokens, idx, options.xhtml_out, options.v15)
+            render_token_between(prev, token, next, options.xhtml_out, options.v15)
         }
     })
 }

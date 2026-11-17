@@ -540,3 +540,43 @@ fn review_minors() {
     );
     assert_eq!(s(&v), "<p><a href=\"b\" rel=\"x\">a</a></p>\n");
 }
+
+/// Review round 2, I-1: a rule's `render_token` and markdown-it's default rules copy only the
+/// neighbors they look at, so a paragraph of 3,000 links renders in linear time.
+#[test]
+fn a_long_paragraph_renders_in_linear_time() {
+    let source: String = (0..3000).map(|i| format!("[a](/p{i}) ")).collect();
+    let want = format!(
+        "<p>{}</p>\n",
+        (0..3000)
+            .map(|i| format!("<a href=\"/p{i}\" rel=\"x\">a</a>"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let cfg = load(&format!(
+        "{TAGGED}\nconfig.amend_library(\"md\", |md| {{ let base = md.renderer.rules.link_open ?? |t, i, o, e, r| r.render_token(t, i, o); md.renderer.rules.link_open = Fn(\"tagged\").curry(base); }});"
+    ));
+    let rules = cfg.markdown_rules.unwrap().0;
+    let start = std::time::Instant::now();
+    let got = MarkdownIt::new()
+        .try_render_with_rules(&source, None, rules.as_ref())
+        .unwrap();
+    let took = start.elapsed();
+    assert_eq!(got, want);
+    assert!(took.as_secs_f64() < 2.0, "took {took:?}");
+}
+
+/// Review round 2, M-8: an instance made while pages render belongs to that call alone, so
+/// its rules can be set there (a library made while the config loads stays frozen).
+#[test]
+fn an_instance_made_in_a_filter_can_have_rules() {
+    let script = format!(
+        "{TAGGED}\nfn md_filter(v) {{ let md = markdown_it(); let base = md.renderer.rules.link_open ?? |t, i, o, e, r| r.render_token(t, i, o); md.renderer.rules.link_open = Fn(\"tagged\").curry(base); md.render(v) }}\nconfig.add_filter(\"md\", |v| md_filter(v));"
+    );
+    let (t, r) = site(&script, &[("a.liquid", "{{ '[a](b)' | md }}")]);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap(),
+        "<p><a href=\"b\" rel=\"x\">a</a></p>\n"
+    );
+}
