@@ -267,7 +267,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing and provenance
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -282,7 +282,14 @@ jobs:
           path: packs
       # Platform packages first, then brrrty; anything already on npm at this
       # version is skipped, so re-running this job after a failure is safe.
+      # npm trusted publishing: npm exchanges this job's GitHub OIDC token
+      # (id-token: write above) for a short-lived publish credential, so no
+      # npm token is stored anywhere. It needs npm 11.5.1 or later.
+      - name: Check npm supports trusted publishing
+        run: |
+          v=$(npm --version)
+          echo "npm $v"
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$v" \
+            || { echo "npm $v is too old for trusted publishing (needs 11.5.1+)"; exit 1; }
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node npm/publish.mjs packs --provenance
