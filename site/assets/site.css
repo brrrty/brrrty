@@ -830,7 +830,8 @@ main { flex: 1; }
 }
 
 /* The 88x31 button, drawn on the pixel grid: keep it sharp at any zoom. */
-.badge { margin: 1.25rem 0 0; line-height: 0; }
+.badge-name { margin: 2rem 0 0; font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.005em; }
+.badge { margin: 0.75rem 0 0; line-height: 0; }
 .badge img { image-rendering: pixelated; }
 /* The badge's one long line wraps, so it reads whole beside the copy button. */
 .code-wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
