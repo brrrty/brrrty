@@ -462,6 +462,32 @@ fn date_keywords_build_without_errors() {
     assert_eq!(r.written, 4);
 }
 
+/// 11ty 3.1.8 dates `Last Modified` by the file's change time (`ctimeMs`,
+/// `Template.js`), not its modification time: a file whose modification
+/// time is set back to 2001 is still dated by when it last changed (now).
+#[test]
+fn last_modified_is_the_change_time() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/p.liquid",
+        "---\ndate: Last Modified\n---\n{{ page.date | date: \"%Y\" }}",
+    );
+    let file = fs::File::options()
+        .write(true)
+        .open(root.join("src/p.liquid"))
+        .unwrap();
+    let y2001 = std::time::UNIX_EPOCH + std::time::Duration::from_secs(978_307_200 + 86_400 * 180);
+    file.set_modified(y2001).unwrap();
+    drop(file);
+    let r = build(&opts(root), &MarkdownIt::new());
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    let year = read(root.join("_site/p/index.html"));
+    assert_ne!(year, "2001");
+    assert!(year.starts_with("20"), "{year}");
+}
+
 #[test]
 fn problem_paths_are_root_relative() {
     let t = tempfile::tempdir().unwrap();

@@ -594,11 +594,11 @@ fn load_page_inner(
         Ok(Some(ms)) => SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(ms.max(0) as u64),
         _ => SystemTime::now(),
     };
-    let (created, modified) = match &meta {
+    let (created, changed) = match &meta {
         // With no creation time (Node's birthtimeMs 0), 11ty dates the page
         // by the build time, for `Last Modified` too.
         Some(m) => match crate::birth::created(&full, m) {
-            Some(c) => (c, m.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
+            Some(c) => (c, crate::birth::changed(m)),
             None => {
                 let t = now();
                 (t, t)
@@ -612,7 +612,7 @@ fn load_page_inner(
     };
     // A page Brrrty can't date is refused on its own: it keeps its place in
     // the order, and only the collections it is in are refused.
-    let (date, date_problem) = match resolve_date(&data, &shown, created, modified) {
+    let (date, date_problem) = match resolve_date(&data, &shown, created, changed) {
         Ok(d) => (d, None),
         Err(p) => {
             let p = p.with_path(&shown);

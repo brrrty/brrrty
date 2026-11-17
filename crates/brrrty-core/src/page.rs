@@ -109,7 +109,7 @@ pub fn resolve_date(
     data: &Data,
     input_path: &Path,
     created: SystemTime,
-    modified: SystemTime,
+    changed: SystemTime,
 ) -> Result<DateTime<Utc>, Problem> {
     if let Some(value) = data.get("date").filter(|v| v.js_truthy()) {
         let invalid = || {
@@ -128,10 +128,11 @@ pub fn resolve_date(
             Value::String(s) => s.as_ref(),
             _ => return Err(invalid()),
         };
-        // 11ty keywords, in any case. Git history lookups come later, so the
-        // `git` forms use file times.
+        // 11ty keywords, in any case. `Last Modified` is the file's change
+        // time (`ctimeMs`), not its modification time. Git history lookups
+        // come later, so the `git` forms use the same file times.
         match text.to_lowercase().as_str() {
-            "last modified" | "git last modified" => return Ok(modified.into()),
+            "last modified" | "git last modified" => return Ok(changed.into()),
             "created" | "git created" => return Ok(created.into()),
             _ => {}
         }

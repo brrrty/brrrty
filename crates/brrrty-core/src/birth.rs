@@ -1,4 +1,5 @@
-//! A file's creation time, as 11ty reads it: Node's `stat.birthtimeMs`.
+//! A file's creation and change times, as 11ty reads them: Node's
+//! `stat.birthtimeMs` and `stat.ctimeMs`.
 //!
 //! 11ty dates a page without a `date` by it, and when it is `0` dates the page
 //! (and `date: Last Modified`) by the time of the build instead
@@ -35,6 +36,35 @@ pub(crate) fn created(path: &Path, meta: &Metadata) -> Option<SystemTime> {
     }
 }
 
+/// When 11ty considers the file last modified for `date: Last Modified`:
+/// Node's `stat.ctimeMs`, the inode change time, not the modification time
+/// (`Template._getDateInstance("ctimeMs")`). Writing a file moves both, but
+/// so does a `chmod`, a rename or a hard link, which leave the
+/// modification time alone. Windows, which isn't a release target, has no
+/// change time in the standard library; there it is the modification time.
+pub(crate) fn changed(meta: &Metadata) -> SystemTime {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        at(meta.ctime(), meta.ctime_nsec())
+    }
+    #[cfg(not(unix))]
+    {
+        meta.modified().unwrap_or(UNIX_EPOCH)
+    }
+}
+
+/// The time `secs` and `nanos` after the epoch.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn at(secs: i64, nanos: i64) -> SystemTime {
+    let nanos = Duration::from_nanos(u64::try_from(nanos).unwrap_or(0));
+    if secs >= 0 {
+        UNIX_EPOCH + Duration::from_secs(secs as u64) + nanos
+    } else {
+        UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs()) + nanos
+    }
+}
+
 /// libuv's birth time from `statx`'s outcome: `Some(btime)` when the call
 /// worked, `None` when it failed and libuv falls back to `stat`'s ctime.
 /// Times are (seconds, nanoseconds) since the epoch; a result of exactly the
@@ -48,12 +78,7 @@ fn from_statx(statx: Option<(i64, u32)>, ctime: (i64, i64)) -> Option<SystemTime
     if secs == 0 && nanos == 0 {
         return None;
     }
-    let nanos = Duration::from_nanos(u64::from(nanos));
-    Some(if secs >= 0 {
-        UNIX_EPOCH + Duration::from_secs(secs as u64) + nanos
-    } else {
-        UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs()) + nanos
-    })
+    Some(at(secs, i64::from(nanos)))
 }
 
 /// `stx_btime` of `path`, or `None` when `statx` fails.
@@ -119,6 +144,30 @@ mod tests {
         assert_eq!(
             from_statx(Some((-10, 500)), (0, 0)),
             Some(UNIX_EPOCH - Duration::from_secs(10) + Duration::from_nanos(500))
+        );
+    }
+
+    /// `date: Last Modified` is the change time: setting the modification
+    /// time back a day leaves it at now.
+    #[cfg(unix)]
+    #[test]
+    fn the_change_time_is_not_the_modification_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("page.md");
+        std::fs::write(&path, "x").unwrap();
+        let earlier = SystemTime::now() - Duration::from_secs(86_400);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(earlier)
+            .unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.modified().unwrap(), earlier);
+        let changed = changed(&meta);
+        assert!(
+            changed > earlier + Duration::from_secs(3_600),
+            "{changed:?}"
         );
     }
 
