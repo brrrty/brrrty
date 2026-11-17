@@ -395,3 +395,34 @@ fn without_source_date_epoch_now_is_the_clock() {
         .as_millis() as f64;
     assert!((real - ms).abs() < 60_000.0, "{ms} vs {real}");
 }
+
+/// Numbers print as JavaScript prints them. Probed with Node: `"n" + 7.5`, `2 + "x"`,
+/// `String(5)`, `String(0.1 + 0.2)`, `new Date(NaN).getFullYear()`, `"a-b-c".replace(/-/, "+")`, `${1e21}`,
+/// `${10} per page`.
+#[test]
+fn numbers_print_as_javascript_prints_them() {
+    let c = ok(r#"
+        config.add_global_data("a", "n" + 7.5);
+        config.add_global_data("b", 2.0 + "x");
+        config.add_global_data("c", (5.0).to_string());
+        config.add_global_data("d", (0.1 + 0.2).to_string());
+        config.add_global_data("e", year(date(())));
+        config.add_global_data("f", regex_replace("a-b-c", "-", "+"));
+        config.add_global_data("g", `${1e21}`);
+        const PER_PAGE = 10.0;
+        config.add_global_data("h", `${PER_PAGE} per page`);
+    "#);
+    let g = |k: &str| c.global_data[k].clone();
+    assert_eq!(g("a"), s("n7.5"));
+    assert_eq!(g("b"), s("2x"));
+    assert_eq!(g("c"), s("5"));
+    assert_eq!(g("d"), s("0.30000000000000004"));
+    let Value::Number(nan) = g("e") else {
+        panic!("{:?}", g("e"))
+    };
+    assert!(nan.is_nan());
+    assert_eq!(g("f"), s("a+b-c"));
+    // Constants too: the optimizer would fold these with Rhai's formatting, `1e21` and `10.0`.
+    assert_eq!(g("g"), s("1e+21"));
+    assert_eq!(g("h"), s("10 per page"));
+}

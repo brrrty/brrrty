@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- In `brrrty.config.rhai`, a constant number inside `${...}` prints as JavaScript prints it, as a variable already did: `${10.0}` and `const PER_PAGE = 10.0; `${PER_PAGE}`` give `10`, not `10.0`, and `${1e21}` gives `1e+21`. Rhai's optimizer folded constants into the string with Rhai's own number formatting; it is now off for config and data scripts.
+
 ## 0.0.15 - 2026-11-17
 
 - Data files and the config can read files in the project: `read_text(path)` is `fs.readFileSync(path, 'utf8')`, `read_json(path)` is `JSON.parse` of it, `read_dir(path)` and `read_dir(path, #{ recursive: true })` are `fs.readdirSync` in Node's order, `file_exists(path)` is `fs.existsSync`, and `parse_csv(text, options)` is csv-parse 7.0.3's `parse`, quirks and error messages included, for the options `columns`, `delimiter`, `bom`, `trim`, `ltrim`, `rtrim`, `skip_empty_lines` and `relax_column_count`. Other csv-parse options are refused by name.

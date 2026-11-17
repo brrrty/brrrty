@@ -171,6 +171,10 @@ pub fn engine_for(
         // Config scripts are one file: no imports, and no `eval`.
         .set_module_resolver(rhai::module_resolvers::DummyModuleResolver::new())
         .set_strict_variables(true)
+        // The optimizer folds `${...}` of constants into a string with Rhai's own float
+        // formatting (`5.0`, `1e21`), past the `to_string` registered below, so a constant
+        // would print differently from a variable holding the same number.
+        .set_optimization_level(rhai::OptimizationLevel::None)
         .disable_symbol("eval");
     e.on_progress(move |ops| {
         (ops % 1024 == 0 && RUN_START.with(|s| s.get().elapsed().as_secs() >= MAX_SECONDS)).then(
