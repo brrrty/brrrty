@@ -270,7 +270,7 @@ impl Files {
         let mut out: Vec<String> = Vec::new();
         // Each folder still to list: its prefix in the output, its path, and
         // the folders above it in this listing, to tell a loop.
-        let mut queue: std::collections::VecDeque<(String, PathBuf, Vec<(u64, u64)>)> =
+        let mut queue: std::collections::VecDeque<Pending> =
             std::collections::VecDeque::from([(String::new(), g.rel.clone(), vec![id(&start)])]);
         while let Some((prefix, rel, above)) = queue.pop_front() {
             let at = if rel.as_os_str().is_empty() {
@@ -366,6 +366,10 @@ impl Files {
         }
     }
 }
+
+/// A folder a recursive listing has yet to list: its prefix in the output, its path, and
+/// the folders above it in the listing (by identity), to tell a loop.
+type Pending = (String, PathBuf, Vec<(u64, u64)>);
 
 /// A folder's identity, to tell a loop.
 fn id(m: &cap_std::fs::Metadata) -> (u64, u64) {
