@@ -3,10 +3,10 @@
 
 use std::cmp::Ordering;
 
-use brrrty_js::{Tz, Value};
+use brrrty_js::{Tz, Value, tz};
 use rhai::{Array, Dynamic, Engine, EvalAltResult, FLOAT, FnPtr, NativeCallContext};
 
-use crate::api::invalid;
+use crate::api::{JsDate, invalid};
 use crate::convert::to_value;
 
 type Res<T> = Result<T, Box<EvalAltResult>>;
@@ -111,7 +111,184 @@ fn js_round(x: FLOAT) -> FLOAT {
     }
 }
 
+fn err<T>(msg: String) -> Res<T> {
+    Err(invalid(msg, rhai::Position::NONE))
+}
+
+/// A number for a method only numbers have in JavaScript (`toFixed`,
+/// `toLocaleString`): an integer or a float, nothing converted.
+fn number_this(v: &Dynamic, what: &str) -> Res<FLOAT> {
+    if let Some(i) = v.clone().try_cast::<rhai::INT>() {
+        return Ok(i as FLOAT);
+    }
+    if let Some(f) = v.clone().try_cast::<FLOAT>() {
+        return Ok(f);
+    }
+    err(format!(
+        "{what}: a {} isn't a number; in JavaScript only numbers have this method. Convert it first, as the JavaScript does with Number(x) or parseFloat(x)",
+        v.type_name()
+    ))
+}
+
+/// `ToIntegerOrInfinity`: `NaN` is 0, fractions are dropped.
+fn to_integer(n: FLOAT) -> FLOAT {
+    if n.is_nan() { 0.0 } else { n.trunc() }
+}
+
+/// `x.toFixed(digits)`.
+fn to_fixed(x: &Dynamic, digits: &Dynamic) -> Res<String> {
+    let n = number_this(x, "to_fixed")?;
+    let d = if digits.is_unit() {
+        0.0
+    } else {
+        to_integer(float(digits, "to_fixed")?)
+    };
+    if !(0.0..=100.0).contains(&d) {
+        return err("to_fixed: toFixed() digits argument must be between 0 and 100 (a RangeError in JavaScript)".into());
+    }
+    brrrty_js::js_to_fixed(n, d as u32)
+        .map_err(|why| invalid(format!("to_fixed: {why}"), rhai::Position::NONE))
+}
+
+/// The locales the English helpers take: none, `"en-US"` or `"en"`.
+fn english(locale: &Dynamic, what: &str) -> Res<()> {
+    if locale.is_unit() {
+        return Ok(());
+    }
+    match locale.clone().into_immutable_string() {
+        Ok(s) if s == "en-US" || s == "en" => Ok(()),
+        Ok(s) => err(format!(
+            "{what}: the locale \"{s}\" isn't ported; Brrrty matches Node only for \"en-US\" (and \"en\", the same here)"
+        )),
+        Err(t) => err(format!(
+            "{what}: the locale must be a string like \"en-US\", not a {t}"
+        )),
+    }
+}
+
+/// `x.toLocaleString('en-US')`.
+fn to_locale_string(x: &Dynamic, locale: &Dynamic) -> Res<String> {
+    english(locale, "to_locale_string")?;
+    Ok(brrrty_js::js_to_locale_string(number_this(
+        x,
+        "to_locale_string",
+    )?))
+}
+
+/// `a.localeCompare(b)` in an English locale: -1, 0 or 1.
+fn locale_compare(a: &Dynamic, b: &Dynamic, locale: &Dynamic) -> Res<rhai::INT> {
+    english(locale, "locale_compare")?;
+    let Ok(a) = a.clone().into_immutable_string() else {
+        return err(format!(
+            "locale_compare: a {} isn't a string; in JavaScript only strings have localeCompare",
+            a.type_name()
+        ));
+    };
+    let b = js_string(b)?;
+    match brrrty_js::js_locale_compare(&a, &b) {
+        Ok(o) => Ok(o as rhai::INT),
+        Err(c) => err(format!(
+            "locale_compare: U+{:04X} is new in Unicode 18, which Node's ICU doesn't have yet, so its order there can't be matched",
+            c as u32
+        )),
+    }
+}
+
+/// `new Date(y, m, ...)` in the local zone.
+fn local_date(args: &[Dynamic]) -> Res<JsDate> {
+    let mut n = Vec::with_capacity(args.len());
+    for a in args {
+        n.push(float(a, "date")?);
+    }
+    Ok(JsDate(tz::make_date(Tz::Local, &n)))
+}
+
+fn register_dates(e: &mut Engine) {
+    e.register_fn("date", |y: Dynamic, m: Dynamic| local_date(&[y, m]));
+    e.register_fn("date", |y: Dynamic, m: Dynamic, d: Dynamic| {
+        local_date(&[y, m, d])
+    });
+    e.register_fn("date", |y: Dynamic, m: Dynamic, d: Dynamic, h: Dynamic| {
+        local_date(&[y, m, d, h])
+    });
+    e.register_fn(
+        "date",
+        |y: Dynamic, m: Dynamic, d: Dynamic, h: Dynamic, mi: Dynamic| local_date(&[y, m, d, h, mi]),
+    );
+    e.register_fn(
+        "date",
+        |y: Dynamic, m: Dynamic, d: Dynamic, h: Dynamic, mi: Dynamic, s: Dynamic| {
+            local_date(&[y, m, d, h, mi, s])
+        },
+    );
+    e.register_fn(
+        "date",
+        |y: Dynamic, m: Dynamic, d: Dynamic, h: Dynamic, mi: Dynamic, s: Dynamic, ms: Dynamic| {
+            local_date(&[y, m, d, h, mi, s, ms])
+        },
+    );
+    type Getter = fn(&tz::Fields) -> FLOAT;
+    let getters: [(&str, Getter); 9] = [
+        ("get_full_year", |f| f.year as FLOAT),
+        ("get_month", |f| FLOAT::from(f.month0)),
+        ("get_date", |f| FLOAT::from(f.day)),
+        ("get_day", |f| FLOAT::from(f.weekday)),
+        ("get_hours", |f| FLOAT::from(f.hour)),
+        ("get_minutes", |f| FLOAT::from(f.minute)),
+        ("get_seconds", |f| FLOAT::from(f.second)),
+        ("get_milliseconds", |f| FLOAT::from(f.millis)),
+        ("get_timezone_offset", |f| f.offset_west),
+    ];
+    for (name, get) in getters {
+        e.register_fn(name, move |d: &mut JsDate| {
+            tz::fields(Tz::Local, d.0).map_or(FLOAT::NAN, |f| get(&f))
+        });
+    }
+    e.register_fn("to_iso_string", |d: &mut JsDate| -> Res<String> {
+        tz::iso_string(d.0).map_or_else(
+            || err("to_iso_string: Invalid time value (a RangeError in JavaScript)".into()),
+            Ok,
+        )
+    });
+}
+
 pub fn register(e: &mut Engine) {
+    register_dates(e);
+    e.register_fn("to_fixed", |x: Dynamic| to_fixed(&x, &Dynamic::UNIT));
+    e.register_fn("to_fixed", |x: Dynamic, d: Dynamic| to_fixed(&x, &d));
+    e.register_fn("to_locale_string", |x: Dynamic| {
+        to_locale_string(&x, &Dynamic::UNIT)
+    });
+    e.register_fn("to_locale_string", |x: Dynamic, l: Dynamic| {
+        to_locale_string(&x, &l)
+    });
+    e.register_fn(
+        "to_locale_string",
+        |_: Dynamic, _: Dynamic, _: Dynamic| -> Res<String> {
+            err("to_locale_string: options aren't ported; Brrrty matches only the default format (up to 3 decimals, grouped by thousands)".into())
+        },
+    );
+    e.register_fn("locale_compare", |a: Dynamic, b: Dynamic| {
+        locale_compare(&a, &b, &Dynamic::UNIT)
+    });
+    e.register_fn("locale_compare", |a: Dynamic, b: Dynamic, l: Dynamic| {
+        locale_compare(&a, &b, &l)
+    });
+    e.register_fn(
+        "locale_compare",
+        |_: Dynamic, _: Dynamic, _: Dynamic, _: Dynamic| -> Res<rhai::INT> {
+            err(
+                "locale_compare: options aren't ported; Brrrty matches only the default order"
+                    .into(),
+            )
+        },
+    );
+    // Math.random() can't give 11ty's output: each run differs, so a page
+    // built from it could never be the same file. Refused with the reason,
+    // like timestamp().
+    e.register_fn("random", || -> Res<FLOAT> {
+        err("random() is not available: Math.random gives a different result on every build, so a page made from it can never match 11ty's. For a filter that shuffles or picks at random, use config.add_nondeterministic_filter(name), which refuses only the pages that use it".into())
+    });
     e.register_fn("js_string", |v: Dynamic| js_string(&v));
     e.register_fn("json_stringify", |v: Dynamic| json_stringify(&v));
     e.register_fn("js_concat", |a: Dynamic, b: Dynamic| js_concat(&a, &b));

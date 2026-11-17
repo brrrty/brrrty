@@ -1493,3 +1493,119 @@ fn a_rhai_filter_replaces_a_nunjucks_one_and_refuses_a_safe_string() {
     let err = render_njk(&cfg, "{{ (s | safe) | upper }}", r#"{"s": "a"}"#).unwrap_err();
     assert!(err.contains("SafeString"), "{err}");
 }
+
+fn string(expr: &str) -> String {
+    match eval(expr) {
+        Value::String(s) => s.to_string(),
+        other => panic!("{expr}: not a string: {other:?}"),
+    }
+}
+
+#[test]
+fn to_fixed_is_v8s() {
+    // Node: (2.5).toFixed(0), (1.005).toFixed(2), (-0).toFixed(2),
+    // (-0.0001).toFixed(2), (1e21).toFixed(2), (1234.5678).toFixed(1), (7).toFixed(3)
+    assert_eq!(string("to_fixed(2.5, 0)"), "3");
+    assert_eq!(string("to_fixed(1.005, 2)"), "1.00");
+    assert_eq!(string("to_fixed(-0.0, 2)"), "0.00");
+    assert_eq!(string("(-0.0001).to_fixed(2)"), "-0.00");
+    assert_eq!(string("to_fixed(1e21, 2)"), "1e+21");
+    assert_eq!(string("1234.5678.to_fixed(1)"), "1234.6");
+    assert_eq!(string("to_fixed(7, 3)"), "7.000");
+    // Digits are truncated, as ToIntegerOrInfinity does.
+    assert_eq!(string("to_fixed(1.25, 1.9)"), "1.3");
+    let p = load_err("to_fixed(1.0, 101)");
+    assert!(p.message.contains("between 0 and 100"), "{}", p.message);
+    let p = load_err(r#"to_fixed("5", 1)"#);
+    assert!(p.message.contains("to_fixed"), "{}", p.message);
+}
+
+#[test]
+fn to_locale_string_is_en_us() {
+    // Node: (1234.5678).toLocaleString('en-US'), (-0.0004)..., (1e21)...,
+    // (1234567).toLocaleString(), (0.0005)...
+    assert_eq!(string("to_locale_string(1234.5678)"), "1,234.568");
+    assert_eq!(string(r#"to_locale_string(-0.0004, "en-US")"#), "-0");
+    assert_eq!(
+        string("to_locale_string(1e21)"),
+        "1,000,000,000,000,000,000,000"
+    );
+    assert_eq!(string("1234567.to_locale_string()"), "1,234,567");
+    assert_eq!(string(r#"0.0005.to_locale_string("en")"#), "0.001");
+    let p = load_err(r#"to_locale_string(1234.5, "de-DE")"#);
+    assert!(p.message.contains("de-DE"), "{}", p.message);
+    let p = load_err(r#"to_locale_string(1234.5, "en-US", #{ maximumFractionDigits: 1 })"#);
+    assert!(p.message.contains("options"), "{}", p.message);
+}
+
+#[test]
+fn locale_compare_is_icus_root_order() {
+    // Node (en-US): "a".localeCompare("B"), "résumé" vs "resume",
+    // "co-op" vs "coop", "10" vs "9", "a" vs "a"
+    assert_eq!(eval(r#"locale_compare("a", "B")"#), Value::Number(-1.0));
+    assert_eq!(
+        eval(r#""résumé".locale_compare("resume")"#),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        eval(r#"locale_compare("co-op", "coop")"#),
+        Value::Number(-1.0)
+    );
+    assert_eq!(
+        eval(r#"locale_compare("10", "9", "en-US")"#),
+        Value::Number(-1.0)
+    );
+    assert_eq!(eval(r#"locale_compare("a", "a")"#), Value::Number(0.0));
+    assert_eq!(
+        list(r#"["b", "B", "a", "é", "A", "e"].sort(|x, y| locale_compare(x, y))"#),
+        "a,A,b,B,e,é"
+    );
+    let p = load_err(r#"locale_compare("a", "b", "sv-SE")"#);
+    assert!(p.message.contains("sv-SE"), "{}", p.message);
+    let p = load_err(r#"locale_compare("a\u20C2", "b")"#);
+    assert!(p.message.contains("U+20C2"), "{}", p.message);
+}
+
+#[test]
+fn random_is_refused_with_the_reason() {
+    let p = load_err("random()");
+    assert!(p.message.contains("Math.random"), "{}", p.message);
+    assert!(
+        p.message.contains("add_nondeterministic_filter"),
+        "{}",
+        p.message
+    );
+}
+
+#[test]
+fn local_dates_from_fields() {
+    // The runner's zone is whatever TZ says; these don't depend on it.
+    let r = |script: &str| load(script).global_data["r"].to_js_string();
+    assert_eq!(
+        r("let d = date(2026, 4, 10);
+           config.add_global_data(\"r\", `${d.get_full_year()}-${d.get_month()}-${d.get_date()}-${d.get_day()}`);"),
+        "2026-4-10-0"
+    );
+    // Month 12 is next January, day 0 the day before, hour 25 the next day.
+    assert_eq!(
+        r("let d = date(2026, 12, 0, 25, 61, 1, 5);
+           config.add_global_data(\"r\", [d.get_full_year(), d.get_month(), d.get_date(), d.get_hours(),
+               d.get_minutes(), d.get_seconds(), d.get_milliseconds()]);"),
+        "2027,0,1,2,1,1,5"
+    );
+    assert_eq!(string("date(99, 0).get_full_year().to_string()"), "1999");
+    assert_eq!(
+        string("date(0).to_iso_string()"),
+        "1970-01-01T00:00:00.000Z"
+    );
+    assert_eq!(
+        string("date(-62198755200000).to_iso_string()"),
+        "-000001-01-01T00:00:00.000Z"
+    );
+    let p = load_err("date(()).to_iso_string()");
+    assert!(p.message.contains("Invalid time value"), "{}", p.message);
+    assert!(matches!(
+        eval("date(2026, 0, 1).get_timezone_offset()"),
+        Value::Number(_)
+    ));
+}
