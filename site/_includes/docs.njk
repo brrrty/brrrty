@@ -1,0 +1,28 @@
+---
+layout: base.njk
+---
+<div class="wrap docs">
+  <nav class="contents" aria-labelledby="contents-title">
+    <h2 id="contents-title">Contents</h2>
+    <ul>
+      {%- for doc in collections.docs %}
+      <li><a href="{{ doc.url }}"{% if doc.url == page.url %} aria-current="page"{% endif %}>{{ doc.data.title }}</a></li>
+      {%- endfor %}
+    </ul>
+  </nav>
+  <article class="prose">
+    <h1>{{ title }}</h1>
+    {% if lead %}<p class="lead">{{ lead | safe }}</p>{% endif %}
+    {{ content | safe }}
+    {%- for doc in collections.docs %}{% if doc.url == page.url %}
+    {%- set prev = collections.docs[loop.index0 - 1] %}
+    {%- set next = collections.docs[loop.index0 + 1] %}
+    {%- if prev or next %}
+    <nav class="pager" aria-label="Previous and next">
+      {%- if prev %}<a class="prev" href="{{ prev.url }}" rel="prev"><span class="dir">Previous</span><span class="pager-title">{{ prev.data.title }}</span></a>{% endif %}
+      {%- if next %}<a class="next" href="{{ next.url }}" rel="next"><span class="dir">Next</span><span class="pager-title">{{ next.data.title }}</span></a>{% endif %}
+    </nav>
+    {%- endif %}
+    {%- endif %}{% endfor %}
+  </article>
+</div>

@@ -1,0 +1,114 @@
+---
+layout: base.njk
+description: Brrrty builds your 11ty site in Rust and writes the same files 11ty 3.1.8 writes, byte for byte, in about a third of the time.
+---
+<div class="wrap">
+  <section class="spread" aria-labelledby="intro">
+    <h1 id="intro">Your 11ty site, built in Rust. Same bytes, sooner.</h1>
+    <p class="lede">Brrrty is a static site generator that builds an existing 11ty project and writes the same files 11ty&nbsp;3.1.8 writes, byte for byte. Templates, Markdown and data stay where they are. The config moves from JavaScript to Rhai.</p>
+    <div class="account">
+
+      <div class="install">
+<pre><code>cargo install brrrty</code></pre>
+        <p>Needs Rust 1.89 or later. From 0.0.10 it is on npm too: <code class="nowrap">npm i -D brrrty</code>.</p>
+      </div>
+      <p class="next">
+        <a class="button" href="/docs/getting-started/">Move a site over</a>
+        <a href="/docs/differences/">What's different from 11ty</a>
+      </p>
+    </div>
+
+    <figure class="plate" aria-labelledby="fig1">
+      <h2 id="fig1">Clean build of a 2,272-file blog</h2>
+      <table class="race">
+        <caption class="vh">Clean build times in seconds. Shorter is faster.</caption>
+        <colgroup><col class="who"><col></colgroup>
+        <tbody>
+          <tr class="where"><th colspan="2" scope="colgroup">Apple M4 laptop</th></tr>
+          <tr>
+            <th scope="row" class="who-brrrty">Brrrty</th>
+            <td><span class="track" style="--t: 0.85"><span class="bar brrrty"></span><span class="t">0.85 s</span></span></td>
+          </tr>
+          <tr>
+            <th scope="row">11ty 3.1.8</th>
+            <td><span class="track" style="--t: 2.32"><span class="bar"></span><span class="t">2.32 s</span></span></td>
+          </tr>
+        </tbody>
+        <tbody>
+          <tr class="where"><th colspan="2" scope="colgroup"><code>node:24-alpine</code> CI container</th></tr>
+          <tr>
+            <th scope="row" class="who-brrrty">Brrrty</th>
+            <td><span class="track" style="--t: 0.86"><span class="bar brrrty"></span><span class="t">0.86 s</span></span></td>
+          </tr>
+          <tr>
+            <th scope="row">11ty 3.1.8</th>
+            <td><span class="track" style="--t: 3.07"><span class="bar"></span><span class="t">3.07 s</span></span></td>
+          </tr>
+        </tbody>
+        <tfoot aria-hidden="true">
+          <tr class="scale">
+            <td></td>
+            <td>
+              <span class="ruler">
+                <span class="seg" style="--i: 0"></span><span class="seg" style="--i: 1"></span><span class="seg" style="--i: 2"></span>
+                <span class="tick tick-0" style="--i: 0">0</span><span class="tick" style="--i: 1">1</span><span class="tick" style="--i: 2">2</span><span class="tick" style="--i: 3">3 s</span>
+              </span>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      <figcaption>
+        <p><b>Fig. 1.</b> Drawn to scale. On first load each bar grows for as long as its build took. The output of both builds is byte-identical.</p>
+        <p><b>Similar species.</b> 11ty, which Brrrty is modeled on and tested against. Same markings; tell them apart by the clock.</p>
+      </figcaption>
+    </figure>
+  </section>
+
+  <section class="notes" aria-labelledby="account">
+    <h2 id="account">What it does</h2>
+    <div class="body">
+      <dl class="account-list">
+        <div><dt>Output</dt><dd>The same files 11ty 3.1.8 writes, byte for byte. It is checked by building test sites with both and comparing every file.</dd></div>
+        <div><dt>Templates</dt><dd>Liquid, Nunjucks, Markdown and HTML in any mix, with 11ty's data cascade, layouts, pagination, permalinks and collections.</dd></div>
+        <div><dt>Config</dt><dd><code>brrrty.config.rhai</code>, a <a href="https://rhai.rs">Rhai</a> script shaped like <code>eleventyConfig</code>: filters, collections, global data, passthrough copy, and the RSS and syntax highlighting plugins. <a href="/docs/configuration/">Reference</a>.</dd></div>
+        <div><dt>Refusals</dt><dd>Where it can't match 11ty exactly, it refuses that page and says why, and builds the rest. It never writes a page that might differ. <a href="/docs/differences/">What it refuses</a>.</dd></div>
+        <div><dt>Dev server</dt><dd><code>brrrty serve</code> rebuilds on every change and updates open pages in place. <a href="/docs/serve/">Details</a>.</dd></div>
+        <div><dt>Status</dt><dd>Early: version {{ site.version }}. Try it on a copy of your site and compare the output with 11ty's before you rely on it.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="notes" aria-labelledby="bertie">
+    <h2 id="bertie">The turtle</h2>
+    <div class="body">
+      <p>Bertie is a turtle with a rocket on his shell. The rocket is the Rust. The turtle is the part that checks every byte before it leaves.</p>
+      <p>Brrrty is three Rs, like "go brrr". This site is built with it, from the same repository, on every change.</p>
+    </div>
+  </section>
+
+  <section class="notes" aria-labelledby="credits">
+    <h2 id="credits">Credits</h2>
+    <div class="body">
+      <p>Brrrty exists because Eleventy is great. It follows 11ty's behavior closely and ports code or data from these projects, each credited with its license in <a href="{{ site.repo }}/blob/main/NOTICE">NOTICE</a>. Thank you to Zach Leatherman and the Eleventy community, and to everyone below.</p>
+      <ul class="credits">
+        <li>Eleventy (11ty) 3.1.8 <span class="by">and its RSS, syntax highlighting and dev server packages, Zach Leatherman</span></li>
+        <li>LiquidJS <span class="by">Jun Yang</span></li>
+        <li>Nunjucks <span class="by">James Long</span></li>
+        <li>markdown-it <span class="by">Vitaly Puzrin, Alex Kocharin</span></li>
+        <li>Prism <span class="by">Lea Verou</span></li>
+        <li>Luxon <span class="by">JS Foundation and contributors</span></li>
+        <li>morphdom <span class="by">Patrick Steele-Idem</span></li>
+        <li>posthtml, posthtml-parser, posthtml-render <span class="by">PostHTML, Ivan Voischev</span></li>
+        <li>htmlparser2 <span class="by">Chris Winberry</span></li>
+        <li>@11ty/posthtml-urls <span class="by">Steven Vachon</span></li>
+        <li>picomatch <span class="by">Jon Schlinkert</span></li>
+        <li>js-yaml <span class="by">Vitaly Puzrin</span></li>
+        <li>slugify <span class="by">Simeon Velichkov</span></li>
+        <li>@sindresorhus/slugify, transliterate <span class="by">Sindre Sorhus</span></li>
+        <li>parse-srcset <span class="by">Alex Bell</span></li>
+        <li>is-json, V8's sort and date parser, CPython's TimSort, ICU's time zone names <span class="by">their authors</span></li>
+      </ul>
+      <p>Body type is <a href="https://github.com/huertatipografica/Alegreya">Alegreya</a> by Huerta Tipográfica, under the SIL Open Font License.</p>
+    </div>
+  </section>
+</div>

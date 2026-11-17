@@ -1,0 +1,9 @@
+---
+layout: base.njk
+---
+<div class="wrap docs single">
+  <article class="prose">
+    {{ content | safe }}
+    {% if source %}<p class="source">This page is built from <a href="{{ site.repo }}/blob/main/{{ source }}">{{ source }}</a> in the repository each time the site is built.</p>{% endif %}
+  </article>
+</div>

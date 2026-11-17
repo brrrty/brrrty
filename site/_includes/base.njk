@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if title %}{{ title }} - {{ site.name }}{% else %}{{ site.name }}, a fast static site generator for 11ty sites{% endif %}</title>
+<meta name="description" content="{{ description or site.description }}">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#1d4a3b" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f4b3c" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="{{ site.url }}{{ page.url }}">
+<link rel="preload" href="/assets/fonts/alegreya-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+{# Logo slot: site/assets/logo.svg is the favicon and the header mark. #}
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="band">
+  <div class="band-inner">
+    <a class="mark" href="/"{% if page.url == "/" %} aria-current="page"{% endif %}><img src="/assets/logo.svg" width="36" height="36" alt=""><span>Brrrty</span></a>
+    <nav class="site-nav" aria-label="Site">
+      <ul>
+        <li><a href="/docs/"{% if page.url.startsWith("/docs/") %} aria-current="page"{% endif %}>Docs</a></li>
+        <li><a href="/changelog/"{% if page.url == "/changelog/" %} aria-current="page"{% endif %}>Changelog</a></li>
+        <li><a href="{{ site.repo }}">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+<main id="main">
+{{ content | safe }}
+</main>
+<footer class="foot">
+  <div class="wrap">
+    <p>Brrrty is MIT licensed. It ports and credits the work of many projects; see <a href="{{ site.repo }}/blob/main/NOTICE">NOTICE</a>.</p>
+    <p>This site is built with Brrrty{% if site.commit %} from <a href="{{ site.repo }}/commit/{{ site.commit }}">{{ site.commit }}</a>{% endif %}.</p>
+  </div>
+</footer>
+</body>
+</html>

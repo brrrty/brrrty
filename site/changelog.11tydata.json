@@ -1,0 +1,7 @@
+{
+  "layout": "page.njk",
+  "title": "Changelog",
+  "description": "What changed in each Brrrty release.",
+  "permalink": "/changelog/",
+  "source": "CHANGELOG.md"
+}
