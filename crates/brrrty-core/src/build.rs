@@ -1653,7 +1653,12 @@ fn build_once(
             &input,
             &input_rel,
             &out,
-            opts.config.template_engines,
+            crate::plugins::syntaxhighlight::scan::Context {
+                engines: opts.config.template_engines,
+                liquid_tag: p.options.has_format("liquid"),
+                nunjucks_tag: p.options.has_format("njk"),
+                global_data: &opts.config.global_data,
+            },
         );
         all.extend(found.iter().cloned());
         p.with_mutations(&all)

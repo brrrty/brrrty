@@ -10,17 +10,29 @@
 //!
 //! "Could" is read from the source, before anything renders, so that pages
 //! Brrrty refuses or doesn't render (Nunjucks, includes, layouts, pages
-//! that fail) count too: every Markdown fence's info string and every
-//! `{% highlight %}` tag in every file under the input folder. A language
-//! name that a template writes (`{{ lang }}`) could be any language.
+//! that fail) count too: every Markdown fence's info string in every file
+//! under the input folder, and every `{% highlight %}` tag in a file that
+//! a template language with the tag reads. A language name that a
+//! template writes (`{{ lang }}`) could be any language.
+//!
+//! Which languages read a page is decided the way the build decides it:
+//! by its extension, its front matter's `templateEngineOverride` and the
+//! config's `markdownTemplateEngine` and `htmlTemplateEngine`. When that
+//! can't be known before the build (the data cascade could set the
+//! override, the page could be included or used as a layout, the file is
+//! data), both Liquid and Nunjucks count as reading it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use brrrty_js::Value;
 use brrrty_prism::grammar::grammars;
 
 use super::normalize;
+use crate::frontmatter::{Data, split_front_matter};
+use crate::options::{TemplateEngines, TemplateLanguage as Lang};
+use crate::render::{DataEngine, Engines, engines_for};
 
 /// A language some file could load that changes grammars Brrrty has.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,59 +47,434 @@ pub struct Found {
     pub keys: Vec<String>,
 }
 
+/// What the scan needs from the config.
+#[derive(Debug, Clone, Copy)]
+pub struct Context<'a> {
+    /// What renders Markdown and HTML.
+    pub engines: TemplateEngines,
+    /// Whether Liquid has `{% highlight %}` (the plugin's `templateFormats`
+    /// has `liquid`).
+    pub liquid_tag: bool,
+    /// Whether Nunjucks has it (`templateFormats` has `njk`).
+    pub nunjucks_tag: bool,
+    /// The config's global data (`addGlobalData`).
+    pub global_data: &'a Data,
+}
+
 /// Larger files aren't templates anyone writes by hand; they are skipped.
 const MAX_FILE: u64 = 16 << 20;
 
+/// The template languages that read some text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Readers {
+    liquid: bool,
+    nunjucks: bool,
+}
+
+impl Readers {
+    /// Either could: the scan can't tell which.
+    const ANY: Readers = Readers {
+        liquid: true,
+        nunjucks: true,
+    };
+
+    fn of(lang: Option<Lang>) -> Readers {
+        Readers {
+            liquid: lang == Some(Lang::Liquid),
+            nunjucks: lang == Some(Lang::Nunjucks),
+        }
+    }
+
+    fn some(self) -> bool {
+        self.liquid || self.nunjucks
+    }
+}
+
+/// One file under the input folder.
+struct File {
+    /// Relative to the input folder.
+    rel: PathBuf,
+    shown: PathBuf,
+    text: String,
+    /// Where the body starts, after any front matter.
+    body_at: usize,
+    /// What reads the front matter (a page's permalink and computed
+    /// values) and the body.
+    front: Readers,
+    body: Readers,
+}
+
+impl File {
+    fn read(&self) -> bool {
+        self.front.some() || self.body.some()
+    }
+
+    /// The parts of the text that something reads, with the line each
+    /// starts on (0-based) and what reads it.
+    fn parts(&self) -> [(&str, usize, Readers); 2] {
+        let (front, body) = self.text.split_at(self.body_at);
+        let lines = front.matches('\n').count();
+        [(front, 0, self.front), (body, lines, self.body)]
+    }
+}
+
 /// Every file under `input` (as `input_rel` shows it) that names a
 /// language changing grammars Brrrty has, skipping `node_modules`, `.git`
-/// and anything under `skip` (the output folder). `engines` says which
-/// language renders Markdown and HTML.
-pub fn scan(
-    input: &Path,
-    input_rel: &Path,
-    skip: &Path,
-    engines: crate::options::TemplateEngines,
-) -> Vec<Found> {
+/// and anything under `skip` (the output folder).
+pub fn scan(input: &Path, input_rel: &Path, skip: &Path, cx: Context<'_>) -> Vec<Found> {
+    let mut paths = Vec::new();
+    walk(input, skip, &mut paths);
+    paths.sort();
     let mut files = Vec::new();
-    walk(input, skip, &mut files);
-    files.sort();
-    let mut out = Vec::new();
-    for file in files {
-        let Ok(bytes) = fs::read(&file) else { continue };
+    for full in paths {
+        let Ok(bytes) = fs::read(&full) else { continue };
         if bytes.iter().take(8192).any(|&b| b == 0) {
             continue;
         }
-        let text = String::from_utf8_lossy(&bytes);
-        let shown = input_rel.join(file.strip_prefix(input).unwrap_or(&file));
-        let nunjucks = may_be_nunjucks(&file, &text, engines);
-        for (line, language) in languages(&text, nunjucks) {
+        let rel = full.strip_prefix(input).unwrap_or(&full).to_path_buf();
+        files.push(File {
+            shown: input_rel.join(&rel),
+            rel,
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+            body_at: 0,
+            front: Readers::default(),
+            body: Readers::default(),
+        });
+    }
+    let global = Global::of(&files, cx.global_data);
+    for f in &mut files {
+        decide(f, input, input_rel, cx.engines, &global);
+    }
+    includes(&mut files, &global);
+
+    let mut out = Vec::new();
+    for f in &files {
+        let mut add = |line: usize, language: String| {
             if let Some(keys) = changes(&language) {
                 out.push(Found {
-                    path: shown.clone(),
+                    path: f.shown.clone(),
                     line,
                     language,
                     keys,
                 });
             }
+        };
+        let mut found = fences(&f.text);
+        for (text, offset, readers) in f.parts() {
+            let liquid = readers.liquid && cx.liquid_tag;
+            let nunjucks = readers.nunjucks && cx.nunjucks_tag;
+            if liquid || nunjucks {
+                found.extend(
+                    tags(text, nunjucks)
+                        .into_iter()
+                        .map(|(line, l)| (line + offset, l)),
+                );
+            }
+        }
+        found.sort_by_key(|(line, _)| *line);
+        for (line, language) in found {
+            add(line, language);
         }
     }
     out
 }
 
-/// Whether Nunjucks could render `file`: a `.njk` file, Markdown or HTML
-/// that the config gives Nunjucks, or a file that names it anywhere (as
-/// `templateEngineOverride` would).
-fn may_be_nunjucks(file: &Path, text: &str, engines: crate::options::TemplateEngines) -> bool {
-    use crate::options::TemplateLanguage;
-    let ext = file
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    ext == "njk"
-        || (ext == "md" && engines.markdown == Some(TemplateLanguage::Nunjucks))
-        || (ext == "html" && engines.html == Some(TemplateLanguage::Nunjucks))
-        || text.contains("njk")
+/// What the global data could set, before it is loaded.
+struct Global {
+    /// `templateEngineOverride`, for every page.
+    engine: bool,
+    /// A `layout` naming no file the scan can see.
+    layout_unknown: bool,
+    /// The `layout` names it sets.
+    layouts: Vec<String>,
+}
+
+impl Global {
+    fn of(files: &[File], config: &Data) -> Global {
+        let mut g = Global {
+            engine: false,
+            layout_unknown: false,
+            layouts: Vec::new(),
+        };
+        let mut key = |k: &str, value: Option<&Value>| match k {
+            "templateEngineOverride" => g.engine = true,
+            "eleventyComputed" => {
+                g.engine = true;
+                g.layout_unknown = true;
+            }
+            "layout" => match value {
+                Some(v) => layout_names(v, &mut g.layouts, &mut g.layout_unknown),
+                None => g.layout_unknown = true,
+            },
+            _ => {}
+        };
+        for (k, v) in config {
+            key(k, Some(v));
+        }
+        // A `_data` file's top-level key is its name.
+        for f in files {
+            let mut parts = f.rel.components();
+            if parts.next().is_some_and(|c| c.as_os_str() == "_data")
+                && let Some(first) = parts.next()
+            {
+                let name = first.as_os_str().to_string_lossy();
+                key(name.split('.').next().unwrap_or(""), None);
+            }
+        }
+        g
+    }
+}
+
+/// The `layout` names in a value: every string under a `layout` key, and
+/// the value itself when it is one. One a template writes could name any
+/// file.
+fn layout_names(v: &Value, out: &mut Vec<String>, unknown: &mut bool) {
+    match v {
+        Value::String(s) if s.contains("{{") || s.contains("{%") => *unknown = true,
+        Value::String(s) => out.push(s.to_string()),
+        _ => {}
+    }
+}
+
+/// Every `layout` in some data, at any depth (`eleventyComputed` too).
+fn layouts_in(data: &Value, out: &mut Vec<String>, unknown: &mut bool) {
+    match data {
+        Value::Object(o) => {
+            for (k, v) in o.iter() {
+                if k == "layout" {
+                    layout_names(v, out, unknown);
+                }
+                layouts_in(v, out, unknown);
+            }
+        }
+        Value::Array(a) => {
+            for v in a.iter() {
+                layouts_in(v, out, unknown);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extension(rel: &Path) -> String {
+    rel.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+fn is_page_ext(ext: &str) -> bool {
+    matches!(ext, "md" | "html" | "liquid" | "njk")
+}
+
+/// What reads `f`, before anything includes it.
+fn decide(f: &mut File, input: &Path, input_rel: &Path, engines: TemplateEngines, g: &Global) {
+    let top = f.rel.components().next().map(|c| c.as_os_str().to_owned());
+    let ext = extension(&f.rel);
+    // Includes and layouts are read by whatever includes them; data by
+    // the language a page's permalink or computed values, or
+    // `dataTemplateEngine`, runs; JavaScript could be a template.
+    if top
+        .as_deref()
+        .is_some_and(|t| t == "_includes" || t == "_data")
+        || matches!(ext.as_str(), "json" | "js" | "cjs" | "mjs" | "rhai")
+    {
+        f.front = Readers::ANY;
+        f.body = Readers::ANY;
+        return;
+    }
+    if !is_page_ext(&ext) {
+        // Read only when included.
+        return;
+    }
+    let unsure = |f: &mut File| {
+        f.front = Readers::ANY;
+        f.body = Readers::ANY;
+    };
+    // `---js` and the like: front matter Brrrty doesn't parse.
+    let first = f.text.trim_start_matches('\u{feff}').lines().next();
+    if first.is_some_and(|l| l.starts_with("---") && !l[3..].trim().is_empty()) {
+        return unsure(f);
+    }
+    let Ok((front, body)) = split_front_matter(&f.text) else {
+        return unsure(f);
+    };
+    let body_at = f.text.len() - body.len();
+    // The cascade sets the override when the global data or a data file
+    // that applies to the page could.
+    if g.engine || local_override(input, input_rel, &f.rel) {
+        return unsure(f);
+    }
+    if front.get("eleventyComputed").is_some_and(
+        |c| !matches!(c, Value::Object(o) if !o.contains_key("templateEngineOverride")),
+    ) {
+        return unsure(f);
+    }
+    let over = front.get("templateEngineOverride");
+    let (Ok((body_engines, _)), Ok(data)) = (
+        engines_for(&ext, over, engines),
+        DataEngine::new(&ext, over, engines),
+    ) else {
+        return unsure(f);
+    };
+    f.body_at = body_at;
+    f.body = Readers::of(match body_engines {
+        Engines::Raw | Engines::Markdown { pre: None } => None,
+        Engines::Template(l) | Engines::Markdown { pre: Some(l) } => Some(l),
+    });
+    f.front = Readers::of(data.lang);
+}
+
+/// Whether a data file that applies to the page at `rel` could set its
+/// `templateEngineOverride`: a JSON one that has it (or computed values,
+/// or that doesn't parse), or one that runs code.
+fn local_override(input: &Path, input_rel: &Path, rel: &Path) -> bool {
+    crate::data::local_data_files(input, input_rel, rel)
+        .iter()
+        .any(|shown| {
+            let full = input.join(shown.strip_prefix(input_rel).unwrap_or(shown));
+            if extension(&full) != "json" {
+                return true;
+            }
+            let Ok(text) = fs::read_to_string(&full) else {
+                return true;
+            };
+            match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(serde_json::Value::Object(o)) => {
+                    o.contains_key("templateEngineOverride") || o.contains_key("eleventyComputed")
+                }
+                Ok(_) => false,
+                Err(_) => true,
+            }
+        })
+}
+
+/// Marks every file a read template could include, or name as its
+/// layout, as read by both languages, until no more are.
+fn includes(files: &mut [File], g: &Global) {
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut unknown = g.layout_unknown;
+    let add = |n: &str, names: &mut BTreeSet<String>| {
+        let last = n.rsplit(['/', '\\']).next().unwrap_or(n).to_lowercase();
+        names.insert(last);
+    };
+    for n in &g.layouts {
+        add(n, &mut names);
+    }
+    // Layouts named in front matter and JSON (data files); a data file
+    // that runs code could name any.
+    for f in files.iter() {
+        let ext = extension(&f.rel);
+        let mut found = Vec::new();
+        if is_page_ext(&ext) {
+            if let Ok((front, _)) = split_front_matter(&f.text) {
+                layouts_in(
+                    &Value::Object(std::sync::Arc::new(front)),
+                    &mut found,
+                    &mut unknown,
+                );
+            }
+        } else if ext == "json" {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&f.text) {
+                layouts_in(&Value::from_json(&v), &mut found, &mut unknown);
+            }
+        } else if matches!(ext.as_str(), "js" | "cjs" | "mjs" | "rhai") && f.text.contains("layout")
+        {
+            unknown = true;
+        }
+        for n in found {
+            add(&n, &mut names);
+        }
+    }
+    let mut seen: Vec<bool> = vec![false; files.len()];
+    loop {
+        if unknown {
+            for f in files.iter_mut() {
+                f.front = Readers::ANY;
+                f.body = Readers::ANY;
+            }
+            return;
+        }
+        let mut grew = false;
+        for (i, f) in files.iter().enumerate() {
+            if seen[i] || !f.read() {
+                continue;
+            }
+            seen[i] = true;
+            for (text, _, readers) in f.parts() {
+                if readers.some() && !included(text, &mut |n| add(n, &mut names)) {
+                    unknown = true;
+                }
+            }
+        }
+        for (i, f) in files.iter_mut().enumerate() {
+            let name = f
+                .rel
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let named = names.iter().any(|n| {
+                name == *n
+                    || name
+                        .strip_prefix(n.as_str())
+                        .is_some_and(|r| r.starts_with('.'))
+            });
+            if named && (f.front != Readers::ANY || f.body != Readers::ANY) {
+                f.front = Readers::ANY;
+                f.body = Readers::ANY;
+                seen[i] = false;
+                grew = true;
+            }
+        }
+        if !grew && !unknown {
+            return;
+        }
+    }
+}
+
+/// The files `text`'s include tags (`include`, `render`, `layout`,
+/// `extends`, `import`, `from`) name, given to `name`; false when one names
+/// its file with anything but one string, which could be any file.
+fn included(text: &str, name: &mut dyn FnMut(&str)) -> bool {
+    let mut rest = text;
+    while let Some(at) = rest.find("{%") {
+        rest = &rest[at + 2..];
+        let tag = rest.trim_start_matches('-').trim_start();
+        let Some(args) = ["include", "render", "layout", "extends", "import", "from"]
+            .iter()
+            .find_map(|t| tag.strip_prefix(t))
+        else {
+            continue;
+        };
+        if !(args.starts_with(char::is_whitespace) || args.starts_with(['"', '\''])) {
+            continue;
+        }
+        let args = args.trim_start();
+        let Some(q) = args.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            return false;
+        };
+        let Some(end) = args[1..].find(q) else {
+            return false;
+        };
+        let file = &args[1..1 + end];
+        if file.contains('\\') || file.contains("{{") || file.contains("{%") {
+            return false;
+        }
+        let after = args[2 + end..].trim_start();
+        let word = after
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("");
+        let plain = after.starts_with("%}")
+            || after.starts_with("-%}")
+            || after.starts_with(',')
+            || ["with", "for", "as", "import", "ignore", "only"].contains(&word)
+            || (!word.is_empty() && after[word.len()..].trim_start().starts_with(':'));
+        if !plain {
+            return false;
+        }
+        name(file);
+    }
+    true
 }
 
 fn walk(dir: &Path, skip: &Path, out: &mut Vec<PathBuf>) {
@@ -138,25 +525,14 @@ pub(crate) fn changes(language: &str) -> Option<Vec<String>> {
     g.mutated_by(&normalize(name)).map(<[String]>::to_vec)
 }
 
-/// The languages `text` could load, with their lines: the first word of
-/// every fence's info string (markdown-it's `info.split(/\s+/)[0]`, its
-/// backslash escapes removed) and the first argument of every
-/// `{% highlight %}` (quotes removed, for Nunjucks). Looser than Markdown
-/// is: a fence anywhere in a line counts. In a file Nunjucks may render
-/// (`nunjucks`), a tag whose arguments aren't one string could load any
-/// language, and so could a tag whose arguments start on another line. A word with a backslash left in
-/// it counts both whole and cut there, as a string in a data file would be
-/// read.
-fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
+/// The languages `text`'s fences could load, with their lines: the first
+/// word of every fence's info string (markdown-it's `info.split(/\s+/)[0]`,
+/// its backslash escapes removed). Looser than Markdown is: a fence
+/// anywhere in a line counts. A word with a backslash left in it counts
+/// both whole and cut there, as a string in a data file would be read.
+fn fences(text: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        let mut add = |word: &str| {
-            let word = unescape(word);
-            if let Some((head, _)) = word.split_once('\\') {
-                out.push((i + 1, head.to_string()));
-            }
-            out.push((i + 1, word));
-        };
         for fence in ["```", "~~~"] {
             let mut rest = line;
             while let Some(at) = rest.find(fence) {
@@ -167,11 +543,31 @@ fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
                     .next()
                     .unwrap_or("");
                 if !word.is_empty() {
-                    add(word);
+                    add_word(&mut out, i + 1, word);
                 }
                 rest = after;
             }
         }
+    }
+    out
+}
+
+fn add_word(out: &mut Vec<(usize, String)>, line: usize, word: &str) {
+    let word = unescape(word);
+    if let Some((head, _)) = word.split_once('\\') {
+        out.push((line, head.to_string()));
+    }
+    out.push((line, word));
+}
+
+/// The languages `text`'s `{% highlight %}` tags could load, with their
+/// lines: the first argument of every tag (quotes removed, for Nunjucks).
+/// When Nunjucks may read the text (`nunjucks`), a tag whose arguments
+/// aren't one string could load any language, and so could a tag whose
+/// arguments start on another line.
+fn tags(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
         let mut rest = line;
         while let Some(at) = rest.find("{%") {
             let tag = rest[at + 2..].trim_start_matches('-').trim_start();
@@ -187,7 +583,7 @@ fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
                     .unwrap_or("");
                 let word = word.trim_matches(['"', '\'']);
                 if !word.is_empty() {
-                    add(word);
+                    add_word(&mut out, i + 1, word);
                 }
                 // The arguments go on to another line, or Nunjucks
                 // evaluates them as an expression other than one string:
@@ -196,12 +592,21 @@ fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
                 if cut || (nunjucks && !word.is_empty() && !one_string(args)) {
                     let written = args.split("%}").next().unwrap_or("");
                     let written = written.trim().trim_end_matches('-').trim_end();
-                    add(&format!("{{{{ {written} }}}}"));
+                    add_word(&mut out, i + 1, &format!("{{{{ {written} }}}}"));
                 }
             }
             rest = &rest[at + 2..];
         }
     }
+    out
+}
+
+/// [`fences`] and [`tags`], in line order.
+#[cfg(test)]
+fn languages(text: &str, nunjucks: bool) -> Vec<(usize, String)> {
+    let mut out = fences(text);
+    out.extend(tags(text, nunjucks));
+    out.sort_by_key(|(line, _)| *line);
     out
 }
 
@@ -321,6 +726,184 @@ mod tests {
             ),
             vec![(1, "lang".to_string()), (2, "{{  }}".to_string())]
         );
+    }
+
+    /// The files `scan` finds a mutating language in, for a site of
+    /// `files` (relative to the input folder) with `markdownTemplateEngine`
+    /// `markdown` and the plugin's formats.
+    fn found_in(
+        files: &[(&str, &str)],
+        markdown: Option<Lang>,
+        formats: (bool, bool),
+        global: &Data,
+    ) -> Vec<String> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (rel, text) in files {
+            let path = dir.path().join(rel);
+            fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            fs::write(path, text).expect("write");
+        }
+        let cx = Context {
+            engines: TemplateEngines {
+                markdown,
+                html: Some(Lang::Liquid),
+            },
+            liquid_tag: formats.0,
+            nunjucks_tag: formats.1,
+            global_data: global,
+        };
+        let mut got: Vec<String> =
+            scan(dir.path(), Path::new("src"), &dir.path().join("_site"), cx)
+                .into_iter()
+                .map(|f| format!("{}:{}", f.path.display(), f.line))
+                .collect();
+        got.dedup();
+        got
+    }
+
+    const BOTH: (bool, bool) = (true, true);
+
+    /// A changelog that quotes tags, in a site where Markdown runs no
+    /// template language: nothing reads them.
+    const CHANGELOG: &str = "# Changes\n\n- `{% highlight js 1,3 %}` in `.njk` files\n- `{% highlight regex %}` too\n\n```rust\nfn main() {}\n```\n";
+
+    #[test]
+    fn tags_count_only_where_a_language_with_the_tag_reads_them() {
+        let none = Data::new();
+        let changelog = [("CHANGELOG.md", CHANGELOG)];
+        assert!(found_in(&changelog, None, BOTH, &none).is_empty());
+        // Liquid reads `js` from the first; Nunjucks could read any.
+        assert_eq!(
+            found_in(&changelog, Some(Lang::Liquid), BOTH, &none),
+            ["src/CHANGELOG.md:4"]
+        );
+        assert_eq!(
+            found_in(&changelog, Some(Lang::Nunjucks), BOTH, &none),
+            ["src/CHANGELOG.md:3", "src/CHANGELOG.md:4"]
+        );
+        // Liquid reads it, but the plugin gave only Nunjucks the tag.
+        assert!(found_in(&changelog, Some(Lang::Liquid), (false, true), &none).is_empty());
+        // `.html` is Liquid here; a `.njk` file is always Nunjucks.
+        assert_eq!(
+            found_in(&[("a.html", "{% highlight regex %}\n")], None, BOTH, &none),
+            ["src/a.html:1"]
+        );
+        assert!(
+            found_in(
+                &[("a.njk", "{% highlight regex %}\n")],
+                None,
+                (true, false),
+                &none
+            )
+            .is_empty()
+        );
+        // Fences count anywhere.
+        assert_eq!(
+            found_in(&[("a.md", "x\n```regex\n```\n")], None, BOTH, &none),
+            ["src/a.md:2"]
+        );
+    }
+
+    #[test]
+    fn an_override_decides_like_the_build() {
+        let none = Data::new();
+        let page = |over: &str| {
+            format!("---\ntemplateEngineOverride: {over}\n---\n{{% highlight regex %}}\n")
+        };
+        for (over, found) in [
+            ("njk,md", true),
+            ("liquid", true),
+            ("md", false),
+            ("false", false),
+            ("html", false),
+        ] {
+            let text = page(over);
+            let got = found_in(&[("a.md", &text)], None, BOTH, &none);
+            assert_eq!(got.len(), usize::from(found), "{over}: {got:?}");
+            if found {
+                assert_eq!(got, ["src/a.md:4"]);
+            }
+        }
+        // With `md` alone, Liquid still reads the front matter's values.
+        let text = "---\ntemplateEngineOverride: md\npermalink: \"{% highlight regex %}\"\n---\n{% highlight regex %}\n";
+        assert_eq!(
+            found_in(&[("a.liquid", text)], Some(Lang::Liquid), BOTH, &none),
+            ["src/a.liquid:3"]
+        );
+        // An override the build refuses: either language could.
+        let text = page("[1]");
+        assert_eq!(found_in(&[("a.md", &text)], None, BOTH, &none).len(), 1);
+    }
+
+    #[test]
+    fn data_that_could_set_the_override_counts_as_either_language() {
+        let none = Data::new();
+        let changelog = ("docs/CHANGELOG.md", CHANGELOG);
+        for data in [
+            ("docs/docs.json", "{\"templateEngineOverride\": \"njk,md\"}"),
+            ("docs/docs.json", "{\"eleventyComputed\": {}}"),
+            ("docs/docs.json", "not json"),
+            ("docs/CHANGELOG.11tydata.js", "module.exports = {};"),
+            ("docs/CHANGELOG.11tydata.rhai", "#{}"),
+            ("_data/templateEngineOverride.json", "\"njk\""),
+        ] {
+            assert!(
+                !found_in(&[changelog, data], None, BOTH, &none).is_empty(),
+                "{data:?}"
+            );
+        }
+        // Data that doesn't set it leaves the page alone.
+        assert!(
+            found_in(
+                &[changelog, ("docs/docs.json", "{\"tags\": \"x\"}")],
+                None,
+                BOTH,
+                &none
+            )
+            .is_empty()
+        );
+        let mut global = Data::new();
+        global.insert("templateEngineOverride".into(), Value::String("njk".into()));
+        assert!(!found_in(&[changelog], None, BOTH, &global).is_empty());
+    }
+
+    #[test]
+    fn a_file_a_template_could_include_counts_as_either_language() {
+        let none = Data::new();
+        let changelog = ("CHANGELOG.md", CHANGELOG);
+        for page in [
+            ("a.njk", "{% include \"../CHANGELOG.md\" %}"),
+            ("a.liquid", "{% render 'changelog.md', x: 1 %}"),
+            ("a.njk", "{% include name %}"),
+            ("a.njk", "{% include \"a\" ~ b %}"),
+            ("_includes/x.njk", "{% include page.inputPath %}"),
+            ("a.md", "---\nlayout: ../CHANGELOG.md\n---\n"),
+            ("a.md", "---\nlayout: \"{{ x }}\"\n---\n"),
+            ("a.11tydata.js", "module.exports = { layout: x };"),
+        ] {
+            assert!(
+                !found_in(&[changelog, page], None, BOTH, &none).is_empty(),
+                "{page:?}"
+            );
+        }
+        // Includes in text nothing reads, or naming other files, don't.
+        for page in [
+            ("a.md", "`{% include name %}`"),
+            ("a.njk", "{% include \"other.md\" %}"),
+            ("a.md", "---\nlayout: base.njk\n---\n"),
+        ] {
+            assert!(
+                found_in(&[changelog, page], None, BOTH, &none).is_empty(),
+                "{page:?}"
+            );
+        }
+        // Includes chain: a file one included file includes.
+        let chain = [
+            changelog,
+            ("a.njk", "{% include \"notes.txt\" %}"),
+            ("notes.txt", "{% include \"CHANGELOG.md\" %}"),
+        ];
+        assert!(!found_in(&chain, None, BOTH, &none).is_empty());
     }
 
     #[test]

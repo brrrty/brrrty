@@ -1,0 +1,9 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js, which adds @11ty/eleventy-plugin-syntaxhighlight 5.0.2
+# with its default options (installed from site/package-lock.json when the
+# fixture is refreshed), and sets `markdownTemplateEngine: false`.
+#
+# CHANGELOG.md quotes `{% highlight %}` tags that would load `regex` and
+# `css-extras` and change the javascript and css grammars, but no template
+# language reads a Markdown page here, so they load nothing: rust.md and
+# js.md are written, not refused.
