@@ -562,4 +562,55 @@ mod tests {
         }
         assert_eq!(v15.render_inline("a `   ` b"), "a <code>   </code> b");
     }
+
+    /// A renderer without markdown-it's `highlight` option renders as it always does and never
+    /// calls `highlight`.
+    #[test]
+    fn renderers_without_the_option_never_call_highlight() {
+        struct Upper;
+        impl MarkdownRenderer for Upper {
+            fn render(&self, source: &str) -> String {
+                source.to_uppercase()
+            }
+        }
+        let mut calls = 0;
+        let out = Upper.render_highlighted("```js\nx\n```\n", &mut |_: &Fence<'_>| {
+            calls += 1;
+            Some("<pre>no</pre>".into())
+        });
+        assert_eq!(out, "```JS\nX\n```\n");
+        assert_eq!(calls, 0);
+    }
+
+    /// A fence that runs to the end of a text with no final newline: markdown-it leaves the
+    /// newline off its last line, and a last line of only spaces or tabs is empty. A fence closed
+    /// on the last line keeps its content's newline. Expected values are markdown-it 15.0.3's
+    /// `render` in Node.
+    #[test]
+    fn a_fence_at_the_end_of_the_text_matches_markdown_it_15() {
+        let md = DefaultMarkdownIt::default();
+        for (src, want) in [
+            (
+                "```js\ncode",
+                "<pre><code class=\"language-js\">code</code></pre>\n",
+            ),
+            ("```\na\n   ", "<pre><code>a\n</code></pre>\n"),
+            ("```\na\n\t", "<pre><code>a\n</code></pre>\n"),
+            (
+                "> ```\n> x",
+                "<blockquote>\n<pre><code>x</code></pre>\n</blockquote>\n",
+            ),
+            ("```\nx\n```", "<pre><code>x\n</code></pre>\n"),
+            ("```\nx\n``", "<pre><code>x\n``</code></pre>\n"),
+            ("~~~\nx\n~~~  ", "<pre><code>x\n</code></pre>\n"),
+            (
+                "- ```\n  y",
+                "<ul>\n<li>\n<pre><code>y</code></pre>\n</li>\n</ul>\n",
+            ),
+            ("```\n\n", "<pre><code>\n</code></pre>\n"),
+            ("a\n```\nb  ", "<p>a</p>\n<pre><code>b  </code></pre>\n"),
+        ] {
+            assert_eq!(md.render(src), want, "{src:?}");
+        }
+    }
 }
