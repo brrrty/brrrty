@@ -587,10 +587,15 @@ fn quoted_line_breaks_never_become_code() {
         });
         assert!(site.is_some());
         let rhai = read(dir.path(), "brrrty.config.rhai");
-        assert!(
-            rhai.contains("config.add_passthrough_copy(\"a\\u2028b\");"),
-            "{rhai}"
-        );
+        // A U+2028 in code makes the file one TODO; in a string it is kept.
+        if nl == "\u{2028}" {
+            assert!(!rhai.contains("config.add_passthrough_copy"), "{rhai}");
+        } else {
+            assert!(
+                rhai.contains("config.add_passthrough_copy(\"a\\u2028b\");"),
+                "{rhai}"
+            );
+        }
     }
 }
 

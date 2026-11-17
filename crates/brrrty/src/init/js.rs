@@ -83,7 +83,7 @@ const REGEX_AFTER: [&str; 12] = [
 ];
 
 fn is_ident_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_' || b == b'$' || b >= 0x80
+    b.is_ascii_alphabetic() || b == b'_' || b == b'$'
 }
 
 fn is_ident_part(b: u8) -> bool {
@@ -116,20 +116,19 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             i += 1;
             continue;
         }
-        // U+2028, U+2029 and U+FEFF (a BOM).
-        if src[i..].starts_with('\u{2028}') || src[i..].starts_with('\u{2029}') {
-            nl = true;
+        // A byte order mark at the very start.
+        if i == 0 && src.starts_with('\u{feff}') {
             i += 3;
             continue;
         }
-        if src[i..].starts_with('\u{feff}') || src[i..].starts_with('\u{a0}') {
-            i += src[i..].chars().next().map_or(1, char::len_utf8);
-            continue;
+        // JavaScript reads some non-ASCII characters as spaces or line breaks
+        // and others as parts of names. Outside strings and comments, none is
+        // read at all.
+        if c >= 0x80 {
+            return Err("there is a non-ASCII character outside a string or comment".into());
         }
         if src[i..].starts_with("//") {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
+            i = line_comment(src, i)?;
             continue;
         }
         if src[i..].starts_with("/*") {
@@ -282,12 +281,30 @@ fn slash(prev: Option<&Token>, after_condition: bool) -> Result<bool, String> {
     }
 }
 
+/// Skip a `//` comment at `i`; returns where its line break is. JavaScript
+/// also ends one at CR, U+2028 and U+2029, which aren't read here.
+fn line_comment(src: &str, mut i: usize) -> Result<usize, String> {
+    let b = src.as_bytes();
+    while i < b.len() && b[i] != b'\n' && b[i] != b'\r' {
+        if b[i..].starts_with(&[0xe2, 0x80, 0xa8]) || b[i..].starts_with(&[0xe2, 0x80, 0xa9]) {
+            return Err("a line separator ends a // comment".into());
+        }
+        i += 1;
+    }
+    Ok(i)
+}
+
 fn regex(b: &[u8], mut i: usize) -> Result<usize, String> {
     i += 1;
     let mut class = false;
     loop {
         match b.get(i) {
-            None | Some(b'\n') => return Err("a regular expression is never closed".into()),
+            None | Some(b'\n' | b'\r') => {
+                return Err("a regular expression is never closed".into());
+            }
+            Some(&c) if c >= 0x80 => {
+                return Err("there is a non-ASCII character in a regular expression".into());
+            }
             Some(b'\\') => i += 2,
             Some(b'[') => {
                 class = true;
@@ -475,10 +492,9 @@ fn substitution(src: &str, mut j: usize, nest: usize) -> Result<usize, String> {
             }
             Some(b'"' | b'\'') => j = string(src, j)?.0,
             Some(b'`') => j = template(src, j, nest)?.0,
-            Some(b'/') if b.get(j + 1) == Some(&b'/') => {
-                while j < b.len() && b[j] != b'\n' {
-                    j += 1;
-                }
+            Some(b'/') if b.get(j + 1) == Some(&b'/') => j = line_comment(src, j)?,
+            Some(&c) if c >= 0x80 => {
+                return Err("there is a non-ASCII character outside a string or comment".into());
             }
             Some(b'/') if b.get(j + 1) == Some(&b'*') => match src[j + 2..].find("*/") {
                 Some(e) => j += e + 4,

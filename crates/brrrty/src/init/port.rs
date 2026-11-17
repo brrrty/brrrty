@@ -1385,12 +1385,13 @@ module.exports = function (eleventyConfig) {
                     "{nl:?}: {l:?}"
                 );
             }
-            assert_eq!(
-                live(&p),
-                ["config.add_passthrough_copy(\"a\");"],
-                "{nl:?}\n{}",
-                p.text
-            );
+            // U+2028 and U+2029 in code make the file one TODO.
+            let want: &[&str] = if nl.starts_with('\u{2028}') || nl.starts_with('\u{2029}') {
+                &[]
+            } else {
+                &["config.add_passthrough_copy(\"a\");"]
+            };
+            assert_eq!(live(&p), want, "{nl:?}\n{}", p.text);
         }
         // A key with a line break in it, quoted in the reason.
         let src = "const h = require(\"@11ty/eleventy-plugin-syntaxhighlight\");\nmodule.exports = function (c) { c.addPlugin(h, { \"a\\nconfig.add_passthrough_copy('x');\": 1 }) };\n";
@@ -1620,6 +1621,32 @@ module.exports = function (eleventyConfig) {
         let p = port(src, "eleventy.config.js");
         assert!(
             p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+    }
+
+    #[test]
+    fn non_ascii_outside_strings_and_comments_ports_nothing() {
+        for src in [
+            "const p = require(\"./p\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { immediate\u{a0}: true });\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c\u{a0}.setOutputDirectory(x);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\");\u{2028}  c\u{3000}.setOutputDirectory(x);\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\"); // note\u{2028}c.setOutputDirectory(x);\n};\n",
+            "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\"); // note\rc.setOutputDirectory(x);\n};\n",
+            "module.exports = function (c) {\u{feff}\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.replace(/é/, \"\"));\n};\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src:?}\n{}", p.text);
+            assert_eq!(p.todos, 1, "{src:?}\n{}", p.text);
+        }
+        // A leading BOM, and non-ASCII in strings, templates and comments, still port.
+        let src = "\u{feff}// Café config, ünïcode\u{a0}ok\n/* \u{2028} */\nmodule.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s}—é`);\n  c.addPassthroughCopy(\"bilder/größe\u{a0}x\");\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert_eq!(
+            live(&p),
+            ["config.add_passthrough_copy(\"bilder/größe\u{a0}x\");"],
             "{}",
             p.text
         );
