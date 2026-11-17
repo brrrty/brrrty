@@ -964,6 +964,17 @@ fn string_method(this: &Val, s: &str, name: &str, args: &[Val], ops: Ops) -> R<V
     let ret_units = |u: &[u16]| -> R<Val> { Ok(Val::str(from_utf16(u)?)) };
     match name {
         "toString" | "valueOf" => Ok(Val::str(s)),
+        "localeCompare" => {
+            let that = to_string(&arg(args, 0), ops)?;
+            english_only(name, &args[args.len().min(1)..])?;
+            match brrrty_js::js_locale_compare(s, &that) {
+                Ok(o) => Ok(Val::num(o as i8 as f64)),
+                Err(c) => Err(unsupported(format!(
+                    "`localeCompare()`: U+{:04X} is new in Unicode 18, which Node's ICU doesn't have yet, so its order there can't be matched",
+                    c as u32
+                ))),
+            }
+        }
         "toUpperCase" => Ok(Val::str(s.to_uppercase())),
         "toLowerCase" => Ok(Val::str(s.to_lowercase())),
         "trim" => Ok(Val::str(s.trim_matches(brrrty_js::is_js_whitespace))),
@@ -1363,8 +1374,32 @@ fn number_method(this: &Val, n: f64, name: &str, args: &[Val], ops: Ops) -> R<Va
             }
             Ok(Val::str(to_fixed(n, f as usize)))
         }
+        "toLocaleString" => {
+            english_only(name, args)?;
+            Ok(Val::str(brrrty_js::js_to_locale_string(n)))
+        }
         _ => object_method(this, name, args, ops),
     }
+}
+
+/// The arguments of a locale-dependent method (`toLocaleString`,
+/// `localeCompare`): Brrrty runs them as Node does in `en-US`, so a locale
+/// other than that (or `"en"`) and any options are refused.
+fn english_only(name: &str, args: &[Val]) -> R<()> {
+    let locale = arg(args, 0);
+    let english = locale.is_undefined()
+        || matches!(&locale, Val::V(Value::String(l)) if &**l == "en-US" || &**l == "en");
+    if !english {
+        return Err(unsupported(format!(
+            "`{name}()` with a locale other than \"en-US\" isn't emulated"
+        ))
+        .with_help("Brrrty matches Node's en-US results only; format the value in a filter, or in the data"));
+    }
+    if !arg(args, 1).is_undefined() {
+        return Err(unsupported(format!("`{name}()` with options isn't emulated"))
+            .with_help("Brrrty matches Node's default en-US results only; format the value in a filter, or in the data"));
+    }
+    Ok(())
 }
 
 fn radix_string(n: f64, radix: u32) -> String {
