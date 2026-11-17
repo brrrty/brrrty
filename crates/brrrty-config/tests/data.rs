@@ -679,10 +679,12 @@ fn a_data_file_that_is_not_utf8_is_refused_with_help() {
     );
     fs::create_dir_all(t.path().join("src/_data")).unwrap();
     fs::write(t.path().join("src/_data/bad.rhai"), b"#{ a: \"\xff\" }").unwrap();
-    let cfg = brrrty_core::ConfigOptions {
-        data: Some(data_runner(Clock::Fixed(NOON_MS), t.path().to_path_buf())),
-        ..Default::default()
-    };
+    let mut cfg = brrrty_core::ConfigOptions::default();
+    cfg.data = Some(data_runner(
+        Clock::Fixed(NOON_MS),
+        t.path().to_path_buf(),
+        cfg.reads.clone(),
+    ));
     let opts = BuildOptions {
         root: t.path().to_path_buf(),
         input: PathBuf::from("src"),
