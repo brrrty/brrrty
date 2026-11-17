@@ -116,33 +116,36 @@ pub(crate) fn evaluate(
         )
     })?;
     let exported = ast.iter_functions().find(|f| f.name == "data");
-    let result: Result<Dynamic, _> = match exported {
-        Some(f) => {
-            let args: Vec<Dynamic> = match f.params.len() {
-                0 => vec![],
-                1 => vec![to_dynamic(&Value::Object(std::sync::Arc::new(
-                    global.clone(),
-                )))],
-                n => {
-                    return Err(Problem::error(
-                        codes::DATA_RHAI_ERROR,
-                        format!(
-                            "`fn data` takes {n} parameters; 11ty's exported function gets one, the global data, so write `fn data()` or `fn data(global)`"
-                        ),
-                    ));
-                }
-            };
-            // Only `data` runs: the script's own statements don't.
-            engine.call_fn_with_options::<Dynamic>(
-                rhai::CallFnOptions::new().eval_ast(false),
-                &mut Scope::new(),
-                &ast,
-                "data",
-                args,
-            )
-        }
-        None => engine.eval_ast::<Dynamic>(&ast),
-    };
+    // Renderer rules can be set while the script runs, not later.
+    let result: Result<Dynamic, _> = crate::markdown_rules::loading(|| -> Result<_, Problem> {
+        Ok(match exported {
+            Some(f) => {
+                let args: Vec<Dynamic> = match f.params.len() {
+                    0 => vec![],
+                    1 => vec![to_dynamic(&Value::Object(std::sync::Arc::new(
+                        global.clone(),
+                    )))],
+                    n => {
+                        return Err(Problem::error(
+                            codes::DATA_RHAI_ERROR,
+                            format!(
+                                "`fn data` takes {n} parameters; 11ty's exported function gets one, the global data, so write `fn data()` or `fn data(global)`"
+                            ),
+                        ));
+                    }
+                };
+                // Only `data` runs: the script's own statements don't.
+                engine.call_fn_with_options::<Dynamic>(
+                    rhai::CallFnOptions::new().eval_ast(false),
+                    &mut Scope::new(),
+                    &ast,
+                    "data",
+                    args,
+                )
+            }
+            None => engine.eval_ast::<Dynamic>(&ast),
+        })
+    })?;
     let value = result.map_err(|e| problem(*e))?;
     to_value(&value).map_err(|why| {
         Problem::error(

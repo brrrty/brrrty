@@ -440,6 +440,7 @@ const ELEVENTY_OPTIONS: RenderOptions = RenderOptions {
     breaks: false,
     linkify: false,
     typographer: false,
+    v15: false,
 };
 
 /// The markdown-it port set up like `require('markdown-it')()` with no options: the `default`
@@ -594,6 +595,7 @@ impl DefaultMarkdownIt {
         if let Some(rules) = rules {
             let options = RenderOptions {
                 html: false,
+                v15: true,
                 ..ELEVENTY_OPTIONS
             };
             rules::apply(&mut ast, source, rules, &options)?;
@@ -662,6 +664,7 @@ impl ConfiguredMarkdownIt {
                 breaks: false,
                 linkify: options.linkify,
                 typographer: options.typographer,
+                v15: true,
             },
         }
     }

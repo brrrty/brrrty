@@ -332,9 +332,10 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
     let ast = engine
         .compile_with_scope(&scope, src)
         .map_err(|e| vec![syntax_problem(&e)])?;
-    let returned: Dynamic = engine
-        .eval_ast_with_scope(&mut scope, &ast)
-        .map_err(|e| vec![runtime_problem(*e)])?;
+    // Renderer rules can be set while the script runs, never once pages render.
+    let returned: Dynamic =
+        markdown_rules::loading(|| engine.eval_ast_with_scope(&mut scope, &ast))
+            .map_err(|e| vec![runtime_problem(*e)])?;
     // Drop the scope before taking the state: nothing else holds it then.
     drop(scope);
     let state = std::mem::take(&mut *state.lock().unwrap_or_else(|e| e.into_inner()));

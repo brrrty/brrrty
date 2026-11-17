@@ -76,11 +76,69 @@ impl MdLib {
     }
 }
 
+thread_local! {
+    /// How many scripts are running their top level on this thread (the config, a data file):
+    /// the only time renderer rules can be set.
+    static LOADING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// How many renderer rules are running on this thread.
+    static IN_RULE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds one to a counter until dropped, panics included.
+struct Count(&'static std::thread::LocalKey<std::cell::Cell<u32>>);
+
+impl Count {
+    fn new(key: &'static std::thread::LocalKey<std::cell::Cell<u32>>) -> Count {
+        key.with(|c| c.set(c.get() + 1));
+        Count(key)
+    }
+}
+
+impl Drop for Count {
+    fn drop(&mut self) {
+        self.0.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+}
+
+/// Runs a script's top level (the config, or a data file), while renderer rules can be set.
+pub fn loading<T>(f: impl FnOnce() -> T) -> T {
+    let _loading = Count::new(&LOADING);
+    f()
+}
+
+/// Libraries are frozen outside a script's top level, and inside a rule: a filter, a
+/// collection or a rule that changed one would make pages depend on the order they render in,
+/// which 11ty's single thread never does.
+fn check_unfrozen(kind: &str) -> Res<()> {
+    let loading = LOADING.with(|c| c.get()) > 0;
+    let in_rule = IN_RULE.with(|c| c.get()) > 0;
+    if loading && !in_rule {
+        return Ok(());
+    }
+    err(format!(
+        "md.renderer.rules.{kind}: renderer rules can't be changed {}; set them while the config or the data file loads",
+        if in_rule {
+            "from inside a renderer rule"
+        } else {
+            "while pages render (in a filter, a collection or a rule)"
+        }
+    ))
+}
+
+fn block_rule_error<T>(kind: &str) -> Res<T> {
+    err(format!(
+        "md.renderer.rules.{kind}: Brrrty runs renderer rules for inline tokens only (text, link_open, link_close, image, code_inline, softbreak, hardbreak, html_inline, em_open, em_close, strong_open, strong_close, s_open, s_close); `{kind}` is a block token, which it can't run a rule for yet"
+    ))
+}
+
 /// The name of the native function a default rule's pointer calls.
 const DEFAULT_RULE_FN: &str = "markdown_it_default_rule";
 
 /// `md.renderer.rules[kind]`: the rule set, markdown-it's own default rule, or `()`.
 fn get_rule(state: &LibState, kind: &str) -> Res<Dynamic> {
+    if brrrty_markdown::is_block_type(kind) {
+        return block_rule_error(kind);
+    }
     if let Some(f) = state.rules.get(kind) {
         return Ok(Dynamic::from(f.clone()));
     }
@@ -94,10 +152,9 @@ fn get_rule(state: &LibState, kind: &str) -> Res<Dynamic> {
 
 fn set_rule(state: &mut LibState, kind: &str, rule: Dynamic) -> Res<()> {
     if brrrty_markdown::is_block_type(kind) {
-        return err(format!(
-            "md.renderer.rules.{kind}: Brrrty runs renderer rules for inline tokens only (text, link_open, link_close, image, code_inline, softbreak, hardbreak, html_inline, em_open, em_close, strong_open, strong_close, s_open, s_close); `{kind}` is a block token, which it can't run a rule for yet"
-        ));
+        return block_rule_error(kind);
     }
+    check_unfrozen(kind)?;
     if rule.is_unit() {
         state.rules.shift_remove(kind);
         return Ok(());
@@ -219,32 +276,28 @@ fn token_at(tokens: &Tokens, idx: INT, what: &str) -> Res<TokenRef> {
     )
 }
 
+fn snapshot(tokens: &Tokens) -> Vec<Token> {
+    tokens.0.iter().map(|t| lock(&t.0).clone()).collect()
+}
+
 /// `renderToken(tokens, idx, options)`.
 fn render_token(tokens: &Tokens, idx: INT, options: &RenderOptions) -> Res<String> {
-    let at = token_at(tokens, idx, "render_token")?;
+    token_at(tokens, idx, "render_token")?;
     let i = usize::try_from(idx).unwrap_or(0);
-    let prev = i.checked_sub(1).map(|p| lock(&tokens.0[p].0).clone());
-    let next = tokens.0.get(i + 1).map(|n| lock(&n.0).clone());
-    let token = lock(&at.0).clone();
     Ok(brrrty_markdown::render_token(
-        prev.as_ref(),
-        &token,
-        next.as_ref(),
+        &snapshot(tokens),
+        i,
         options.xhtml_out,
+        options.v15,
     ))
 }
 
 /// markdown-it's default rule for `tokens[idx]` (`renderToken` for a type without one).
 fn render_default(tokens: &Tokens, idx: usize, options: &RenderOptions) -> Result<String, String> {
-    let start = idx.saturating_sub(1);
-    let end = (idx + 2).min(tokens.0.len());
-    let mut window: Vec<Token> = tokens.0[start..end]
-        .iter()
-        .map(|t| lock(&t.0).clone())
-        .collect();
-    let out = brrrty_markdown::render_default(&mut window, idx - start, options)?;
+    let mut all = snapshot(tokens);
+    let out = brrrty_markdown::render_default(&mut all, idx, options)?;
     // The image rule sets the token's `alt`.
-    *lock(&tokens.0[idx].0) = window.swap_remove(idx - start);
+    *lock(&tokens.0[idx].0) = all.swap_remove(idx);
     Ok(out)
 }
 
@@ -276,6 +329,7 @@ fn render_inline(
             .map(|t| TokenRef(Arc::new(Mutex::new(t))))
             .collect(),
     ));
+    let _in_rule = Count::new(&IN_RULE);
     let mut out = String::new();
     for i in 0..tokens.0.len() {
         let kind = lock(&tokens.0[i].0).kind.clone();
@@ -387,8 +441,12 @@ fn md_render(ctx: NativeCallContext, md: &mut MdLib, s: Dynamic) -> Res<String> 
                 .into(),
         );
     };
-    let Some(s) = crate::builtins::source(&s, "md.render")? else {
-        return Ok(String::new());
+    // markdown-it's `render` throws on anything but a string (unlike the filters' `s || ''`).
+    let Some(s) = s.clone().into_immutable_string().ok() else {
+        return err(format!(
+            "md.render: Input data should be a String, not {} (markdown-it throws)",
+            s.type_name()
+        ));
     };
     let rules = InScript { rules, ctx: &ctx };
     let result = match inst {
@@ -456,7 +514,22 @@ pub fn register(e: &mut Engine) {
             });
         };
     }
-    string_field!("type", kind);
+    e.register_get("type", |t: &mut TokenRef| -> ImmutableString {
+        lock(&t.0).kind.clone().into()
+    });
+    e.register_set("type", |t: &mut TokenRef, v: Dynamic| -> Res<()> {
+        let kind = str_arg(&v, "token.type")?;
+        // markdown-it renders a block type with rules Brrrty doesn't run for inline tokens
+        // (`fence`, `code_block`, `html_block`) or with block newlines; the rest are checked
+        // against markdown-it.
+        if brrrty_markdown::is_block_type(&kind) {
+            return err(format!(
+                "token.type = \"{kind}\": Brrrty renders inline tokens only, and `{kind}` is a block token type"
+            ));
+        }
+        lock(&t.0).kind = kind;
+        Ok(())
+    });
     string_field!("tag", tag);
     string_field!("content", content);
     string_field!("markup", markup);

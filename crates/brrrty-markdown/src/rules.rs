@@ -102,6 +102,9 @@ pub struct RenderOptions {
     pub breaks: bool,
     pub linkify: bool,
     pub typographer: bool,
+    /// markdown-it 15's renderer (`markdownIt()` and `markdown()`), not 14.3.3's (11ty's own
+    /// instance): their `renderToken` differ around hidden tokens.
+    pub v15: bool,
 }
 
 /// `options.langPrefix`, which no instance Brrrty has changes.
@@ -204,19 +207,23 @@ pub fn render_attrs(token: &Token) -> String {
     out
 }
 
-/// `renderToken(tokens, idx, options)`, given the token before (`tokens[idx - 1]`), the token
-/// and the one after.
-pub fn render_token(
-    prev: Option<&Token>,
-    token: &Token,
-    next: Option<&Token>,
-    xhtml_out: bool,
-) -> String {
+/// `renderToken(tokens, idx, options)`: 14.3.3's, or 15's when `v15`. 15 looks past hidden
+/// tokens with `nesting` 0 on both sides, and writes the newline before a block token only
+/// after a hidden closing token.
+pub fn render_token(tokens: &[Token], idx: usize, xhtml_out: bool, v15: bool) -> String {
+    let token = &tokens[idx];
     if token.hidden {
         return String::new();
     }
+    let skip = |t: &Token| v15 && t.hidden && t.nesting == 0;
     let mut out = String::new();
-    if token.block && token.nesting != -1 && prev.is_some_and(|p| p.hidden) {
+    let prev = if v15 {
+        tokens[..idx].iter().rev().find(|t| !skip(t))
+    } else {
+        idx.checked_sub(1).map(|i| &tokens[i])
+    };
+    let lf_before = prev.is_some_and(|p| p.hidden && (!v15 || p.nesting == -1));
+    if token.block && token.nesting != -1 && lf_before {
         out.push('\n');
     }
     out.push_str(if token.nesting == -1 { "</" } else { "<" });
@@ -228,6 +235,7 @@ pub fn render_token(
     let mut need_lf = false;
     if token.block {
         need_lf = true;
+        let next = tokens[idx + 1..].iter().find(|t| !skip(t));
         if token.nesting == 1
             && let Some(next) = next
         {
@@ -274,7 +282,13 @@ pub fn render_default(
         "html_inline" => token.content.clone(),
         kind => {
             if kind == "image" {
-                let alt = token.alt_text.clone().unwrap_or_default();
+                // markdown-it reads the image's `children`, which only a real image has.
+                let Some(alt) = token.alt_text.clone() else {
+                    return Err(
+                        "the image rule needs the image's children, which only an image token has (markdown-it throws)"
+                            .into(),
+                    );
+                };
                 let Some(i) = token.attr_index("alt") else {
                     return Err(
                         "the image rule needs an `alt` attribute, and markdown-it throws without one"
@@ -283,8 +297,7 @@ pub fn render_default(
                 };
                 tokens[idx].attrs.as_mut().expect("has attrs")[i].1 = alt;
             }
-            let prev = idx.checked_sub(1).map(|i| &tokens[i]);
-            render_token(prev, &tokens[idx], tokens.get(idx + 1), options.xhtml_out)
+            render_token(tokens, idx, options.xhtml_out, options.v15)
         }
     })
 }
@@ -645,13 +658,13 @@ mod tests {
         t.attr_join("class".into(), "x".into());
         t.attr_join("class".into(), "y".into());
         assert_eq!(
-            render_token(None, &t, None, false),
+            render_token(std::slice::from_ref(&t), 0, false, true),
             "<a href=\"a&quot;&lt;&amp;&gt;\" class=\"x y\">"
         );
         let br = Token::new("softbreak", "br", 0, 0);
-        assert_eq!(render_token(None, &br, None, true), "<br />");
+        assert_eq!(render_token(&[br], 0, true, true), "<br />");
         let mut hidden = Token::new("paragraph_open", "p", 1, 0);
         hidden.hidden = true;
-        assert_eq!(render_token(None, &hidden, None, false), "");
+        assert_eq!(render_token(&[hidden], 0, false, false), "");
     }
 }

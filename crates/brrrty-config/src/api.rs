@@ -312,6 +312,8 @@ pub fn engine_for(
          name: ImmutableString,
          f: FnPtr|
          -> Result<(), Box<EvalAltResult>> {
+            // 11ty lowercases the name.
+            let name = name.to_lowercase();
             if name != "md" {
                 return Err(runtime(format!(
                     "amend_library(\"{name}\", ...): Brrrty only has 11ty's Markdown library, \"md\""
