@@ -2,6 +2,8 @@
 
 mod clock;
 mod compat;
+mod corpus;
+mod corpus_report;
 mod fixtures;
 mod settings;
 
@@ -48,6 +50,47 @@ enum Cmd {
         #[command(flatten)]
         dirs: Dirs,
     },
+    /// Build a list of public 11ty sites with 11ty (in Docker) and Brrrty, and record the results.
+    Corpus {
+        /// TOML file with `[[site]] repo = "owner/name"` entries.
+        #[arg(long)]
+        list: PathBuf,
+        /// Where the clones go, one folder per site, plus `_work/`.
+        #[arg(long)]
+        sites_dir: PathBuf,
+        /// Logs and host copies, one folder per site; Docker must be able to mount it [default: <sites-dir>/_work].
+        #[arg(long)]
+        work_dir: Option<PathBuf>,
+        /// Build outputs, one folder per site; a case-sensitive volume holds every site's paths [default: the work dir].
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// JSON results file; existing entries for other sites are kept.
+        #[arg(long)]
+        results: PathBuf,
+        /// A Linux build of brrrty, for timing it in the same container as 11ty.
+        #[arg(long)]
+        linux_brrrty: Option<PathBuf>,
+        /// Only these sites (`owner/name` or its folder name); repeatable.
+        #[arg(long)]
+        only: Vec<String>,
+        /// Only the first N sites of the list.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Seconds each site may take in all; a site out of time is recorded as a failure.
+        #[arg(long, default_value_t = 1500)]
+        time_limit: u64,
+        /// Timed builds per tool.
+        #[arg(long, default_value_t = 3)]
+        runs: usize,
+        /// Remove the Docker images this run pulled when it's done.
+        #[arg(long)]
+        remove_images: bool,
+        /// Keep every site's outputs and host copy, not just those with a different file.
+        #[arg(long)]
+        keep_outputs: bool,
+    },
+    /// Print Markdown tables from a `corpus` results file.
+    CorpusReport { results: PathBuf },
 }
 
 /// The repository root: the parent of this crate's folder.
@@ -85,6 +128,39 @@ fn main() -> ExitCode {
             let (sites, settings) = dirs.resolve(&root);
             compat::scoreboard(&root, &sites, &settings)
         }
+        Cmd::Corpus {
+            list,
+            sites_dir,
+            work_dir,
+            output_dir,
+            results,
+            linux_brrrty,
+            only,
+            limit,
+            time_limit,
+            runs,
+            remove_images,
+            keep_outputs,
+        } => corpus::run_corpus(
+            &root,
+            corpus::Options {
+                list,
+                output_dir: output_dir
+                    .or_else(|| work_dir.clone())
+                    .unwrap_or_else(|| sites_dir.join("_work")),
+                work_dir: work_dir.unwrap_or_else(|| sites_dir.join("_work")),
+                sites_dir,
+                results,
+                linux_brrrty,
+                only,
+                limit,
+                time_limit: std::time::Duration::from_secs(time_limit),
+                runs,
+                remove_images,
+                keep_outputs,
+            },
+        ),
+        Cmd::CorpusReport { results } => corpus_report::run_report(&results),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,
