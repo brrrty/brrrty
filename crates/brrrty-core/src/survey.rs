@@ -36,8 +36,9 @@ pub struct TemplateSurvey {
     /// Pages refused. A template refused before it was expanded into pages
     /// counts as one.
     pub refused: usize,
-    /// The template language that reads its body, when known.
+    /// The template language that reads its body, when `lang_known`.
     pub(crate) lang: Option<Lang>,
+    pub(crate) lang_known: bool,
 }
 
 impl Survey {
@@ -80,7 +81,10 @@ impl Log {
     }
 
     pub fn lang(&self, template: &Path, lang: Option<Lang>) {
-        self.with(template, |t| t.lang = lang);
+        self.with(template, |t| {
+            t.lang = lang;
+            t.lang_known = true;
+        });
     }
 
     pub fn written(&self, template: &Path) {

@@ -28,6 +28,7 @@ pub mod permalink;
 pub mod plugins;
 pub mod problem;
 mod render;
+mod scan;
 pub mod serve_lock;
 mod survey;
 mod templates;

@@ -81,7 +81,7 @@ pub struct ConfigOptions {
 }
 
 /// A template language that runs on a page's text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TemplateLanguage {
     Liquid,
     Nunjucks,

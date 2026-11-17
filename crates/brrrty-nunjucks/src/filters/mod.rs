@@ -77,6 +77,11 @@ pub(crate) enum Filter {
     User(FilterFn),
 }
 
+/// Whether `name` is one of Nunjucks's own filters.
+pub(crate) fn is_builtin(name: &str) -> bool {
+    NUNJUCKS_FILTERS.contains(&name)
+}
+
 /// `env.getFilter(name)`.
 pub(crate) fn lookup(engine: &Engine, name: &str) -> R<Filter> {
     if let Some(f) = engine.filters.get(name) {

@@ -2482,10 +2482,10 @@ fn build_once(
         .collect();
     let mut report = finish(report, strict, start);
     if let Some(log) = log_owned {
-        report.survey = Some(crate::survey::Survey {
-            templates: log.finish(),
-            js_keys,
-        });
+        let mut templates = log.finish();
+        crate::scan::Scanner::new(&langs, template_engines, &root, &js_keys)
+            .add_findings(&mut templates);
+        report.survey = Some(crate::survey::Survey { templates, js_keys });
     }
     report
 }

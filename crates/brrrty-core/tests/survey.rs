@@ -72,10 +72,9 @@ fn a_survey_records_what_the_layout_hid() {
     // What is reported is unchanged.
     let codes: Vec<&str> = report.problems.iter().map(|p| p.code).collect();
     assert_eq!(codes, [codes::LIQUID_UNKNOWN_FILTER]);
-    assert_eq!(
-        codes_of(&report, "src/reads.liquid"),
-        [codes::LIQUID_UNKNOWN_FILTER, codes::DATA_JS_UNSUPPORTED]
-    );
+    let reads = codes_of(&report, "src/reads.liquid");
+    assert_eq!(reads[0], codes::LIQUID_UNKNOWN_FILTER);
+    assert!(reads.contains(&codes::DATA_JS_UNSUPPORTED), "{reads:?}");
     let pages = codes_of(&report, "src/pages.liquid");
     assert!(pages.contains(&codes::LIQUID_UNKNOWN_FILTER), "{pages:?}");
     assert!(pages.contains(&codes::DATA_JS_UNSUPPORTED), "{pages:?}");
@@ -115,5 +114,127 @@ fn a_survey_that_writes_matches_a_build() {
     assert_eq!(
         fs::read_to_string(dir.path().join("out/plain/index.html")).unwrap(),
         "plain\n"
+    );
+}
+
+fn found(report: &BuildReport, template: &str) -> Vec<(String, String, Option<usize>)> {
+    let survey = report.survey.as_ref().expect("a survey");
+    survey.templates[Path::new(template)]
+        .problems
+        .iter()
+        .map(|p| {
+            (
+                p.message.clone(),
+                p.path.as_ref().unwrap().display().to_string(),
+                p.line,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_scan_lists_every_filter_and_data_read_a_render_stops_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "src/_data/stuff.js", "module.exports = {};\n");
+    write(root, "src/_data/more.js", "module.exports = {};\n");
+    write(
+        root,
+        "src/_includes/part.njk",
+        "{{ x | four }}\n{{ more.y }}\n",
+    );
+    write(
+        root,
+        "src/page.njk",
+        "---\ntitle: T\n---\n{{ title | one }}\n{% if false %}{{ title | two }}{% endif %}\n{{ stuff.a | upper | three }}\n{% include \"part.njk\" %}\n",
+    );
+    write(
+        root,
+        "src/shadow.njk",
+        "{% set stuff = 1 %}{{ stuff | nope }}\n",
+    );
+    write(
+        root,
+        "src/broken.njk",
+        "{% include \"bad.njk\" %}{{ 1 | nope }}\n",
+    );
+    write(root, "src/_includes/bad.njk", "{% if %}\n");
+    let report = survey(&opts(root), &MarkdownIt::new(), true);
+    let page = found(&report, "src/page.njk");
+    let messages: Vec<&str> = page.iter().map(|(m, _, _)| m.as_str()).collect();
+    for want in [
+        "Error: filter not found: one",
+        "Error: filter not found: two",
+        "Error: filter not found: three",
+        "Error: filter not found: four",
+    ] {
+        assert!(messages.contains(&want), "{want} in {page:#?}");
+    }
+    assert!(
+        page.iter().any(|(m, p, l)| m.contains("`stuff`")
+            && m.contains("src/_data/stuff.js")
+            && p == "src/page.njk"
+            && *l == Some(6)),
+        "{page:#?}"
+    );
+    assert!(
+        page.iter().any(|(m, p, l)| m.contains("`more`")
+            && p == "src/_includes/part.njk"
+            && *l == Some(2)),
+        "{page:#?}"
+    );
+    // The build's own report of `one` and the scan's are one problem.
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| **m == "Error: filter not found: one")
+            .count(),
+        1
+    );
+    let shadow = found(&report, "src/shadow.njk");
+    assert!(
+        !shadow.iter().any(|(m, _, _)| m.contains("`stuff`")),
+        "{shadow:#?}"
+    );
+    let broken = found(&report, "src/broken.njk");
+    assert!(
+        broken.iter().any(|(_, p, _)| p == "src/_includes/bad.njk"),
+        "{broken:#?}"
+    );
+    // Reported problems are unchanged by the scan.
+    let plain = build(&opts(root), &MarkdownIt::new());
+    assert_eq!(plain.problems, report.problems);
+}
+
+#[test]
+fn the_scan_lists_every_unknown_liquid_filter_in_a_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root,
+        "src/_includes/base.liquid",
+        "{{ title | first_one }}\n{% include 'meta' %}\n{{ content }}\n",
+    );
+    write(
+        root,
+        "src/_includes/meta.liquid",
+        "{{ title | second_one | upcase }}\n",
+    );
+    write(
+        root,
+        "src/a.md",
+        "---\nlayout: base.liquid\ntitle: A\n---\n# A\n",
+    );
+    let report = survey(&opts(root), &MarkdownIt::new(), true);
+    let a = found(&report, "src/a.md");
+    assert!(
+        a.iter().any(|(m, p, _)| m == "undefined filter: first_one" && p == "src/_includes/base.liquid"),
+        "{a:#?}"
+    );
+    assert!(
+        a.iter().any(|(m, p, l)| m == "undefined filter: second_one"
+            && p == "src/_includes/meta.liquid"
+            && *l == Some(1)),
+        "{a:#?}"
     );
 }

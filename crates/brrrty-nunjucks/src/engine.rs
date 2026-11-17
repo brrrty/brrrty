@@ -134,6 +134,12 @@ impl Engine {
         self.globals.insert(name.to_string(), value);
     }
 
+    /// Whether a template can use the filter `name`: one added with
+    /// [`Engine::register_filter`] or one of Nunjucks's own.
+    pub fn has_filter(&self, name: &str) -> bool {
+        self.filters.contains_key(name) || crate::filters::is_builtin(name)
+    }
+
     /// Parses and compiles `source`. `name` names the template in errors.
     pub fn compile(&self, name: &str, source: &str) -> Result<Compiled, NunjucksError> {
         Ok(Compiled {

@@ -199,6 +199,22 @@ impl Engine {
         crate::parse_checked(template_name, source, Some(&check), &self.raw_block_names)
     }
 
+    /// Parses `source` without checking its filters, so every filter in
+    /// it can be listed: [`Engine::parse`] stops at the first unknown one.
+    /// Tags the embedder added still parse.
+    pub fn parse_unchecked(
+        &self,
+        template_name: &str,
+        source: &str,
+    ) -> Result<Template, LiquidError> {
+        crate::parse_checked(template_name, source, None, &self.raw_block_names)
+    }
+
+    /// Whether a filter named `name` is registered.
+    pub fn has_filter(&self, name: &str) -> bool {
+        self.filters.contains_key(name)
+    }
+
     /// Renders `t` with `data` as its variables.
     pub fn render(
         &self,
