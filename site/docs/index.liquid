@@ -1,12 +1,12 @@
 ---
 title: Docs
 description: Brrrty's documentation, from install to the edge cases.
-lead: Start with Getting started if you are moving a site over from 11ty. The rest is reference.
+lead: Getting started takes an existing 11ty site to Brrrty. The rest is reference.
 eleventyExcludeFromCollections: true
 ---
 <ul class="index-list">
 {%- for doc in collections.docs %}
   <li><a href="{{ doc.url }}"><span class="index-title">{{ doc.data.title }}</span><span class="index-summary">{{ doc.data.summary }}</span></a></li>
 {%- endfor %}
-  <li><a href="/changelog/"><span class="index-title">Changelog</span><span class="index-summary">What changed in each release, built from the repository's CHANGELOG.md.</span></a></li>
+  <li><a href="/changelog/"><span class="index-title">Changelog</span><span class="index-summary">What changed in each release.</span></a></li>
 </ul>

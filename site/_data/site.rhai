@@ -1,12 +1,9 @@
-// Site-wide data. `git_head()` reads the commit this build comes from.
-let commit = "";
-try { commit = git_head().sub_string(0, 7); } catch {}
-
+// Site-wide data.
 #{
     name: "Brrrty",
     url: "https://brrrty.com",
-    description: "Brrrty builds your 11ty site in Rust and writes the same files 11ty 3.1.8 writes, byte for byte.",
+    description: "Brrrty is a static site generator written in Rust. Start from your 11ty site: byte-compatible output in a fraction of the time.",
     repo: "https://github.com/brrrty/brrrty",
-    commit: commit,
+    author: #{ name: "Josh Sherman", url: "https://joshtronic.com/" },
     year: year(now()),
 }

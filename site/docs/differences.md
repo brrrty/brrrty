@@ -3,7 +3,7 @@ title: Differences from 11ty
 order: 5
 summary: What Brrrty does differently from 11ty 3.1.8, what it doesn't do yet, and why.
 description: Where Brrrty and 11ty 3.1.8 differ.
-lead: Where 11ty builds a page, Brrrty aims to write the same bytes. Everything on this page is about the edges, where it can't yet, or where it chooses to stop rather than guess.
+lead: Where Brrrty can't match 11ty 3.1.8 yet, and where it stops rather than guess.
 ---
 
 ## It refuses instead of guessing

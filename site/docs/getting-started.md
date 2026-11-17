@@ -3,7 +3,7 @@ title: Getting started
 order: 1
 summary: Install Brrrty, port an 11ty config to Rhai, build, serve, and check the output against 11ty's.
 description: Install Brrrty and move an existing 11ty site over to it.
-lead: Brrrty builds an existing 11ty project. Your templates, Markdown, layouts and JSON data stay as they are. What changes is the config, and any data file written in JavaScript.
+lead: Start from your existing 11ty site. Your templates, Markdown, layouts and JSON data stay as they are. What changes is the config, and any data file written in JavaScript.
 ---
 
 ## Install
@@ -80,7 +80,7 @@ config.add_collection("posts", |api| api.get_filtered_by_glob("./src/posts/*.md"
 
 The last expression is the object 11ty's config function returns. Every call is listed in the [configuration reference](/docs/configuration/).
 
-Keep `eleventy.config.js` next to it while you work. Once `brrrty.config.rhai` exists, Brrrty ignores the JavaScript file, so the two can live side by side and 11ty keeps working.
+Once `brrrty.config.rhai` exists, Brrrty ignores `eleventy.config.js`, so both can stay and 11ty keeps working.
 
 Rhai is not JavaScript, and a few things work differently: `7 / 2` is `3`, `+` won't mix strings and numbers, `if` needs a real boolean, and `#{ }` maps sort their keys. Brrrty has a helper for each of these; see [Rhai is not JavaScript](/docs/configuration/#rhai-is-not-javascript).
 
@@ -103,7 +103,7 @@ A page that uses data from a `.js` file with no port is refused with `data-js-un
 npm run build
 ```
 
-That runs `brrrty build`; `brrrty` on its own does the same. It writes the site into `_site` and prints one line, like this one from building this site:
+That runs `brrrty build`; `brrrty` on its own does the same. It writes the site into `_site` and prints one line:
 
 ```text
 Wrote 9 files, copied 6 files in 0.01 seconds (brrrty 0.0.10)
@@ -153,7 +153,7 @@ npm run serve
 
 ## 5. Check the output against 11ty
 
-The point of Brrrty is that the output is the same. Build with both and compare:
+Build with both and compare:
 
 ```sh
 npx @11ty/eleventy --output=_site-11ty

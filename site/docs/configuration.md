@@ -104,8 +104,6 @@ config.add_collection("byOrder", |api|
     api.get_filtered_by_tag("docs").sort(|a, b| a.data.order - b.data.order));
 ```
 
-This site's own sidebar is built with that collection.
-
 ## Data files
 
 Global data in `_data/name.rhai`, and template and folder data in `page.11tydata.rhai` and `folder/folder.11tydata.rhai`, are Rhai scripts. The last expression is the data. Folders nest keys as JSON files do: `_data/a/b.rhai` is `a.b`.

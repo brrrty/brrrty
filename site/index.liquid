@@ -1,21 +1,23 @@
 ---
 layout: base.njk
-description: Brrrty builds your 11ty site in Rust and writes the same files 11ty 3.1.8 writes, byte for byte, in about a third of the time.
+description: Brrrty is a static site generator written in Rust. It builds your existing 11ty site, with byte-compatible output, in a fraction of the time.
 ---
 {%- comment -%} The latest release, read from the changelog page at build time. {%- endcomment -%}
 {%- assign changelog = collections.all | where: "url", "/changelog/" | first -%}
 {%- assign release = changelog.templateContent | split: "<h2>" | slice: 1 | first | split: " - " | first -%}
 <div class="home">
   <section class="hero" aria-labelledby="claim">
-    <h1 id="claim">Your 11ty site, built in&nbsp;Rust. <span>Same bytes, in about a third of the&nbsp;time.</span></h1>
+    <div class="hero-main">
+      <h1 id="claim">Eleventy, but make it go&nbsp;brrr.</h1>
+      <p class="lede">Brrrty is a static site generator written in Rust. It builds your existing 11ty site, with byte-compatible output, in a fraction of the time. Templates, Markdown and data stay as they are; the config moves to Rhai.</p>
+    </div>
     <div class="hero-side">
-      <p class="lede">Brrrty is a static site generator that builds an existing 11ty project and writes the same files 11ty&nbsp;3.1.8 writes, byte for byte. Templates, Markdown and data stay where they are. The config moves from JavaScript to Rhai.</p>
       <div class="code install">
 <pre><code>npm i -D brrrty</code></pre>
       </div>
       <p class="install-note">Then <code>"build": "brrrty build"</code> in your <code>package.json</code> scripts. On macOS and Linux. Or, with Rust 1.89 or later, <code>cargo install brrrty</code>.</p>
       <p class="actions">
-        <a class="button" href="/docs/getting-started/">Move a site over</a>
+        <a class="button" href="/docs/getting-started/">Try it on your site</a>
         <a class="button button-quiet" href="/docs/differences/">What's different from 11ty</a>
       </p>
     </div>
@@ -53,37 +55,36 @@ description: Brrrty builds your 11ty site in Rust and writes the same files 11ty
     </ol>
     <div class="axis" aria-hidden="true"><span style="--i: 0">0</span><span style="--i: 1">1</span><span style="--i: 2">2</span><span style="--i: 3">3</span><span style="--i: 4">4 s</span></div>
     <figcaption>
-      <p class="match"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg> Output identical: 2,272 of 2,272 files, compared byte for byte on the GitLab runner.</p>
-      <p>Bars are drawn to scale. On first load, each one grows for as long as its build took.</p>
+      <p class="match"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg> 2,272 of 2,272 files match, compared file by file against 11ty&nbsp;3.1.8 output on the GitLab runner.</p>
     </figcaption>
   </figure>
 
   <section class="band" aria-labelledby="port">
     <div class="band-text">
       <h2 id="port">Port the config. Keep the rest.</h2>
-      <p>11ty is configured in JavaScript, which Brrrty doesn't run. The same calls go in <code>brrrty.config.rhai</code>, a small <a href="https://rhai.rs">Rhai</a> script: 11ty's method names in snake_case, with <code>config</code> for <code>eleventyConfig</code>. Your templates, Markdown and data don't change.</p>
+      <p>Brrrty doesn't run JavaScript, so the same calls go in <code>brrrty.config.rhai</code>, a small <a href="https://rhai.rs">Rhai</a> script: 11ty's method names in snake_case, with <code>config</code> for <code>eleventyConfig</code>.</p>
       <p><a class="more" href="/docs/getting-started/#1-port-the-config">Porting a config, step by step</a></p>
     </div>
     <div class="port">
       <div class="code">
         <p class="code-head">eleventy.config.js</p>
-<pre><code>module.exports = function (eleventyConfig) {
+{% highlight js %}module.exports = function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy("src/images");
-  eleventyConfig.addFilter("shout", (s) =&gt; s.toUpperCase() + "!");
-  eleventyConfig.addCollection("posts", (api) =&gt;
+  eleventyConfig.addFilter("shout", (s) => s.toUpperCase() + "!");
+  eleventyConfig.addCollection("posts", (api) =>
     api.getFilteredByGlob("./src/posts/*.md").reverse()
   );
   return { dir: { input: "src" } };
-};</code></pre>
+};{% endhighlight %}
       </div>
       <div class="code is-brrrty">
         <p class="code-head">brrrty.config.rhai</p>
-<pre><code>config.add_passthrough_copy("src/images");
+{% highlight rust %}config.add_passthrough_copy("src/images");
 config.add_filter("shout", |s| s.to_upper() + "!");
 config.add_collection("posts", |api|
     api.get_filtered_by_glob("./src/posts/*.md").reverse());
 
-#{ dir: #{ input: "src" } }</code></pre>
+#{ dir: #{ input: "src" } }{% endhighlight %}
       </div>
     </div>
   </section>
@@ -91,10 +92,10 @@ config.add_collection("posts", |api|
   <section class="band" aria-labelledby="does">
     <div class="band-text">
       <h2 id="does">What it does</h2>
-      <p>Version {{ release }}, and early. Try it on a copy of your site and compare the output with 11ty's before you rely on it.</p>
+      <p>Version {{ release }}, and early. Try it on a copy of your site and compare the output with 11ty's.</p>
     </div>
     <dl class="spec">
-      <div><dt>Output</dt><dd>The same files 11ty 3.1.8 writes, byte for byte. It is checked by building test sites with both and comparing every file.</dd></div>
+      <div><dt>Output</dt><dd>Byte-compatible with 11ty 3.1.8, checked by building test sites with both and comparing every file.</dd></div>
       <div><dt>Templates</dt><dd>Liquid, Nunjucks, Markdown and HTML in any mix, with 11ty's data cascade, layouts, pagination, permalinks and collections. <a href="/docs/templates/">Templates</a></dd></div>
       <div><dt>Config</dt><dd><code>brrrty.config.rhai</code>, shaped like <code>eleventyConfig</code>: filters, collections, global data, passthrough copy, and the RSS and syntax highlighting plugins. <a href="/docs/configuration/">Reference</a></dd></div>
       <div><dt>Refusals</dt><dd>Where it can't match 11ty exactly, it refuses that page, says why, and builds the rest. It never writes a page that might differ. <a href="/docs/differences/">What it refuses</a></dd></div>
@@ -106,14 +107,25 @@ config.add_collection("posts", |api|
     <h2 id="name">The name</h2>
     <div class="band-body">
       <p>Brrr + Eleventy = Brrrty. It's also a nod to Bertie, who holds the Guinness World Record for the fastest tortoise.</p>
-      <p>This site is built with Brrrty, from the same repository, on every change.</p>
     </div>
   </section>
 
   <section class="band band-small" aria-labelledby="built">
     <h2 id="built">How it was built</h2>
     <div class="band-body">
-      <p>Brrrty went from a written spec to running a real 2,272-file blog in about 33 hours, built by Josh Sherman with <a href="https://claude.com/claude-code">Claude Code</a>. Claude wrote the code and Josh steered. Every change got an independent review and a file-by-file comparison against real 11ty output before it merged. Total model cost: $765.</p>
+      <p>Everybody seems to be rewriting things in Rust lately, and I wanted to see what the fuss was about. So I picked the tool I use every day.</p>
+      <p>Brrrty went from a written spec to running a real 2,272-file blog in about 33 hours, built by <a href="{{ site.author.url }}">{{ site.author.name }}</a> with <a href="https://claude.com/claude-code">Claude Code</a>. Claude wrote the code and Josh steered. Every change got an independent review and a file-by-file comparison against real 11ty output before it merged. Total model cost: $765.</p>
+    </div>
+  </section>
+
+  <section class="band band-small" aria-labelledby="badge">
+    <h2 id="badge">Badge</h2>
+    <div class="band-body">
+      <p>An 88x31 button for sites built with Brrrty. Paste the HTML, or grab the <a href="/assets/88x31/brrrty.png">PNG</a>, the <a href="/assets/88x31/brrrty@2x.png">2x PNG</a> or the <a href="/assets/88x31/brrrty.svg">SVG</a>.</p>
+      <p class="badge"><img src="/assets/88x31/brrrty.png" srcset="/assets/88x31/brrrty@2x.png 2x" width="88" height="31" alt="Built with Brrrty"></p>
+      <div class="code code-wrap">
+{% highlight html %}<a href="https://brrrty.com/"><img src="https://brrrty.com/assets/88x31/brrrty.png" width="88" height="31" alt="Built with Brrrty"></a>{% endhighlight %}
+      </div>
     </div>
   </section>
 

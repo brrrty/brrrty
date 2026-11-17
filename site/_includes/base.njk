@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if title %}{{ title }} - {{ site.name }}{% else %}{{ site.name }}, a fast static site generator for 11ty sites{% endif %}</title>
+<title>{% if title %}{{ title }} - {{ site.name }}{% else %}{{ site.name }}, a fast static site generator in Rust{% endif %}</title>
 <meta name="description" content="{{ description or site.description }}">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="{{ site.url }}{{ page.url }}">
 <link rel="preload" href="/assets/fonts/host-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -46,8 +46,8 @@
 <footer class="foot">
   <div class="foot-inner">
     <p class="foot-mark">brrrty</p>
-    <p>MIT licensed. Brrrty ports and credits the work of many projects; see <a href="{{ site.repo }}/blob/main/NOTICE">NOTICE</a>.</p>
-    <p>This site is built with Brrrty{% if site.commit %} from <a href="{{ site.repo }}/commit/{{ site.commit }}"><code>{{ site.commit }}</code></a>{% endif %}.</p>
+    <p>MIT licensed. Third-party credits in <a href="{{ site.repo }}/blob/main/NOTICE">NOTICE</a>.</p>
+    <p>Made by <a href="{{ site.author.url }}">{{ site.author.name }}</a>.</p>
   </div>
 </footer>
 </body>

@@ -44,7 +44,7 @@ Autoescaping is on, and includes are looked up in `_includes`, then in the proje
 
 `slug`, `slugify`, `url` and `log` work in both languages. With `config.add_plugin("rss", ...)`, so do the feed plugin's filters: `htmlBaseUrl`, `addPathPrefixToFullUrl`, `eleventyFeedHasUrl`, `eleventyFeedSortByDate` and `eleventyFeedHead` everywhere, and `dateToRfc3339`, `dateToRfc822`, `getNewestCollectionItemDate`, `absoluteUrl` and `htmlToAbsoluteUrls` in Nunjucks, as in 11ty.
 
-11ty's `getCollectionItem`, `getPreviousCollectionItem`, `getNextCollectionItem`, `getCollectionItemIndex`, `inputPathToUrl` and `renderTransforms` aren't there yet. A page that uses one is refused with an unknown filter error. For previous and next links, loop over the collection and compare `url` to `page.url`; this site's docs pages do that.
+11ty's `getCollectionItem`, `getPreviousCollectionItem`, `getNextCollectionItem`, `getCollectionItemIndex`, `inputPathToUrl` and `renderTransforms` aren't there yet. A page that uses one is refused with an unknown filter error. For previous and next links, loop over the collection and compare `url` to `page.url`.
 
 Filters you add in `brrrty.config.rhai` work in both languages.
 

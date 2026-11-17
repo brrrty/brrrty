@@ -29,7 +29,7 @@ layout: base.njk
   <article class="prose">
     {%- if source %}
     {{ body | safe }}
-    <p class="source">This page is built from <a href="{{ site.repo }}/blob/main/{{ source }}">{{ source }}</a> in the repository each time the site is built.</p>
+    <p class="source">Source: <a href="{{ site.repo }}/blob/main/{{ source }}">{{ source }}</a></p>
     {%- else %}
     <h1>{{ title }}</h1>
     {% if lead %}<p class="lead">{{ lead | safe }}</p>{% endif %}
