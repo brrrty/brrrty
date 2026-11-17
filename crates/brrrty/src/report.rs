@@ -277,4 +277,87 @@ mod tests {
         let span = locate("\u{feff}{{ x }}\n", 1, 1).unwrap();
         assert_eq!(span.offset(), 3);
     }
+
+    #[test]
+    fn locate_clamps_to_the_line_and_misses_past_the_end() {
+        // Past the end of the line: an empty span at its end, never into the next line.
+        let span = locate("ab\ncd\n", 1, 9).unwrap();
+        assert_eq!((span.offset(), span.len()), (2, 0));
+        // Columns count characters, not bytes.
+        let span = locate("x\né!\r\n", 2, 2).unwrap();
+        assert_eq!((span.offset(), span.len()), (4, 1));
+        let span = locate("x\néz", 2, 1).unwrap();
+        assert_eq!((span.offset(), span.len()), (2, 2));
+        assert!(locate("one line", 2, 1).is_none());
+        assert!(locate("", 1, 1).is_none());
+    }
+
+    /// Without the file to show, the location goes in front of the message, once.
+    #[test]
+    fn a_problem_whose_file_is_gone_names_its_location_in_the_message() {
+        let root = Path::new("/nonexistent-brrrty-root");
+        let at = Problem::error(codes::TEMPLATE_UNSUPPORTED, "boom")
+            .with_path("src/a.md")
+            .at(3, 4);
+        assert!(render_problem(&at, root, false).contains("src/a.md:3:4: boom"));
+        let mut line_only =
+            Problem::error(codes::TEMPLATE_UNSUPPORTED, "boom").with_path("src/a.md");
+        line_only.line = Some(7);
+        assert!(render_problem(&line_only, root, false).contains("src/a.md:7: boom"));
+        let path_only = Problem::warning(codes::TEMPLATE_UNSUPPORTED, "boom").with_path("src/a.md");
+        assert!(render_problem(&path_only, root, false).contains("src/a.md: boom"));
+        let bare = Problem::error(codes::TEMPLATE_UNSUPPORTED, "boom");
+        let text = render_problem(&bare, root, false);
+        assert!(text.contains("boom") && !text.contains(": boom"), "{text}");
+    }
+
+    #[test]
+    fn colored_output_carries_escape_codes_and_plain_output_none() {
+        let p = Problem::error(codes::TEMPLATE_UNSUPPORTED, "boom");
+        let root = Path::new(".");
+        assert!(render_problem(&p, root, true).contains('\u{1b}'));
+        assert!(!render_problem(&p, root, false).contains('\u{1b}'));
+    }
+
+    #[test]
+    fn the_counts_line_is_singular_for_one_and_lists_notes_only_when_there_are_some() {
+        let root = Path::new(".");
+        let last = |ps: &[Problem]| {
+            problems_text(ps, root, false)
+                .lines()
+                .last()
+                .unwrap()
+                .to_string()
+        };
+        let e = || Problem::error(codes::TEMPLATE_UNSUPPORTED, "e");
+        let w = || Problem::warning(codes::TEMPLATE_UNSUPPORTED, "w");
+        let n = || Problem::info(codes::TEMPLATE_UNSUPPORTED, "n");
+        assert_eq!(last(&[e(), w()]), "1 error, 1 warning");
+        assert_eq!(last(&[e(), e(), w(), w()]), "2 errors, 2 warnings");
+        assert_eq!(last(&[n()]), "0 errors, 0 warnings, 1 note");
+        assert_eq!(last(&[w(), n(), n()]), "0 errors, 1 warning, 2 notes");
+    }
+
+    #[test]
+    fn unsupported_templates_get_one_issue_link_per_extension() {
+        let root = Path::new(".");
+        let u = |path: &str| Problem::error(codes::TEMPLATE_UNSUPPORTED, "u").with_path(path);
+        let text = problems_text(
+            &[u("a.hbs"), u("b.hbs"), u("c.11ty.js"), u("d.webc")],
+            root,
+            false,
+        );
+        let links: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("Report it or help build it: "))
+            .collect();
+        assert_eq!(links.len(), 3, "{text}");
+        assert!(
+            links[0].contains("Unsupported%3A%20.11ty.js"),
+            "{}",
+            links[0]
+        );
+        assert!(links[1].contains("Unsupported%3A%20.hbs"), "{}", links[1]);
+        assert!(links[2].contains("Unsupported%3A%20.webc"), "{}", links[2]);
+    }
 }

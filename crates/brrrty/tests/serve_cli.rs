@@ -344,3 +344,42 @@ fn bad_flags_are_a_usage_error() {
     let (status, _, _) = serve.wait();
     assert_eq!(status.code(), Some(2));
 }
+
+#[test]
+fn a_host_for_every_interface_prints_a_url_a_browser_can_open() {
+    let dir = site(&[("src/index.md", "# Hi\n")]);
+    let mut serve = Serve::start(
+        dir.path(),
+        &["--input", "src", "--port", "0", "--host", "0.0.0.0"],
+    );
+    // `http://0.0.0.0:<port>/` is not something a browser opens; the port still serves.
+    let port = serve.port();
+    assert!(get_ok(port));
+    serve.signal(libc::SIGINT);
+    let (status, _, err) = serve.wait();
+    assert_eq!(status.code(), Some(0), "{err}");
+}
+
+#[test]
+fn a_host_that_does_not_resolve_exits_1_and_cleans_up() {
+    let dir = site(&[("src/index.md", "# Hi\n")]);
+    let serve = Serve::start(
+        dir.path(),
+        &[
+            "--input",
+            "src",
+            "--port",
+            "0",
+            "--host",
+            "no-such-host.invalid",
+        ],
+    );
+    let (status, out, err) = serve.wait();
+    assert_eq!(status.code(), Some(1), "{out:?} {err}");
+    assert!(err.contains("Brrrty could not start the server"), "{err}");
+    assert!(err.contains("no-such-host.invalid"), "{err}");
+    assert!(!out.iter().any(|l| l.starts_with("Server at")), "{out:?}");
+    // The first build's pages are kept; only the staging folder goes.
+    assert!(dir.path().join("_site/index.html").is_file());
+    assert!(!dir.path().join("_site/.brrrty-serve").exists());
+}
