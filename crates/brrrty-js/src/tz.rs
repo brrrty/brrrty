@@ -72,10 +72,25 @@ fn offset_seconds(tz: Tz, ms: f64) -> i64 {
     match tz {
         Tz::Utc => 0,
         Tz::Local => Local
-            .timestamp_millis_opt(ms as i64)
+            .timestamp_millis_opt(in_chrono_range(ms as i64))
             .single()
             .map_or(0, |d| i64::from(d.offset().fix().local_minus_utc())),
     }
+}
+
+/// `ms` moved by whole 400-year cycles to within about 250,000 years of
+/// 1970, which chrono can look up. The calendar repeats every 400 years,
+/// and so do the zone's rules that far out (the last rule, or the local
+/// mean time before the first), so the offset is the same; JavaScript's
+/// range reaches 275,760.
+fn in_chrono_range(ms: i64) -> i64 {
+    const CYCLE: i64 = 146_097 * 86_400_000;
+    const LIMIT: i64 = 7_800_000_000_000_000;
+    if ms.abs() <= LIMIT {
+        return ms;
+    }
+    let cycles = (ms.abs() - LIMIT) / CYCLE + 1;
+    ms - ms.signum() * cycles * CYCLE
 }
 
 /// Broken-down time of the instant `ms` in `tz`.
@@ -124,6 +139,88 @@ pub fn local_to_utc(tz: Tz, local_ms: f64) -> f64 {
         (false, false) => before,
     };
     local_ms - offset as f64 * 1000.0
+}
+
+/// `new Date(year, month, day, hours, minutes, seconds, ms)` with two to
+/// seven arguments, already numbers: a wall-clock time in `tz`, as
+/// milliseconds since 1970, or `NaN`. Missing arguments are day 1 and 0.
+/// Fields roll over as in JavaScript (month 12 is January of the next
+/// year, day 0 the last day of the month before), fractions are dropped,
+/// and a whole year from 0 to 99 means 1900 to 1999.
+pub fn make_date(tz: Tz, args: &[f64]) -> f64 {
+    let get = |i: usize, default: f64| args.get(i).copied().unwrap_or(default);
+    let mut year = get(0, f64::NAN);
+    if year.is_finite() {
+        let y = year.trunc();
+        if (0.0..=99.0).contains(&y) {
+            year = 1900.0 + y;
+        }
+    }
+    let day = make_day(year, get(1, 0.0), get(2, 1.0));
+    let time = make_time(get(3, 0.0), get(4, 0.0), get(5, 0.0), get(6, 0.0));
+    let local = day * MS_PER_DAY + time;
+    // V8 gives up on a local time well outside the range before looking
+    // up the zone.
+    if !local.is_finite() || local.abs() > MAX_TIME + 10.0 * MS_PER_DAY {
+        return f64::NAN;
+    }
+    time_clip(local_to_utc(tz, local))
+}
+
+/// The spec's `TimeClip`: `NaN` outside 8.64e15 ms, else whole ms.
+pub fn time_clip(t: f64) -> f64 {
+    if !t.is_finite() || t.abs() > MAX_TIME {
+        f64::NAN
+    } else {
+        t.trunc() + 0.0
+    }
+}
+
+/// The spec's `MakeDay`, with V8's limits on the year and month.
+fn make_day(year: f64, month: f64, date: f64) -> f64 {
+    if !year.is_finite() || !month.is_finite() || !date.is_finite() {
+        return f64::NAN;
+    }
+    let (y, m, dt) = (year.trunc(), month.trunc(), date.trunc());
+    if !(-1_000_000.0..=1_000_000.0).contains(&y) || !(-10_000_000.0..=10_000_000.0).contains(&m) {
+        return f64::NAN;
+    }
+    let ym = y as i64 + (m as i64).div_euclid(12);
+    let mn = (m as i64).rem_euclid(12);
+    days_from_civil(ym, mn + 1, 1) as f64 + dt - 1.0
+}
+
+/// The spec's `MakeTime`.
+fn make_time(h: f64, min: f64, s: f64, ms: f64) -> f64 {
+    if !h.is_finite() || !min.is_finite() || !s.is_finite() || !ms.is_finite() {
+        return f64::NAN;
+    }
+    h.trunc() * 3_600_000.0 + min.trunc() * 60_000.0 + s.trunc() * 1000.0 + ms.trunc()
+}
+
+/// `Date.prototype.toISOString()`, or `None` for an invalid date (where
+/// JavaScript throws a `RangeError`, "Invalid time value"). A year outside
+/// 0 to 9999 has a sign and six digits.
+pub fn iso_string(ms: f64) -> Option<String> {
+    let f = fields(Tz::Utc, ms)?;
+    let year = if (0..=9999).contains(&f.year) {
+        format!("{:04}", f.year)
+    } else {
+        format!(
+            "{}{:06}",
+            if f.year < 0 { '-' } else { '+' },
+            f.year.unsigned_abs()
+        )
+    };
+    Some(format!(
+        "{year}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        f.month0 + 1,
+        f.day,
+        f.hour,
+        f.minute,
+        f.second,
+        f.millis
+    ))
 }
 
 /// The zone the process runs in, as `TZ` or `/etc/localtime` names it.

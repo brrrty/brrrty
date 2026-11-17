@@ -1597,29 +1597,9 @@ fn date_method(this: &Val, ms: f64, name: &str, ops: Ops) -> R<Val> {
         "getUTCSeconds" => num(utc(), |f| f64::from(f.second)),
         "getUTCMilliseconds" => num(utc(), |f| f64::from(f.millis)),
         "toString" => Ok(Val::str(brrrty_js::tz::date_to_string(ops.tz, ms))),
-        "toISOString" | "toJSON" => {
-            let Some(f) = utc() else {
-                return Err(js_err("RangeError", "Invalid time value"));
-            };
-            let year = if (0..=9999).contains(&f.year) {
-                format!("{:04}", f.year)
-            } else {
-                format!(
-                    "{}{:06}",
-                    if f.year < 0 { '-' } else { '+' },
-                    f.year.unsigned_abs()
-                )
-            };
-            Ok(Val::str(format!(
-                "{year}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-                f.month0 + 1,
-                f.day,
-                f.hour,
-                f.minute,
-                f.second,
-                f.millis
-            )))
-        }
+        "toISOString" | "toJSON" => brrrty_js::tz::iso_string(ms)
+            .map(Val::str)
+            .ok_or_else(|| js_err("RangeError", "Invalid time value")),
         _ if name.starts_with("set") => Err(unsupported(format!(
             "`{name}()` would change a date from the data"
         ))
