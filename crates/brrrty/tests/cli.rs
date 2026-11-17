@@ -331,6 +331,31 @@ fn a_config_error_stops_before_building() {
     assert!(!d.path().join("_site").exists());
 }
 
+/// A `TZ` that names no zone in the bundled tz data stops the build: Node
+/// would quietly use UTC or the system zone, so local dates could differ.
+#[test]
+fn a_tz_that_names_no_zone_is_an_error() {
+    let d = site(&[("a.md", "a\n")]);
+    for tz in ["America/Chigaco", "EST5EDT,M3.2.0,M11.1.0"] {
+        let o = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+            .current_dir(d.path())
+            .env("TZ", tz)
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(1));
+        let err = stderr(&o);
+        assert!(err.contains(codes::TZ_INVALID), "{err}");
+        assert!(err.contains(&format!("TZ is `{tz}`")), "{err}");
+        assert!(!d.path().join("_site").exists());
+    }
+    let o = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .current_dir(d.path())
+        .env("TZ", "asia/tokyo")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+}
+
 #[test]
 fn a_bad_source_date_epoch_is_an_error() {
     let d = site(&[("a.md", "a\n")]);

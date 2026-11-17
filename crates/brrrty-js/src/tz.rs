@@ -1,15 +1,20 @@
 //! Time zones as JavaScript sees them: broken-down time, the offset, the
 //! zone's id and its long name.
 //!
-//! `Tz::Utc` is exact. `Tz::Local` takes the offsets and wall-clock time
-//! from the operating system (through `chrono::Local`, which honors `TZ`).
-//! The two things the system cannot give are the zone's id (LiquidJS's `%Z` prints
-//! it) and its English long name (`Date.prototype.toString` prints it in
-//! parentheses). Node gets those from ICU, so they come from a table
-//! generated from Node (`src/zones.rs`, made by `tools/gen-zones.mjs`). See [`long_name`] for what is
-//! printed when the zone or the offset is not in it.
+//! `Tz::Utc` is exact. `Tz::Local` is the zone `TZ` (or `/etc/localtime`)
+//! names, with offsets from the tz database bundled into Brrrty: release
+//! [`TZDATA_VERSION`], the one Node 26.2.0 ships (`process.versions.tz`).
+//! The operating system's tz data is never read, so a machine with older
+//! or newer data gives the same pages. A `TZ` that names no zone in that
+//! data is refused ([`check_local`]).
+//!
+//! The zone's id (LiquidJS's `%Z` prints it) and its English long name
+//! (`Date.prototype.toString` prints it in parentheses) come from a table
+//! generated from Node (`src/zones.rs`, made by `tools/gen-zones.mjs`).
+//! See [`long_name`] for what is printed when the zone or the offset is
+//! not in it.
 
-use chrono::{Local, Offset, TimeZone};
+use std::sync::OnceLock;
 
 use crate::zones::{PROFILES, ZONE_IDS};
 
@@ -67,30 +72,133 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// The tz database release bundled into Brrrty (`jiff-tzdb` 0.1.7): the
+/// one Node 26.2.0 ships.
+pub const TZDATA_VERSION: &str = "2026b";
+
+/// A zone from the bundled tz database.
+pub struct Zone {
+    /// The name as the tz database spells it.
+    pub name: &'static str,
+    rules: ::tz::TimeZone,
+}
+
+impl Zone {
+    /// The zone called `name` (any case), if the bundled data has it.
+    pub fn named(name: &str) -> Option<&'static Zone> {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        static CACHE: OnceLock<Mutex<HashMap<&'static str, &'static Zone>>> = OnceLock::new();
+        let (canonical, bytes) = jiff_tzdb::get(name)?;
+        let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
+        if let Some(z) = cache.get(canonical) {
+            return Some(z);
+        }
+        let rules = ::tz::TimeZone::from_tz_data(bytes).ok()?;
+        let zone: &'static Zone = Box::leak(Box::new(Zone {
+            name: canonical,
+            rules,
+        }));
+        cache.insert(canonical, zone);
+        Some(zone)
+    }
+
+    /// The UTC offset at the instant `ms`, in seconds east.
+    pub fn offset_seconds(&self, ms: f64) -> i64 {
+        let secs = (ms / 1000.0).floor() as i64;
+        self.rules
+            .find_local_time_type(in_rule_range(secs))
+            .map_or(0, |t| i64::from(t.ut_offset()))
+    }
+}
+
+/// `secs` moved by whole 400-year cycles to within about 250,000 years of
+/// 1970, where the rules can be evaluated. The calendar repeats every 400
+/// years, and so do the zone's rules that far out (the last rule, or the
+/// local mean time before the first), so the offset is the same;
+/// JavaScript's range reaches 275,760.
+fn in_rule_range(secs: i64) -> i64 {
+    const CYCLE: i64 = 146_097 * 86_400;
+    const LIMIT: i64 = 7_800_000_000_000;
+    if secs.abs() <= LIMIT {
+        return secs;
+    }
+    let cycles = (secs.abs() - LIMIT) / CYCLE + 1;
+    secs - secs.signum() * cycles * CYCLE
+}
+
+/// The local zone, or why it can't be used. Read once per process.
+fn local_zone() -> Result<&'static Zone, &'static str> {
+    static LOCAL: OnceLock<Result<&'static Zone, String>> = OnceLock::new();
+    LOCAL
+        .get_or_init(|| {
+            resolve_local(
+                std::env::var("TZ").ok().as_deref(),
+                std::path::Path::new("/etc/localtime"),
+            )
+        })
+        .as_ref()
+        .map(|z| *z)
+        .map_err(String::as_str)
+}
+
+/// Whether local time can be used: `Err` says why not, naming `TZ` or
+/// `/etc/localtime`. Builds check this before they start, so a page is
+/// never written with a zone guessed.
+pub fn check_local() -> Result<(), String> {
+    local_zone().map(|_| ()).map_err(str::to_string)
+}
+
+/// The zone `TZ` names, or `/etc/localtime` when `TZ` is unset, in the
+/// bundled data.
+fn resolve_local(tz: Option<&str>, localtime: &std::path::Path) -> Result<&'static Zone, String> {
+    let utc = || Zone::named("UTC").ok_or_else(|| "the bundled tz data has no UTC".to_string());
+    match tz {
+        Some(raw) => {
+            let name = raw.strip_prefix(':').unwrap_or(raw);
+            if name.is_empty() {
+                // Node treats an empty TZ as UTC.
+                return utc();
+            }
+            let name = match name.strip_prefix('/') {
+                Some(_) => name.split_once("zoneinfo/").map_or("", |(_, z)| z),
+                None => name,
+            };
+            Zone::named(name).ok_or_else(|| {
+                format!(
+                    "TZ is `{raw}`, which isn't a time zone in Brrrty's tz data ({TZDATA_VERSION}, Node 26's). \
+                     Node would quietly use UTC or the system zone instead. Set TZ to a zone name such as \
+                     America/Chicago, or unset it"
+                )
+            })
+        }
+        None => match std::fs::read_link(localtime) {
+            Ok(link) => {
+                let link = link.to_string_lossy();
+                let name = link.split_once("zoneinfo/").map_or("", |(_, z)| z);
+                Zone::named(name).ok_or_else(|| {
+                    format!(
+                        "/etc/localtime points to `{link}`, which isn't a time zone in Brrrty's tz data \
+                         ({TZDATA_VERSION}). Set TZ to a zone name such as America/Chicago"
+                    )
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => utc(),
+            Err(_) => Err(format!(
+                "Brrrty can't tell which time zone {} is (it isn't a link into a zoneinfo folder). \
+                 Set TZ to a zone name such as America/Chicago",
+                localtime.display()
+            )),
+        },
+    }
+}
+
 /// The UTC offset of `tz` at the instant `ms`, in seconds east.
 fn offset_seconds(tz: Tz, ms: f64) -> i64 {
     match tz {
         Tz::Utc => 0,
-        Tz::Local => Local
-            .timestamp_millis_opt(in_chrono_range(ms as i64))
-            .single()
-            .map_or(0, |d| i64::from(d.offset().fix().local_minus_utc())),
+        Tz::Local => local_zone().map_or(0, |z| z.offset_seconds(ms)),
     }
-}
-
-/// `ms` moved by whole 400-year cycles to within about 250,000 years of
-/// 1970, which chrono can look up. The calendar repeats every 400 years,
-/// and so do the zone's rules that far out (the last rule, or the local
-/// mean time before the first), so the offset is the same; JavaScript's
-/// range reaches 275,760.
-fn in_chrono_range(ms: i64) -> i64 {
-    const CYCLE: i64 = 146_097 * 86_400_000;
-    const LIMIT: i64 = 7_800_000_000_000_000;
-    if ms.abs() <= LIMIT {
-        return ms;
-    }
-    let cycles = (ms.abs() - LIMIT) / CYCLE + 1;
-    ms - ms.signum() * cycles * CYCLE
 }
 
 /// Broken-down time of the instant `ms` in `tz`.
@@ -460,6 +568,51 @@ mod tests {
             Some("Asia/Tokyo")
         );
         assert_eq!(zone_key(Some(""), &missing), None);
+    }
+
+    #[test]
+    fn the_local_zone_comes_from_the_bundled_data_or_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("localtime");
+        let name = |tz: Option<&str>, lt: &std::path::Path| resolve_local(tz, lt).map(|z| z.name);
+        assert_eq!(name(None, &missing), Ok("UTC"));
+        assert_eq!(name(Some(""), &missing), Ok("UTC"));
+        assert_eq!(name(Some(":Asia/Tokyo"), &missing), Ok("Asia/Tokyo"));
+        assert_eq!(name(Some("asia/tokyo"), &missing), Ok("Asia/Tokyo"));
+        assert_eq!(name(Some("US/Pacific"), &missing), Ok("US/Pacific"));
+        assert_eq!(
+            name(Some("/usr/share/zoneinfo/Europe/Paris"), &missing),
+            Ok("Europe/Paris")
+        );
+        // Typos, stray spaces and POSIX rules: Node would quietly use UTC
+        // or the system zone, so Brrrty refuses, naming TZ.
+        for bad in [
+            "Foo/Bar",
+            "America/Chigaco",
+            "America/Chicago ",
+            "EST5EDT,M3.2.0,M11.1.0",
+            "CET-1CEST,M3.5.0,M10.5.0/3",
+            "<+0330>-3:30",
+            "JST-9",
+            "/etc/localtime",
+        ] {
+            let why = name(Some(bad), &missing).unwrap_err();
+            assert!(why.contains(&format!("TZ is `{bad}`")), "{why}");
+        }
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink("/var/db/timezone/zoneinfo/America/Edmonton", &link).unwrap();
+        assert_eq!(name(None, &link), Ok("America/Edmonton"));
+        let copy = dir.path().join("copy");
+        std::fs::write(&copy, b"TZif").unwrap();
+        assert!(name(None, &copy).unwrap_err().contains("Set TZ"));
+    }
+
+    #[test]
+    fn offsets_are_node_26_s_not_the_system_s() {
+        // tz 2026c makes Alberta UTC-6 all year from 2026-11-01; Node 26.2.0
+        // ships 2026b, where 2026-11-17 is still UTC-7.
+        let edmonton = Zone::named("America/Edmonton").unwrap();
+        assert_eq!(edmonton.offset_seconds(1_794_916_800_000.0), -7 * 3600);
     }
 
     #[test]

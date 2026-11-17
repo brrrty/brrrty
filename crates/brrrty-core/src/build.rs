@@ -1542,6 +1542,14 @@ fn remove_serve_staging(out: &Path) -> Option<Problem> {
 const RENDER_STACK: usize = 16 * 1024 * 1024;
 
 /// Build the site described by `opts`.
+/// The local time zone can't be used: `TZ` names no zone in the bundled
+/// tz data, or `/etc/localtime` can't be read as one.
+pub fn tz_problem(message: String) -> Problem {
+    Problem::error(codes::TZ_INVALID, message).with_help(
+        "set TZ to a zone name such as America/Chicago, the zone your 11ty builds run in",
+    )
+}
+
 pub fn build(opts: &BuildOptions, markdown: &dyn MarkdownRenderer) -> BuildReport {
     build_with(opts, markdown, Mode::default())
 }
@@ -1654,6 +1662,10 @@ fn build_once(
             Problem::error(codes::SOURCE_DATE_EPOCH_INVALID, message)
                 .with_help("set it to whole seconds since 1970, or unset it to use the clock"),
         );
+        return finish(report, strict, start);
+    }
+    if let Err(message) = brrrty_js::tz::check_local() {
+        report.problems.push(tz_problem(message));
         return finish(report, strict, start);
     }
     report.problems.extend(opts.config.problems.iter().cloned());

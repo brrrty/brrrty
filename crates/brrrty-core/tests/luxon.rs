@@ -33,15 +33,10 @@ fn matches_luxon() {
         n,
         refused.len()
     );
-    // Only what the module docs list is refused: a zone name before 1970, or an instant
-    // chrono's calendar can't hold.
+    // Only what the module docs list is refused: a zone name before 1970.
     let unexpected: Vec<_> = refused
         .iter()
-        .filter(|(ms, e)| {
-            !((e.contains("before 1970") && *ms < 0.0)
-                || (e.contains("outside the range") && ms.abs() > 8.0e15 / 40.0)
-                || (e.contains("from 2100") && *ms >= 4_102_444_800_000.0))
-        })
+        .filter(|(ms, e)| !(e.contains("before 1970") && *ms < 0.0))
         .collect();
     assert!(unexpected.is_empty(), "unexpected refusals: {unexpected:?}");
     assert!(
@@ -79,12 +74,15 @@ fn invalid_input_is_invalid_datetime() {
     assert_eq!(luxon_format(0.0, "", "utc", "en").unwrap(), "");
 }
 
+/// The bundled tz data has each zone's rules to the end of JavaScript's
+/// range. Node: `DateTime.fromMillis(4120000000000, { zone }).toFormat("HH:mm ZZ")`.
 #[test]
-fn zones_with_dst_are_refused_from_2100() {
+fn zones_with_dst_work_after_2099() {
     let july_2100 = 4_120_000_000_000.0;
-    let e = luxon_format(july_2100, "HH:mm", "America/New_York", "en-US").unwrap_err();
-    assert!(e.contains("from 2100"), "{e}");
-    // 2099 is fine, and so are zones with no DST, fixed offsets and UTC.
+    assert_eq!(
+        luxon_format(july_2100, "HH:mm ZZ", "America/New_York", "en-US").unwrap(),
+        "00:26 -04:00"
+    );
     assert_eq!(
         luxon_format(4_088_000_000_000.0, "HH:mm ZZ", "America/New_York", "en-US").unwrap(),
         "15:33 -04:00"

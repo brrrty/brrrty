@@ -260,6 +260,7 @@ fn epoch_problem(message: String) -> Problem {
 /// asks for. `Ok(None)` when there is no config file.
 pub fn load(root: &Path) -> Result<Option<SiteConfig>, Vec<Problem>> {
     let clock = Clock::from_env().map_err(|p| vec![p])?;
+    brrrty_js::tz::check_local().map_err(|m| vec![brrrty_core::tz_problem(m)])?;
     load_with(root, clock)
 }
 

@@ -66,6 +66,7 @@ pub mod codes {
     pub const SERVE_STAGING_LEFT: &str = "serve-staging-left";
     pub const SOURCE_DATE_EPOCH_INVALID: &str = "source-date-epoch-invalid";
     pub const TAGS_INVALID: &str = "tags-invalid";
+    pub const TZ_INVALID: &str = "tz-invalid";
     pub const SYMLINK_BROKEN: &str = "symlink-broken";
     pub const SYMLINK_LOOP: &str = "symlink-loop";
     pub const SYNTAX_HIGHLIGHT_FAILED: &str = "syntax-highlight-failed";

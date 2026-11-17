@@ -14,7 +14,11 @@ exclude = ["tools"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
-icu_collator = "2.4.0"
+icu_collator = "=2.4.0"
+icu_collator_data = "=2.4.0"
+icu_properties = "=2.4.0"
+jiff-tzdb = "=0.1.7"
+tz-rs = "=0.7.3"
 indexmap = "2"
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 unicode-normalization = "0.1.26"
