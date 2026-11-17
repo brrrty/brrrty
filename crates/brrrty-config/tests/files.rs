@@ -605,3 +605,16 @@ fn option_values_are_checked() {
     );
     assert!(e.contains("are the same csv-parse option"), "{e}");
 }
+
+/// A symlink with an absolute target is refused even when the target is
+/// inside the project: the sandbox resolves from the project's handle and
+/// can't follow `/`. Node reads it; the port uses a relative symlink.
+#[cfg(unix)]
+#[test]
+fn an_absolute_symlink_is_refused_even_into_the_project() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "data/a.txt", "x");
+    std::os::unix::fs::symlink(t.path().join("data/a.txt"), t.path().join("data/abs")).unwrap();
+    let e = refused(t.path(), r#"read_text("data/abs")"#);
+    assert!(e.contains("leads outside the project folder"), "{e}");
+}
