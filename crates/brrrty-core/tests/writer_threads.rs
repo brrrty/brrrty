@@ -159,7 +159,10 @@ fn a_copy_fails_mid_batch(root: &Path) -> String {
     summary(root, &r)
 }
 
-/// Copies keep the source's modification time, as 11ty's copy does.
+/// On macOS, copies are APFS clones, which keep the source's modification
+/// time, as 11ty's copy does. On Linux `fs::copy` gives the copy the time it
+/// was made, which is what Brrrty has always done there.
+#[cfg(target_os = "macos")]
 fn mtimes_are_kept(root: &Path) -> String {
     write(root, "src/index.md", "hi");
     for i in 0..50 {
@@ -195,6 +198,7 @@ fn run(name: &str) -> String {
         "case" => names_differing_by_case(&root),
         #[cfg(unix)]
         "fails_mid_batch" => a_copy_fails_mid_batch(&root),
+        #[cfg(target_os = "macos")]
         "mtimes" => mtimes_are_kept(&root),
         _ => panic!("unknown scenario {name}"),
     }
@@ -265,6 +269,7 @@ fn a_copy_failing_mid_batch_matches_one_thread() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn mtimes_are_kept_on_the_writer_pool() {
     same_either_way("mtimes_are_kept_on_the_writer_pool", "mtimes");
 }

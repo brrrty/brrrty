@@ -211,19 +211,20 @@ fn a_burst_of_twenty_edits_inside_the_debounce_makes_one_build() {
             live.page() == "<main><p>v20</p>\n</main>"
         });
         // Count every build the burst caused, including any still to come.
-        let mut builds = 0;
-        while live.rebuilds.recv_timeout(QUIET).is_ok() {
-            builds += 1;
+        let mut seen = Vec::new();
+        while let Ok(r) = live.rebuilds.recv_timeout(QUIET) {
+            seen.push(r.changed_paths);
         }
+        let builds = seen.len();
         // Every save landed well inside the 150 ms window, so the burst is one build. Only
         // a machine so loaded that two saves were 100 ms apart may split it, and then
         // into no more than two.
         if widest < Duration::from_millis(100) {
-            assert_eq!(builds, 1, "widest gap {widest:?}");
+            assert_eq!(builds, 1, "widest gap {widest:?}, changed: {seen:?}");
         } else {
             assert!(
                 (1..=2).contains(&builds),
-                "{builds} builds, widest gap {widest:?}"
+                "{builds} builds, widest gap {widest:?}, changed: {seen:?}"
             );
         }
         assert_eq!(live.page(), "<main><p>v20</p>\n</main>");
