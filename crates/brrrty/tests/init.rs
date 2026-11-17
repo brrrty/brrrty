@@ -126,7 +126,7 @@ fn sets_up_a_cjs_site() {
     }
     let text = stdout(&out);
     assert!(
-        text.contains("Wrote package.json and brrrty.config.rhai."),
+        text.contains("Wrote brrrty.config.rhai and package.json."),
         "{text}"
     );
     assert!(text.contains("brrrty.config.rhai has 2 TODOs"), "{text}");
@@ -199,7 +199,7 @@ fn leaves_scripts_that_dont_run_eleventy() {
     assert!(pkg.contains("\"build\": \"npm-run-all build:*\",\n    \"build:site\": \"eleventy\",\n    \"start\": \"brrrty serve\"\n"), "{pkg}");
     let text = stdout(&out);
     assert!(
-        text.contains("scripts.build runs \"npm-run-all build:*\", which isn't 11ty itself, so Brrrty left it alone."),
+        text.contains("scripts.build runs \"npm-run-all build:*\", which isn't an 11ty command, so Brrrty left it alone."),
         "{text}"
     );
     assert!(text.contains("scripts.build:site runs 11ty"), "{text}");
@@ -443,6 +443,153 @@ fn ported_fixtures_match_eleventy() {
         assert!(
             compared.iter().any(|n| n == must),
             "{must} wasn't compared: {compared:?}"
+        );
+    }
+}
+
+#[test]
+fn compound_scripts_are_left_with_advice() {
+    let src = "{\n  \"scripts\": {\n    \"build\": \"npm run css && eleventy && npm run pagefind\",\n    \"start\": \"eleventy --serve\"\n  },\n  \"devDependencies\": { \"@11ty/eleventy\": \"3\" }\n}\n";
+    let dir = site(&[("package.json", src)]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let pkg = read(dir.path(), "package.json");
+    assert!(pkg.contains("\"build\": \"npm run css && eleventy && npm run pagefind\",\n    \"start\": \"brrrty serve\",\n    \"start:11ty\": \"eleventy --serve\""), "{pkg}");
+    let text = stdout(&out);
+    assert!(text.contains("scripts.build runs 11ty as one step of \"npm run css && eleventy && npm run pagefind\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.build:11ty (to compare with 11ty), then replace `eleventy` in scripts.build with `brrrty build`."), "{text}");
+    // No `build:11ty` to run, so the comparison runs 11ty directly.
+    assert!(
+        text.contains("npx @11ty/eleventy --output=_site-11ty"),
+        "{text}"
+    );
+}
+
+#[test]
+fn keeps_a_bom_in_package_json() {
+    let src = "\u{feff}{\n  \"devDependencies\": {\n    \"@11ty/eleventy\": \"3\"\n  }\n}\n";
+    let dir = site(&[("package.json", src)]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let pkg = read(dir.path(), "package.json");
+    assert!(
+        pkg.starts_with(
+            "\u{feff}{\n  \"devDependencies\": {\n    \"@11ty/eleventy\": \"3\",\n    \"brrrty\""
+        ),
+        "{pkg:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn never_reads_special_files_or_outside_the_folder() {
+    use std::time::{Duration, Instant};
+    let run_bounded = |root: &Path, args: &[&str]| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+            .args(args)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if started.elapsed() > Duration::from_secs(20) {
+                let _ = child.kill();
+                panic!("brrrty {args:?} hung");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        child.wait_with_output().unwrap()
+    };
+
+    // A FIFO and /dev/zero as package.json: no hang, no huge read.
+    let fifo = tempfile::tempdir().unwrap();
+    let made = Command::new("mkfifo")
+        .arg(fifo.path().join("package.json"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    fs::write(fifo.path().join("index.md"), "# Hi\n").unwrap();
+    // The bare command's check. (The build itself reads package.json for
+    // `pkg`, which is older code and outside this test.)
+    let hint_in = |dir: PathBuf| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(brrrty::init::should_hint(&dir)));
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("should_hint hung")
+    };
+    assert!(!hint_in(fifo.path().to_path_buf()));
+    let out = run_bounded(fifo.path(), &["init", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+
+    let zero = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("/dev/zero", zero.path().join("package.json")).unwrap();
+    let out = run_bounded(zero.path(), &["init", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!hint_in(zero.path().to_path_buf()));
+
+    // An 11ty config that leads outside the folder is never read or quoted.
+    let outside = site(&[("secret.js", "aws_secret_access_key = SECRET123\n")]);
+    let dir = site(&[("package.json", PACKAGE)]);
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.js"),
+        dir.path().join("eleventy.config.js"),
+    )
+    .unwrap();
+    let out = run_bounded(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!stdout(&out).contains("SECRET123") && !stderr(&out).contains("SECRET123"));
+    assert!(!dir.path().join("brrrty.config.rhai").exists());
+    assert_eq!(read(dir.path(), "package.json"), PACKAGE);
+
+    // A huge package.json is refused, not read.
+    let big = site(&[(
+        "package.json",
+        &format!(
+            "{{\"devDependencies\":{{\"@11ty/eleventy\":\"3\"}},\"x\":\"{}\"}}",
+            "a".repeat(2 << 20)
+        ),
+    )]);
+    let out = run_bounded(big.path(), &["init", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+}
+
+#[test]
+fn input_outside_the_folder_isnt_walked() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        (
+            "eleventy.config.js",
+            "module.exports = function () { return { dir: { input: \"/\" } }; };\n",
+        ),
+    ]);
+    let started = std::time::Instant::now();
+    let out = run_in(dir.path(), &["init", "--dry-run"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(started.elapsed().as_secs() < 10);
+}
+
+#[test]
+fn quoted_line_breaks_never_become_code() {
+    for nl in ["\r", "\u{2028}", "\r\n"] {
+        let config = format!(
+            "module.exports = function (c) {{{nl}  c.addFilter(\"f\", (s) => s);{nl}  c.addPassthroughCopy(\"a\u{2028}b\");{nl}}};{nl}"
+        );
+        let dir = site(&[("package.json", PACKAGE), ("eleventy.config.js", &config)]);
+        let out = run_in(dir.path(), &["init", "--yes"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let site = brrrty_config::load(dir.path()).unwrap_or_else(|p| {
+            panic!("{nl:?}: {p:?}\n{}", read(dir.path(), "brrrty.config.rhai"))
+        });
+        assert!(site.is_some());
+        let rhai = read(dir.path(), "brrrty.config.rhai");
+        assert!(
+            rhai.contains("config.add_passthrough_copy(\"a\\u2028b\");"),
+            "{rhai}"
         );
     }
 }

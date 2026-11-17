@@ -32,7 +32,14 @@ pub(crate) struct Token {
     pub end: usize,
     /// A line break comes between this token and the one before.
     pub nl_before: bool,
+    /// The bracket that closes or opens this one, for `(`, `[`, `{` and their pairs.
+    pub pair: Option<usize>,
+    /// A template literal (which on a new line continues the statement as a tag).
+    pub tick: bool,
 }
+
+/// How deep brackets and template literals may nest before Brrrty stops reading.
+pub(crate) const MAX_DEPTH: usize = 64;
 
 impl Token {
     pub(crate) fn is(&self, p: &str) -> bool {
@@ -137,7 +144,7 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             i = end;
             Tok::Str(value)
         } else if c == b'`' {
-            let (end, value) = template(src, i)?;
+            let (end, value) = template(src, i, 0)?;
             i = end;
             match value {
                 Some(v) => Tok::Str(v),
@@ -186,10 +193,50 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             start,
             end: i,
             nl_before: nl,
+            pair: None,
+            tick: c == b'`',
         });
         nl = false;
     }
+    pair_up(&mut out)?;
     Ok(out)
+}
+
+/// Fill in `pair` for every bracket, in one pass.
+fn pair_up(toks: &mut [Token]) -> Result<(), String> {
+    let mut stack: Vec<usize> = Vec::new();
+    for k in 0..toks.len() {
+        match toks[k].tok {
+            Tok::Punct("(" | "[" | "{") => {
+                if stack.len() >= MAX_DEPTH {
+                    return Err(format!("brackets nest more than {MAX_DEPTH} deep"));
+                }
+                stack.push(k);
+            }
+            Tok::Punct(close @ (")" | "]" | "}")) => {
+                let Some(o) = stack.pop() else {
+                    return Err(format!("a `{close}` closes nothing"));
+                };
+                let want = match toks[o].tok {
+                    Tok::Punct("(") => ")",
+                    Tok::Punct("[") => "]",
+                    _ => "}",
+                };
+                if want != close {
+                    return Err(format!(
+                        "a `{close}` closes a bracket opened with something else"
+                    ));
+                }
+                toks[o].pair = Some(k);
+                toks[k].pair = Some(o);
+            }
+            _ => {}
+        }
+    }
+    if !stack.is_empty() {
+        return Err("a bracket is never closed".into());
+    }
+    Ok(())
 }
 
 fn regex_allowed(prev: Option<&Token>) -> bool {
@@ -331,7 +378,10 @@ fn escape(src: &str, j: usize, units: &mut Vec<u16>) -> (usize, bool) {
 
 /// A template literal from `i`: where it ends, and its value when it has no
 /// substitutions.
-fn template(src: &str, i: usize) -> Result<(usize, Option<Option<String>>), String> {
+fn template(src: &str, i: usize, depth: usize) -> Result<(usize, Option<Option<String>>), String> {
+    if depth > MAX_DEPTH {
+        return Err(format!("template literals nest more than {MAX_DEPTH} deep"));
+    }
     let b = src.as_bytes();
     let mut j = i + 1;
     let mut units: Vec<u16> = Vec::new();
@@ -348,7 +398,7 @@ fn template(src: &str, i: usize) -> Result<(usize, Option<Option<String>>), Stri
             }
             Some(b'$') if b.get(j + 1) == Some(&b'{') => {
                 plain = false;
-                j = substitution(src, j + 2)?;
+                j = substitution(src, j + 2, depth + 1)?;
             }
             Some(b'\r') => {
                 // A template's CR LF and CR read as LF.
@@ -374,7 +424,7 @@ fn template(src: &str, i: usize) -> Result<(usize, Option<Option<String>>), Stri
 }
 
 /// Skip a `${ ... }` body starting at `j`; returns the offset after its `}`.
-fn substitution(src: &str, mut j: usize) -> Result<usize, String> {
+fn substitution(src: &str, mut j: usize, nest: usize) -> Result<usize, String> {
     let b = src.as_bytes();
     let mut depth = 0usize;
     loop {
@@ -390,7 +440,7 @@ fn substitution(src: &str, mut j: usize) -> Result<usize, String> {
                 j += 1;
             }
             Some(b'"' | b'\'') => j = string(src, j)?.0,
-            Some(b'`') => j = template(src, j)?.0,
+            Some(b'`') => j = template(src, j, nest)?.0,
             Some(b'/') if b.get(j + 1) == Some(&b'/') => {
                 while j < b.len() && b[j] != b'\n' {
                     j += 1;
@@ -407,23 +457,16 @@ fn substitution(src: &str, mut j: usize) -> Result<usize, String> {
 
 /// The index of the token that closes the bracket at `open`.
 pub(crate) fn matching(toks: &[Token], open: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (k, t) in toks.iter().enumerate().skip(open) {
-        if let Tok::Punct(p) = t.tok {
-            match p {
-                "(" | "[" | "{" => depth += 1,
-                ")" | "]" | "}" => {
-                    depth = depth.checked_sub(1)?;
-                    if depth == 0 {
-                        return Some(k);
-                    }
-                }
-                _ => {}
-            }
-        }
+    let t = toks.get(open)?;
+    if !matches!(t.tok, Tok::Punct("(" | "[" | "{")) {
+        return None;
     }
-    None
+    t.pair
 }
+
+/// Keywords that end their statement at a line break (JavaScript's
+/// restricted productions): `return\n{...}` returns `undefined`.
+const RESTRICTED: [&str; 5] = ["return", "throw", "break", "continue", "yield"];
 
 fn can_end(t: &Token) -> bool {
     match &t.tok {
@@ -433,6 +476,9 @@ fn can_end(t: &Token) -> bool {
 }
 
 fn continues(t: &Token) -> bool {
+    if t.tick {
+        return true;
+    }
     match &t.tok {
         Tok::Punct(p) => !matches!(*p, "!" | "~" | "++" | "--"),
         Tok::Ident(k) => matches!(k.as_str(), "else" | "catch" | "finally"),
@@ -447,7 +493,12 @@ pub(crate) fn statements(toks: &[Token], from: usize, to: usize) -> Vec<(usize, 
     let mut start = from;
     for k in from..to {
         let t = &toks[k];
-        if depth == 0 && k > start && t.nl_before && can_end(&toks[k - 1]) && !continues(t) {
+        if depth == 0
+            && k > start
+            && t.nl_before
+            && (toks[k - 1].ident().is_some_and(|w| RESTRICTED.contains(&w))
+                || (can_end(&toks[k - 1]) && !continues(t)))
+        {
             out.push((start, k));
             start = k;
         }
@@ -625,6 +676,9 @@ pub(crate) fn rhai_string(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             c if (c as u32) < 0x20 || c == '\u{7f}' => {
                 out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            '\u{85}' | '\u{2028}' | '\u{2029}' => {
+                out.push_str(&format!("\\u{:04x}", ch as u32));
             }
             c => out.push(c),
         }

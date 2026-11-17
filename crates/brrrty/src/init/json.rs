@@ -186,6 +186,12 @@ pub(crate) fn apply(src: &str, mut edits: Vec<Edit>) -> String {
 pub(crate) struct Style {
     pub newline: &'static str,
     pub unit: String,
+    /// The whole file is on one line: new objects go on one line too.
+    pub inline: bool,
+    /// What goes between a key and its value, like `": "`.
+    pub colon: String,
+    /// What follows a comma between members on one line.
+    pub after_comma: String,
 }
 
 impl Style {
@@ -197,8 +203,36 @@ impl Style {
             .map(|m| indent_before(src, m.key_start))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "  ".into());
-        Style { newline, unit }
+        let inline = !src[top.open..=top.close].contains('\n');
+        let colon = top
+            .members
+            .first()
+            .map(|m| src[m.key_end..m.value_start].to_string())
+            .unwrap_or_else(|| ": ".into());
+        let after_comma = match top.members.get(..2) {
+            Some([a, b]) => gap_after_comma(src, a.value_end, b.key_start),
+            _ => {
+                if inline {
+                    String::new()
+                } else {
+                    " ".into()
+                }
+            }
+        };
+        Style {
+            newline,
+            unit,
+            inline,
+            colon,
+            after_comma,
+        }
     }
+}
+
+/// The whitespace after the comma between `end` and `next`.
+fn gap_after_comma(src: &str, end: usize, next: usize) -> String {
+    let gap = &src[end..next];
+    gap.rsplit_once(',').map_or(gap, |(_, w)| w).to_string()
 }
 
 /// The spaces and tabs between the line start and `at`, when only those come before it.
@@ -238,8 +272,11 @@ pub(crate) fn append(
                     indent
                 };
                 format!("{}{indent}", style.newline)
+            } else if o.members.len() >= 2 {
+                let n = o.members.len();
+                gap_after_comma(src, o.members[n - 2].value_end, o.members[n - 1].key_start)
             } else {
-                " ".to_string()
+                style.after_comma.clone()
             };
             let mut text = String::new();
             for (k, v) in members {
@@ -249,6 +286,17 @@ pub(crate) fn append(
                 start: last.value_end,
                 end: last.value_end,
                 text,
+            }
+        }
+        None if style.inline => {
+            let body: Vec<String> = members
+                .iter()
+                .map(|(k, v)| format!("{}{}{v}", quoted(k), style.colon))
+                .collect();
+            Edit {
+                start: o.open + 1,
+                end: o.close,
+                text: body.join(&format!(",{}", style.after_comma)),
             }
         }
         None => {
@@ -273,15 +321,21 @@ pub(crate) fn new_object(depth: usize, style: &Style, members: &[(&str, &str)]) 
     let nl = style.newline;
     let inner = style.unit.repeat(depth + 1);
     let outer = style.unit.repeat(depth);
+    let pair = |k: &str, v: &str| {
+        format!(
+            "{}{}{}",
+            serde_json::to_string(k).unwrap_or_default(),
+            style.colon,
+            serde_json::to_string(v).unwrap_or_default()
+        )
+    };
+    if style.inline {
+        let body: Vec<String> = members.iter().map(|(k, v)| pair(k, v)).collect();
+        return format!("{{{}}}", body.join(&format!(",{}", style.after_comma)));
+    }
     let body: Vec<String> = members
         .iter()
-        .map(|(k, v)| {
-            format!(
-                "{inner}{}: {}",
-                serde_json::to_string(k).unwrap_or_default(),
-                serde_json::to_string(v).unwrap_or_default()
-            )
-        })
+        .map(|(k, v)| format!("{inner}{}", pair(k, v)))
         .collect();
     format!("{{{nl}{}{nl}{outer}}}", body.join(&format!(",{nl}")))
 }
@@ -342,10 +396,35 @@ mod tests {
             append(src, &b, 1, &style, &[("y".into(), "2".into())]),
         ];
         let out = apply(src, edits);
-        assert_eq!(
-            out,
-            "{\"a\": {\n    \"k\": \"v\"\n  }, \"b\": {\"x\":1, \"y\":2}}"
-        );
+        assert_eq!(out, "{\"a\": {\"k\": \"v\"}, \"b\": {\"x\":1, \"y\":2}}");
         serde_json::from_str::<serde_json::Value>(&out).unwrap();
+    }
+
+    #[test]
+    fn one_line_files_stay_on_one_line() {
+        let src = "{\"name\":\"x\",\"scripts\":{\"test\":\"t\"}}";
+        let top = object_at(src, 0).unwrap();
+        let style = Style::of(src, &top);
+        let scripts = object_at(src, top.get("scripts").unwrap().value_start).unwrap();
+        let edits = vec![
+            append(
+                src,
+                &scripts,
+                1,
+                &style,
+                &[("build".into(), "\"b\"".into())],
+            ),
+            append(
+                src,
+                &top,
+                0,
+                &style,
+                &[("dev".into(), new_object(1, &style, &[("k", "v")]))],
+            ),
+        ];
+        assert_eq!(
+            apply(src, edits),
+            "{\"name\":\"x\",\"scripts\":{\"test\":\"t\",\"build\":\"b\"},\"dev\":{\"k\":\"v\"}}"
+        );
     }
 }

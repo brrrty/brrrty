@@ -80,60 +80,118 @@ pub struct Plan {
     pub output: String,
 }
 
+/// The most `brrrty init` reads of `package.json` or an 11ty config.
+pub const MAX_READ: u64 = 1 << 20;
+
+const BOM: &str = "\u{feff}";
+
 /// Whether `dir` looks like an 11ty site: `package.json` depends on
-/// `@11ty/eleventy`, or 11ty's config file is there.
+/// `@11ty/eleventy`, or 11ty's config file is there. Reads only regular
+/// files inside `dir`, and at most [`MAX_READ`] bytes, so it can't hang or
+/// fill memory.
 pub fn looks_like_eleventy(dir: &Path) -> bool {
-    detect(dir).is_some()
+    let Ok(root) = fs::canonicalize(dir) else {
+        return false;
+    };
+    detect(&root).is_some()
 }
 
-/// The reason `dir` is an 11ty site.
-fn detect(dir: &Path) -> Option<String> {
-    if let Some(name) = ELEVENTY_CONFIGS.iter().find(|n| dir.join(n).is_file()) {
+/// The reason `root` (canonical) is an 11ty site.
+fn detect(root: &Path) -> Option<String> {
+    if let Some(name) = ELEVENTY_CONFIGS.iter().find(|n| present(root, n)) {
         return Some((*name).to_string());
     }
-    let text = fs::read_to_string(dir.join(PACKAGE_JSON)).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let text = match read_inside(root, PACKAGE_JSON) {
+        Ok(Some(Read::Text(t))) => t,
+        _ => return None,
+    };
+    let v: serde_json::Value =
+        serde_json::from_str(text.strip_prefix(BOM).unwrap_or(&text)).ok()?;
     ["dependencies", "devDependencies"]
         .iter()
         .any(|k| v.get(k).and_then(|d| d.get("@11ty/eleventy")).is_some())
         .then(|| "package.json".to_string())
 }
 
-/// Whether a bare `brrrty` here should suggest `brrrty init`.
+/// Whether `name` is in `root` as a file or a symlink, without opening it.
+fn present(root: &Path, name: &str) -> bool {
+    fs::symlink_metadata(root.join(name)).is_ok_and(|m| m.is_file() || m.file_type().is_symlink())
+}
+
+/// Whether a bare `brrrty` here should suggest `brrrty init`. Never fails.
 pub fn should_hint(dir: &Path) -> bool {
     looks_like_eleventy(dir) && fs::symlink_metadata(dir.join(CONFIG_FILE)).is_err()
 }
 
-/// Where `name` in `root` is written. A symlink is followed only when it
-/// stays inside `root`.
-fn target(root: &Path, name: &str) -> Result<PathBuf, Refusal> {
+/// A file read by [`read_inside`].
+enum Read {
+    Text(String),
+    /// Not UTF-8: its text with replacement characters.
+    Lossy(String),
+    /// Larger than [`MAX_READ`].
+    TooBig,
+}
+
+/// Where `name` in `root` really is: a regular file inside `root`, through a
+/// symlink only when it stays inside. `Ok(None)` when there is nothing there.
+fn resolve_inside(root: &Path, name: &str) -> Result<Option<PathBuf>, String> {
     let p = root.join(name);
-    match fs::symlink_metadata(&p) {
-        Ok(m) if m.file_type().is_symlink() => {
-            let real = fs::canonicalize(&p).map_err(|e| {
-                Refusal::Refused(format!(
-                    "{name} is a symlink Brrrty can't follow ({e}), so nothing was written."
-                ))
-            })?;
-            if !real.starts_with(root) {
-                return Err(Refusal::Refused(format!(
-                    "{name} is a symlink to {}, outside {}. Brrrty only writes inside the site's folder, so nothing was written.",
-                    real.display(),
-                    root.display()
-                )));
-            }
-            if !real.is_file() {
-                return Err(Refusal::Refused(format!(
-                    "{name} is a symlink to {}, which isn't a file, so nothing was written.",
-                    real.display()
-                )));
-            }
-            Ok(real)
+    let meta = match fs::symlink_metadata(&p) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Brrrty can't look at {name}: {e}")),
+    };
+    let real = if meta.file_type().is_symlink() {
+        let real = fs::canonicalize(&p)
+            .map_err(|e| format!("{name} is a symlink Brrrty can't follow ({e})"))?;
+        if !real.starts_with(root) {
+            return Err(format!(
+                "{name} is a symlink to {}, outside {}. Brrrty only reads and writes inside the site's folder",
+                real.display(),
+                root.display()
+            ));
         }
-        Ok(m) if !m.is_file() => Err(Refusal::Refused(format!(
-            "{name} isn't a file, so nothing was written."
-        ))),
-        _ => Ok(p),
+        real
+    } else {
+        p
+    };
+    let meta = fs::metadata(&real).map_err(|e| format!("Brrrty can't look at {name}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{name} isn't a regular file"));
+    }
+    Ok(Some(real))
+}
+
+/// Read `name` in `root` with [`resolve_inside`]'s rules, at most [`MAX_READ`] bytes.
+fn read_inside(root: &Path, name: &str) -> Result<Option<Read>, String> {
+    use std::io::Read as _;
+    let Some(path) = resolve_inside(root, name)? else {
+        return Ok(None);
+    };
+    let f = fs::File::open(&path).map_err(|e| format!("Brrrty can't read {name}: {e}"))?;
+    // Checked again on the open file, in case it changed in between.
+    if !f.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(format!("{name} isn't a regular file"));
+    }
+    let mut bytes = Vec::new();
+    f.take(MAX_READ + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Brrrty can't read {name}: {e}"))?;
+    if bytes.len() as u64 > MAX_READ {
+        return Ok(Some(Read::TooBig));
+    }
+    Ok(Some(match String::from_utf8(bytes) {
+        Ok(s) => Read::Text(s),
+        Err(e) => Read::Lossy(String::from_utf8_lossy(e.as_bytes()).into_owned()),
+    }))
+}
+
+/// Where `name` in `root` is written: see [`resolve_inside`].
+fn target(root: &Path, name: &str) -> Result<PathBuf, Refusal> {
+    match resolve_inside(root, name) {
+        Ok(Some(p)) => Ok(p),
+        Ok(None) => Ok(root.join(name)),
+        Err(why) => Err(Refusal::Refused(format!("{why}, so nothing was written."))),
     }
 }
 
@@ -151,12 +209,6 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             dir.display()
         )));
     }
-    if detect(&root).is_none() {
-        return Err(Refusal::NotEleventy(format!(
-            "{} doesn't look like an 11ty site: there is no package.json that depends on @11ty/eleventy, and no eleventy.config.js, eleventy.config.mjs, eleventy.config.cjs or .eleventy.js. Run `brrrty init` in your site's folder, or point --dir at it.",
-            root.display()
-        )));
-    }
     if fs::symlink_metadata(root.join(CONFIG_FILE)).is_ok() {
         return Err(Refusal::Refused(format!(
             "{CONFIG_FILE} already exists in {}, and `brrrty init` never overwrites it, so nothing was written. To start again from the 11ty config, move it out of the way and run `brrrty init` again.",
@@ -165,17 +217,30 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     }
     let package_path = target(&root, PACKAGE_JSON)?;
     let config_path = target(&root, CONFIG_FILE)?;
+    if detect(&root).is_none() {
+        return Err(Refusal::NotEleventy(format!(
+            "{} doesn't look like an 11ty site: there is no package.json that depends on @11ty/eleventy, and no eleventy.config.js, eleventy.config.mjs, eleventy.config.cjs or .eleventy.js. Run `brrrty init` in your site's folder, or point --dir at it.",
+            root.display()
+        )));
+    }
 
     // brrrty.config.rhai
-    let config = ELEVENTY_CONFIGS
-        .iter()
-        .copied()
-        .find(|n| root.join(n).is_file());
+    let config = ELEVENTY_CONFIGS.iter().copied().find(|n| present(&root, n));
     let (rhai, todos, input, output) = match config {
         Some(name) => {
-            let src = fs::read_to_string(root.join(name))
-                .map_err(|e| Refusal::Refused(format!("Brrrty can't read {name}: {e}")))?;
-            let p = port::port(&src, name);
+            let read = read_inside(&root, name)
+                .map_err(|why| Refusal::Refused(format!("{why}, so nothing was written.")))?;
+            let p = match read {
+                Some(Read::Text(src)) => port::port(src.strip_prefix(BOM).unwrap_or(&src), name),
+                Some(Read::Lossy(src)) => {
+                    port::unreadable(&src, name, "it isn't UTF-8, so Brrrty couldn't read it")
+                }
+                Some(Read::TooBig) | None => port::unreadable(
+                    "",
+                    name,
+                    &format!("it is larger than {} MiB, so Brrrty didn't read it", MAX_READ >> 20),
+                ),
+            };
             (p.text, p.todos, p.input, p.output)
         }
         None => (
@@ -187,17 +252,31 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     };
 
     // package.json
-    let old_package = match fs::read_to_string(&package_path) {
-        Ok(s) => Some(s),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => {
+    let old_package = match read_inside(&root, PACKAGE_JSON) {
+        Ok(None) => None,
+        Ok(Some(Read::Text(s))) => Some(s),
+        Ok(Some(Read::Lossy(_))) => {
+            return Err(Refusal::Refused(
+                "package.json isn't UTF-8, so nothing was written.".into(),
+            ));
+        }
+        Ok(Some(Read::TooBig)) => {
             return Err(Refusal::Refused(format!(
-                "Brrrty can't read package.json: {e}"
+                "package.json is larger than {} MiB, so Brrrty didn't read it and nothing was written.",
+                MAX_READ >> 20
             )));
         }
+        Err(why) => return Err(Refusal::Refused(format!("{why}, so nothing was written."))),
     };
     let edited = match &old_package {
-        Some(src) => edit_package(src)?,
+        Some(src) => match src.strip_prefix(BOM) {
+            Some(rest) => {
+                let mut e = edit_package(rest)?;
+                e.text.insert_str(0, BOM);
+                e
+            }
+            None => edit_package(src)?,
+        },
         None => Edited {
             text: new_package(),
             advice: Vec::new(),
@@ -206,6 +285,13 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     };
 
     let mut changes = Vec::new();
+    // The new file first: it is the one that can't already exist.
+    changes.push(Change {
+        name: CONFIG_FILE,
+        old: None,
+        new: rhai,
+        path: config_path,
+    });
     if old_package.as_deref() != Some(edited.text.as_str()) {
         changes.push(Change {
             name: PACKAGE_JSON,
@@ -214,15 +300,14 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             path: package_path,
         });
     }
-    changes.push(Change {
-        name: CONFIG_FILE,
-        old: None,
-        new: rhai,
-        path: config_path,
-    });
 
-    let input = root.join(input.unwrap_or_else(|| ".".into()));
-    let js_data = js_data_files(&root, &input);
+    let js_data = match input {
+        Some(i) => match fs::canonicalize(root.join(i)) {
+            Ok(input) if input.starts_with(&root) => js_data_files(&root, &input),
+            _ => Vec::new(),
+        },
+        None => js_data_files(&root, &root),
+    };
     Ok(Plan {
         root,
         config,
@@ -247,16 +332,50 @@ fn new_package() -> String {
     )
 }
 
-/// Whether a script runs 11ty.
-fn runs_eleventy(cmd: &str) -> bool {
-    cmd.split(|c: char| c.is_whitespace() || ";&|()".contains(c))
-        .map(|w| w.trim_matches(|c| c == '"' || c == '\''))
-        .any(|w| {
-            w == "eleventy"
-                || w.ends_with("/eleventy")
-                || w.starts_with("@11ty/eleventy@")
-                || w.contains("@11ty/eleventy/")
+/// Whether a script is exactly one 11ty command: `eleventy`,
+/// `npx @11ty/eleventy` or `node_modules/.bin/eleventy`, after any
+/// `NAME=value` settings (or `cross-env` ones), with its own flags.
+fn is_eleventy_command(cmd: &str) -> bool {
+    if cmd.contains(['&', '|', ';', '`', '>', '<', '(', ')', '\n', '\r']) || cmd.contains("$(") {
+        return false;
+    }
+    let mut words = cmd.split_whitespace().peekable();
+    let assignment = |w: &str| {
+        w.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
+    };
+    while words.peek().is_some_and(|w| assignment(w)) {
+        words.next();
+    }
+    if words.peek() == Some(&"cross-env") {
+        words.next();
+        while words.peek().is_some_and(|w| assignment(w)) {
+            words.next();
+        }
+    }
+    match words.next() {
+        Some("eleventy" | "node_modules/.bin/eleventy" | "./node_modules/.bin/eleventy") => true,
+        Some("npx") => {
+            let mut w = words.next();
+            if matches!(w, Some("-y" | "--yes")) {
+                w = words.next();
+            }
+            w.is_some_and(|w| w == "@11ty/eleventy" || w.starts_with("@11ty/eleventy@"))
+        }
+        _ => false,
+    }
+}
+
+/// The step of a compound script (`a && b`, `a; b`, `a | b`) that is an
+/// 11ty command, if one is.
+fn eleventy_step(cmd: &str) -> Option<&str> {
+    cmd.split("&&")
+        .flat_map(|p| p.split("||"))
+        .flat_map(|p| p.split(';'))
+        .flat_map(|p| p.split('|'))
+        .map(str::trim)
+        .find(|step| is_eleventy_command(step))
 }
 
 fn edit_package(src: &str) -> Result<Edited, Refusal> {
@@ -272,12 +391,28 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
     let mut edits = Vec::new();
     let mut advice = Vec::new();
     let mut top_append: Vec<(String, String)> = Vec::new();
+    // What the file should hold afterwards, to check the edit against.
+    let mut expect = value.clone();
+    let set = |expect: &mut serde_json::Value, object: &str, key: &str, v: &str| {
+        if let Some(o) = expect.as_object_mut() {
+            let entry = o
+                .entry(object.to_string())
+                .or_insert_with(|| serde_json::Value::Object(Default::default()));
+            if let Some(inner) = entry.as_object_mut() {
+                inner.insert(key.to_string(), serde_json::Value::String(v.to_string()));
+            }
+        }
+    };
 
     // Scripts.
     let wanted = [("build", "brrrty build"), ("start", "brrrty serve")];
-    let mut has_build_11ty = false;
     match top.get("scripts") {
-        None => top_append.push(("scripts".into(), json::new_object(1, &style, &wanted))),
+        None => {
+            top_append.push(("scripts".into(), json::new_object(1, &style, &wanted)));
+            for (name, cmd) in wanted {
+                set(&mut expect, "scripts", name, cmd);
+            }
+        }
         Some(m) => match json::object_at(src, m.value_start) {
             None => advice.push(
                 "`scripts` in package.json isn't an object, so Brrrty left it alone. Add \"build\": \"brrrty build\" and \"start\": \"brrrty serve\" to it.".into(),
@@ -289,12 +424,12 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                         .and_then(|v| v.as_str())
                         .map(str::to_string)
                 };
-                has_build_11ty = scripts.get("build:11ty").is_some();
                 let mut append = Vec::new();
                 for (name, cmd) in wanted {
                     let quoted = serde_json::to_string(cmd).unwrap_or_default();
                     let Some(member) = scripts.get(name) else {
                         append.push((name.to_string(), quoted));
+                        set(&mut expect, "scripts", name, cmd);
                         continue;
                     };
                     let current = string(name);
@@ -303,15 +438,12 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                     }
                     let keep = format!("{name}:11ty");
                     match current {
-                        Some(old) if runs_eleventy(&old) => {
+                        Some(old) if is_eleventy_command(&old) => {
                             if scripts.get(&keep).is_some() {
                                 advice.push(format!(
                                     "scripts.{name} runs 11ty, and scripts.{keep} is taken, so Brrrty left both alone. Change scripts.{name} to \"{cmd}\" when you're ready."
                                 ));
                                 continue;
-                            }
-                            if name == "build" {
-                                has_build_11ty = true;
                             }
                             // Rename it to `name:11ty`, with the new script in front.
                             let i = scripts
@@ -328,10 +460,17 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                             e.end = member.key_end;
                             e.text.push_str(&serde_json::to_string(&keep).unwrap_or_default());
                             edits.push(e);
+                            set(&mut expect, "scripts", name, cmd);
+                            set(&mut expect, "scripts", &keep, &old);
                         }
-                        Some(old) => advice.push(format!(
-                            "scripts.{name} runs \"{old}\", which isn't 11ty itself, so Brrrty left it alone. Where it runs 11ty, run \"{cmd}\" instead."
-                        )),
+                        Some(old) => match eleventy_step(&old) {
+                            Some(step) => advice.push(format!(
+                                "scripts.{name} runs 11ty as one step of \"{old}\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.{keep} (to compare with 11ty), then replace `{step}` in scripts.{name} with `{cmd}`."
+                            )),
+                            None => advice.push(format!(
+                                "scripts.{name} runs \"{old}\", which isn't an 11ty command, so Brrrty left it alone. Where it runs 11ty, run `{cmd}` instead."
+                            )),
+                        },
                         None => advice.push(format!(
                             "scripts.{name} isn't a string, so Brrrty left it alone. Set it to \"{cmd}\"."
                         )),
@@ -347,7 +486,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                         if ["build", "start", "build:11ty", "start:11ty"].contains(&k.as_str()) {
                             continue;
                         }
-                        if runs_eleventy(cmd) {
+                        if is_eleventy_command(cmd) || eleventy_step(cmd).is_some() {
                             advice.push(format!(
                                 "scripts.{k} runs 11ty (\"{cmd}\"). Brrrty's commands are `brrrty build` and `brrrty serve`, if you want it to run Brrrty."
                             ));
@@ -377,6 +516,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                 .and_then(|m| json::object_at(src, m.value_start))
             {
                 Some(dev) => {
+                    set(&mut expect, "devDependencies", "brrrty", VERSION);
                     // In order, as npm keeps them.
                     match dev.members.iter().position(|m| m.key.as_str() > "brrrty") {
                         Some(i) => {
@@ -405,10 +545,13 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                 None if top.get("devDependencies").is_some() => advice.push(format!(
                     "`devDependencies` in package.json isn't an object, so Brrrty left it alone. Add \"brrrty\": \"{VERSION}\" to it."
                 )),
-                None => top_append.push((
-                    "devDependencies".into(),
-                    json::new_object(1, &style, &[("brrrty", VERSION)]),
-                )),
+                None => {
+                    set(&mut expect, "devDependencies", "brrrty", VERSION);
+                    top_append.push((
+                        "devDependencies".into(),
+                        json::new_object(1, &style, &[("brrrty", VERSION)]),
+                    ));
+                }
             }
         }
     }
@@ -416,22 +559,16 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
         edits.push(json::append(src, &top, 0, &style, &top_append));
     }
     let text = json::apply(src, edits);
-    // The edit must leave valid JSON with what was asked for in it.
+    // The edit must leave exactly the original plus the intended changes.
     let check: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| bad(format!("couldn't be edited safely ({e})")))?;
-    let mut expect = value;
-    if let Some(o) = expect.as_object_mut() {
-        o.remove("scripts");
-        o.remove("devDependencies");
-    }
-    let mut got = check.clone();
-    if let Some(o) = got.as_object_mut() {
-        o.remove("scripts");
-        o.remove("devDependencies");
-    }
-    if expect != got {
+    if check != expect {
         return Err(bad("couldn't be edited safely".into()));
     }
+    let has_build_11ty = check["scripts"]
+        .get("build:11ty")
+        .and_then(|v| v.as_str())
+        .is_some_and(is_eleventy_command);
     Ok(Edited {
         text,
         advice,
@@ -443,7 +580,8 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
 /// `*.11tydata.js` files anywhere in the input folder.
 fn js_data_files(root: &Path, input: &Path) -> Vec<String> {
     let mut found = Vec::new();
-    walk(input, 0, &mut |p| {
+    let mut budget = 100_000usize;
+    walk(input, 0, &mut budget, &mut |p| {
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
         let Some((stem, ext)) = name.rsplit_once('.') else {
             return;
@@ -465,7 +603,9 @@ fn js_data_files(root: &Path, input: &Path) -> Vec<String> {
     found
 }
 
-fn walk(dir: &Path, depth: usize, f: &mut dyn FnMut(&Path)) {
+/// Visit the files under `dir` without following symlinks, giving up after
+/// `budget` entries.
+fn walk(dir: &Path, depth: usize, budget: &mut usize, f: &mut dyn FnMut(&Path)) {
     if depth > 32 {
         return;
     }
@@ -473,6 +613,10 @@ fn walk(dir: &Path, depth: usize, f: &mut dyn FnMut(&Path)) {
         return;
     };
     for e in entries.flatten() {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
         let name = e.file_name();
         let name = name.to_string_lossy();
         let Ok(kind) = e.file_type() else { continue };
@@ -480,7 +624,7 @@ fn walk(dir: &Path, depth: usize, f: &mut dyn FnMut(&Path)) {
             if name.starts_with('.') || name == "node_modules" || name == "_site" {
                 continue;
             }
-            walk(&e.path(), depth + 1, f);
+            walk(&e.path(), depth + 1, budget, f);
         } else if kind.is_file() {
             f(&e.path());
         }
@@ -510,24 +654,41 @@ pub fn diff(plan: &Plan) -> String {
 }
 
 /// Write the changes, each atomically.
+///
+/// A new file is linked into place, so one that appeared since the plan is
+/// never overwritten; a changed file is written only if it still holds what
+/// the plan read. The new `brrrty.config.rhai` goes first.
 pub fn apply(plan: &Plan) -> io::Result<()> {
     for c in &plan.changes {
-        // Checked again: something may have made it since the plan.
-        if c.old.is_none() && fs::symlink_metadata(&c.path).is_ok() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!(
-                    "{} appeared while Brrrty was working, so it wasn't overwritten",
+        if let Some(old) = &c.old {
+            let now = fs::read(&c.path)?;
+            if now != old.as_bytes() {
+                return Err(io::Error::other(format!(
+                    "{} changed while Brrrty was working, so it wasn't overwritten",
                     c.name
-                ),
-            ));
+                )));
+            }
         }
-        write_atomic(&c.path, &c.new)?;
+        write_atomic(&c.path, &c.new, c.old.is_none()).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "{} appeared while Brrrty was working, so it wasn't overwritten",
+                        c.name
+                    ),
+                )
+            } else {
+                e
+            }
+        })?;
     }
     Ok(())
 }
 
-fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+/// Write `path` through a temporary file. With `new`, fails rather than
+/// replace a file already there. Replacing breaks a hard link to the old file.
+fn write_atomic(path: &Path, text: &str, new: bool) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let tmp = dir.join(format!(".{name}.brrrty-{}.tmp", std::process::id()));
@@ -542,9 +703,21 @@ fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
         drop(f);
-        fs::rename(&tmp, path)
+        if new {
+            match fs::hard_link(&tmp, path) {
+                Ok(()) => fs::remove_file(&tmp),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+                // A file system without hard links: check, then rename.
+                Err(_) if fs::symlink_metadata(path).is_ok() => {
+                    Err(io::Error::from(io::ErrorKind::AlreadyExists))
+                }
+                Err(_) => fs::rename(&tmp, path),
+            }
+        } else {
+            fs::rename(&tmp, path)
+        }
     })();
-    if result.is_err() {
+    if result.is_err() || new {
         let _ = fs::remove_file(&tmp);
     }
     result
@@ -654,20 +827,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spots_scripts_that_run_eleventy() {
+    fn spots_scripts_that_are_11ty() {
         for yes in [
             "eleventy",
-            "npx @11ty/eleventy --serve",
-            "rm -rf _site && eleventy",
-            "npx @11ty/eleventy@3.1.2",
-            "node node_modules/@11ty/eleventy/cmd.cjs",
-            "cross-env NODE_ENV=production eleventy",
+            "npx @11ty/eleventy --serve --port 8080",
+            "npx -y @11ty/eleventy@3.1.2",
+            "NODE_ENV=production eleventy",
+            "cross-env ELEVENTY_ENV=prod eleventy --quiet",
+            "./node_modules/.bin/eleventy",
         ] {
-            assert!(runs_eleventy(yes), "{yes}");
+            assert!(is_eleventy_command(yes), "{yes}");
         }
-        for no in ["vite build", "npm-run-all build:*", "eleventy-dev-server"] {
-            assert!(!runs_eleventy(no), "{no}");
+        for no in [
+            "vite build",
+            "npm-run-all build:*",
+            "eleventy-dev-server",
+            "npm run css && eleventy && npm run pagefind",
+            "echo building with eleventy",
+            "node --run eleventy",
+            "rm -rf _site; eleventy",
+            "eleventy > log.txt",
+        ] {
+            assert!(!is_eleventy_command(no), "{no}");
         }
+        assert_eq!(
+            eleventy_step("npm run css && eleventy --quiet && npm run pagefind"),
+            Some("eleventy --quiet")
+        );
+        assert_eq!(eleventy_step("echo building with eleventy"), None);
     }
 
     #[test]

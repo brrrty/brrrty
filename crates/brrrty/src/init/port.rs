@@ -43,21 +43,65 @@ enum Item {
         link: String,
         span: (usize, usize),
     },
-    Left {
-        why: String,
-        span: (usize, usize),
-    },
 }
 
 struct Reader<'a> {
     src: &'a str,
     file: &'a str,
     toks: Vec<Token>,
+    /// Where each line of `src` starts and ends, without its terminator.
+    lines: Vec<(usize, usize)>,
     items: Vec<Item>,
     bindings: HashMap<String, Binding>,
-    dir: Vec<(&'static str, String)>,
-    engines: Vec<(&'static str, String)>,
+    /// For each name: how often it appears, and how often as an `addPlugin` argument.
+    uses: HashMap<String, (usize, usize)>,
+    /// `dir.*` and the template engines, with where each was set.
+    settings: Vec<Setting>,
     left_data_engine: bool,
+    /// Set when nothing can be ported: the whole file becomes one TODO.
+    whole: Option<String>,
+}
+
+struct Setting {
+    /// `dir.input`, `markdownTemplateEngine` and so on.
+    key: &'static str,
+    /// The value, as Rhai.
+    value: String,
+    /// The value as written, for `dir.*`.
+    raw: Option<String>,
+    span: (usize, usize),
+}
+
+/// Line terminators: JavaScript's, and every one Rhai might end a comment at.
+fn is_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}' | '\u{85}')
+}
+
+/// The lines of `src`: CR LF, LF, CR, U+2028, U+2029 and NEL each end one.
+fn split_lines(src: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut it = src.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if is_terminator(c) {
+            out.push((start, i));
+            let mut next = i + c.len_utf8();
+            if c == '\r' && it.peek().is_some_and(|&(_, d)| d == '\n') {
+                it.next();
+                next += 1;
+            }
+            start = next;
+        }
+    }
+    out.push((start, src.len()));
+    out
+}
+
+/// `text` with every line terminator made a space, safe inside a `//` comment.
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if is_terminator(c) { ' ' } else { c })
+        .collect()
 }
 
 /// Port the 11ty config file `file`, whose text is `src`.
@@ -65,13 +109,11 @@ pub(crate) fn port(src: &str, file: &str) -> Port {
     let toks = match js::tokenize(src) {
         Ok(t) => t,
         Err(why) => {
-            let mut r = Reader::new(src, file, Vec::new());
-            r.items.push(Item::Todo {
-                why: format!("Brrrty couldn't read this file ({why}), so port all of it"),
-                link: PORTING.into(),
-                span: (0, src.len()),
-            });
-            return r.finish();
+            return unreadable(
+                src,
+                file,
+                &format!("Brrrty couldn't read this file ({why})"),
+            );
         }
     };
     let mut r = Reader::new(src, file, toks);
@@ -79,17 +121,50 @@ pub(crate) fn port(src: &str, file: &str) -> Port {
     r.finish()
 }
 
+/// A port that is one TODO quoting all of `src`.
+pub(crate) fn unreadable(src: &str, file: &str, why: &str) -> Port {
+    let mut r = Reader::new(src, file, Vec::new());
+    r.whole = Some(why.to_string());
+    r.finish()
+}
+
+/// Keywords whose `(...) {` is not a function body.
+const NOT_METHODS: [&str; 6] = ["if", "for", "while", "switch", "catch", "with"];
+
 impl<'a> Reader<'a> {
     fn new(src: &'a str, file: &'a str, toks: Vec<Token>) -> Self {
+        let mut uses: HashMap<String, (usize, usize)> = HashMap::new();
+        for (k, t) in toks.iter().enumerate() {
+            let Some(name) = t.ident() else { continue };
+            if k > 0 && (toks[k - 1].is(".") || toks[k - 1].is("?.")) {
+                continue;
+            }
+            let entry = uses.entry(name.to_string()).or_default();
+            entry.0 += 1;
+            // `addPlugin(name, ...)` or `addPlugin(name.export, ...)`.
+            let call = k >= 3
+                && toks[k - 1].is("(")
+                && toks[k - 2].is_ident("addPlugin")
+                && toks[k - 3].is(".");
+            let ends = |i: usize| toks.get(i).is_some_and(|t| t.is(",") || t.is(")"));
+            let member = toks.get(k + 1).is_some_and(|t| t.is("."))
+                && toks.get(k + 2).and_then(Token::ident).is_some()
+                && ends(k + 3);
+            if call && (ends(k + 1) || member) {
+                entry.1 += 1;
+            }
+        }
         Reader {
             src,
             file,
             toks,
+            lines: split_lines(src),
             items: Vec::new(),
             bindings: HashMap::new(),
-            dir: Vec::new(),
-            engines: Vec::new(),
+            uses,
+            settings: Vec::new(),
             left_data_engine: false,
+            whole: None,
         }
     }
 
@@ -106,21 +181,72 @@ impl<'a> Reader<'a> {
         });
     }
 
+    fn give_up(&mut self, why: impl Into<String>) {
+        if self.whole.is_none() {
+            self.whole = Some(why.into());
+        }
+    }
+
+    /// What a top-level statement exports, if anything: `module.exports`,
+    /// `exports.x` or `export` (but not `import`).
+    fn is_export(&self, a: usize) -> bool {
+        let t = &self.toks[a];
+        t.is_ident("export")
+            || t.is_ident("exports")
+            || (t.is_ident("module")
+                && self.toks.get(a + 1).is_some_and(|t| t.is("."))
+                && self.toks.get(a + 2).is_some_and(|t| t.is_ident("exports")))
+    }
+
     fn read(&mut self) {
         let n = self.toks.len();
         let stmts = js::statements(&self.toks, 0, n);
-        // The config function, when the export names a function declared elsewhere.
-        let mut config_name: Option<String> = None;
+        // Exactly one config export (and, in ESM, one `export const config`).
+        let mut exports = Vec::new();
+        let mut config_exports = Vec::new();
         for &(a, b) in &stmts {
-            if let Some(rest) = self.export_start(a, b)
-                && rest + 1 == b
-                && let Some(name) = self.toks[rest].ident()
-            {
-                config_name = Some(name.to_string());
+            if !self.is_export(a) {
+                continue;
+            }
+            if let Some(rest) = self.export_start(a, b) {
+                exports.push((a, rest, b));
+            } else if let Some(rest) = self.config_export(a, b) {
+                config_exports.push((a, rest, b));
+            } else {
+                return self.give_up("it exports in a way Brrrty can't follow");
             }
         }
-        let mut found = false;
+        if exports.len() != 1 || config_exports.len() > 1 {
+            return self.give_up(if exports.is_empty() {
+                "Brrrty found no config function exported here"
+            } else {
+                "it exports more than once, and only the last export counts in JavaScript"
+            });
+        }
+        let (export_at, rest, export_end) = exports[0];
+        if !config_exports.is_empty() && !self.toks[export_at].is_ident("export") {
+            return self.give_up("it mixes `module.exports` with `export`");
+        }
+        // `module.exports = config` with `function config(...) {...}`.
+        let mut config_name: Option<String> = None;
+        if rest + 1 == export_end
+            && let Some(name) = self.toks[rest].ident()
+        {
+            let decls = stmts
+                .iter()
+                .filter(|&&(a, _)| self.fn_decl(a) == Some(name))
+                .count();
+            if decls != 1 || self.uses.get(name).map_or(0, |u| u.0) != 2 {
+                return self.give_up(format!(
+                    "the exported `{name}` isn't one function declared once, so Brrrty can't tell what runs"
+                ));
+            }
+            config_name = Some(name.to_string());
+        }
         for (a, b) in stmts {
+            if self.whole.is_some() {
+                return;
+            }
             let t = self.toks[a].clone();
             if b == a + 1 && matches!(t.tok, Tok::Str(_)) {
                 continue; // "use strict"
@@ -134,36 +260,28 @@ impl<'a> Reader<'a> {
             if matches!(t.ident(), Some("const" | "let" | "var")) && self.require(a, b) {
                 continue;
             }
-            if let Some(rest) = self.export_start(a, b) {
-                if config_name.is_some() && rest + 1 == b {
+            if a == export_at {
+                if config_name.is_some() {
                     continue;
                 }
-                if self.config_fn(rest, b) {
-                    found = true;
-                } else {
-                    self.todo(
-                        a,
-                        b,
-                        "Brrrty couldn't read this config function, so port it by hand",
-                        DOCS,
-                    );
+                if !self.config_fn(rest, b) {
+                    self.give_up("Brrrty couldn't read the config function");
                 }
                 continue;
             }
-            if let Some(rest) = self.config_export(a, b) {
+            if let Some(&(at, rest, _)) = config_exports.first()
+                && at == a
+            {
                 self.returned(rest, b);
-                found = true;
                 continue;
             }
-            if let Some(name) = &config_name {
-                let decl = if t.is_ident("async") { a + 1 } else { a };
-                if self.toks[decl].is_ident("function")
-                    && self.toks.get(decl + 1).is_some_and(|t| t.is_ident(name))
-                    && self.config_fn(a, b)
-                {
-                    found = true;
-                    continue;
+            if let Some(name) = &config_name
+                && self.fn_decl(a) == Some(name.as_str())
+            {
+                if !self.config_fn(a, b) {
+                    self.give_up("Brrrty couldn't read the config function");
                 }
+                continue;
             }
             self.todo(
                 a,
@@ -172,14 +290,71 @@ impl<'a> Reader<'a> {
                 PORTING,
             );
         }
-        if !found && !self.toks.is_empty() {
-            self.items.push(Item::Todo {
-                why: "Brrrty found no config function exported here; check nothing is missing"
-                    .into(),
-                link: DOCS.into(),
-                span: (0, 0),
-            });
+    }
+
+    /// The name of the function declared at `a`, if it is a declaration.
+    fn fn_decl(&self, a: usize) -> Option<&str> {
+        let t = &self.toks;
+        let k = if t[a].is_ident("async") { a + 1 } else { a };
+        if !t.get(k)?.is_ident("function") {
+            return None;
         }
+        t.get(k + 1)?.ident()
+    }
+
+    /// Whether `toks[a..b]` can return or throw at its own level: outside any
+    /// function it defines.
+    fn may_stop(&self, a: usize, b: usize) -> bool {
+        let t = &self.toks;
+        let mut k = a;
+        while k < b {
+            let tok = &t[k];
+            let skip_block = |open: usize| -> Option<usize> {
+                t.get(open)
+                    .filter(|o| o.is("{"))
+                    .and_then(|o| o.pair)
+                    .map(|c| c + 1)
+            };
+            if tok.is("=>") {
+                if let Some(next) = skip_block(k + 1) {
+                    k = next;
+                    continue;
+                }
+            } else if tok.is_ident("function") || tok.is_ident("class") {
+                // Past the name and parameters to the body.
+                let mut j = k + 1;
+                while j < b && !t[j].is("{") && !t[j].is("(") {
+                    j += 1;
+                }
+                if j < b && t[j].is("(") {
+                    j = t[j].pair.map_or(b, |c| c + 1);
+                }
+                while j < b && !t[j].is("{") {
+                    j += 1;
+                }
+                if let Some(next) = skip_block(j) {
+                    k = next;
+                    continue;
+                }
+                return true;
+            } else if tok.is(")")
+                && t.get(k + 1).is_some_and(|n| n.is("{"))
+                && let Some(open) = tok.pair
+                && open > 0
+                && t[open - 1]
+                    .ident()
+                    .is_some_and(|w| !NOT_METHODS.contains(&w))
+                && let Some(next) = skip_block(k + 1)
+            {
+                // A method: `name(...) { ... }`.
+                k = next;
+                continue;
+            } else if tok.is_ident("return") || tok.is_ident("throw") {
+                return true;
+            }
+            k += 1;
+        }
+        false
     }
 
     /// `module.exports = ` or `export default `: the index after it.
@@ -339,6 +514,9 @@ impl<'a> Reader<'a> {
     fn config_fn(&mut self, a: usize, b: usize) -> bool {
         let t = &self.toks;
         let mut k = a;
+        if a >= b || b > t.len() {
+            return false;
+        }
         if t[k].is_ident("async") {
             k += 1;
         }
@@ -378,8 +556,51 @@ impl<'a> Reader<'a> {
             return false;
         }
         let param = param.unwrap_or_default();
-        for (x, y) in js::statements(t, k + 1, b - 1) {
+        let body = (k + 1, b - 1);
+        // The parameter must stay the config object.
+        if !param.is_empty() {
+            for j in body.0..body.1 {
+                if t[j].is_ident(&param)
+                    && (j == 0 || !(t[j - 1].is(".") || t[j - 1].is("?.")))
+                    && t.get(j + 1)
+                        .is_some_and(|n| matches!(n.tok, Tok::Punct("=" | "||=" | "&&=" | "??=")))
+                {
+                    self.give_up(format!("`{param}` is assigned in the config function"));
+                    return true;
+                }
+            }
+        }
+        let stmts = js::statements(t, body.0, body.1);
+        // `return` and a line break returns `undefined`: what follows is not the config.
+        for &(x, y) in &stmts {
+            if t[x].is_ident("return")
+                && y == x + 1
+                && t.get(y).is_some_and(|n| !n.is(";"))
+                && y < body.1
+            {
+                self.give_up("`return` is followed by a line break, so JavaScript returns `undefined` there and what follows never runs");
+                return true;
+            }
+        }
+        let mut stopped: Option<&'static str> = None;
+        for (x, y) in stmts {
+            if let Some(why) = stopped {
+                self.todo(x, y, why, PORTING);
+                continue;
+            }
+            let returns = self.toks[x].is_ident("return");
+            let before = self.items.len();
             self.statement(&param, x, y);
+            if returns {
+                stopped = Some("11ty never runs this: it comes after `return`");
+            } else if self.may_stop(x, y)
+                && self.items[before..]
+                    .iter()
+                    .all(|i| matches!(i, Item::Todo { .. }))
+            {
+                stopped =
+                    Some("this may not run in 11ty: the code above can return or throw first");
+            }
         }
         true
     }
@@ -403,7 +624,7 @@ impl<'a> Reader<'a> {
                 k += 2;
             }
         }
-        if names.is_empty() || !t[k].is("(") || js::matching(t, k) != Some(b - 1) {
+        if names.is_empty() || k >= b || !t[k].is("(") || js::matching(t, k) != Some(b - 1) {
             self.todo(a, b, "port this code", PORTING);
             return;
         }
@@ -512,13 +733,12 @@ impl<'a> Reader<'a> {
             ),
             "setQuietMode" | "setWatchThrottleWaitTime" | "setServerOptions" | "addWatchTarget"
             | "setWatchJavaScriptDependencies" | "setChokidarConfig"
-            | "setServerPassthroughCopyBehavior" => {
-                let span = self.span(a, b);
-                self.items.push(Item::Left {
-                    why: "it is for 11ty's watcher and dev server, and doesn't change the files 11ty writes".into(),
-                    span,
-                });
-            }
+            | "setServerPassthroughCopyBehavior" => self.todo(
+                a,
+                b,
+                "this is for 11ty's watcher and dev server and doesn't change the files 11ty writes; Brrrty's `serve` has no setting for it, so drop it",
+                "https://brrrty.com/docs/serve/",
+            ),
             _ => self.todo(a, b, "port this to Rhai", PORTING),
         }
     }
@@ -526,8 +746,18 @@ impl<'a> Reader<'a> {
     /// What the plugin `toks[a..b]` is: its module and export.
     fn plugin_ref(&self, (a, b): (usize, usize)) -> Option<Binding> {
         let t = &self.toks;
+        // A name counts only when nothing else in the file declares or assigns it.
+        let trusted = |name: &str| {
+            self.uses
+                .get(name)
+                .is_some_and(|&(all, plugin)| all == plugin + 1)
+        };
         if b == a + 1 {
-            return self.bindings.get(t[a].ident()?).cloned();
+            let name = t[a].ident()?;
+            if !trusted(name) {
+                return None;
+            }
+            return self.bindings.get(name).cloned();
         }
         if let Some(m) = self.required(a, b) {
             return Some(Binding::Module(m));
@@ -535,7 +765,11 @@ impl<'a> Reader<'a> {
         if b >= 3 && t[b - 2].is(".") {
             let export = t[b - 1].ident()?.to_string();
             let module = if b == a + 3 {
-                match self.bindings.get(t[a].ident()?)? {
+                let name = t[a].ident()?;
+                if !trusted(name) {
+                    return None;
+                }
+                match self.bindings.get(name)? {
                     Binding::Module(m) => m.clone(),
                     Binding::Export(..) => return None,
                 }
@@ -667,16 +901,20 @@ impl<'a> Reader<'a> {
                 link,
             );
         }
-        match self.dir.iter().find(|(k, _)| *k == key) {
-            Some((_, old)) if *old != value => self.todo(
-                a,
-                b,
-                format!("`dir.{key}` is set twice; check which one 11ty uses"),
-                link,
-            ),
-            Some(_) => {}
-            None => self.dir.push((key, value)),
-        }
+        let span = self.span(a, b);
+        let key = match key {
+            "input" => "dir.input",
+            "output" => "dir.output",
+            "includes" => "dir.includes",
+            "data" => "dir.data",
+            _ => "dir.layouts",
+        };
+        self.settings.push(Setting {
+            key,
+            value: js::rhai_string(&value),
+            raw: Some(value),
+            span,
+        });
     }
 
     /// The object the config returns, in `toks[a..b]`.
@@ -719,9 +957,23 @@ impl<'a> Reader<'a> {
                     };
                     match self.lit(p.value) {
                         Some(Lit::Str(e)) if e == "liquid" || e == "njk" => {
-                            self.engines.push((key, js::rhai_string(&e)))
+                            let span = self.span(x, y);
+                            self.settings.push(Setting {
+                                key,
+                                value: js::rhai_string(&e),
+                                raw: None,
+                                span,
+                            })
                         }
-                        Some(Lit::Bool(false)) => self.engines.push((key, "false".into())),
+                        Some(Lit::Bool(false)) => {
+                            let span = self.span(x, y);
+                            self.settings.push(Setting {
+                                key,
+                                value: "false".into(),
+                                raw: None,
+                                span,
+                            })
+                        }
                         _ => self.todo(
                             x,
                             y,
@@ -742,107 +994,143 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The lines `span` covers, whole.
-    fn quote(&self, span: (usize, usize)) -> (usize, usize, Vec<&'a str>) {
-        let src = self.src;
-        let start = src[..span.0].rfind('\n').map_or(0, |i| i + 1);
-        let end = src[span.1..].find('\n').map_or(src.len(), |i| span.1 + i);
-        let first = src[..start].matches('\n').count() + 1;
-        let lines: Vec<&str> = src[start..end]
-            .split('\n')
-            .map(|l| l.strip_suffix('\r').unwrap_or(l))
-            .collect();
-        (first, first + lines.len() - 1, lines)
-    }
-
+    /// Quote the lines `span` covers, whole, each as its own `//` line.
     fn quoted(&self, out: &mut String, span: (usize, usize)) {
-        if span == (0, 0) {
-            return;
-        }
-        let (first, last, lines) = self.quote(span);
+        let line_of = |at: usize| self.lines.partition_point(|&(_, end)| end < at);
+        let first = line_of(span.0);
+        let last = line_of(span.1).max(first).min(self.lines.len() - 1);
         if first == last {
-            out.push_str(&format!("// {}, line {first}:\n", self.file));
+            out.push_str(&format!("// {}, line {}:\n", self.file, first + 1));
         } else {
-            out.push_str(&format!("// {}, lines {first}-{last}:\n", self.file));
+            out.push_str(&format!(
+                "// {}, lines {}-{}:\n",
+                self.file,
+                first + 1,
+                last + 1
+            ));
         }
-        for l in lines {
+        for &(a, b) in &self.lines[first..=last] {
+            let l = &self.src[a..b];
             if l.trim().is_empty() {
                 out.push_str("//\n");
             } else {
-                out.push_str(&format!("//     {l}\n"));
+                out.push_str(&format!("//     {}\n", one_line(l)));
             }
         }
     }
 
-    fn finish(self) -> Port {
+    fn finish(mut self) -> Port {
         let mut out = format!(
             "// Written by `brrrty init` from {file}, which Brrrty doesn't run.\n\
              // Brrrty reads this file instead; 11ty still reads {file}.\n\
              // Reference: {DOCS}\n",
             file = self.file
         );
+        if let Some(why) = self.whole.take() {
+            out.push_str(&format!(
+                "\n// TODO: port all of this file by hand: {}.\n// See {DOCS}\n",
+                one_line(&why)
+            ));
+            if !self.src.is_empty() {
+                self.quoted(&mut out, (0, self.src.len()));
+            }
+            return Port {
+                text: out,
+                todos: 1,
+                input: None,
+                output: None,
+            };
+        }
+        // A setting made more than once: 11ty's precedence decides, so neither is ported.
+        let mut settings: Vec<&Setting> = Vec::new();
+        let mut todos_after: Vec<(String, (usize, usize))> = Vec::new();
+        for st in &self.settings {
+            if self.settings.iter().filter(|o| o.key == st.key).count() > 1 {
+                todos_after.push((
+                    format!("`{}` is set more than once; which one 11ty uses depends on where each is, so set it by hand", st.key),
+                    st.span,
+                ));
+            } else {
+                settings.push(st);
+            }
+        }
+        let link = format!("{DOCS}#what-the-script-returns");
         let mut todos = 0;
         let mut last_single = false;
-        for item in &self.items {
+        let mut body = String::new();
+        let todo_items = todos_after.into_iter().map(|(why, span)| Item::Todo {
+            why,
+            link: link.clone(),
+            span,
+        });
+        let items: Vec<Item> = std::mem::take(&mut self.items)
+            .into_iter()
+            .chain(todo_items)
+            .collect();
+        for item in &items {
             match item {
                 Item::Rhai(line) => {
                     let single =
                         !line.contains('\n') || line.lines().all(|l| l.starts_with("config."));
                     if !(single && last_single) {
-                        out.push('\n');
+                        body.push('\n');
                     }
-                    out.push_str(line);
-                    out.push('\n');
+                    body.push_str(line);
+                    body.push('\n');
                     last_single = single;
                 }
                 Item::Todo { why, link, span } => {
                     todos += 1;
-                    out.push_str(&format!("\n// TODO: {why}.\n// See {link}\n"));
-                    self.quoted(&mut out, *span);
-                    last_single = false;
-                }
-                Item::Left { why, span } => {
-                    out.push_str(&format!("\n// Left out: {why}.\n"));
-                    self.quoted(&mut out, *span);
+                    body.push_str(&format!("\n// TODO: {}.\n// See {link}\n", one_line(why)));
+                    self.quoted(&mut body, *span);
                     last_single = false;
                 }
             }
         }
+        out.push_str(&body);
         if self.left_data_engine {
             out.push_str("\n// Left out: `dataTemplateEngine`, which 11ty 3 doesn't read.\n");
         }
-        if !self.dir.is_empty() || !self.engines.is_empty() {
+        let dirs: Vec<&&Setting> = settings
+            .iter()
+            .filter(|s| s.key.starts_with("dir."))
+            .collect();
+        let engines: Vec<&&Setting> = settings
+            .iter()
+            .filter(|s| !s.key.starts_with("dir."))
+            .collect();
+        if !settings.is_empty() {
             out.push_str("\n#{\n");
-            if !self.dir.is_empty() {
+            if !dirs.is_empty() {
                 out.push_str("    dir: #{\n");
-                for (k, v) in &self.dir {
-                    out.push_str(&format!("        {k}: {},\n", js::rhai_string(v)));
+                for st in &dirs {
+                    out.push_str(&format!("        {}: {},\n", &st.key[4..], st.value));
                 }
                 out.push_str("    },\n");
             }
-            for (k, v) in &self.engines {
-                out.push_str(&format!("    {k}: {v},\n"));
+            for st in &engines {
+                out.push_str(&format!("    {}: {},\n", st.key, st.value));
             }
             out.push_str("}\n");
         }
         let dir = |key: &str| {
-            self.dir
+            settings
                 .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, v)| v.clone())
+                .find(|s| s.key == key)
+                .and_then(|s| s.raw.clone())
         };
         Port {
             text: out,
             todos,
-            input: dir("input"),
-            output: dir("output"),
+            input: dir("dir.input"),
+            output: dir("dir.output"),
         }
     }
 }
 
 /// A path 11ty would read as a glob.
 fn glob(path: &str) -> bool {
-    path.contains(['*', '?', '[', ']', '{', '}']) || path.starts_with('!')
+    path.contains(['*', '?', '[', ']', '{', '}', '(', ')']) || path.starts_with('!')
 }
 
 #[cfg(test)]
@@ -883,9 +1171,9 @@ module.exports = function (eleventyConfig) {
         assert!(t.contains("// TODO: port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 15:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n"), "{t}");
         assert!(t.contains("globs"), "{t}");
         assert!(t.contains("`_includes`"), "{t}");
-        assert!(t.contains("// Left out: it is for 11ty's watcher"), "{t}");
+        assert!(t.contains("// TODO: this is for 11ty's watcher"), "{t}");
         assert!(t.contains("#{\n    dir: #{\n        input: \"src\",\n        output: \"dist\",\n    },\n    markdownTemplateEngine: \"njk\",\n}\n"), "{t}");
-        assert_eq!(p.todos, 4, "{t}");
+        assert_eq!(p.todos, 5, "{t}");
         assert_eq!(p.input.as_deref(), Some("src"));
     }
 
@@ -928,5 +1216,240 @@ module.exports = function (eleventyConfig) {
         );
         assert_eq!(p.todos, 1);
         assert!(p.text.contains("couldn't read this file"), "{}", p.text);
+    }
+
+    /// Lines that aren't comments: what the generated config runs.
+    fn live(p: &Port) -> Vec<&str> {
+        p.text
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with("//"))
+            .collect()
+    }
+
+    #[test]
+    fn return_then_line_break_ports_nothing() {
+        let src = "module.exports = function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"a\");\n  return\n  {\n    dir: { output: \"elsewhere\" }\n  }\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(live(&p).is_empty(), "{}", p.text);
+        assert!(
+            p.text.contains("`return` is followed by a line break"),
+            "{}",
+            p.text
+        );
+        assert_eq!(p.output, None);
+    }
+
+    #[test]
+    fn code_after_return_is_a_todo() {
+        let src = "module.exports = function (c) {\n  return { dir: { output: \"out\" } };\n  c.addPassthroughCopy(\"secret\");\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            !p.text.contains("config.add_passthrough_copy"),
+            "{}",
+            p.text
+        );
+        assert!(p.text.contains("11ty never runs this"), "{}", p.text);
+        // An early return inside an `if`: what follows may not run.
+        let src = "module.exports = function (c) {\n  if (process.env.X) { return {}; }\n  c.addPassthroughCopy(\"a\");\n  c.addFilter(\"f\", function (s) { return s; });\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            !p.text.contains("config.add_passthrough_copy"),
+            "{}",
+            p.text
+        );
+        assert!(p.text.contains("may not run"), "{}", p.text);
+        // A `return` inside a filter's own function doesn't stop anything.
+        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", function (s) { return s; });\n  c.addFilter(\"g\", (s) => { return s; });\n  c.addPassthroughCopy(\"a\");\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+    }
+
+    #[test]
+    fn more_than_one_export_ports_nothing() {
+        for src in [
+            "module.exports = function (c) { c.addPassthroughCopy(\"old\") };\nmodule.exports = function (c) { c.addPassthroughCopy(\"new\") };\n",
+            "module.exports.config = { dir: { output: \"x\" } };\nmodule.exports = function (c) { c.addPassthroughCopy(\"a\") };\n",
+            "function config(c) { c.addPassthroughCopy(\"a\") }\nfunction config(c) { c.addPassthroughCopy(\"b\") }\nmodule.exports = config;\n",
+            "module.exports = config;\nfunction config(c) {}\nasync",
+            "export default function (c) { c.addPassthroughCopy(\"a\") }\nexport const config = { dir: { output: \"x\" } };\nexport const config2 = {};\n",
+            "module.exports = function (c) { c = other; c.addPassthroughCopy(\"a\") };\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert_eq!(p.todos, 1, "{src}\n{}", p.text);
+        }
+    }
+
+    #[test]
+    fn shadowed_plugin_names_are_todos() {
+        let inner = "const syntaxHighlight = require(\"@11ty/eleventy-plugin-syntaxhighlight\");\nmodule.exports = function (c) {\n  const syntaxHighlight = require(\"./my-highlighter\");\n  c.addPlugin(syntaxHighlight);\n};\n";
+        let reassigned = "let hl = require(\"@11ty/eleventy-plugin-syntaxhighlight\");\nhl = require(\"./mine\");\nmodule.exports = function (c) {\n  c.addPlugin(hl);\n};\n";
+        for src in [inner, reassigned] {
+            let p = port(src, "eleventy.config.js");
+            assert!(!p.text.contains("config.add_plugin"), "{}", p.text);
+        }
+    }
+
+    #[test]
+    fn settings_made_twice_are_todos() {
+        let src = "export default function (c) {\n  c.setOutputDirectory(\"a\");\n}\nexport const config = {\n  dir: { output: \"b\" },\n  markdownTemplateEngine: \"njk\",\n};\n";
+        let p = port(src, "eleventy.config.mjs");
+        assert!(!live(&p).iter().any(|l| l.contains("output")), "{}", p.text);
+        assert_eq!(p.todos, 2, "{}", p.text);
+        assert!(
+            p.text.contains("markdownTemplateEngine: \"njk\""),
+            "{}",
+            p.text
+        );
+    }
+
+    #[test]
+    fn every_line_terminator_stays_inside_comments() {
+        for nl in ["\r", "\r\n", "\u{2028}", "\u{2029}", "\n"] {
+            let src = format!(
+                "module.exports = function (c) {{{nl}  c.addFilter(\"x\", (s) => s);{nl}  c.addPassthroughCopy(\"a\");{nl}}};{nl}"
+            );
+            let p = port(&src, "eleventy.config.js");
+            for l in p.text.split('\n') {
+                assert!(
+                    !l.contains(['\r', '\u{2028}', '\u{2029}', '\u{85}']),
+                    "{nl:?}: {l:?}"
+                );
+            }
+            assert_eq!(
+                live(&p),
+                ["config.add_passthrough_copy(\"a\");"],
+                "{nl:?}\n{}",
+                p.text
+            );
+        }
+        // A key with a line break in it, quoted in the reason.
+        let src = "const h = require(\"@11ty/eleventy-plugin-syntaxhighlight\");\nmodule.exports = function (c) { c.addPlugin(h, { \"a\\nconfig.add_passthrough_copy('x');\": 1 }) };\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(live(&p).is_empty(), "{}", p.text);
+    }
+
+    #[test]
+    fn hostile_input_is_bounded() {
+        let deep = |open: &str, n: usize| {
+            format!(
+                "module.exports = function (c) {{ c.addPassthroughCopy({}) }};",
+                open.repeat(n)
+            )
+        };
+        let started = std::time::Instant::now();
+        for src in [
+            deep("[", 100_000),
+            deep("{a:", 20_000),
+            format!(
+                "module.exports = function (c) {{ c.x(`{}`) }};",
+                "${`".repeat(10_000)
+            ),
+            "c.a();\n".repeat(20_000),
+        ] {
+            let p = port(&src, "eleventy.config.js");
+            assert!(p.todos >= 1);
+        }
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn fuzz_never_panics() {
+        let sample = "const { feedPlugin } = require(\"@11ty/eleventy-plugin-rss\");\n// c\nmodule.exports = async function (c) {\n  c.addPassthroughCopy({ \"a\": \"b\" });\n  c.addPlugin(feedPlugin, { type: \"atom\", collection: { name: \"p\", limit: -1.5 } });\n  c.addFilter(\"f\", (s) => `${s}/x/` + /re[/]/g.source);\n  return { dir: { input: \"src\" }, htmlTemplateEngine: false };\n};\n";
+        let started = std::time::Instant::now();
+        // Every prefix of a real config.
+        for (i, _) in sample.char_indices() {
+            let _ = port(&sample[..i], "eleventy.config.js");
+        }
+        // Random soup of JavaScript pieces.
+        let pieces = [
+            "(",
+            ")",
+            "{",
+            "}",
+            "[",
+            "]",
+            ",",
+            ";",
+            "\n",
+            "\r",
+            "\u{2028}",
+            "return",
+            "c",
+            ".",
+            "addPlugin",
+            "addPassthroughCopy",
+            "module.exports",
+            "=",
+            "=>",
+            "function",
+            "\"s\"",
+            "'",
+            "`",
+            "${",
+            "/",
+            "/*",
+            "*/",
+            "//",
+            "-",
+            "1",
+            "async",
+            "export",
+            "default",
+            "import",
+            "from",
+            "require",
+            "const",
+            "x",
+            ":",
+            "\\",
+            "é",
+            "\u{feff}",
+        ];
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        for _ in 0..3000 {
+            let mut src = String::new();
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let len = (seed % 60) as usize;
+            for _ in 0..len {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                src.push_str(pieces[(seed % pieces.len() as u64) as usize]);
+                src.push(' ');
+            }
+            let p = port(&src, "eleventy.config.js");
+            for l in p.text.split('\n') {
+                assert!(!l.contains(['\r', '\u{2028}', '\u{2029}']), "{src:?}");
+            }
+        }
+        // The sample with a piece cut out or repeated, which often still tokenizes.
+        let chars: Vec<char> = sample.chars().collect();
+        for _ in 0..3000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let at = (seed % chars.len() as u64) as usize;
+            let len = 1 + ((seed >> 20) % 12) as usize;
+            let end = (at + len).min(chars.len());
+            let mut m: Vec<char> = chars[..at].to_vec();
+            if seed & 1 == 0 {
+                m.extend_from_slice(&chars[at..end]);
+                m.extend_from_slice(&chars[at..end]);
+            }
+            m.extend_from_slice(&chars[end..]);
+            let src: String = m.into_iter().collect();
+            let p = port(&src, "eleventy.config.js");
+            for l in p.text.split('\n') {
+                assert!(!l.contains(['\r', '\u{2028}', '\u{2029}']), "{src:?}");
+            }
+        }
+        assert!(started.elapsed().as_secs() < 20, "{:?}", started.elapsed());
     }
 }
