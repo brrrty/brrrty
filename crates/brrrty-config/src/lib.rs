@@ -112,6 +112,9 @@ mod builtins;
 mod callbacks;
 mod collections;
 mod convert;
+// Public for `tests/csv_probes.rs`, which checks it against csv-parse.
+#[doc(hidden)]
+pub mod csv;
 mod data;
 mod filters;
 mod git;
