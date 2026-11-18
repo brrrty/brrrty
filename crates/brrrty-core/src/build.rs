@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use brrrty_js::Value;
@@ -231,6 +231,56 @@ struct Shared<'a> {
     virtuals: &'a HashMap<PathBuf, FeedOptions>,
     /// The survey being recorded, in a survey build.
     survey: Option<&'a Log>,
+    /// Collection items whose `data` lacks keys Brrrty can't supply.
+    items_withheld: Mutex<ItemsWithheld>,
+}
+
+/// The `data` objects of collection items that lack keys Brrrty can't
+/// supply, registered so a read of one of those keys through the item (a
+/// collection loop, a pagination alias) is caught as a read of the key
+/// itself is: see [`traps::withhold`]. Unregistered when dropped.
+#[derive(Default)]
+struct ItemsWithheld {
+    /// Held so no other object takes their address while registered.
+    held: Vec<Arc<IndexMap<String, Value>>>,
+    /// Why each key is withheld, from the first page that withholds it.
+    reasons: BTreeMap<String, Withheld>,
+}
+
+impl ItemsWithheld {
+    /// Register the items made for `pages`, one each, in order.
+    fn add(&mut self, items: &[Page], pages: &[Prepared]) {
+        for (item, page) in items.iter().zip(pages) {
+            let withheld = &page.source.withheld;
+            if withheld.is_empty() {
+                continue;
+            }
+            let Value::Object(item) = &item.item else {
+                continue;
+            };
+            let Some(Value::Object(data)) = item.get("data") else {
+                continue;
+            };
+            let keys: Arc<[String]> = withheld.iter().map(|(k, _)| k.clone()).collect();
+            traps::withhold(traps::object_id(data), keys);
+            self.held.push(data.clone());
+            for (k, w) in withheld {
+                self.reasons.entry(k.clone()).or_insert_with(|| w.clone());
+            }
+        }
+    }
+}
+
+impl Drop for ItemsWithheld {
+    fn drop(&mut self) {
+        for data in &self.held {
+            traps::release(traps::object_id(data));
+        }
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Why a data key has no value.
@@ -1124,11 +1174,15 @@ impl Place<'_, '_> {
     /// A permalink or computed value that read data Brrrty can't supply
     /// would put the page in the wrong place.
     fn check_undefined(&self, undefined: &BTreeSet<String>) -> Result<(), Problem> {
+        let items = lock(&self.shared.items_withheld);
         match missing_data_problem(
             undefined,
             &self.source.withheld,
             &self.shared.data_dir,
-            CollectionsState::default(),
+            CollectionsState {
+                items_withheld: Some(&items.reasons),
+                ..CollectionsState::default()
+            },
         ) {
             Some(problem) => Err(problem.with_path(&self.source.shown)),
             None => Ok(()),
@@ -1338,6 +1392,8 @@ struct CollectionsState<'a> {
     poisoned: Option<&'a BTreeMap<String, String>>,
     /// The config's collections that failed, with why.
     broken: Option<&'a BTreeMap<String, Problem>>,
+    /// Why each key collection items' `data` lacks is withheld.
+    items_withheld: Option<&'a BTreeMap<String, Withheld>>,
 }
 
 /// The problem for a read of a config collection that failed.
@@ -1482,9 +1538,27 @@ fn missing_data_problem(
     if let Some(p) = collections_problem(undefined, state) {
         return Some(p);
     }
+    // Keys read through a collection item's `data`, which lacks them as
+    // the page's own data does.
+    let through_items: Vec<(String, Withheld)> = undefined
+        .iter()
+        .filter_map(|n| n.strip_prefix(traps::WITHHELD_PREFIX))
+        .filter(|k| !undefined.contains(*k))
+        .map(|k| {
+            let why = withheld
+                .iter()
+                .find(|(w, _)| w == k)
+                .map(|(_, w)| w.clone())
+                .or_else(|| state.items_withheld.and_then(|m| m.get(k)).cloned())
+                .unwrap_or(Withheld::Failed);
+            // Shown as "`v` of another page's `data`".
+            (format!("{k}` of another page's `data"), why)
+        })
+        .collect();
     let used: Vec<&(String, Withheld)> = withheld
         .iter()
         .filter(|(k, _)| undefined.contains(k.as_str()))
+        .chain(through_items.iter())
         .collect();
     if used.is_empty() {
         return None;
@@ -2219,6 +2293,7 @@ fn build_once(
         data_dir: data_dir.clone(),
         virtuals: &virtuals,
         survey: log,
+        items_withheld: Mutex::new(ItemsWithheld::default()),
     };
 
     let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
@@ -2313,6 +2388,7 @@ fn build_once(
                     .iter()
                     .map(|x| Page::new(&x.data, x.page_number))
                     .collect();
+                lock(&shared.items_withheld).add(&items, &p);
                 slot_items.push(items.iter().map(|x| x.item.clone()).collect());
                 (Some(items), Slot::Ready(p))
             }
@@ -2350,6 +2426,7 @@ fn build_once(
                 .iter()
                 .map(|p| Page::new(&p.data, p.page_number))
                 .collect();
+            lock(&shared.items_withheld).add(&items, &pages);
             slot_items[i] = items.iter().map(|x| x.item.clone()).collect();
             made[i] = Some(pages);
             Ok(items)
@@ -2550,12 +2627,14 @@ fn build_once(
             renderable: content::renderable(&p.data),
         })
         .collect();
+    let items_withheld = lock(&shared.items_withheld).reasons.clone();
     let state = CollectionsState {
         gap: gap.as_deref(),
         has_config,
         rhai_config: opts.config.file.is_some(),
         poisoned: Some(&poisoned),
         broken: Some(&broken),
+        items_withheld: Some(&items_withheld),
     };
     let check = |i: usize, undefined: &BTreeSet<String>| {
         let src = &prepared[i].source;

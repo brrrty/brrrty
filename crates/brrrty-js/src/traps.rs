@@ -18,10 +18,16 @@
 //! A registered ("open") object also traps a read of a property it doesn't
 //! have: the `collections` object of a site whose 11ty config may add
 //! collections Brrrty can't see.
+//!
+//! A registered ("withholding") object traps a read of the keys it was
+//! registered with, and a listing of its properties: a collection item's
+//! `data`, which lacks the keys whose value Brrrty can't supply (see
+//! [`withhold`]).
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
-use std::sync::{Arc, RwLock};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, RwLock};
 
 use indexmap::IndexMap;
 
@@ -38,7 +44,16 @@ pub const ITEM_PREFIX: &str = "item.";
 /// Prefix of a trap recorded for a missing property of an open object.
 pub const OPEN_PREFIX: &str = "collections.";
 
+/// Prefix of a trap recorded for a read of a withheld key (`withheld.site`).
+pub const WITHHELD_PREFIX: &str = "withheld.";
+
 static OPEN: RwLock<Vec<usize>> = RwLock::new(Vec::new());
+
+/// Withholding objects, by [`object_id`], with the keys they lack.
+static WITHHELD: LazyLock<RwLock<HashMap<usize, Arc<[String]>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+/// How many objects are withholding, so a read can skip the lock when none.
+static WITHHELD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// What a [`ContentSource`] has for an item.
 #[derive(Debug, Clone)]
@@ -85,6 +100,52 @@ pub fn open(id: usize) {
 pub fn close(id: usize) {
     if let Ok(mut v) = OPEN.write() {
         v.retain(|x| *x != id);
+    }
+}
+
+/// Register an object as lacking `keys`, whose value Brrrty can't supply:
+/// reading one of them, or listing the object's properties, is a trap.
+/// `id` is [`object_id`] of the object, which must stay alive until
+/// [`release`].
+pub fn withhold(id: usize, keys: Arc<[String]>) {
+    if keys.is_empty() {
+        return;
+    }
+    if let Ok(mut m) = WITHHELD.write()
+        && m.insert(id, keys).is_none()
+    {
+        WITHHELD_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+pub fn release(id: usize) {
+    if let Ok(mut m) = WITHHELD.write()
+        && m.remove(&id).is_some()
+    {
+        WITHHELD_COUNT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The keys `o` was registered as lacking, if it was.
+fn withheld(o: &IndexMap<String, Value>) -> Option<Arc<[String]>> {
+    if WITHHELD_COUNT.load(Ordering::SeqCst) == 0 {
+        return None;
+    }
+    WITHHELD.read().ok()?.get(&object_id(o)).cloned()
+}
+
+fn withholds(o: &IndexMap<String, Value>, key: &str) -> bool {
+    withheld(o).is_some_and(|keys| keys.iter().any(|k| k == key))
+}
+
+/// Record the trap for a listing of a withholding object. True when it was.
+fn list_withheld(o: &IndexMap<String, Value>) -> bool {
+    match withheld(o) {
+        Some(keys) => {
+            hit(format!("{WITHHELD_PREFIX}{}", keys[0]));
+            true
+        }
+        None => false,
     }
 }
 
@@ -174,6 +235,10 @@ pub fn read(o: &IndexMap<String, Value>, key: &str, found: Option<Value>) -> Opt
             hit(format!("{ITEM_PREFIX}{key}"));
             found
         }
+        None if withholds(o, key) => {
+            hit(format!("{WITHHELD_PREFIX}{key}"));
+            found
+        }
         None if is_open(o) => {
             hit(format!("{OPEN_PREFIX}{key}"));
             found
@@ -209,6 +274,9 @@ pub fn read_item(item: &Value, key: &str) {
 /// values. An item's names are all there, so only an open object, which
 /// may have more, is a trap. True when it recorded one.
 pub fn keys(o: &IndexMap<String, Value>) -> bool {
+    if list_withheld(o) {
+        return true;
+    }
     if is_open(o) {
         hit(format!("{OPEN_PREFIX}*"));
         return true;
@@ -222,7 +290,9 @@ pub fn has(o: &IndexMap<String, Value>, key: &str) -> bool {
     if o.contains_key(key) {
         return true;
     }
-    if is_open(o) {
+    if withholds(o, key) {
+        hit(format!("{WITHHELD_PREFIX}{key}"));
+    } else if is_open(o) {
         hit(format!("{OPEN_PREFIX}{key}"));
     }
     false
@@ -253,6 +323,9 @@ pub fn entries(o: &IndexMap<String, Value>) -> bool {
             trapped = true;
         }
     }
+    if list_withheld(o) {
+        trapped = true;
+    }
     if is_open(o) {
         hit(format!("{OPEN_PREFIX}*"));
         trapped = true;
@@ -278,6 +351,31 @@ mod tests {
         o.insert("content".to_string(), Value::Undefined);
         o.insert("template".to_string(), Value::Undefined);
         o
+    }
+
+    #[test]
+    fn a_withholding_object_traps_its_keys_and_listings() {
+        let mut o = IndexMap::new();
+        o.insert("title".to_string(), Value::String("t".into()));
+        let id = object_id(&o);
+        withhold(id, Arc::from(vec!["site".to_string()]));
+        clear();
+        assert_eq!(
+            read(&o, "title", o.get("title").cloned()),
+            o.get("title").cloned()
+        );
+        assert_eq!(read(&o, "other", None), None);
+        assert!(take().is_empty());
+        assert_eq!(read(&o, "site", None), None);
+        assert_eq!(take(), vec!["withheld.site".to_string()]);
+        assert!(!has(&o, "site"));
+        assert_eq!(take(), vec!["withheld.site".to_string()]);
+        assert!(entries(&o));
+        assert_eq!(take(), vec!["withheld.site".to_string()]);
+        release(id);
+        assert_eq!(read(&o, "site", None), None);
+        assert!(!entries(&o));
+        assert!(take().is_empty());
     }
 
     #[test]

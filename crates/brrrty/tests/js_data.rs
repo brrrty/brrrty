@@ -328,6 +328,68 @@ fn a_process_a_data_file_leaves_running_does_not_keep_the_build_open() {
     );
 }
 
+/// A withheld key read through another page's `data`: a collection loop,
+/// a pagination alias and a permalink over the items.
+fn reads_through_items(on: bool) -> (Output, tempfile::TempDir) {
+    let config = if on { ON } else { "" };
+    let t = site(&[
+        ("brrrty.config.rhai", config),
+        (
+            "src/_data/v.js",
+            "module.exports = { m: new Map(), t: \"x\" };",
+        ),
+        (
+            "src/index.njk",
+            "---\ntags: post\n---\n{% for p in collections.post %}[{{ p.data.v.t }}]{% endfor %}",
+        ),
+        ("src/other.md", "---\ntags: post\nlayout: false\n---\nhi"),
+        (
+            "src/pg.njk",
+            "---\npagination:\n  data: collections.post\n  size: 1\n  alias: it\npermalink: \"pg/{{ pagination.pageNumber }}/\"\n---\n[{{ it.data.v.t }}]",
+        ),
+        (
+            "src/link.njk",
+            "---\npagination:\n  data: collections.post\n  size: 1\n  alias: it\npermalink: \"link/{{ it.data.v.t }}{{ pagination.pageNumber }}/\"\n---\nlink",
+        ),
+        (
+            "src/fine.njk",
+            "{% for p in collections.post %}[{{ p.data.title }}{{ p.url }}]{% endfor %}",
+        ),
+    ]);
+    (build(t.path(), &[], &[]), t)
+}
+
+fn check_reads_through_items(on: bool) {
+    let (o, t) = reads_through_items(on);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    for page in ["index/index.html", "pg/0/index.html", "pg/1/index.html"] {
+        assert!(!t.path().join("_site").join(page).exists(), "{page}: {out}");
+    }
+    assert!(!t.path().join("_site/link").exists(), "{out}");
+    assert!(out.contains("src/index.njk"), "{out}");
+    assert!(out.contains("src/pg.njk"), "{out}");
+    assert!(out.contains("src/link.njk"), "{out}");
+    assert!(out.contains("_data/v.js"), "{out}");
+    assert!(
+        out.contains("src/fine.njk"),
+        "a pagination that fails leaves the collections incomplete: {out}"
+    );
+}
+
+#[test]
+fn a_withheld_key_read_through_collection_items_refuses_the_page_with_node() {
+    if !has_node() {
+        return;
+    }
+    check_reads_through_items(true);
+}
+
+#[test]
+fn a_withheld_key_read_through_collection_items_refuses_the_page_without_node() {
+    check_reads_through_items(false);
+}
+
 #[test]
 fn a_proxy_of_a_plain_object_is_merged_as_11ty_merges_it() {
     if !has_node() {
