@@ -676,3 +676,39 @@ fn a_computed_permalink_false_for_one_page_is_refused() {
     );
     assert!(!t.path().join("_site/cf/index.html").exists(), "{out}");
 }
+
+/// A paginated page's data lists `pagination` first, as 11ty's
+/// `DeepCopy({ pagination }, data)` does; a JavaScript layout sees
+/// `content` then the same (expected text from 11ty 3.1.8).
+#[test]
+fn a_paginated_pages_data_keys_are_in_11tys_order() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/_data/list.json", "[1, 2, 3]"),
+        (
+            "src/k3.11ty.js",
+            "module.exports = { data: { pagination: { data: 'list', size: 1, alias: 'it' }, permalink: (d) => `/k3/${d.pagination.pageNumber}/` }, render: (d) => Object.keys(d).join(',') };\n",
+        ),
+        (
+            "src/_includes/jl.11ty.js",
+            "module.exports = { data: { a: 1 }, render(d) { return Object.keys(d).join(',') + '\\n' + d.content; } };\n",
+        ),
+        (
+            "src/k4.njk",
+            "---\nlayout: jl.11ty.js\npagination:\n  data: list\n  size: 1\npermalink: /k4/{{ pagination.pageNumber }}/\n---\nx\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        read(t.path(), "k3/1/index.html"),
+        "pagination,list,eleventy,pkg,permalink,page,collections,it"
+    );
+    assert_eq!(
+        read(t.path(), "k4/2/index.html"),
+        "content,pagination,list,eleventy,pkg,a,layout,permalink,page,collections\nx\n"
+    );
+}

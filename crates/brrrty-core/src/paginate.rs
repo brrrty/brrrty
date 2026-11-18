@@ -270,9 +270,21 @@ impl Paging {
 
     /// The template's data with the `pagination` every page shares, for
     /// [`Paging::page_data`]. Built once: pages share its values.
+    ///
+    /// The keys in 11ty's order: `DeepCopy({ pagination }, data)` puts
+    /// `pagination` first, and `collections`, taken out before the copy,
+    /// goes back in last (only JavaScript can list them).
     pub fn base(&self, data: &Data) -> Data {
-        let mut base = data.clone();
+        let mut base = Data::with_capacity(data.len() + 1);
         base.insert("pagination".into(), self.parent.clone());
+        for (k, v) in data {
+            if k != "pagination" && k != "collections" {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+        if let Some(c) = data.get("collections") {
+            base.insert("collections".into(), c.clone());
+        }
         base
     }
 
