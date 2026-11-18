@@ -51,6 +51,9 @@ In 11ty, Prism is shared across the whole build, and loading some languages chan
 - A template or directory data function that returns different data for different templates (a counter, a random value, the time) refuses the pages that use it: 11ty's result would depend on the order it happens to load templates.
 - A template or directory data file that gives something other than an object is ignored, as 11ty ignores it, but with a warning.
 - A page that reads `collections` on a site with template or directory JavaScript data is refused: 11ty orders those pages by file-read timing, so its own order changes from one build to the next.
+- A function in the data that a page calls runs twice per call, so its side effects (a log line, a fetch) happen twice. One that gives a different result for the same arguments, or changes a list pages share, stops the build before anything is written: 11ty builds pages one after another and Brrrty in parallel, so its results would follow a different order. State one function shares with another, or across different arguments, can still go unnoticed.
+- A function that changes the data or arguments it is given is refused, and so is one that reads `this` where 11ty hands it its own filters, or that receives data through `structuredClone`: Brrrty watches what the function writes through a wrapper, which `structuredClone` can't copy.
+- An error thrown by a computed or permalink function refuses that page, where 11ty stops the whole build.
 
 ## brrrty serve is stricter about the network
 
