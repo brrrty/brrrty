@@ -1473,10 +1473,12 @@ const FILTERS_THIS = "11ty's filters and shortcodes";
 // What 11ty hands a computed or permalink function as `this`
 // (`_renderFunction`): `Object.assign({}, javascriptFunctions)`, the
 // filters and shortcodes by name, which run Brrrty's own.
-function filtersThis() {
+// A computed function's also has `tmpl` (`ComputedData.add`), 11ty's
+// Template object, which Brrrty has no copy of; a plain permalink
+// function's (`renderPermalink`) doesn't.
+function filtersThis(computed) {
   const out = filterFunctions();
-  // And `tmpl`, 11ty's Template object, which Brrrty has no copy of.
-  trapKey(out, "tmpl", "reads `this.tmpl`, 11ty's internal Template object");
+  if (computed) trapKey(out, "tmpl", "reads `this.tmpl`, 11ty's internal Template object");
   return out;
 }
 
@@ -1603,7 +1605,7 @@ async function handle(req) {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
       const proxy = new ComputedDataProxy(req.keys);
-      const thisArg = filtersThis();
+      const thisArg = filtersThis(true);
       refusedInCall = null;
       let vars;
       try {
@@ -1620,7 +1622,8 @@ async function handle(req) {
     case "pageCall": {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
-      const r = await runOnce(fn, filtersThis(), [p.data], "await");
+      // A computed value is set where it goes; a plain permalink isn't.
+      const r = await runOnce(fn, filtersThis(typeof req.set === "string"), [p.data], "await");
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       if (typeof req.set === "string") {
         if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };

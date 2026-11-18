@@ -2638,9 +2638,11 @@ fn build_once(
                 }
                 let front = match virtuals.get(rel) {
                     Some(f) => layout_name(&f.data),
-                    None => fs::read_to_string(input.join(rel))
-                        .ok()
-                        .and_then(|text| split_front_matter(&text).ok().and_then(|(front, _)| layout_name(&front))),
+                    None => fs::read_to_string(input.join(rel)).ok().and_then(|text| {
+                        split_front_matter(&text)
+                            .ok()
+                            .and_then(|(front, _)| layout_name(&front))
+                    }),
                 };
                 names.extend(front.or(fallback));
             }

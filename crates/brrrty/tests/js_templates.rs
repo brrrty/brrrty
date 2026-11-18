@@ -723,7 +723,10 @@ fn an_overridden_javascript_layout_never_runs() {
     }
     let t = site(&[
         ("brrrty.config.rhai", ON),
-        ("src/posts/posts.11tydata.json", "{\"layout\": \"post.11ty.js\"}"),
+        (
+            "src/posts/posts.11tydata.json",
+            "{\"layout\": \"post.11ty.js\"}",
+        ),
         ("src/posts/a.md", "---\nlayout: plain.njk\n---\na"),
         (
             "src/_includes/post.11ty.js",
@@ -897,15 +900,28 @@ fn permalink_and_computed_functions_call_filters_on_this() {
         ("brrrty.config.rhai", ON),
         (
             "src/p.11ty.js",
-            "module.exports = { data: { title: 'Hello World', permalink(d) { return `/${this.slugify(d.title)}/`; }, eleventyComputed: { s: function (d) { return this.slug(d.title) + '|' + typeof this.page; } } }, render: (d) => d.s };\n",
+            "module.exports = { data: { title: 'Hello World', permalink(d) { return `/${this.slugify(d.title)}/`; }, eleventyComputed: { s: function (d) { return this.slug(d.title) + '|' + typeof this.page + '|' + Object.keys(this).join(','); } } }, render: (d) => d.s };\n",
+        ),
+        (
+            "src/plain.11ty.js",
+            "module.exports = { data: { permalink() { return '/' + ('tmpl' in this ? 'has-tmpl' : 'no-tmpl') + '/'; } }, render: () => 'p' };\n",
+        ),
+        (
+            "src/t.11ty.js",
+            "module.exports = { data: { eleventyComputed: { s: function () { return typeof this.tmpl; } } }, render: (d) => d.s };\n",
         ),
     ]);
     let o = build(t.path(), &[]);
-    assert!(o.status.success(), "{}", text(&o));
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    // Text from 11ty 3.1.8: a computed function's `this` ends with `tmpl`.
     assert_eq!(
         read(t.path(), "hello-world/index.html"),
-        "hello-world|undefined"
+        "hello-world|undefined|getBundle,getBundleFileUrl,inputPathToUrl,slug,slugify,url,log,getCollectionItemIndex,getCollectionItem,getPreviousCollectionItem,getNextCollectionItem,renderTransforms,tmpl"
     );
+    assert!(out.contains("reads `this.tmpl`"), "{out}");
+    // A plain permalink function's `this` has no `tmpl` in 11ty.
+    assert_eq!(read(t.path(), "no-tmpl/index.html"), "p");
 }
 
 /// A filter a render calls from a timer that outlives it is named where
