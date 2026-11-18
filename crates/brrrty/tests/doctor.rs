@@ -625,7 +625,7 @@ fn the_build_scripts_flags_are_ported_or_marked() {
         "// Ported from: site.config.js sha256:",
         "// TODO(brrrty): port this to Rhai.",
         "// TODO(brrrty): `--pathprefix=/blog/` sets 11ty's `pathPrefix`",
-        "// package.json, scripts.build:\n//     eleventy --input=src --config=site.config.js --pathprefix=/blog/\n",
+        "// package.json, scripts.build:11ty:\n//     eleventy --input=src --config=site.config.js --pathprefix=/blog/\n",
         "#{\n    dir: #{\n        input: \"src\",\n    },\n}\n",
     ] {
         assert!(rhai.contains(want), "missing {want:?} in:\n{rhai}");
@@ -735,4 +735,151 @@ fn hand_ports_are_unverified_until_recorded_then_tracked() {
     std::fs::write(dir.path().join(".eleventy.js"), js).unwrap();
     let err = stderr(&run(dir.path(), &["build"]));
     assert!(err.contains("11ty now reads .eleventy.js"), "{err}");
+}
+
+fn pkg(build: &str) -> String {
+    serde_json::json!({
+        "scripts": { "build": build },
+        "devDependencies": { "@11ty/eleventy": "3.1.8" }
+    })
+    .to_string()
+}
+
+/// Re-review: common spellings of the 11ty command had their flags dropped silently. Each
+/// is now read (`dir.input` ported, `--pathprefix` marked); nothing builds until it's dealt
+/// with.
+#[test]
+fn every_spelling_of_the_command_is_read() {
+    for build in [
+        "npx eleventy --input=src --pathprefix=/blog/",
+        "pnpm exec eleventy --input=src --pathprefix=/blog/",
+        "yarn eleventy --input=src --pathprefix=/blog/",
+        "node node_modules/@11ty/eleventy/cmd.cjs --input=src --pathprefix=/blog/",
+        "eleventy --input=src --pathprefix=/blog/ > log.txt",
+        "eleventy --input=src --pathprefix=/blog/ 2>&1",
+        "(cd . && eleventy --input=src --pathprefix=/blog/)",
+    ] {
+        let dir = site(&[("package.json", &pkg(build)), ("src/index.md", "# Hi\n")]);
+        let init = run(dir.path(), &["init", "--yes"]);
+        assert_eq!(init.status.code(), Some(0), "{build}: {}", stderr(&init));
+        let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+        assert!(rhai.contains("input: \"src\""), "{build}:\n{rhai}");
+        assert!(
+            rhai.contains("// TODO(brrrty): `--pathprefix=/blog/`"),
+            "{build}:\n{rhai}"
+        );
+        let text = stdout(&run(dir.path(), &["doctor"]));
+        assert!(
+            text.ends_with("0 of 1 page will build; 1 blocker, grouped below.\n"),
+            "{build}: {text}"
+        );
+        assert!(!text.contains("warning"), "{build}: {text}");
+    }
+}
+
+/// A script that mentions 11ty in a way init can't read, or runs a file that uses 11ty's
+/// JavaScript API, is a marker naming the script, never silence.
+#[test]
+fn unreadable_scripts_and_the_javascript_api_are_marked() {
+    for (build, why) in [
+        (
+            "concurrently \"eleventy --input=src\" \"sass x\"",
+            "couldn't read the flags",
+        ),
+        ("cd site && eleventy", "couldn't read the flags"),
+        ("node build.mjs", "uses 11ty's JavaScript API"),
+    ] {
+        let dir = site(&[
+            ("package.json", &pkg(build)),
+            (
+                "build.mjs",
+                "import Eleventy from \"@11ty/eleventy\";\nawait new Eleventy(\"src\").write();\n",
+            ),
+            ("src/index.md", "# Hi\n"),
+        ]);
+        let init = run(dir.path(), &["init", "--yes"]);
+        assert_eq!(init.status.code(), Some(0), "{build}: {}", stderr(&init));
+        let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+        assert!(rhai.contains(why), "{build}:\n{rhai}");
+        assert!(
+            rhai.contains(&format!("//     {build}\n")),
+            "{build}:\n{rhai}"
+        );
+        let text = stdout(&run(dir.path(), &["doctor"]));
+        assert!(text.contains("0 of 1 page will build"), "{build}: {text}");
+    }
+}
+
+/// Re-review: flags changed in package.json after init, and `--config` dropped from the
+/// script, now warn (`config-stale`).
+#[test]
+fn package_json_changes_after_init_warn() {
+    let dir = site(&[
+        ("package.json", &pkg("eleventy --config=cfg/site.js")),
+        ("cfg/site.js", "module.exports = function () {};\n"),
+        (
+            "eleventy.config.js",
+            "module.exports = function (c) { c.addTransform(\"x\", (s) => s); };\n",
+        ),
+        ("index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains("// Ported from: cfg/site.js sha256:"),
+        "{rhai}"
+    );
+    assert!(
+        rhai.contains("// 11ty flags from package.json: sha256:"),
+        "{rhai}"
+    );
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(stderr(&built), "");
+
+    // New flags in the build script (init kept 11ty's command as build:11ty).
+    let edited = std::fs::read_to_string(dir.path().join("package.json"))
+        .unwrap()
+        .replace(
+            "eleventy --config=cfg/site.js",
+            "eleventy --config=cfg/site.js --pathprefix=/blog/",
+        );
+    std::fs::write(dir.path().join("package.json"), &edited).unwrap();
+    let err = stderr(&run(dir.path(), &["build"]));
+    assert!(
+        err.contains("the flags package.json's scripts pass to 11ty changed"),
+        "{err}"
+    );
+
+    // `--config` dropped: 11ty reads eleventy.config.js, with its transform.
+    std::fs::write(
+        dir.path().join("package.json"),
+        edited.replace(
+            "eleventy --config=cfg/site.js --pathprefix=/blog/",
+            "eleventy",
+        ),
+    )
+    .unwrap();
+    let err = stderr(&run(dir.path(), &["build"]));
+    assert!(
+        err.contains("11ty now reads eleventy.config.js, not the cfg/site.js"),
+        "{err}"
+    );
+    assert!(err.contains("no longer pass the 11ty flags"), "{err}");
+}
+
+/// Re-review: `--config=` means 11ty reads no config, so there's nothing to call unverified.
+#[test]
+fn an_empty_config_flag_is_not_unverified() {
+    let dir = site(&[
+        ("package.json", &pkg("eleventy --config=")),
+        ("eleventy.config.js", "module.exports = function () {};\n"),
+        ("index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(stderr(&built), "");
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(rhai.contains("11ty reads no config file"), "{rhai}");
 }
