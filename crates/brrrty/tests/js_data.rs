@@ -1129,25 +1129,36 @@ fn caches_closures_and_bound_functions_build() {
 }
 
 #[test]
-fn a_computed_value_from_the_clock_is_refused_every_time() {
+fn a_computed_value_from_the_clock_builds_every_time() {
     if !has_node() {
         return;
     }
+    // The time of the call, as under 11ty: the replay check is handed the
+    // same values, so the outcome never depends on the millisecond.
     let mut files = vec![
         ("brrrty.config.rhai", ON),
         (
             "src/_data/eleventyComputed.js",
-            "module.exports = { built: () => new Date(), lucky: () => Math.random() < 2 };",
+            "const c = require(\"crypto\");\nmodule.exports = { built: () => new Date(), lucky: () => Math.random() < 2, id: () => c.randomUUID(), t: () => performance.now() > 0, hr: () => String(process.hrtime.bigint() % 7n), f: () => new Intl.DateTimeFormat(\"en-US\", { timeStyle: \"medium\" }).format() };",
         ),
     ];
     let pages: Vec<(String, String)> = (0..40)
-        .map(|i| (format!("src/p{i}.njk"), "{{ built }}".to_string()))
+        .map(|i| {
+            (
+                format!("src/p{i}.njk"),
+                "{{ built }}|{{ id | length }}|{{ t }}|{{ f | length > 0 }}".to_string(),
+            )
+        })
         .collect();
     files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
-    let (o, _t) = same_every_run(&files, 8);
-    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
-    let out = text(&o);
-    assert!(out.contains("reads the current time"), "{out}");
+    let t = site(&files);
+    for _ in 0..8 {
+        let _ = fs::remove_dir_all(t.path().join("_site"));
+        let o = build(t.path(), &[], &[]);
+        assert!(o.status.success(), "{}", text(&o));
+        let p = written(&t, "p3/index.html").unwrap();
+        assert!(p.ends_with("|36|true|true"), "{p}");
+    }
 }
 
 #[test]
@@ -1198,4 +1209,128 @@ fn a_computed_key_inside_shared_global_data_stays_the_pages_own() {
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(written(&t, "a/index.html").as_deref(), Some("S/a"));
     assert_eq!(written(&t, "b/index.html").as_deref(), Some("S/b"));
+}
+
+#[test]
+fn a_function_that_changes_a_data_files_own_list_is_refused() {
+    if !has_node() {
+        return;
+    }
+    // 11ty's templates see the list sorted, or the style added, from that
+    // call on; Brrrty's see it as it loaded.
+    for (data, page) in [
+        (
+            "const all = [{t:\"b\",d:2},{t:\"a\",d:1},{t:\"c\",d:3}];\nmodule.exports = { all, newest() { return all.sort((x, y) => y.d - x.d); } };\n",
+            "{% for p in d.newest() %}{{ p.t }}{% endfor %} first={{ d.all[0].t }}",
+        ),
+        (
+            "const styles = [];\nmodule.exports = { styles, use(n) { if (!styles.includes(n)) styles.push(n); return \"\"; } };\n",
+            "{{ d.use(\"gallery\") }}css=[{{ d.styles | join(\",\") }}]",
+        ),
+        // Changed and changed back within one page: 11ty's template between
+        // the two calls sees the change.
+        (
+            "const stack = [];\nmodule.exports = { stack, open(n) { stack.push(n); return \"\"; }, close() { stack.pop(); return \"\"; } };\n",
+            "{{ d.open(\"x\") }}[{{ d.stack | join }}]{{ d.close() }}",
+        ),
+    ] {
+        let (o, t) = same_every_run(
+            &[
+                ("brrrty.config.rhai", ON),
+                ("src/_data/d.js", data),
+                ("src/a.njk", page),
+            ],
+            3,
+        );
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+        let out = text(&o);
+        assert!(
+            out.contains("changes the data src/_data/d.js gives"),
+            "{out}"
+        );
+        assert!(out.contains("js-data-impure"), "{out}");
+        assert_eq!(written(&t, "a/index.html"), None);
+    }
+}
+
+#[test]
+fn state_a_function_keeps_to_itself_and_returns_later_is_caught() {
+    if !has_node() {
+        return;
+    }
+    // Not part of what the file exports: the replay check sees it.
+    let (o, _t) = same_every_run(
+        &[
+            ("brrrty.config.rhai", ON),
+            (
+                "src/_data/d.js",
+                "const seen = [];\nmodule.exports = { add(x) { seen.push(x); return \"\"; }, list() { return seen.join(\",\"); } };\n",
+            ),
+            ("src/a.njk", "{{ d.add(\"a\") }}"),
+            ("src/b.njk", "[{{ d.list() }}]"),
+        ],
+        5,
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("js-data-impure"), "{out}");
+    // Named as a reader would: no internal labels.
+    assert!(out.contains("in the content of src/"), "{out}");
+}
+
+#[test]
+fn a_helper_that_resets_and_counts_within_each_page_builds_every_time() {
+    if !has_node() {
+        return;
+    }
+    // 11ty renders one page at a time; Brrrty lets one page call functions
+    // at a time, so each page counts from its own reset.
+    let mut files = vec![
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/c.js",
+            "let n = 0;\nmodule.exports = { reset() { n = 0; return \"\"; }, next() { n += 1; return n; } };\n",
+        ),
+    ];
+    let pages: Vec<(String, String)> = (0..40)
+        .map(|i| {
+            (
+                format!("src/n{i}.njk"),
+                "{{ c.reset() }}{{ c.next() }}{{ c.next() }}{{ c.next() }}".to_string(),
+            )
+        })
+        .collect();
+    files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
+    let (o, t) = same_every_run(&files, 10);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(written(&t, "n7/index.html").as_deref(), Some("123"));
+}
+
+#[test]
+fn a_replay_that_never_finishes_is_given_up_on() {
+    if !has_node() {
+        return;
+    }
+    // The data file hangs only when it loads a second time.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/d.js",
+            "const fs = require(\"fs\");\nconst again = fs.existsSync(\"marker\");\nfs.writeFileSync(\"marker\", \"1\");\nmodule.exports = async () => { if (again) await new Promise(() => {}); return { f: () => \"x\" }; };\n",
+        ),
+        ("src/a.njk", "{{ d.f() }}"),
+    ]);
+    let started = Instant::now();
+    let o = build(t.path(), &[], &[]);
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        text(&o).contains("longer than the first run allows"),
+        "{}",
+        text(&o)
+    );
 }

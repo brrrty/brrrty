@@ -47,4 +47,6 @@ lang = "en_US.UTF-8"
 # - fx/: a function from the data keeps its identity through `first`, `set`,
 #   a loop or an index (`==`, `===`, `in`, Liquid `contains`), but each
 #   Nunjucks member lookup is a new wrapper; `dump`/`json` leave it out;
-#   an object of functions counts as empty.
+#   an object of functions counts as empty;
+# - luxon's `fromISO` reads the clock inside for a zone's offset, and a
+#   helper formatting fixed dates with it builds (luxon.njk, luxon 3.7.2).

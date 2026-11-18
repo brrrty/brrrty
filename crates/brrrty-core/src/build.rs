@@ -1035,7 +1035,9 @@ fn load_page_inner(
             source: &source,
         };
         let mut undefined = BTreeSet::new();
+        let unit = UnitGuard::enter(format!("1 load {}", shown.display()));
         let (data, permalink) = place.locate(values, &locator, &mut undefined)?;
+        drop(unit);
         place.check_undefined(&undefined)?;
         let output_rel = match permalink {
             Permalink::Write { output_rel, .. } => Some(output_rel),
@@ -2348,13 +2350,7 @@ fn build_once(
         items_withheld: Mutex::new(ItemsWithheld::default()),
     };
 
-    let loaded: Vec<Loaded> = loadable
-        .par_iter()
-        .map(|rel| {
-            let _unit = UnitGuard::enter(format!("1 load {}", rel.display()));
-            load(&shared, rel)
-        })
-        .collect();
+    let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
     let stop = js_stop(js_calls.as_ref());
     if !stop.is_empty() {
         report.problems.extend(stop);
