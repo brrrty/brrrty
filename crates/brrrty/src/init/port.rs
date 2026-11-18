@@ -2586,6 +2586,13 @@ impl<'o, 'l> Reader<'o, 'l> {
                     },
                 });
             }
+            // A repeated key keeps the last value: an earlier one must run nothing.
+            let dropped = entries.iter().enumerate().any(|(i, e)| {
+                !is_pure(&e.val) && entries[i + 1..].iter().any(|later| later.key == e.key)
+            });
+            if dropped {
+                return Val::Code(self.src(a, b));
+            }
             return Val::Obj(object(entries));
         }
         if t[a].is("[") && js::matching(t, a) == Some(b - 1) {
@@ -2666,6 +2673,12 @@ impl<'o, 'l> Reader<'o, 'l> {
 
     /// A property of a value.
     fn member(&mut self, base: Val, key: &str) -> Val {
+        // Taking one part of a list or object drops the rest: the rest must
+        // run nothing. (A module's exports run when it loads, which `load_top`
+        // marks.)
+        if matches!(base, Val::Obj(_) | Val::Arr(_)) && !is_pure(&base) {
+            return Val::Unknown;
+        }
         match base {
             Val::Obj(es) => es
                 .into_iter()
@@ -4580,6 +4593,39 @@ module.exports = function (eleventyConfig) {
             assert_eq!(p.todos, todos, "{src}\n{}", p.text);
             assert!(!p.text.contains("drop it"), "{src}\n{}", p.text);
         }
+    }
+
+    /// Taking one part of a list or object, or a repeated key, drops the
+    /// rest: code there is never dropped.
+    #[test]
+    fn indexing_never_drops_code() {
+        for src in [
+            "const fs = require(\"fs\");\nmodule.exports = function (c) {\n  c.addPassthroughCopy([fs.rmSync(\"src/drafts\", { recursive: true, force: true }), \"a\"][1]);\n};\n",
+            "const fs = require(\"fs\");\nconst dir = { x: fs.writeFileSync(\"src/gen.md\", \"# gen\"), y: \"a\" }.y;\nmodule.exports = function (c) {\n  c.addPassthroughCopy(dir);\n};\n",
+            "const fs = require(\"fs\");\nmodule.exports = function (c) {\n  c.addLayoutAlias(\"post\", [fs.writeFileSync(\"x\", \"y\"), \"post.njk\"][1]);\n};\n",
+            "const fs = require(\"fs\");\nmodule.exports = function (c) {\n  for (const d of [[fs.rmSync(\"src/drafts\"), \"a\"][1]]) c.addPassthroughCopy(d);\n};\n",
+            "const fs = require(\"fs\");\nmodule.exports = function (c) {\n  c.addPassthroughCopy({ a: fs.rmSync(\"x\"), a: \"a\" }.a);\n};\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(
+                !live(&p).iter().any(|l| l.starts_with("config.")),
+                "{src}\n{}",
+                p.text
+            );
+            assert!(p.todos >= 1, "{src}\n{}", p.text);
+        }
+        // Plain lists and objects still index.
+        let src = "module.exports = function (c) {\n  c.addPassthroughCopy([\"x\", \"a\"][1]);\n  c.addPassthroughCopy({ y: \"b\" }.y);\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert_eq!(
+            live(&p),
+            [
+                "config.add_passthrough_copy(\"a\");",
+                "config.add_passthrough_copy(\"b\");"
+            ],
+            "{}",
+            p.text
+        );
     }
 
     /// In a cycle, a module gets the other's exports before it has finished
