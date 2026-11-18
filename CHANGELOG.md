@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A run of 11ty that only adds `--output` or `--dryrun` to the build's flags, such as `npm run build:11ty -- --output=_site-11ty` in CI to compare with Brrrty's output, is a comparison run. It's no longer a conflict, and it gets no TODO; before, it refused every page. With `"build": "brrrty build"`, a comparison run's other flags are the ones 11ty builds with.
+- A file a script runs that starts 11ty's command line (`execFileSync("node", ["node_modules/@11ty/eleventy/cmd.cjs", ...])`, `spawn("npx", ["@11ty/eleventy", ...])`, `execSync("npx @11ty/eleventy ...")`) no longer counts as using 11ty's JavaScript API. Its arguments are read from the file's string literals and handled like a script's. When they can't be read, the TODO says that the file starts 11ty's command line.
+- Messages name where the flags come from: `.gitlab-ci.yml, line 8 → ci/compare.mjs`, `package.json, scripts.build`, `netlify.toml, [build] command`. They no longer say "package.json's scripts" for flags package.json doesn't pass.
+- A `// 11ty flags from package.json:` hash recorded by 0.0.19 stays valid: Brrrty also accepts the hash 0.0.19 would compute, so these changes raise no `config-stale` warning on their own.
+
 ## 0.0.19 - 2026-11-17
 
 - `brrrty build` and `brrrty doctor` no longer treat a config `brrrty init` couldn't fully port as if it were ported. `init` now marks each statement it couldn't port with `// TODO(brrrty):`, and a config it couldn't port at all with `// TODO(brrrty-file):`. While one is left, every page is refused with `config-todo`, which names the lines, and nothing is written or copied; `doctor` lists it first, as a blocker of every page, and its verdict can't say the pages build. Before, Brrrty built with what was ported (11ty's default folders, when nothing was) and doctor said the pages would build, though an unported transform, Markdown library, template format or folder made them differ from 11ty's. Delete a marker once you've ported it, or decided it changes nothing Brrrty writes. A config written by an older `init` counts its `// TODO:` lines (with the `// See https://...` line under them) the same way.

@@ -847,7 +847,7 @@ fn package_json_changes_after_init_warn() {
     std::fs::write(dir.path().join("package.json"), &edited).unwrap();
     let err = stderr(&run(dir.path(), &["build"]));
     assert!(
-        err.contains("the flags package.json's scripts pass to 11ty changed"),
+        err.contains("the 11ty flags in package.json, scripts.build:11ty changed"),
         "{err}"
     );
 
@@ -865,7 +865,10 @@ fn package_json_changes_after_init_warn() {
         err.contains("11ty now reads eleventy.config.js, not the cfg/site.js"),
         "{err}"
     );
-    assert!(err.contains("no longer pass the 11ty flags"), "{err}");
+    assert!(
+        err.contains("passes the 11ty flags brrrty.config.rhai records any more"),
+        "{err}"
+    );
 }
 
 /// Re-review: `--config=` means 11ty reads no config, so there's nothing to call unverified.
@@ -1049,4 +1052,57 @@ fn a_ci_line_the_scan_cant_read_is_marked() {
     assert!(rhai.contains("// .gitlab-ci.yml, line 2:"), "{rhai}");
     let text = stdout(&run(dir.path(), &["doctor"]));
     assert!(text.contains("0 of 1 page will build"), "{text}");
+}
+
+const COMPARE_MJS: &str = "import { execFileSync } from \"node:child_process\";\nconst dir = process.env.OUT ?? \"/tmp/11ty\";\nexecFileSync(process.execPath, [\"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${dir}`, \"--quiet\"], { stdio: \"inherit\" });\n";
+const COMPARE_CI: &str = "build:\n  script:\n    - npm ci\n    - npm run build\ncompare:\n  script:\n    - npm ci\n    - node ci/compare.mjs\n";
+
+/// A synthetic copy of a real blog's setup: a CI job spawns 11ty's command line with
+/// `--output` beside Brrrty's build to compare them. That's a comparison run, not a
+/// build and not API use: init marks nothing, and the page builds.
+#[test]
+fn a_ci_comparison_run_is_not_marked() {
+    let dir = site(&[
+        ("package.json", &pkg("npx @11ty/eleventy")),
+        ("eleventy.config.js", "module.exports = function () {};\n"),
+        (".gitlab-ci.yml", COMPARE_CI),
+        ("ci/compare.mjs", COMPARE_MJS),
+        ("index.md", "# Hi\n"),
+    ]);
+    let init = run(dir.path(), &["init", "--yes"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    let out = run(dir.path(), &["doctor"]);
+    assert_eq!(stdout(&out), "The 1 page will build.\n");
+}
+
+/// The same site, ported by 0.0.19: its header records the hash 0.0.19 gave the scripts
+/// (with the comparison run read as API use), and the marker was deleted by hand. It
+/// stays in step: no warning.
+#[test]
+fn a_config_0_0_19_recorded_stays_in_step() {
+    let js = "module.exports = function () {};\n";
+    let dir = site(&[
+        (
+            "package.json",
+            "{\"scripts\":{\"build\":\"brrrty build\",\"build:11ty\":\"npx @11ty/eleventy\"},\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+        ),
+        ("eleventy.config.js", js),
+        (".gitlab-ci.yml", COMPARE_CI),
+        ("ci/compare.mjs", COMPARE_MJS),
+        ("index.md", "# Hi\n"),
+    ]);
+    let old = brrrty_config::eleventy_cli::legacy_fingerprint(dir.path()).unwrap();
+    let hash = brrrty_config::markers::source_hash(js.as_bytes());
+    std::fs::write(
+        dir.path().join("brrrty.config.rhai"),
+        format!(
+            "// Ported from: eleventy.config.js {hash}\n// 11ty flags from package.json: {old}\n"
+        ),
+    )
+    .unwrap();
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(stderr(&built), "");
 }
