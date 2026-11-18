@@ -45,7 +45,9 @@ In 11ty, Prism is shared across the whole build, and loading some languages chan
 
 `config.set_js_data("node")` runs JavaScript data files in your own Node, so their output is 11ty's. A few things differ from 11ty there, on purpose:
 
-- A data file's `console.log` goes to stderr, not stdout.
+- A data file's `console.log`, and anything else it writes to stdout, goes to stderr.
+- A process a data file starts and leaves running is stopped when the build ends, unless it started a session of its own (`detached`).
+- A getter in the data is read twice, to refuse one whose value changes; one with side effects runs once more than under 11ty.
 - A template or directory data function that returns different data for different templates (a counter, a random value, the time) refuses the pages that use it: 11ty's result would depend on the order it happens to load templates.
 - A template or directory data file that gives something other than an object is ignored, as 11ty ignores it, but with a warning.
 - A page that reads `collections` on a site with template or directory JavaScript data is refused: 11ty orders those pages by file-read timing, so its own order changes from one build to the next.
