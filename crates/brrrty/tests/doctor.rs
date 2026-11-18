@@ -1609,3 +1609,32 @@ fn javascript_reads_of_collections_under_a_gap_wait_on_its_blocker() {
     );
     assert!(text.contains("; 1 blocker, grouped below."), "{text}");
 }
+
+/// With JavaScript data on and no Node, the collections wait on the
+/// missing Node, which is the one blocker; nothing says to turn it on.
+#[test]
+fn collections_with_local_javascript_data_and_no_node_wait_on_node() {
+    let dir = site(&[
+        ("brrrty.config.rhai", "config.set_js_data(\"node\");\n"),
+        (
+            "sharks/sharks.11tydata.js",
+            "module.exports = { fin: 1 };\n",
+        ),
+        ("sharks/a.njk", "a\n"),
+        (
+            "sitemap.njk",
+            "{% for p in collections.all %}{{ p.url }}\n{% endfor %}",
+        ),
+    ]);
+    let out = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .args(["doctor"])
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .env_remove("SOURCE_DATE_EPOCH")
+        .env("BRRRTY_NODE", "/nonexistent/node")
+        .output()
+        .unwrap();
+    let text = stdout(&out);
+    assert!(!text.contains("Turn JavaScript data on"), "{text}");
+    assert!(text.contains("couldn't run"), "{text}");
+}

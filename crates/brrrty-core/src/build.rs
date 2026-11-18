@@ -2839,6 +2839,7 @@ fn build_once(
         javascript.len(),
         templates.iter().any(|t| t.computed_membership),
         js_data_unrun,
+        js_wanted,
     )
     .or_else(|| {
         imports_gap(&templates, &input_rel, has_config, &config_names).map(|why| Gap {
@@ -3681,6 +3682,7 @@ fn collections_gap(
     javascript: usize,
     computed: bool,
     js_data_unrun: usize,
+    js_on: bool,
 ) -> Option<Gap> {
     let plural = |n: usize, one: &str, many: &str| {
         if n == 1 {
@@ -3715,6 +3717,15 @@ fn collections_gap(
                 "templates (.11ty.js) are in the site"
             ),
             plural(javascript, "its pages", "their pages")
+        )));
+    }
+    if js_data_unrun > 0 && js_on {
+        // On, but it couldn't run (no Node, or Node stopped): that problem
+        // is reported on its own.
+        return Some(follows(format!(
+            "{js_data_unrun} {} a JavaScript data file that couldn't run, which may set its `tags` or `date`, so the collections would be missing or misplace {}",
+            plural(js_data_unrun, "template uses", "templates use"),
+            plural(js_data_unrun, "its page", "their pages")
         )));
     }
     if js_data_unrun > 0 {
