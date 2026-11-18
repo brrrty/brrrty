@@ -68,7 +68,7 @@ pub struct Plan {
     /// The 11ty config file read, if any.
     pub config: Option<&'static str>,
     pub changes: Vec<Change>,
-    /// `// TODO:` blocks in the new `brrrty.config.rhai`.
+    /// `// TODO(brrrty)` markers in the new `brrrty.config.rhai`.
     pub todos: usize,
     /// JavaScript data files without a `.rhai` port, relative to the root.
     pub js_data: Vec<String>,
@@ -240,7 +240,11 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             let read = read_inside(&root, name)
                 .map_err(|why| Refusal::Refused(format!("{why}, so nothing was written.")))?;
             let p = match read {
-                Some(Read::Text(src)) => port::port(src.strip_prefix(BOM).unwrap_or(&src), name),
+                Some(Read::Text(src)) => {
+                    let mut p = port::port(src.strip_prefix(BOM).unwrap_or(&src), name);
+                    record_source(&mut p.text, name, src.as_bytes());
+                    p
+                }
                 Some(Read::Lossy(src)) => {
                     port::unreadable(&src, name, "it isn't UTF-8, so Brrrty couldn't read it")
                 }
@@ -327,6 +331,15 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         has_build_11ty: edited.has_build_11ty,
         output: output.unwrap_or_else(|| "_site".into()),
     })
+}
+
+/// Add the `Ported from` line, with `bytes`' hash, after the header's comment lines: a
+/// build warns when the 11ty config no longer has that hash.
+fn record_source(text: &mut String, name: &str, bytes: &[u8]) {
+    use brrrty_config::markers::{PORTED_FROM, source_hash};
+    let line = format!("{PORTED_FROM}{name} {}\n", source_hash(bytes));
+    let at = text.find("\n\n").map_or(text.len(), |i| i + 1);
+    text.insert_str(at, &line);
 }
 
 struct Edited {
@@ -767,7 +780,7 @@ pub fn summary(plan: &Plan) -> String {
     if plan.todos > 0 {
         let source = plan.config.unwrap_or("the 11ty config");
         todo.push(format!(
-            "{CONFIG_FILE} has {} TODO{}: parts of {source} that Brrrty can't port by itself. Each quotes the JavaScript it stands in for.",
+            "{CONFIG_FILE} has {} TODO(brrrty) marker{}: parts of {source} that Brrrty can't port by itself. Each quotes the JavaScript it stands in for. Brrrty builds no pages while one is left: port each one, or decide it changes nothing Brrrty writes, then delete its TODO line. `brrrty doctor` lists them.",
             plan.todos,
             if plan.todos == 1 { "" } else { "s" }
         ));

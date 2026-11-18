@@ -116,6 +116,114 @@ fn a_site_that_builds_exits_0() {
     assert!(!dir.path().join("_site").exists());
 }
 
+/// The corpus run's first repro: `brrrty init` can't port the 11ty config at all (it hands
+/// `eleventyConfig` to a helper), so the folders it sets are lost. 11ty writes `<h1>Hello</h1>`;
+/// with default folders Brrrty would write `<h1></h1>`.
+#[test]
+fn a_config_init_could_not_port_blocks_every_page() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+        ),
+        (
+            "eleventy.config.js",
+            "function addHelpers(eleventyConfig) {\n  eleventyConfig.addFilter(\"shout\", (s) => String(s).toUpperCase());\n}\n\nmodule.exports = function (eleventyConfig) {\n  addHelpers(eleventyConfig);\n  return { dir: { input: \"src\", data: \"data\" } };\n};\n",
+        ),
+        ("src/data/site.json", "{\"title\":\"Hello\"}\n"),
+        (
+            "src/index.njk",
+            "---\npermalink: index.html\n---\n<h1>{{ site.title }}</h1>\n",
+        ),
+    ]);
+    let init = run(dir.path(), &["init", "--yes"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "{text}{}", stderr(&out));
+    assert!(
+        text.starts_with("1. `brrrty init` couldn't port any of eleventy.config.js ("),
+        "{text}"
+    );
+    assert!(text.contains("   brrrty.config.rhai:6:1: "), "{text}");
+    assert!(
+        text.ends_with("0 of 1 page will build; 1 blocker, grouped below.\n"),
+        "{text}"
+    );
+    let json: Value =
+        serde_json::from_str(&stdout(&run(dir.path(), &["doctor", "--json"]))).unwrap();
+    assert_eq!(json["builds"], false);
+    assert_eq!(json["groups"][0]["cause"]["code"], "config-todo");
+    assert_eq!(json["groups"][0]["pages"], 1);
+
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(1));
+    assert!(stderr(&built).contains("config-todo"), "{}", stderr(&built));
+    assert!(!dir.path().join("_site").exists());
+}
+
+/// The corpus run's second repro: init ports the folder and the passthrough copy but not
+/// the transform, which uppercases every page in 11ty. Every page waits on the TODO, which
+/// comes first, and the page's other blockers are still listed after it.
+#[test]
+fn a_todo_init_left_blocks_every_page_and_comes_first() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"src/style.css\");\n  eleventyConfig.addTransform(\"shout\", function (content) {\n    return content.toUpperCase();\n  });\n  return { dir: { input: \"src\" } };\n};\n",
+        ),
+        ("src/index.md", "# hi\n"),
+        ("src/other.njk", "{{ 1 | usd }}\n"),
+        ("src/style.css", "body {}\n"),
+    ]);
+    let init = run(dir.path(), &["init", "--yes"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let out = run(dir.path(), &["doctor", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let v: Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(v["pages"]["building"], 0);
+    assert_eq!(v["pages"]["total"], 2);
+    let groups = v["groups"].as_array().unwrap();
+    assert_eq!(groups[0]["cause"]["code"], "config-todo");
+    assert_eq!(groups[0]["pages"], 2);
+    assert_eq!(groups[0]["locations"][0]["path"], "brrrty.config.rhai");
+    assert_eq!(groups[0]["locations"][0]["line"], 8);
+    assert_eq!(groups[1]["cause"]["name"], "usd");
+
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(1));
+    assert!(
+        stdout(&built).starts_with("Wrote 0 files, copied 0 files"),
+        "{}",
+        stdout(&built)
+    );
+    assert!(!dir.path().join("_site").exists());
+
+    // Once the marker is gone, the person has decided: the page builds, and a change to
+    // the 11ty config since init is a warning.
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    std::fs::write(
+        dir.path().join("brrrty.config.rhai"),
+        rhai.replace("// TODO(brrrty): ", "// Ported by hand: "),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("src/other.njk"), "x\n").unwrap();
+    let js = std::fs::read_to_string(dir.path().join("eleventy.config.js")).unwrap();
+    std::fs::write(dir.path().join("eleventy.config.js"), js + "// later\n").unwrap();
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("warning: brrrty.config.rhai:4:1: eleventy.config.js changed after `brrrty init` ported it"),
+        "{text}"
+    );
+    assert!(text.ends_with("All 2 pages will build.\n"), "{text}");
+}
+
 #[test]
 fn usage_errors_exit_2() {
     let dir = site(&[("a.md", "# A\n")]);

@@ -118,7 +118,7 @@ fn sets_up_a_cjs_site() {
         "config.add_passthrough_copy(\"src/images\");\n",
         "config.add_passthrough_copy(#{ \"src/favicon.svg\": \"favicon.svg\" });\n",
         "config.add_plugin(\"syntaxhighlight\");\n",
-        "// TODO: port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 7:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n",
+        "// TODO(brrrty): port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 7:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n",
         "//       eleventyConfig.addShortcode(\"year\", () => `${new Date().getFullYear()}`);\n",
         "#{\n    dir: #{\n        input: \"src\",\n        output: \"dist\",\n    },\n    markdownTemplateEngine: \"njk\",\n}\n",
     ] {
@@ -129,7 +129,10 @@ fn sets_up_a_cjs_site() {
         text.contains("Wrote brrrty.config.rhai and package.json."),
         "{text}"
     );
-    assert!(text.contains("brrrty.config.rhai has 2 TODOs"), "{text}");
+    assert!(
+        text.contains("brrrty.config.rhai has 2 TODO(brrrty) markers"),
+        "{text}"
+    );
     assert!(text.contains("      src/_data/site.js\n"), "{text}");
     assert!(!text.contains("ported.js"), "{text}");
     assert!(
@@ -137,7 +140,30 @@ fn sets_up_a_cjs_site() {
         "{text}"
     );
 
-    // Brrrty builds with the new config.
+    // The 11ty config is recorded with its hash.
+    let hash = brrrty_config::markers::source_hash(CJS.as_bytes());
+    assert!(
+        rhai.contains(&format!("\n// Ported from: eleventy.config.js {hash}\n")),
+        "{rhai}"
+    );
+
+    // While the TODOs are left, Brrrty writes nothing, and says why.
+    let refused = run_in(dir.path(), &["build"]);
+    assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+    assert!(
+        stderr(&refused).contains("config-todo"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(!dir.path().join("dist").exists());
+
+    // Deleting the markers says they are dealt with: Brrrty builds with the new config.
+    let ported: String = rhai
+        .lines()
+        .filter(|l| !l.starts_with("// TODO(brrrty)"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(dir.path().join("brrrty.config.rhai"), ported).unwrap();
     let built = run_in(dir.path(), &["build"]);
     assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
     assert!(dir.path().join("dist/index.html").is_file());
@@ -179,7 +205,11 @@ fn sets_up_an_esm_site() {
     ] {
         assert!(rhai.contains(want), "missing {want:?} in:\n{rhai}");
     }
-    assert!(stdout(&out).contains("has 4 TODOs"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("has 4 TODO(brrrty) markers"),
+        "{}",
+        stdout(&out)
+    );
     // The config loads, though the feed's collection is a TODO still.
     brrrty_config::load(dir.path()).expect("the written config loads");
 }

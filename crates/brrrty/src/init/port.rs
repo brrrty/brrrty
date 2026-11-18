@@ -4,9 +4,15 @@
 //! Only what can be read exactly becomes Rhai: the folders, the template
 //! engines, passthrough copies and ignores with literal paths, and the plugins
 //! Brrrty has, with literal options. Every other statement is quoted as it is,
-//! under a `// TODO:` that says where to read about porting it.
+//! under a `// TODO(brrrty):` line that says where to read about porting it; a
+//! file it can't port at all is one `// TODO(brrrty-file):`. A build refuses
+//! every page while one of those is left (see `brrrty_config::markers`).
+//! Statements that only set up 11ty's watcher are quoted under a
+//! `// Left out:` line instead, as they change nothing 11ty writes.
 
 use std::collections::HashMap;
+
+use brrrty_config::markers::{TODO, TODO_FILE};
 
 use super::js::{self, Lit, Tok, Token};
 
@@ -19,7 +25,7 @@ const RSS: &str = "@11ty/eleventy-plugin-rss";
 #[derive(Debug)]
 pub(crate) struct Port {
     pub text: String,
-    /// How many `// TODO:` blocks it has.
+    /// How many `// TODO(brrrty)` markers it has.
     pub todos: usize,
     /// `dir.input`, when the config sets it.
     pub input: Option<String>,
@@ -38,10 +44,13 @@ enum Binding {
 
 enum Item {
     Rhai(String),
+    /// A statement not ported. `marker`: it may change what 11ty writes, so it gets a
+    /// `TODO(brrrty)` marker; otherwise it is only noted as left out.
     Todo {
         why: String,
         link: String,
         span: (usize, usize),
+        marker: bool,
     },
 }
 
@@ -178,6 +187,18 @@ impl<'a> Reader<'a> {
             why: why.into(),
             link: link.into(),
             span,
+            marker: true,
+        });
+    }
+
+    /// A statement left out because it can't change what 11ty writes.
+    fn left_out(&mut self, a: usize, b: usize, why: impl Into<String>, link: impl Into<String>) {
+        let span = self.span(a, b);
+        self.items.push(Item::Todo {
+            why: why.into(),
+            link: link.into(),
+            span,
+            marker: false,
         });
     }
 
@@ -795,10 +816,10 @@ impl<'a> Reader<'a> {
             ),
             "setQuietMode" | "setWatchThrottleWaitTime" | "setServerOptions" | "addWatchTarget"
             | "setWatchJavaScriptDependencies" | "setChokidarConfig"
-            | "setServerPassthroughCopyBehavior" => self.todo(
+            | "setServerPassthroughCopyBehavior" => self.left_out(
                 a,
                 b,
-                "this is for 11ty's watcher and dev server and doesn't change the files 11ty writes; Brrrty's `serve` has no setting for it, so drop it",
+                "this is for 11ty's watcher and dev server and doesn't change the files 11ty writes, and Brrrty's `serve` has no setting for it",
                 "https://brrrty.com/docs/serve/",
             ),
             _ => self.todo(a, b, "port this to Rhai", PORTING),
@@ -1092,7 +1113,7 @@ impl<'a> Reader<'a> {
         );
         if let Some(why) = self.whole.take() {
             out.push_str(&format!(
-                "\n// TODO: port all of this file by hand: {}.\n// See {DOCS}\n",
+                "\n// {TODO_FILE}: port all of this file by hand: {}.\n// Brrrty builds no pages until you port it and delete this line.\n// See {DOCS}\n",
                 one_line(&why)
             ));
             if !self.src.is_empty() {
@@ -1126,6 +1147,7 @@ impl<'a> Reader<'a> {
             why,
             link: link.clone(),
             span,
+            marker: true,
         });
         let items: Vec<Item> = std::mem::take(&mut self.items)
             .into_iter()
@@ -1143,9 +1165,19 @@ impl<'a> Reader<'a> {
                     body.push('\n');
                     last_single = single;
                 }
-                Item::Todo { why, link, span } => {
-                    todos += 1;
-                    body.push_str(&format!("\n// TODO: {}.\n// See {link}\n", one_line(why)));
+                Item::Todo {
+                    why,
+                    link,
+                    span,
+                    marker,
+                } => {
+                    let head = if *marker {
+                        todos += 1;
+                        TODO
+                    } else {
+                        "Left out"
+                    };
+                    body.push_str(&format!("\n// {head}: {}.\n// See {link}\n", one_line(why)));
                     self.quoted(&mut body, *span);
                     last_single = false;
                 }
@@ -1232,12 +1264,13 @@ module.exports = function (eleventyConfig) {
         assert!(t.contains("config.add_passthrough_copy(\"src/images\");\nconfig.add_passthrough_copy(#{ \"static\": \"/\" });\nconfig.add_passthrough_copy(#{ \"src/a.svg\": \"a.svg\" });\n"), "{t}");
         assert!(t.contains("config.add_plugin(\"syntaxhighlight\");"), "{t}");
         assert!(t.contains("config.add_plugin(\"rss\", #{\n    type: \"atom\",\n    output_path: \"/feed.xml\",\n"), "{t}");
-        assert!(t.contains("// TODO: port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 15:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n"), "{t}");
+        assert!(t.contains("// TODO(brrrty): port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 15:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n"), "{t}");
         assert!(t.contains("globs"), "{t}");
         assert!(t.contains("`_includes`"), "{t}");
-        assert!(t.contains("// TODO: this is for 11ty's watcher"), "{t}");
+        assert!(t.contains("// Left out: this is for 11ty's watcher"), "{t}");
         assert!(t.contains("#{\n    dir: #{\n        input: \"src\",\n        output: \"dist\",\n    },\n    markdownTemplateEngine: \"njk\",\n}\n"), "{t}");
-        assert_eq!(p.todos, 5, "{t}");
+        // The watcher setting is left out, not a TODO: it changes nothing 11ty writes.
+        assert_eq!(p.todos, 4, "{t}");
         assert_eq!(p.input.as_deref(), Some("src"));
     }
 
@@ -1268,7 +1301,10 @@ module.exports = function (eleventyConfig) {
         let src = "const slug = (s) => s.toLowerCase();\nfunction config(c) {\n  c.addPassthroughCopy('a');\n}\nmodule.exports = config;\n";
         let t = port(src, ".eleventy.js").text;
         assert!(t.contains("config.add_passthrough_copy(\"a\");"), "{t}");
-        assert!(t.contains("// TODO: port this code, or drop it"), "{t}");
+        assert!(
+            t.contains("// TODO(brrrty): port this code, or drop it"),
+            "{t}"
+        );
         assert!(!t.contains("module.exports"), "{t}");
     }
 
