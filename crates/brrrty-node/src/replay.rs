@@ -38,7 +38,6 @@ pub(crate) struct Log<'a> {
     pub loads: &'a [LoadRecord],
     /// How many of `loads` loaded global data.
     pub global_end: usize,
-    pub clock: &'a Json,
     pub load_handles: u64,
     pub calls: &'a [Record],
     /// The longest any request took the first time.

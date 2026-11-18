@@ -174,8 +174,6 @@ pub struct Worker {
     call_log: Vec<Record>,
     /// Set once the data files loaded: see [`JsRuntime::begin_calls`].
     calls_begun: bool,
-    /// The clock and random values the data files read as they loaded.
-    clock: Json,
     /// How many function handles the data files' values made.
     load_handles: u64,
     /// The longest a request took.
@@ -250,7 +248,6 @@ impl Worker {
             global_end: 0,
             call_log: Vec::new(),
             calls_begun: false,
-            clock: Json::Array(Vec::new()),
             load_handles: 0,
             slowest: Duration::ZERO,
             deadline: None,
@@ -790,7 +787,6 @@ impl JsRuntime for Worker {
             Err(f) => return JsResult::Failed(f),
         };
         let raw = frame.raw.unwrap_or(Json::Null);
-        self.clock = raw.get("clock").cloned().unwrap_or(Json::Array(Vec::new()));
         self.load_handles = raw.get("handles").and_then(Json::as_u64).unwrap_or(0);
         self.calls_begun = true;
         let changed: Vec<&str> = raw
@@ -892,7 +888,6 @@ impl JsRuntime for Worker {
             run_mode: self.run_mode,
             loads: &self.load_log,
             global_end: self.global_end,
-            clock: &self.clock,
             load_handles: self.load_handles,
             calls: &self.call_log,
             slowest: self.slowest,
