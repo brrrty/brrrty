@@ -12,6 +12,7 @@ fn opts(root: &Path, input: &str, output: &str) -> BuildOptions {
         passthrough: vec![],
         strict: false,
         config: Default::default(),
+        js: Default::default(),
     }
 }
 

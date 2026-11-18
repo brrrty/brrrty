@@ -7,6 +7,7 @@ pub mod codes {
     pub const COMPUTED_UNSUPPORTED: &str = "computed-unsupported";
     pub const CONFIG_ERROR: &str = "config-error";
     pub const CONFIG_INVALID: &str = "config-invalid";
+    pub const CONFIG_JS_DATA_INVALID: &str = "config-js-data-invalid";
     pub const CONFIG_LATE_CALL: &str = "config-late-call";
     pub const CONFIG_LIMIT: &str = "config-limit";
     pub const CONFIG_STALE: &str = "config-stale";
@@ -39,6 +40,20 @@ pub mod codes {
     pub const IGNORE_LINE_INVALID: &str = "ignore-line-invalid";
     pub const INPUT_MISSING: &str = "input-missing";
     pub const INPUT_NOT_A_DIRECTORY: &str = "input-not-a-directory";
+    /// A JavaScript data file threw, or its promise was rejected.
+    pub const JS_DATA_ERROR: &str = "js-data-error";
+    /// A local data function returned different data for two templates.
+    pub const JS_DATA_IMPURE: &str = "js-data-impure";
+    /// JavaScript data is on, and no Node was found.
+    pub const JS_DATA_NODE_MISSING: &str = "js-data-node-missing";
+    /// JavaScript data is on, and the Node found is older than 18.
+    pub const JS_DATA_NODE_OLD: &str = "js-data-node-old";
+    /// A template or directory data file gave something other than an object (11ty drops it).
+    pub const JS_DATA_NOT_OBJECT: &str = "js-data-not-object";
+    /// A value in JavaScript data can't cross to Brrrty exactly.
+    pub const JS_DATA_VALUE: &str = "js-data-value";
+    /// The Node running JavaScript data stopped or broke the protocol.
+    pub const JS_WORKER_FAILED: &str = "js-worker-failed";
     pub const LAYOUT_CYCLE: &str = "layout-cycle";
     pub const LAYOUT_INVALID: &str = "layout-invalid";
     pub const LAYOUT_MISSING: &str = "layout-missing";

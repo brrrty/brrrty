@@ -538,3 +538,29 @@ fn numbers_print_as_javascript_prints_them() {
     assert_eq!(g("g"), s("1e+21"));
     assert_eq!(g("h"), s("10 per page"));
 }
+
+#[test]
+fn set_js_data_turns_javascript_data_on_or_off() {
+    use brrrty_core::JsData;
+    let on = ok("let x = 1;\nconfig.set_js_data(\"node\");\n").build_options();
+    assert_eq!(on.js_data, Some((JsData::Node, Some(2))));
+    let off = ok("config.set_js_data(\"off\");").build_options();
+    assert_eq!(off.js_data, Some((JsData::Off, Some(1))));
+    // A later call wins.
+    let last = ok("config.set_js_data(\"node\");\nconfig.set_js_data(\"off\");").build_options();
+    assert_eq!(last.js_data, Some((JsData::Off, Some(2))));
+    assert_eq!(ok("let x = 1;").build_options().js_data, None);
+}
+
+#[test]
+fn set_js_data_names_the_two_values_it_takes() {
+    let p = err("\nconfig.set_js_data(\"yes\");");
+    assert_eq!(p.code, codes::CONFIG_JS_DATA_INVALID);
+    assert!(
+        p.message.contains("\"node\"") && p.message.contains("\"off\""),
+        "{}",
+        p.message
+    );
+    assert_eq!(p.line, Some(2));
+    assert!(p.column.is_some());
+}

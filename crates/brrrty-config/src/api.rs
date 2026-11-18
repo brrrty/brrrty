@@ -84,6 +84,8 @@ pub struct State {
     /// global data function) is reported. The state is then a copy of what the script set,
     /// which such a call changes to no effect, as 11ty's late calls do.
     pub closed: Option<brrrty_core::LateProblems>,
+    /// `set_js_data(...)`: the last call's mode and line.
+    pub js_data: Option<(brrrty_core::JsData, Option<usize>)>,
 }
 
 /// The `config` object.
@@ -121,6 +123,10 @@ fn open<'a>(state: &'a Arc<Mutex<State>>, call: &str, pos: Position) -> MutexGua
 /// A value the script gave that Brrrty can't use, thrown as a Rhai error.
 #[derive(Debug, Clone)]
 pub struct InvalidValue(pub String);
+
+/// A `set_js_data` value other than `"node"` and `"off"`.
+#[derive(Debug, Clone)]
+pub struct InvalidJsData(pub String);
 
 fn runtime(message: String) -> Box<EvalAltResult> {
     invalid(message, Position::NONE)
@@ -332,6 +338,28 @@ pub fn engine_for(
                 ));
             }
             state.collections.insert(name.to_string(), (f, pos));
+            Ok(())
+        },
+    );
+    // Brrrty's own: whether JavaScript data files run, in the site's Node.
+    e.register_fn(
+        "set_js_data",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         mode: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            let pos = ctx.call_position();
+            let Some(m) = brrrty_core::JsData::parse(mode.as_str()) else {
+                return Err(EvalAltResult::ErrorRuntime(
+                    Dynamic::from(InvalidJsData(format!(
+                        "config.set_js_data({}): use \"node\" (run JavaScript data files in the site's own Node) or \"off\"",
+                        serde_json::Value::String(mode.to_string())
+                    ))),
+                    pos,
+                )
+                .into());
+            };
+            open(&c.0, "config.set_js_data", pos).js_data = Some((m, pos.line()));
             Ok(())
         },
     );

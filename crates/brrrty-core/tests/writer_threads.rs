@@ -41,6 +41,7 @@ fn opts(root: &Path, entries: &[(&str, Option<&str>)]) -> BuildOptions {
         passthrough: Vec::new(),
         strict: false,
         config,
+        js: Default::default(),
     }
 }
 

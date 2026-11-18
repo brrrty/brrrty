@@ -20,6 +20,7 @@ fn opts(root: &Path, config: ConfigOptions) -> BuildOptions {
         passthrough: Vec::new(),
         strict: false,
         config,
+        js: Default::default(),
     }
 }
 

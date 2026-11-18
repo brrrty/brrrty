@@ -16,6 +16,7 @@ fn opts(root: &Path) -> BuildOptions {
         passthrough: Vec::new(),
         strict: false,
         config: Default::default(),
+        js: Default::default(),
     }
 }
 

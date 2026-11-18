@@ -29,6 +29,11 @@ const FORWARDED = ['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM', 'SIGUSR2', 'SIGALRM
 // SIGTERM) once this process is gone, even when it was killed with SIGKILL.
 const LAUNCHER_PID_VAR = 'BRRRTY_LAUNCHER_PID';
 
+// The Node that runs a site's JavaScript data files (with
+// `config.set_js_data("node")`): the one running this launcher, unless the
+// user already chose one.
+const NODE_VAR = 'BRRRTY_NODE';
+
 // Ctrl-C under `npm run` or `npx` reaches this process twice: once from the
 // terminal and once from npm, which forwards it. Copies of a signal that come
 // within this many milliseconds of the last one passed on count as one, so the
@@ -76,7 +81,11 @@ function run(bin, args, { coalesceMs = COALESCE_MS } = {}) {
   const child = childProcess.spawn(bin, args, {
     stdio: 'inherit',
     detached: process.platform !== 'win32',
-    env: { ...process.env, [LAUNCHER_PID_VAR]: String(process.pid) },
+    env: {
+      ...process.env,
+      [LAUNCHER_PID_VAR]: String(process.pid),
+      [NODE_VAR]: process.env[NODE_VAR] || process.execPath,
+    },
   });
 
   const lastSent = new Map();

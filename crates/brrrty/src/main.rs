@@ -73,6 +73,10 @@ struct DoctorArgs {
     /// brrrty.config.rhai, or _site]. Nothing is written there
     #[arg(long)]
     output: Option<PathBuf>,
+    /// Run JavaScript data files in the site's own Node (`node`), or refuse the pages that
+    /// need them (`off`) [default: `config.set_js_data(...)`, or off]
+    #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
+    js_data: Option<String>,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -94,6 +98,10 @@ struct ServeArgs {
     /// [default: `dir.output` from brrrty.config.rhai, or _site]
     #[arg(long)]
     output: Option<PathBuf>,
+    /// Run JavaScript data files in the site's own Node (`node`), or refuse the pages that
+    /// need them (`off`) [default: `config.set_js_data(...)`, or off]
+    #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
+    js_data: Option<String>,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -115,6 +123,10 @@ struct BuildArgs {
     /// brrrty.config.rhai, or _site]
     #[arg(long)]
     output: Option<PathBuf>,
+    /// Run JavaScript data files in the site's own Node (`node`), or refuse the pages that
+    /// need them (`off`) [default: `config.set_js_data(...)`, or off]
+    #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
+    js_data: Option<String>,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -124,6 +136,11 @@ struct BuildArgs {
     /// Don't print the summary line
     #[arg(long)]
     quiet: bool,
+}
+
+/// `--js-data`, which clap has already checked is `node` or `off`.
+fn js_data_flag(v: Option<&str>) -> Option<brrrty_core::JsData> {
+    v.and_then(brrrty_core::JsData::parse)
 }
 
 fn run_build(args: BuildArgs) -> ExitCode {
@@ -140,6 +157,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
         output: args.output,
         passthrough: args.passthrough,
         strict: args.strict,
+        js_data: js_data_flag(args.js_data.as_deref()),
     };
     let opts = match build_options(&root, &flags) {
         Ok(opts) => opts,
@@ -186,6 +204,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             output: args.output,
             passthrough: args.passthrough,
             strict: args.strict,
+            js_data: js_data_flag(args.js_data.as_deref()),
         },
         quiet,
         color,
@@ -344,6 +363,7 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         },
         passthrough: args.passthrough,
         strict: false,
+        js_data: js_data_flag(args.js_data.as_deref()),
     };
     let opts = match build_options(&root, &flags) {
         Ok(opts) => opts,

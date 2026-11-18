@@ -209,6 +209,8 @@ pub struct SiteConfig {
     /// The error that refuses every page while `brrrty init`'s TODO markers
     /// are left in the file (see [`markers`]).
     pub unported: Option<Problem>,
+    /// `config.set_js_data(...)`: the last call's mode and line.
+    pub js_data: Option<(brrrty_core::JsData, Option<usize>)>,
 }
 
 impl SiteConfig {
@@ -234,6 +236,7 @@ impl SiteConfig {
             reads: self.reads.clone(),
             late_problems: self.late_problems.clone(),
             unported: self.unported.clone(),
+            js_data: self.js_data,
         }
     }
 }
@@ -456,6 +459,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         reads,
         late_problems,
         unported: None,
+        js_data: state.js_data,
     })
 }
 
@@ -523,6 +527,10 @@ pub(crate) fn error_parts(e: EvalAltResult) -> ErrorParts {
         EvalAltResult::ErrorRuntime(token, _) if token.is::<api::InvalidValue>() => {
             code = codes::CONFIG_INVALID;
             token.clone_cast::<api::InvalidValue>().0
+        }
+        EvalAltResult::ErrorRuntime(token, _) if token.is::<api::InvalidJsData>() => {
+            code = codes::CONFIG_JS_DATA_INVALID;
+            token.clone_cast::<api::InvalidJsData>().0
         }
         EvalAltResult::ErrorTerminated(token, _) => token.to_string(),
         other => other.to_string(),

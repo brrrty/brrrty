@@ -22,6 +22,98 @@ pub struct BuildOptions {
     pub write_to: Option<PathBuf>,
     /// How 11ty was started, as `eleventy.env.runMode` shows it.
     pub run_mode: RunMode,
+    /// Whether JavaScript data files run, and in which Node.
+    pub js: JsOptions,
+}
+
+/// Whether a site's JavaScript data files run (`config.set_js_data`,
+/// `--js-data`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum JsData {
+    /// Pages that need JavaScript data are refused, as before 0.0.22.
+    #[default]
+    Off,
+    /// They run in the site's own Node.
+    Node,
+}
+
+impl JsData {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JsData::Off => "off",
+            JsData::Node => "node",
+        }
+    }
+
+    /// `"node"` or `"off"`.
+    pub fn parse(s: &str) -> Option<JsData> {
+        match s {
+            "node" => Some(JsData::Node),
+            "off" => Some(JsData::Off),
+            _ => None,
+        }
+    }
+}
+
+/// Where the JavaScript data mode came from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum JsDataSource {
+    /// Neither the config nor the command line said.
+    #[default]
+    Default,
+    /// `config.set_js_data(...)` in the config file, at this line.
+    Config { file: PathBuf, line: Option<usize> },
+    /// `--js-data` on the command line.
+    Flag,
+}
+
+/// The Node found to run JavaScript data, as doctor shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsNode {
+    pub path: PathBuf,
+    /// `v24.22.3`.
+    pub version: String,
+    /// `process.versions.tz`.
+    pub tz: String,
+    /// It can record every module the data loads (Node 22.15 and later).
+    pub load_hooks: bool,
+}
+
+/// Why no Node runs the JavaScript data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsNodeMissing {
+    /// Node was found, but it is older than 18.
+    pub too_old: bool,
+    /// What happened, in one line (`Node not found (tried node on PATH)`).
+    pub message: String,
+}
+
+/// Starts a JavaScript runtime for one build.
+pub type JsStarter = std::sync::Arc<
+    dyn Fn(RunMode) -> Result<Box<dyn brrrty_js::runtime::JsRuntime>, String> + Send + Sync,
+>;
+
+/// How JavaScript data files are run in this build.
+#[derive(Clone, Default)]
+pub struct JsOptions {
+    pub mode: JsData,
+    pub source: JsDataSource,
+    /// The Node that runs them, or why there is none. Looked for only when
+    /// the mode is `Node`; `None` otherwise.
+    pub node: Option<Result<JsNode, JsNodeMissing>>,
+    /// Starts the runtime; set when the mode is `Node` and Node was found.
+    pub start: Option<JsStarter>,
+}
+
+impl std::fmt::Debug for JsOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsOptions")
+            .field("mode", &self.mode)
+            .field("source", &self.source)
+            .field("node", &self.node)
+            .field("start", &self.start.is_some())
+            .finish()
+    }
 }
 
 /// The folder `brrrty serve` builds into, inside the output folder. Brrrty owns the name:
@@ -96,6 +188,8 @@ pub struct ConfigOptions {
     /// Warnings found while pages render (a `config` call made too late), reported with the
     /// build's.
     pub late_problems: LateProblems,
+    /// `config.set_js_data(...)`: the mode and the line of the call.
+    pub js_data: Option<(JsData, Option<usize>)>,
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
     /// nothing is written or copied.
     pub unported: Option<Problem>,

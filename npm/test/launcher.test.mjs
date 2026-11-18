@@ -98,6 +98,25 @@ test('the binary is told the launcher\'s process id', async () => {
   assert.equal(r.stdout, String(l.child.pid));
 });
 
+test('the binary is told which Node runs the launcher', async () => {
+  const r = await launch(['env', 'BRRRTY_NODE']).done;
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, process.execPath);
+});
+
+test('a BRRRTY_NODE already set is kept', async () => {
+  const code = `require(${JSON.stringify(launcherPath)}).run(${JSON.stringify(fake)}, ["env", "BRRRTY_NODE"])`;
+  const child = spawn(process.execPath, ['-e', code], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, BRRRTY_NODE: '/opt/node/bin/node' },
+  });
+  let stdout = '';
+  child.stdout.on('data', (d) => (stdout += d));
+  const status = await new Promise((resolve) => child.on('exit', resolve));
+  assert.equal(status, 0);
+  assert.equal(stdout, '/opt/node/bin/node');
+});
+
 test('every catchable terminating signal is forwarded', () => {
   for (const s of ['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM']) assert.ok(launcher.FORWARDED.includes(s), s);
 });

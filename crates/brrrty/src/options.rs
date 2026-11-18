@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use brrrty_core::{BuildOptions, Problem};
+use brrrty_core::{
+    BuildOptions, ConfigOptions, JsData, JsDataSource, JsNode, JsNodeMissing, JsOptions, Problem,
+    RunMode,
+};
 
 /// The build flags the command line takes.
 #[derive(Debug, Clone, Default)]
@@ -15,6 +18,8 @@ pub struct Flags {
     pub passthrough: Vec<PathBuf>,
     /// `--strict`.
     pub strict: bool,
+    /// `--js-data`; the config's `set_js_data`, or off, when not given.
+    pub js_data: Option<JsData>,
 }
 
 /// Read the config in `root` and combine it with `flags`. Flags on the command line win, as
@@ -43,7 +48,60 @@ pub fn build_options(root: &Path, flags: &Flags) -> Result<BuildOptions, Vec<Pro
         root: root.to_path_buf(),
         passthrough: flags.passthrough.clone(),
         strict: flags.strict,
+        js: js_options(root, &config, flags.js_data),
         config,
         ..BuildOptions::default()
     })
+}
+
+/// Whether JavaScript data runs: `--js-data` over `config.set_js_data`, else off. When on,
+/// the Node to run it in: `BRRRTY_NODE`, else `node` on `PATH`.
+fn js_options(root: &Path, config: &ConfigOptions, flag: Option<JsData>) -> JsOptions {
+    let (mode, source) = match (flag, config.js_data) {
+        (Some(m), _) => (m, JsDataSource::Flag),
+        (None, Some((m, line))) => (
+            m,
+            JsDataSource::Config {
+                file: config.file.clone().unwrap_or_default(),
+                line,
+            },
+        ),
+        (None, None) => (JsData::Off, JsDataSource::Default),
+    };
+    let mut js = JsOptions {
+        mode,
+        source,
+        node: None,
+        start: None,
+    };
+    if mode == JsData::Off {
+        return js;
+    }
+    match brrrty_node::find_node(std::env::var_os("BRRRTY_NODE").as_deref()) {
+        Ok(info) => {
+            js.node = Some(Ok(JsNode {
+                path: info.path.clone(),
+                version: info.version_text(),
+                tz: info.tz.clone(),
+                load_hooks: info.load_hooks,
+            }));
+            let root = root.to_path_buf();
+            js.start = Some(std::sync::Arc::new(move |run_mode| {
+                let mode = match run_mode {
+                    RunMode::Build => brrrty_node::RunMode::Build,
+                    RunMode::Serve => brrrty_node::RunMode::Serve,
+                };
+                brrrty_node::Worker::start(&info, &root, mode)
+                    .map(|w| Box::new(w) as Box<dyn brrrty_js::runtime::JsRuntime>)
+                    .map_err(|e| e.to_string())
+            }));
+        }
+        Err(missing) => {
+            js.node = Some(Err(JsNodeMissing {
+                too_old: matches!(missing, brrrty_node::NodeMissing::TooOld { .. }),
+                message: missing.to_string(),
+            }));
+        }
+    }
+    js
 }

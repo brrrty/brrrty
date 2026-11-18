@@ -17,6 +17,7 @@ fn opts_with_passthrough(root: &Path, pt: &[&str]) -> BuildOptions {
         passthrough: pt.iter().map(PathBuf::from).collect(),
         strict: false,
         config: Default::default(),
+        js: Default::default(),
     }
 }
 

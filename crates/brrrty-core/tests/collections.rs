@@ -29,6 +29,7 @@ fn run(root: &Path) -> BuildReport {
             passthrough: Vec::new(),
             strict: false,
             config: Default::default(),
+            js: Default::default(),
         },
         &MarkdownIt::new(),
     )
