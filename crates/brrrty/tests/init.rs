@@ -478,16 +478,17 @@ fn ported_fixtures_match_eleventy() {
 }
 
 #[test]
-fn compound_scripts_are_left_with_advice() {
+fn compound_scripts_keep_their_other_steps() {
     let src = "{\n  \"scripts\": {\n    \"build\": \"npm run css && eleventy && npm run pagefind\",\n    \"start\": \"eleventy --serve\"\n  },\n  \"devDependencies\": { \"@11ty/eleventy\": \"3\" }\n}\n";
     let dir = site(&[("package.json", src)]);
     let out = run_in(dir.path(), &["init", "--yes"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let pkg = read(dir.path(), "package.json");
-    assert!(pkg.contains("\"build\": \"npm run css && eleventy && npm run pagefind\",\n    \"start\": \"brrrty serve\",\n    \"start:11ty\": \"eleventy --serve\""), "{pkg}");
+    // Only the 11ty step becomes Brrrty's; the others stay, in order.
+    assert!(pkg.contains("\"build\": \"npm run css && brrrty build && npm run pagefind\",\n    \"build:11ty\": \"npm run css && eleventy && npm run pagefind\",\n    \"start\": \"brrrty serve\",\n    \"start:11ty\": \"eleventy --serve\""), "{pkg}");
+    // `npm run build:11ty -- --output=…` would pass the flag to the last step, so the
+    // comparison runs 11ty directly.
     let text = stdout(&out);
-    assert!(text.contains("scripts.build runs 11ty as one step of \"npm run css && eleventy && npm run pagefind\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.build:11ty (to compare with 11ty), then replace `eleventy` in scripts.build with `brrrty build`."), "{text}");
-    // No `build:11ty` to run, so the comparison runs 11ty directly.
     assert!(
         text.contains("npx @11ty/eleventy --output=_site-11ty"),
         "{text}"

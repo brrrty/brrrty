@@ -1245,3 +1245,64 @@ fn init_marks_a_preload() {
     );
     assert!(stdout(&run(dir.path(), &["doctor"])).contains("0 of 1 page will build"));
 }
+
+/// A build script with other commands beside 11ty (`sass … && eleventy`): they can't
+/// change 11ty's environment, so nothing is marked, and init keeps them, in order,
+/// replacing only the 11ty step (with its TZ).
+#[test]
+fn init_keeps_other_commands_in_a_build_script() {
+    for (build, want, serve) in [
+        (
+            "sass src/a.scss _site/a.css && eleventy --input=src",
+            "sass src/a.scss _site/a.css && brrrty build",
+            "brrrty serve",
+        ),
+        (
+            "tailwindcss -i a.css -o _site/a.css && postcss b.css -o _site/b.css && TZ=Asia/Tokyo eleventy --input=src",
+            "tailwindcss -i a.css -o _site/a.css && postcss b.css -o _site/b.css && TZ=Asia/Tokyo brrrty build",
+            "TZ=Asia/Tokyo brrrty serve",
+        ),
+        (
+            "node scripts/prep.js && npx @11ty/eleventy --input=src && node scripts/after.js",
+            "node scripts/prep.js && brrrty build && node scripts/after.js",
+            "brrrty serve",
+        ),
+    ] {
+        let dir = site(&[
+            ("package.json", &pkg(build)),
+            ("scripts/prep.js", "console.log(1);\n"),
+            ("scripts/after.js", "console.log(2);\n"),
+            ("src/index.md", "# Hi\n"),
+        ]);
+        let init = run(dir.path(), &["init", "--yes"]);
+        assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+        let pkg: Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pkg["scripts"]["build"], want, "{build}");
+        assert_eq!(pkg["scripts"]["build:11ty"], build);
+        assert_eq!(pkg["scripts"]["start"], serve, "{build}");
+        let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+        assert!(!rhai.contains("TODO(brrrty)"), "{build}:\n{rhai}");
+        assert!(rhai.contains("input: \"src\""), "{build}:\n{rhai}");
+        let text = stdout(&run(dir.path(), &["doctor"]));
+        assert_eq!(text, "The 1 page will build.\n", "{build}");
+    }
+}
+
+/// A shell builtin that changes state beside 11ty is marked through init.
+#[test]
+fn init_marks_a_builtin_beside_11ty() {
+    let dir = site(&[
+        ("package.json", &pkg("export TZ=Asia/Tokyo && eleventy")),
+        ("index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains("couldn't read the flags this script passes to 11ty"),
+        "{rhai}"
+    );
+    assert!(stdout(&run(dir.path(), &["doctor"])).contains("0 of 1 page will build"));
+}
