@@ -446,3 +446,28 @@ fn a_thrown_non_error_is_reported_at_the_data_file() {
     assert!(out.contains("Uncaught \"plain text\""), "{out}");
     assert!(out.contains("src/_data/d.js"), "{out}");
 }
+
+#[test]
+fn collections_with_local_javascript_data_are_refused_as_11tys_own_nondeterminism() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "module.exports = { tags: \"post\" };",
+        ),
+        ("src/posts/a.md", "a"),
+        ("src/posts/b.md", "b"),
+        (
+            "src/list.njk",
+            "{% for p in collections.post %}{{ p.url }}{% endfor %}",
+        ),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1));
+    let out = text(&o);
+    assert!(out.contains("11ty orders these pages by file"), "{out}");
+    assert!(t.path().join("_site/posts/a/index.html").exists());
+}

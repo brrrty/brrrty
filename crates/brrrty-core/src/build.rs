@@ -2985,7 +2985,7 @@ fn collections_gap(
     }
     if js_data > 0 {
         return Some(format!(
-            "{js_data} {} a JavaScript data file, which 11ty loads from the disk while it decides the order of templates, so Brrrty can't tell the order of the collections",
+            "{js_data} {} a JavaScript data file, which 11ty loads from the disk while it decides the order of templates: 11ty orders these pages by file-read timing, so its own collections change order from one build to the next, and Brrrty can't match them",
             plural(js_data, "template uses", "templates use")
         ));
     }
