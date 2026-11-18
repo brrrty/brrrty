@@ -900,6 +900,17 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
             if let Some(v) = a.strip_prefix("TZ=") {
                 extra.push(format!("\0env TZ={v}"));
             }
+            // A locale 11ty formats dates in, which Brrrty doesn't (it formats in English).
+            if let Some((k, v)) = a.split_once('=')
+                && (k.starts_with("LC_") || k == "LANG" || k == "LANGUAGE")
+                && brrrty_core::non_english_locale(|n| (n == "LANG").then(|| v.to_string()))
+                    .is_some()
+            {
+                extra.push(format!("\0locale {a}"));
+            }
+            if a.starts_with("NODE_PATH=") {
+                extra.push(format!("\0nodepath {a}"));
+            }
             if let Some(v) = a.strip_prefix("NODE_OPTIONS=") {
                 let words: Vec<String> = v.split_whitespace().map(str::to_string).collect();
                 extra.extend(
@@ -1148,6 +1159,7 @@ fn shown(flags: &[(String, Option<String>)]) -> String {
             ("\0preload", Some(v)) => format!("a preload of {v}"),
             ("\0cwd", Some(v)) => format!("cwd {v}"),
             ("\0opts", Some(v)) => format!("options {v}"),
+            ("\0locale" | "\0nodepath", Some(v)) => v.clone(),
             (_, Some(v)) => format!("--{n}={v}"),
             (_, None) => n.clone(),
         })
@@ -1623,6 +1635,12 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 )),
                 "cwd" => Some(format!(
                     "11ty starts in {v}, not the site's folder, so its flags and config are read from there; port them as they apply there, then delete this line"
+                )),
+                "locale" => Some(format!(
+                    "11ty runs with {v} here, so it formats dates in that locale, and Brrrty formats them in English (en-US); run 11ty with an English locale, or check the dates on the pages, then delete this line"
+                )),
+                "nodepath" => Some(format!(
+                    "11ty runs with {v}, which changes where Node finds modules (plugins, the config's imports); check what it changes, then delete this line"
                 )),
                 "opts" => Some(format!(
                     "11ty is started with options Brrrty can't check (`{v}`), which can change its environment or folder; port what they do, then delete this line"
@@ -3051,5 +3069,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.input, None);
+    }
+
+    #[test]
+    fn an_inline_locale_or_node_path_is_marked() {
+        let t = site();
+        for build in [
+            "LANG=de_DE.UTF-8 eleventy --input=src",
+            "LC_ALL=fr_FR.UTF-8 eleventy --input=src",
+            "LC_TIME=fr_FR.UTF-8 eleventy --input=src",
+            "LANGUAGE=fr_FR eleventy --input=src",
+            "env LANG=de_DE.UTF-8 eleventy --input=src",
+            "cross-env LANG=de_DE.UTF-8 eleventy --input=src",
+        ] {
+            let c = find(&json!({ "scripts": { "build": build } }), t.path()).unwrap();
+            assert!(
+                whys(&c)
+                    .iter()
+                    .any(|w| w.contains("Brrrty formats them in English (en-US)")),
+                "{build}: {:?}",
+                c.todos
+            );
+        }
+        let c = find(
+            &json!({ "scripts": { "build": "NODE_PATH=./lib eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert!(
+            whys(&c)[0].starts_with("11ty runs with NODE_PATH=./lib"),
+            "{:?}",
+            c.todos
+        );
+        // English and C locales format as Brrrty does.
+        for build in [
+            "LANG=C.UTF-8 eleventy --input=src",
+            "LC_ALL=en_GB.UTF-8 eleventy --input=src",
+        ] {
+            let c = find(&json!({ "scripts": { "build": build } }), t.path()).unwrap();
+            assert!(c.todos.is_empty(), "{build}: {:?}", c.todos);
+        }
     }
 }

@@ -1549,6 +1549,37 @@ const RENDER_STACK: usize = 16 * 1024 * 1024;
 /// Build the site described by `opts`.
 /// The local time zone can't be used: `TZ` names no zone in the bundled
 /// tz data, or `/etc/localtime` can't be read as one.
+/// The locale Node's ICU takes as its default from the environment, when it isn't
+/// English: the first of `LC_ALL`, `LC_MESSAGES` and `LANG` that is set to a real
+/// locale (an empty value, `C`, `POSIX` and `C.*` fall through). `LC_TIME` and
+/// `LANGUAGE` don't count, as Node's `Intl` showed: `LC_TIME=fr_FR.UTF-8` alone gives
+/// `en-US`, `LANGUAGE=fr_FR` too.
+pub fn non_english_locale(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let v = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|k| {
+        get(k).filter(|v| !(v.is_empty() || v == "C" || v == "POSIX" || v.starts_with("C.")))
+    })?;
+    let lang = v.split(['.', '@']).next().unwrap_or_default();
+    let english = lang == "en" || lang.starts_with("en_") || lang.starts_with("en-");
+    (!english).then_some(v)
+}
+
+/// The warning when 11ty, run in this environment, would format dates in a locale
+/// other than English.
+fn locale_problem() -> Option<Problem> {
+    let v = non_english_locale(|k| std::env::var(k).ok())?;
+    Some(
+        Problem::warning(
+            codes::LOCALE_DIFFERS,
+            format!(
+                "11ty run here would format dates in {v} (from LC_ALL, LC_MESSAGES or LANG); Brrrty formats them in English (en-US)"
+            ),
+        )
+        .with_help(
+            "A page that formats a date with the locale (`toLocaleDateString`, `Intl`) differs from 11ty's run in this environment. Build with an English locale, such as LANG=C.UTF-8 or en_US.UTF-8, to compare with 11ty.",
+        ),
+    )
+}
+
 pub fn tz_problem(message: String) -> Problem {
     Problem::error(codes::TZ_INVALID, message).with_help(
         "set TZ to a zone name such as America/Chicago, the zone your 11ty builds run in",
@@ -1679,6 +1710,7 @@ fn build_once(
         report.problems.push(tz_problem(message));
         return finish(report, strict, start);
     }
+    report.problems.extend(locale_problem());
     report.problems.extend(opts.config.problems.iter().cloned());
     // `brrrty init` left parts of the 11ty config unported: any page could differ from
     // 11ty's, so every page is refused once rendered (to find its other problems too).
@@ -2784,6 +2816,51 @@ mod tests {
     use super::*;
 
     /// From `Template.getMappedDate`: which pages read their date from disk.
+    #[test]
+    fn the_locale_node_takes_is_lc_all_then_lc_messages_then_lang() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        assert_eq!(non_english_locale(env(&[])), None);
+        assert_eq!(non_english_locale(env(&[("LANG", "C.UTF-8")])), None);
+        assert_eq!(non_english_locale(env(&[("LANG", "en_GB.UTF-8")])), None);
+        assert_eq!(non_english_locale(env(&[("LANG", "POSIX")])), None);
+        assert_eq!(
+            non_english_locale(env(&[("LANG", "de_DE.UTF-8")])).as_deref(),
+            Some("de_DE.UTF-8")
+        );
+        assert_eq!(
+            non_english_locale(env(&[("LC_ALL", "fr_FR.UTF-8"), ("LANG", "de_DE.UTF-8")]))
+                .as_deref(),
+            Some("fr_FR.UTF-8")
+        );
+        assert_eq!(
+            non_english_locale(env(&[
+                ("LC_MESSAGES", "fr_FR.UTF-8"),
+                ("LANG", "en_US.UTF-8")
+            ]))
+            .as_deref(),
+            Some("fr_FR.UTF-8")
+        );
+        // An empty or C LC_ALL falls through to LANG, as node gave `und-DE` for it.
+        assert_eq!(
+            non_english_locale(env(&[("LC_ALL", "C"), ("LANG", "de_DE.UTF-8")])).as_deref(),
+            Some("de_DE.UTF-8")
+        );
+        assert_eq!(
+            non_english_locale(env(&[("LC_ALL", "en_US.UTF-8"), ("LANG", "de_DE.UTF-8")])),
+            None
+        );
+        // LC_TIME and LANGUAGE don't set node's default locale.
+        assert_eq!(non_english_locale(env(&[("LC_TIME", "fr_FR.UTF-8")])), None);
+        assert_eq!(non_english_locale(env(&[("LANGUAGE", "fr_FR")])), None);
+    }
+
     #[test]
     fn which_pages_read_their_date_from_disk() {
         let s = |t: &str| Value::String(t.into());
