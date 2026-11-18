@@ -1180,3 +1180,53 @@ fn a_compare_job_beside_an_11ty_build_is_marked() {
         "{rhai}"
     );
 }
+
+/// Review: init dropped a build script's `TZ=`, so Brrrty built with another time zone and
+/// the dates differed. It's carried into `brrrty build` now.
+#[test]
+fn init_carries_the_build_scripts_tz() {
+    for (build, want) in [
+        (
+            "TZ=Asia/Tokyo eleventy --input=src",
+            "TZ=Asia/Tokyo brrrty build",
+        ),
+        (
+            "cross-env TZ=Asia/Tokyo eleventy --input=src",
+            "cross-env TZ=Asia/Tokyo brrrty build",
+        ),
+    ] {
+        let dir = site(&[("package.json", &pkg(build)), ("src/index.md", "# Hi\n")]);
+        let init = run(dir.path(), &["init", "--yes"]);
+        assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+        let pkg: Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(pkg["scripts"]["build"], want, "{build}");
+        assert_eq!(pkg["scripts"]["build:11ty"], build);
+        let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+        assert!(!rhai.contains("TODO(brrrty)"), "{build}:\n{rhai}");
+        let built = run(dir.path(), &["build"]);
+        assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+        assert_eq!(stderr(&built), "", "{build}");
+    }
+}
+
+/// Review: a preload runs code inside 11ty; init names the file in a marker.
+#[test]
+fn init_marks_a_preload() {
+    let dir = site(&[
+        (
+            "package.json",
+            &pkg("node -r ./patch.cjs node_modules/@11ty/eleventy/cmd.cjs"),
+        ),
+        ("index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains("// TODO(brrrty): 11ty runs with ./patch.cjs preloaded"),
+        "{rhai}"
+    );
+    assert!(stdout(&run(dir.path(), &["doctor"])).contains("0 of 1 page will build"));
+}
