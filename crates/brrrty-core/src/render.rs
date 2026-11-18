@@ -151,16 +151,16 @@ pub(crate) fn engines_for(
     Ok((engine, syntax))
 }
 
+/// How a JavaScript read of `collections` that can't be built is refused.
+pub(crate) const GAP_TRAP: &str = "reads `collections`, but ";
+
 /// The keys a JavaScript template or layout can't read on this page: the
 /// withheld ones, and `collections` when it can't be built (a marker in the
 /// data, so it is still listed as 11ty lists it).
 fn js_traps(job: &Job<'_>) -> Vec<(String, String)> {
     let mut traps = job.traps.to_vec();
     if let Some(why) = job.gap {
-        traps.push((
-            "collections".to_string(),
-            format!("reads `collections`, but {why}"),
-        ));
+        traps.push(("collections".to_string(), format!("{GAP_TRAP}{why}")));
     }
     traps
 }

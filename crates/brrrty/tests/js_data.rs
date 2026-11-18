@@ -522,14 +522,14 @@ fn a_local_data_function_runs_once_for_each_template_it_applies_to() {
     ]);
     let o = build(t.path(), &[], &[]);
     assert!(o.status.success(), "{}", text(&o));
-    // Once per template, and once more in the check that loads the data
-    // again in another order.
+    // Once per template, and once more in each of the two checks that load
+    // the data again in another order.
     assert_eq!(
         fs::read_to_string(t.path().join("calls"))
             .unwrap()
             .lines()
             .count(),
-        6
+        9
     );
     assert_eq!(
         fs::read_to_string(t.path().join("_site/posts/a/index.html")).unwrap(),

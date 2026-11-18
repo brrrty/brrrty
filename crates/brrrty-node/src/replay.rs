@@ -81,20 +81,13 @@ impl Log<'_> {
         let reverse: Vec<usize> = (0..units.len()).rev().collect();
         let mut named: Vec<usize> = (0..units.len()).collect();
         named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
-        // With no calls, only the load order is checked: one worker.
-        let both = !self.calls.is_empty();
         // Requests are parsed again here, and data may nest deep: a roomy
         // stack, as for replies.
         let thread = || std::thread::Builder::new().stack_size(crate::client::REPLY_STACK);
         let (a, b) = std::thread::scope(|s| {
             let a = thread().spawn_scoped(s, || self.replay(&units, &reverse, true, &kept));
-            let b = thread().spawn_scoped(s, || {
-                if both {
-                    self.replay(&units, &named, false, &kept)
-                } else {
-                    Ok(())
-                }
-            });
+            // Both load in another order, so both run even with no calls.
+            let b = thread().spawn_scoped(s, || self.replay(&units, &named, false, &kept));
             let join = |h: std::io::Result<
                 std::thread::ScopedJoinHandle<'_, Result<(), Failure>>,
             >| match h {
@@ -191,14 +184,11 @@ impl Log<'_> {
                 }
             })
         };
-        if interleave {
-            self.loads_reversed(&mut w, &send)?;
-        } else {
-            send(&mut w, json!({"op": "feedClock", "values": self.clock}))?;
-            for r in self.loads {
-                send(&mut w, r.req.clone())?;
-            }
-        }
+        // The template and template/directory data modules run in the
+        // reverse of the build's order in one worker, and rotated by one
+        // (the first last) in the other: a rotation moves every module's
+        // place, which the reverse leaves alone for the middle one.
+        self.loads_reordered(&mut w, &send, interleave)?;
         let begun = send(&mut w, json!({"op": "callsBegin"}))?;
         let handles = begun
             .raw
@@ -291,15 +281,22 @@ impl Log<'_> {
     }
 
     /// Load the data again with the template and directory data files and
-    /// the templates evaluated in the reverse of the first run's order, as
-    /// 11ty evaluates each when its file finishes loading, in an order of
-    /// its own; then their loads in the first run's order, each compared
-    /// with the first run's reply. Each load gets the clock and random
-    /// values it read the first time.
-    fn loads_reversed(
+    /// the templates evaluated in another order (`reverse`, or the first
+    /// run's rotated by one), as 11ty evaluates each when its file finishes
+    /// loading, in an order of its own; then their loads in the first run's
+    /// order, each compared with the first run's reply. Each load gets the
+    /// clock and random values it read the first time.
+    ///
+    /// Between the two orders every module's place changes (the rotation
+    /// moves each one), so a page that shows its own module's place (a
+    /// shared counter it read at load) differs in one of them. A
+    /// dependence that comes out the same in the build's order, its reverse
+    /// and its rotation is not seen.
+    fn loads_reordered(
         &self,
         w: &mut Worker,
         send: &dyn Fn(&mut Worker, Json) -> Result<crate::client::Frame, Failure>,
+        reverse: bool,
     ) -> Result<(), Failure> {
         // Each load's reply, parsed here, on this thread's roomy stack.
         let replies: Vec<Json> = self
@@ -344,7 +341,13 @@ impl Log<'_> {
                 json!({"kind": kind, "path": path, "feed": feed(split + i)}),
             ));
         }
-        items.reverse();
+        if reverse {
+            items.reverse();
+        } else {
+            if !items.is_empty() {
+                items.rotate_left(1);
+            }
+        }
         let got = send(
             w,
             json!({"op": "preload", "items": items.iter().map(|(_, j)| j.clone()).collect::<Vec<_>>()}),
@@ -485,9 +488,11 @@ fn difference(r: &Record, head: &Json, raw: Option<&Json>) -> String {
         }
         t
     };
-    let what = match r.req().get("op").and_then(Json::as_str) {
+    let op = r.req().get("op").and_then(Json::as_str).map(str::to_string);
+    let what = match op.as_deref() {
         Some("call") => "{fn}, which a template calls,",
         Some("pageCall" | "pageVars") => "{fn}, a computed or permalink function,",
+        Some("render") => "a JavaScript template's render",
         _ => "a function from JavaScript data",
     };
     let place = match where_(&r.label) {
@@ -495,7 +500,7 @@ fn difference(r: &Record, head: &Json, raw: Option<&Json>) -> String {
         None => String::new(),
     };
     format!(
-        "{what}{place} gives a different result when the pages' calls come in another order ({} the first time, {} the second), so it keeps state between calls and its results follow the order pages are built in, which differs between 11ty and Brrrty",
+        "{what}{place} gives a different result when the pages' calls, or the templates' and data files' module code, run in another order ({} the first time, {} the second): it shows state its module or the data share, which follows the order 11ty loads files and builds pages in, and that differs between 11ty and Brrrty",
         shown(&r.head, r.raw.as_ref()),
         shown(head, raw)
     )

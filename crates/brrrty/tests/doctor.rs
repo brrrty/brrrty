@@ -1578,3 +1578,34 @@ fn collections_with_local_javascript_data_that_is_off_name_the_switch() {
     );
     assert!(!text.contains("depends on file reads"), "{text}");
 }
+
+/// A JavaScript template that reads `collections` the build can't make
+/// waits on what stops them, as a Nunjucks page does: one blocker.
+#[test]
+fn javascript_reads_of_collections_under_a_gap_wait_on_its_blocker() {
+    if !has_node() {
+        return;
+    }
+    let dir = site(&[
+        ("brrrty.config.rhai", "config.set_js_data(\"node\");\n"),
+        (
+            "pk.njk",
+            "---\npagination:\n  data: collections\n  size: 1\n---\nx",
+        ),
+        (
+            "a.11ty.js",
+            "module.exports = (d) => String(d.collections.all.length);\n",
+        ),
+        (
+            "b.11ty.js",
+            "module.exports = (d) => String(d.collections.all.length);\n",
+        ),
+        ("c.njk", "{{ collections.all | length }}"),
+    ]);
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(
+        text.contains("Waiting on the blockers above (3 pages, 3 templates)"),
+        "{text}"
+    );
+    assert!(text.contains("; 1 blocker, grouped below."), "{text}");
+}

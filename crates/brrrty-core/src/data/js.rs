@@ -525,6 +525,10 @@ impl JsCalls {
                 let p = self.note_refusal(&r).with_path(shown);
                 return Err(if r.impure {
                     p
+                } else if r.why.contains(crate::render::GAP_TRAP) {
+                    // The collections can't be built: the page waits on the
+                    // problem that says why.
+                    p.following("Fix the problems reported above.")
                 } else {
                     p.with_help(RENDER_REFUSED_HELP)
                 });
@@ -562,7 +566,7 @@ impl JsCalls {
 
 const RENDER_REFUSED_HELP: &str = "11ty runs this in its own JavaScript, where Brrrty can't follow it; the rest of the site still builds.";
 
-const IMPURE_HELP: &str = "Brrrty builds pages in a different order than 11ty, so a function whose result depends on earlier calls gives different pages. Nothing was written. Make the function return the same thing for the same arguments: move counters, random values and the current time out of it.";
+const IMPURE_HELP: &str = "Brrrty loads files and builds pages in a different order than 11ty, so code whose result depends on what ran before it gives different pages. Nothing was written. Make each function, render and module return the same thing for the same input: move counters, registries and random values out of code that pages share (a helper several templates or data files import), and out of functions pages call.";
 
 /// The stack frames of a thrown error worth showing, as a help line.
 fn stack_help(e: &JsError, root: &Path) -> String {

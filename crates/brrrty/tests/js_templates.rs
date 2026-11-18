@@ -818,6 +818,29 @@ fn module_state_shared_at_load_is_refused() {
     let out = text(&o);
     assert_eq!(o.status.code(), Some(1), "{out}");
     assert!(out.contains("in another order"), "{out}");
+    // Only the middle one shows its place, which the reverse keeps: the
+    // rotation moves it.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        counter,
+        (
+            "src/a.11ty.js",
+            "require('./lib/counter.js')();\nmodule.exports = () => 'a';\n",
+        ),
+        (
+            "src/b.11ty.js",
+            "const id = require('./lib/counter.js')();\nmodule.exports = () => `b id=${id}`;\n",
+        ),
+        (
+            "src/c.11ty.js",
+            "require('./lib/counter.js')();\nmodule.exports = () => 'c';\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert!(!t.path().join("_site/b/index.html").exists(), "{out}");
     // Module code that shares nothing builds.
     let t = site(&[
         ("brrrty.config.rhai", ON),
