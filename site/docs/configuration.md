@@ -118,6 +118,20 @@ If the script defines `fn data()` or `fn data(global)`, Brrrty calls it the way 
 
 Each file runs once per build, on its own, and can't see `config`. A `.rhai` file and a `.json` file for the same key merge, the `.rhai` one winning, and a `.js` file next to a `.rhai` port is ignored. An error refuses only the pages that read that key.
 
+## JavaScript data
+
+`config.set_js_data("node");` runs the site's JavaScript data files (`_data/*.js`, `.cjs`, `.mjs`, and `*.11tydata.js` and the like) in your own Node, as 11ty runs them, so a site that uses luxon, `fetch` or `@11ty/eleventy-fetch` in its data builds without a port. `config.set_js_data("off")`, or no call, keeps them off: a page that reads their data is refused, and the rest build. `--js-data=node` or `--js-data=off` on `brrrty build`, `serve` and `doctor` overrides the config for one run; `off` shows what still depends on JavaScript. `brrrty init` writes the line when it finds files it can't translate to Rhai.
+
+- **Which Node:** `BRRRTY_NODE` when set, else `node` on `PATH`; 18 or later, 11ty 3's own floor. The npm package sets `BRRRTY_NODE` to the Node that runs it. With no Node, the pages that need the data are refused with `js-data-node-missing`, which says what was tried.
+- **How it runs:** one Node per build, given the worker on its command line (nothing is written to disk). Files load one at a time in 11ty's order, with 11ty's import rules (a lone `default` export, CommonJS's duplicated `default`, `"type": "module"`), and an exported function is called with the config's global data and `eleventy`, frozen. A template or directory data function runs once for every template it applies to, as in 11ty; if two calls give different data, the pages that use it are refused (`js-data-impure`), since 11ty's result would depend on its load order. `ELEVENTY_ROOT`, `ELEVENTY_SOURCE`, `ELEVENTY_RUN_MODE` and `ELEVENTY_VERSION` are set.
+- **What crosses:** plain objects (in JavaScript key order), arrays (a hole reads as `undefined`, which no template output tells apart), strings, numbers (`-0`, `NaN` and infinities too), booleans, `null`, `undefined` and `Date`s, exactly. Symbol keys and non-enumerable keys are left out, as templates don't see them. Anything else is refused with `js-data-value`, naming the file and the path inside it, and only the pages that read that key are refused: a `Map`, `Set`, `RegExp`, `BigInt`, typed array, class instance (a luxon `DateTime` included), an invalid `Date`, a circular reference, a getter that changes between reads, or a function read as a value.
+- **Logging:** a data file's `console.log` goes to stderr, where Brrrty passes it through, not stdout as under 11ty: stdout carries Brrrty's own output and `--json`.
+- **Errors:** a file that throws is `js-data-error`, at the first line of your own code in the stack, with the source line. One that never settles gets a note after 10 seconds, and is waited for, as 11ty waits.
+- **`brrrty serve`** runs the data again in a fresh Node on every rebuild, and rebuilds when any file it read or loaded changes, `node_modules` and `package-lock.json` included.
+- **Security:** it's your site's own code, run with your rights, as under 11ty, with network and file access. Brrrty doesn't sandbox it. Brrrty itself still writes only the output folder; the data's code can write elsewhere, as `@11ty/eleventy-fetch` writes its `.cache/` folder.
+
+`brrrty doctor` lists each file and its state. A port to Rhai is still the long-term path: it needs no Node, and doctor checks a port against the file it replaces.
+
 ## Reading files
 
 Data files and the config can read files in the project, as a JavaScript data file does with `fs` and csv-parse:

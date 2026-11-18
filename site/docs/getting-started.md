@@ -128,7 +128,7 @@ Rhai is not JavaScript, and a few things work differently: `7 / 2` is `3`, `+` w
 
 ## 2. Port JavaScript data files
 
-Brrrty doesn't run JavaScript data files. Write each one as a Rhai script with the same name: `_data/site.js` becomes `_data/site.rhai`, and `post.11tydata.js` becomes `post.11tydata.rhai`. The script's last expression is the data:
+`brrrty init` translates data files whose value is a literal to Rhai, and turns on [JavaScript data](/docs/configuration/#javascript-data) for the rest with `config.set_js_data("node");`, so they run in your own Node as under 11ty. To drop Node from the build, port them. Write each one as a Rhai script with the same name: `_data/site.js` becomes `_data/site.rhai`, and `post.11tydata.js` becomes `post.11tydata.rhai`. The script's last expression is the data:
 
 ```rust
 // _data/site.rhai, from module.exports = { title: "My site", year: new Date().getFullYear() }
@@ -137,7 +137,7 @@ Brrrty doesn't run JavaScript data files. Write each one as a Rhai script with t
 
 When a `.rhai` file sits next to a `.js` file of the same name, Brrrty uses the `.rhai` one and prints a note. JSON data files work unchanged.
 
-A page that uses data from a `.js` file with no port is refused with `data-js-unsupported`; pages that don't use it still build.
+With JavaScript data off, a page that uses data from a `.js` file with no port is refused with `data-js-unsupported`; pages that don't use it still build. `brrrty doctor` checks each port against its `.js` file when Node can run both, and says when the `.js` can go.
 
 ## 3. Build
 

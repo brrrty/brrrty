@@ -41,6 +41,15 @@ In 11ty, Prism is shared across the whole build, and loading some languages chan
 
 `SOURCE_DATE_EPOCH`, a whole number of seconds since 1970, sets the time for `now()`, Liquid's `'now'` and `'today'`, and feed dates, so two builds of the same source give the same files. Without it, the clock is read as 11ty reads it.
 
+## JavaScript data runs only when you turn it on
+
+`config.set_js_data("node")` runs JavaScript data files in your own Node, so their output is 11ty's. A few things differ from 11ty there, on purpose:
+
+- A data file's `console.log` goes to stderr, not stdout.
+- A template or directory data function that returns different data for different templates (a counter, a random value, the time) refuses the pages that use it: 11ty's result would depend on the order it happens to load templates.
+- A template or directory data file that gives something other than an object is ignored, as 11ty ignores it, but with a warning.
+- A page that reads `collections` on a site with template or directory JavaScript data is refused: 11ty orders those pages by file-read timing, so its own order changes from one build to the next.
+
 ## brrrty serve is stricter about the network
 
 It listens on `localhost` only, answers only requests that name this machine, and never serves a file outside the output folder. A build with errors still serves the pages that built. The full list is on the [brrrty serve](/docs/serve/) page.
