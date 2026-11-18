@@ -34,7 +34,13 @@ impl Interrupts {
         {
             use signal_hook::consts::{SIGINT, SIGTERM};
             use signal_hook::iterator::Signals;
-            let mut signals = Signals::new([SIGINT, SIGTERM])?;
+            // SIGINT the process was started ignoring stays ignored, as without Brrrty's
+            // handler.
+            let caught: Vec<i32> = [SIGINT, SIGTERM]
+                .into_iter()
+                .filter(|s| !crate::cleanup::ignored(*s))
+                .collect();
+            let mut signals = Signals::new(caught)?;
             let shared = Arc::clone(&state);
             std::thread::Builder::new()
                 .name("brrrty-signals".into())

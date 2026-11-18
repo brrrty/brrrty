@@ -261,6 +261,18 @@ fn ctrl_c_mid_load_leaves_no_node_behind() {
 #[cfg(unix)]
 #[test]
 fn ctrl_c_stops_a_data_file_stuck_in_a_loop() {
+    signal_stops_a_data_file_stuck_in_a_loop("-INT");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hangup_stops_a_data_file_stuck_in_a_loop() {
+    signal_stops_a_data_file_stuck_in_a_loop("-HUP");
+    signal_stops_a_data_file_stuck_in_a_loop("-QUIT");
+}
+
+#[cfg(unix)]
+fn signal_stops_a_data_file_stuck_in_a_loop(signal: &str) {
     if !has_node() {
         return;
     }
@@ -289,7 +301,7 @@ fn ctrl_c_stops_a_data_file_stuck_in_a_loop() {
     let node_pid = fs::read_to_string(&pid_file).expect("the data file ran");
     assert!(alive(&node_pid));
     Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
+        .args([signal, &child.id().to_string()])
         .status()
         .unwrap();
     let _ = child.wait();
@@ -302,6 +314,50 @@ fn ctrl_c_stops_a_data_file_stuck_in_a_loop() {
         let _ = Command::new("kill").args(["-9", &node_pid]).status();
     }
     assert!(!survived, "Node {node_pid} outlived brrrty");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_build_started_ignoring_ctrl_c_keeps_ignoring_it() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/slow.js",
+            "require(\"fs\").writeFileSync(require(\"path\").join(__dirname, \"..\", \"..\", \"pid\"), String(process.pid));\nmodule.exports = () => new Promise((r) => setTimeout(() => r({ a: 1 }), 1500));",
+        ),
+        ("src/index.njk", "{{ slow.a }}"),
+    ]);
+    let bin = env!("CARGO_BIN_EXE_brrrty");
+    let mut child = Command::new("sh")
+        .args([
+            "-c",
+            &format!("trap '' INT; exec '{bin}' build --input src"),
+        ])
+        .current_dir(t.path())
+        .env_remove("BRRRTY_NODE")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid_file = t.path().join("pid");
+    let start = Instant::now();
+    while !pid_file.exists() && start.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    let status = child.wait().unwrap();
+    assert!(status.success(), "{status:?}");
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "1"
+    );
 }
 
 #[cfg(unix)]

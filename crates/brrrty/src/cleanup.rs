@@ -115,25 +115,58 @@ pub fn install_signals() -> io::Result<()> {
     Ok(())
 }
 
-/// For a build: on Ctrl-C or SIGTERM, stop the JavaScript data worker, then end as the
-/// signal would. The worker leads a process group of its own, which a terminal's Ctrl-C
-/// doesn't reach. Does nothing outside Unix.
+/// For a build: on Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, stop the JavaScript data worker,
+/// then end as the signal would. The worker leads a process group of its own, which a
+/// terminal's signals don't reach. Does nothing outside Unix.
 pub fn stop_workers_on_signals() -> io::Result<()> {
     #[cfg(unix)]
     {
-        use signal_hook::consts::{SIGINT, SIGTERM};
-        let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM])?;
-        std::thread::Builder::new()
-            .name("brrrty-signals".into())
-            .spawn(move || {
-                if let Some(sig) = signals.forever().next() {
-                    brrrty_node::stop_all();
-                    let _ = signal_hook::low_level::emulate_default_handler(sig);
-                    std::process::exit(128 + sig);
-                }
-            })?;
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+        stop_workers_on(&[SIGINT, SIGTERM, SIGHUP, SIGQUIT])?;
     }
     Ok(())
+}
+
+/// [`stop_workers_on_signals`] for SIGHUP and SIGQUIT only, where Ctrl-C and SIGTERM have
+/// a handler of their own (`serve`, `doctor --verify`) that stops the worker too.
+pub fn stop_workers_on_hangup() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use signal_hook::consts::{SIGHUP, SIGQUIT};
+        stop_workers_on(&[SIGHUP, SIGQUIT])?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn stop_workers_on(signals: &[i32]) -> io::Result<()> {
+    // A signal the process was started ignoring (`brrrty build &` in a script) stays
+    // ignored.
+    let caught: Vec<i32> = signals.iter().copied().filter(|s| !ignored(*s)).collect();
+    if caught.is_empty() {
+        return Ok(());
+    }
+    let mut signals = signal_hook::iterator::Signals::new(caught)?;
+    std::thread::Builder::new()
+        .name("brrrty-signals".into())
+        .spawn(move || {
+            if let Some(sig) = signals.forever().next() {
+                brrrty_node::stop_all();
+                let _ = signal_hook::low_level::emulate_default_handler(sig);
+                std::process::exit(128 + sig);
+            }
+        })?;
+    Ok(())
+}
+
+/// Whether `sig` is ignored now, as a shell leaves SIGINT for a background job.
+#[cfg(unix)]
+pub fn ignored(sig: i32) -> bool {
+    // SAFETY: a null new action only reads the current one into `old`.
+    unsafe {
+        let mut old: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(sig, std::ptr::null(), &mut old) == 0 && old.sa_sigaction == libc::SIG_IGN
+    }
 }
 
 /// Start `cmd` as the child a signal kills, unless a stop is in progress: then `Ok(None)`,

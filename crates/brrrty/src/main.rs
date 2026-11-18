@@ -202,6 +202,10 @@ fn run_serve(args: ServeArgs) -> ExitCode {
         }
     };
     brrrty::serve::signals::stop_with_launcher();
+    if let Err(e) = brrrty::cleanup::stop_workers_on_hangup() {
+        brrrty::say_err!("Brrrty could not listen for signals: {e}");
+        return ExitCode::from(1);
+    }
     let settings = Settings {
         flags: Flags {
             input: args.input,
@@ -347,7 +351,9 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         unsafe { std::env::set_var("SOURCE_DATE_EPOCH", verify_epoch().to_string()) };
         // From here, Ctrl-C or SIGTERM stops 11ty, removes the temporary folder and exits
         // 130 or 143.
-        if let Err(e) = brrrty::cleanup::install_signals() {
+        if let Err(e) = brrrty::cleanup::install_signals()
+            .and_then(|()| brrrty::cleanup::stop_workers_on_hangup())
+        {
             brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
             return ExitCode::from(1);
         }
