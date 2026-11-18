@@ -336,6 +336,7 @@ dependencies = [
  "brrrty-js",
  "chrono",
  "indexmap",
+ "serde",
  "serde_json",
  "tempfile",
 ]

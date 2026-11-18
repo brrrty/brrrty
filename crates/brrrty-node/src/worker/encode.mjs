@@ -15,6 +15,10 @@
 
 import { types as utilTypes } from "node:util";
 
+// How many objects and arrays deep a value may nest. Brrrty's templates and
+// filters walk values recursively, so a deeper one is refused, never a crash.
+const MAX_DEPTH = 1000;
+
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 function article(word) {
@@ -91,6 +95,9 @@ function encodeValue(value, register) {
       if (extra.length) return { $x: `a Date with other properties (${extra.join(", ")})` };
       const ms = Date.prototype.getTime.call(v);
       return Number.isNaN(ms) ? { $x: "an invalid Date" } : { $d: ms };
+    }
+    if (stack.length >= MAX_DEPTH) {
+      return { $x: `a value nested more than ${MAX_DEPTH} objects and arrays deep` };
     }
     if (Array.isArray(v) && proto === Array.prototype) {
       // Templates can read a property set on an array (`list.total`).

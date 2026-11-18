@@ -306,3 +306,50 @@ fn opened_files_are_reads_too() {
         .collect();
     assert!(reads.contains(&root.join("rows.csv")), "{reads:?}");
 }
+
+/// `{c: {c: ... {leaf: "x"}}}` with `levels` objects around the leaf, and
+/// a `{children: [...]}` tree as deep.
+fn deep_site(levels: usize) -> tempfile::TempDir {
+    site(&[(
+        "deep.js",
+        &format!(
+            "let o = {{ leaf: \"x\" }}; for (let i = 0; i < {levels}; i++) o = {{ c: o }};\nlet t = {{ name: \"t\" }}; for (let i = 0; i < {levels}; i++) t = {{ children: [t] }};\nmodule.exports = {{ o, t }};"
+        ),
+    )])
+}
+
+#[test]
+fn data_nested_two_hundred_levels_deep_crosses() {
+    let Some(node) = node() else { return };
+    let t = deep_site(200);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = ok(w.load(&t.path().join("deep.js"), true));
+    assert!(d.refused.is_empty(), "{:?}", d.refused);
+    let mut v = get(&d.value, "o");
+    for _ in 0..200 {
+        v = get(v, "c");
+    }
+    assert_eq!(get(v, "leaf"), &Value::String("x".into()));
+    let mut v = get(&d.value, "t");
+    for _ in 0..200 {
+        v = match get(v, "children") {
+            Value::Array(a) => &a[0],
+            other => panic!("{other:?}"),
+        };
+    }
+    assert_eq!(get(v, "name"), &Value::String("t".into()));
+}
+
+#[test]
+fn data_nested_deeper_than_brrrty_reads_is_refused_not_a_crash() {
+    let Some(node) = node() else { return };
+    let t = deep_site(5000);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = ok(w.load(&t.path().join("deep.js"), true));
+    let whats: Vec<&str> = d.refused.iter().map(|(_, w)| w.as_str()).collect();
+    assert_eq!(whats.len(), 2, "{whats:?}");
+    assert!(
+        whats.iter().all(|w| w.contains("nested more than")),
+        "{whats:?}"
+    );
+}

@@ -19,8 +19,16 @@ pub enum PathPart {
 
 /// A path inside a data file's value, shown as `data.posts[3].date`.
 pub fn path_text(path: &[PathPart]) -> String {
+    // A very deep path keeps its first and last parts.
+    const KEEP: usize = 6;
     let mut out = String::from("data");
-    for part in path {
+    for (n, part) in path.iter().enumerate() {
+        if path.len() > 3 * KEEP && n >= KEEP && n < path.len() - KEEP {
+            if n == KEEP {
+                out.push_str(&format!("<{} levels>", path.len() - 2 * KEEP));
+            }
+            continue;
+        }
         match part {
             PathPart::Index(i) => out.push_str(&format!("[{i}]")),
             PathPart::Key(k) => {
@@ -127,5 +135,14 @@ mod tests {
         ];
         assert_eq!(path_text(&p), r#"data.posts[3]["a b"].$ok_1"#);
         assert_eq!(path_text(&[]), "data");
+    }
+
+    #[test]
+    fn a_very_deep_path_keeps_its_ends() {
+        let p: Vec<PathPart> = (0..40).map(|_| PathPart::Key("c".into())).collect();
+        assert_eq!(
+            path_text(&p),
+            "data.c.c.c.c.c.c<28 levels>.c.c.c.c.c.c"
+        );
     }
 }

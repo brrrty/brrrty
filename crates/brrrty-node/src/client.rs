@@ -29,6 +29,9 @@ const WORKER_SOURCE: &str = concat!(
 /// The 11ty version the worker tells data files it is (`ELEVENTY_VERSION`).
 const ELEVENTY_VERSION: &str = "3.1.8";
 
+/// The stack of the thread that parses replies.
+const REPLY_STACK: usize = 32 * 1024 * 1024;
+
 /// How many of Node's last stderr lines a failure shows.
 const STDERR_TAIL: usize = 20;
 
@@ -102,7 +105,14 @@ impl Worker {
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let (tx, replies) = mpsc::channel();
-        std::thread::spawn(move || read_frames(stdout, tx));
+        // A reply nests up to three JSON levels per level of the value
+        // (`encode.mjs` refuses values deeper than 1000), and parsing it
+        // recurses once per level: a roomy stack, not serde's 128 limit.
+        std::thread::Builder::new()
+            .name("brrrty-node-replies".into())
+            .stack_size(REPLY_STACK)
+            .spawn(move || read_frames(stdout, tx))
+            .map_err(|e| WorkerError(format!("cannot read Node's replies: {e}")))?;
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
         let tail = stderr_tail.clone();
         let stderr_thread = std::thread::spawn(move || drain_stderr(stderr, tail));
@@ -389,12 +399,21 @@ fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>) {
             let _ = tx.send(Err(format!("a cut-off reply: {e}")));
             return;
         }
-        let parsed =
-            serde_json::from_slice(&body).map_err(|e| format!("a reply that isn't JSON: {e}"));
+        let parsed = parse_reply(&body);
         if tx.send(parsed).is_err() {
             return;
         }
     }
+}
+
+/// One reply body, without serde's nesting limit (see [`REPLY_STACK`]).
+fn parse_reply(body: &[u8]) -> Reply {
+    let mut de = serde_json::Deserializer::from_slice(body);
+    de.disable_recursion_limit();
+    let v = serde::Deserialize::deserialize(&mut de)
+        .and_then(|v: Json| de.end().map(|()| v))
+        .map_err(|e| format!("a reply that isn't JSON: {e}"))?;
+    Ok(v)
 }
 
 /// Pass Node's stderr through to Brrrty's, as it comes, keeping the last
