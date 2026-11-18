@@ -27,6 +27,14 @@ const wellFormed =
     ? (s) => s.isWellFormed()
     : (s) => !LONE_SURROGATE.test(s);
 
+const LONE_SURROGATES = new RegExp(LONE_SURROGATE.source, "g");
+
+// `s` with each lone surrogate replaced by U+FFFD, so it can cross as
+// JSON text Brrrty reads.
+function toWellFormed(s) {
+  return typeof s.toWellFormed === "function" ? s.toWellFormed() : s.replace(LONE_SURROGATES, "\uFFFD");
+}
+
 function article(word) {
   // "a Uint8Array", "a URL", "an Uncommon".
   const vowel = /^[AEIOaeio]/.test(word) || (/^[Uu]/.test(word) && !/^U(int|RL|rl|ni|s)/.test(word));
@@ -77,6 +85,10 @@ function unseen(v, isArray) {
 }
 
 function pathText(path) {
+  return toWellFormed(pathTextRaw(path));
+}
+
+function pathTextRaw(path) {
   let out = "data";
   for (const part of path) {
     out += typeof part === "number" ? `[${part}]` : /^[A-Za-z_$][\w$]*$/.test(part) ? `.${part}` : `[${JSON.stringify(part)}]`;
@@ -183,7 +195,9 @@ function encodeValue(value, register) {
             item = enc(desc ? desc.value : v[key], byReference);
           }
         }
-        entries.push([key, item]);
+        // A key with a lone surrogate is refused, under a name that can
+        // cross.
+        entries.push([wellFormed(key) ? key : toWellFormed(key), item]);
         path.pop();
       }
       stack.pop();

@@ -65,6 +65,15 @@ process.stdout.write = process.stderr.write.bind(process.stderr);
 const root = process.cwd();
 const reads = new Set();
 
+// `process.argv` as `npx @11ty/eleventy` (with `--serve` under `brrrty
+// serve`) gives it: data files written for older 11ty check it for
+// `--serve`. 11ty's other flags aren't known here.
+process.argv = [
+  process.execPath,
+  path.join(root, "node_modules", ".bin", "eleventy"),
+  ...(process.env.ELEVENTY_RUN_MODE === "serve" ? ["--serve"] : []),
+];
+
 function note(p) {
   try {
     if (p instanceof URL) {
@@ -261,14 +270,14 @@ function rootValue(value) {
 function thrown(e) {
   if (e instanceof Error || (e && typeof e === "object" && typeof e.stack === "string")) {
     return {
-      name: String(e.name || "Error"),
-      message: String(e.message ?? ""),
-      stack: String(e.stack || ""),
-      inspect: e.brrrtyPlace || util.inspect(e),
+      name: toWellFormed(String(e.name || "Error")),
+      message: toWellFormed(String(e.message ?? "")),
+      stack: toWellFormed(String(e.stack || "")),
+      inspect: toWellFormed(String(e.brrrtyPlace || util.inspect(e))),
     };
   }
   const text = typeof e === "string" ? JSON.stringify(e) : util.inspect(e);
-  return { name: "", message: `Uncaught ${text}`, stack: "", inspect: "" };
+  return { name: "", message: toWellFormed(`Uncaught ${text}`), stack: "", inspect: "" };
 }
 
 // An ES module's SyntaxError from import() carries no file or line (Node

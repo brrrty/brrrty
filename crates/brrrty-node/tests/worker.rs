@@ -84,7 +84,7 @@ fn eleventy_environment_variables_are_set() {
     let Some(node) = node() else { return };
     let t = site(&[(
         "e.js",
-        "module.exports = { root: process.env.ELEVENTY_ROOT, source: process.env.ELEVENTY_SOURCE, mode: process.env.ELEVENTY_RUN_MODE, v: process.env.ELEVENTY_VERSION, cwd: process.cwd() };",
+        "module.exports = { root: process.env.ELEVENTY_ROOT, source: process.env.ELEVENTY_SOURCE, mode: process.env.ELEVENTY_RUN_MODE, v: process.env.ELEVENTY_VERSION, cwd: process.cwd(), serving: process.argv.includes(\"--serve\"), frames: process.env.BRRRTY_FRAMES_FD === undefined };",
     )]);
     let mut w = Worker::start(&node, t.path(), RunMode::Serve).expect("starts");
     let e = ok(w.load(&t.path().join("e.js"), true));
@@ -92,6 +92,8 @@ fn eleventy_environment_variables_are_set() {
     assert_eq!(get(&e.value, "source"), &Value::String("cli".into()));
     assert_eq!(get(&e.value, "mode"), &Value::String("serve".into()));
     assert_eq!(get(&e.value, "v"), &Value::String("3.1.8".into()));
+    assert_eq!(get(&e.value, "serving"), &Value::Bool(true));
+    assert_eq!(get(&e.value, "frames"), &Value::Bool(true));
     let Value::String(cwd) = get(&e.value, "cwd") else {
         panic!()
     };
@@ -211,7 +213,7 @@ fn a_missing_node_is_not_found_and_an_old_one_too_old() {
     let fake = t.path().join("node");
     fs::write(
         &fake,
-        "#!/bin/sh\nprintf '[\"v16.20.2\",\"2023c\",\"73.1\",\"undefined\"]'\n",
+        "#!/bin/sh\nprintf '[\"v16.20.2\",\"2023c\",\"73.1\",\"undefined\",\"node\"]'\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -440,4 +442,25 @@ fn a_file_that_gives_the_same_data_again_crosses_once() {
     let two = ok(w.load(&t.path().join("count.js"), true));
     assert_eq!(get(&one.value, "n"), &Value::Number(1.0));
     assert_eq!(get(&two.value, "n"), &Value::Number(2.0));
+}
+
+#[test]
+fn a_lone_surrogate_in_a_key_or_an_error_is_the_sites_problem_not_a_crash() {
+    let Some(node) = node() else { return };
+    let t = site(&[
+        (
+            "key.js",
+            r#"module.exports = { ["a\ud800"]: 1, deep: { ["b\udc00"]: 2 }, ok: 3 };"#,
+        ),
+        ("err.js", r#"throw new Error("bad \ud800 text");"#),
+    ]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = ok(w.load(&t.path().join("key.js"), true));
+    assert_eq!(get(&d.value, "ok"), &Value::Number(3.0));
+    assert_eq!(d.refused.len(), 2, "{:?}", d.refused);
+    match w.load(&t.path().join("err.js"), true) {
+        JsResult::Thrown(e) => assert!(e.message.starts_with("bad "), "{}", e.message),
+        other => panic!("{other:?}"),
+    }
+    ok(w.load(&t.path().join("key.js"), true));
 }

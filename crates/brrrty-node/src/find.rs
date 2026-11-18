@@ -79,7 +79,9 @@ pub fn find_node(env_override: Option<&OsStr>) -> Result<NodeInfo, NodeMissing> 
         ),
         _ => ("node".into(), vec!["node on PATH".to_string()]),
     };
-    let script = r#"process.stdout.write(JSON.stringify([process.version, process.versions.tz || "", process.versions.icu || "", typeof require("node:module").registerHooks]))"#;
+    // The last item names the runtime: Bun and Deno answer like Node, but
+    // load modules and read files their own way.
+    let script = r#"process.stdout.write(JSON.stringify([process.version, process.versions.tz || "", process.versions.icu || "", typeof require("node:module").registerHooks, process.versions.bun ? "Bun" : process.versions.deno ? "Deno" : (process.release && process.release.name) || ""]))"#;
     let mut child = match Command::new(&program)
         .args(["-e", script])
         .stdin(Stdio::null())
@@ -128,6 +130,13 @@ pub fn find_node(env_override: Option<&OsStr>) -> Result<NodeInfo, NodeMissing> 
 fn parse_probe(path: &Path, stdout: &str) -> Option<Result<NodeInfo, NodeMissing>> {
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).ok()?;
     let a = v.as_array()?;
+    let runtime = a.get(4)?.as_str()?;
+    if runtime != "node" {
+        return Some(Err(NodeMissing::Broken {
+            path: path.to_path_buf(),
+            stderr: format!("it is {runtime}, which runs JavaScript differently from Node"),
+        }));
+    }
     let version_text = a.first()?.as_str()?;
     let version = parse_version(version_text)?;
     if version < MIN_NODE {
@@ -170,9 +179,15 @@ mod tests {
 
     #[test]
     fn an_old_node_is_too_old() {
-        let r = parse_probe(Path::new("n"), r#"["v16.20.2","2023c","73.1","undefined"]"#);
+        let r = parse_probe(
+            Path::new("n"),
+            r#"["v16.20.2","2023c","73.1","undefined","node"]"#,
+        );
         assert!(matches!(r, Some(Err(NodeMissing::TooOld { .. }))));
-        let r = parse_probe(Path::new("n"), r#"["v22.15.0","2025a","76.1","function"]"#);
+        let r = parse_probe(
+            Path::new("n"),
+            r#"["v22.15.0","2025a","76.1","function","node"]"#,
+        );
         assert!(matches!(
             r,
             Some(Ok(NodeInfo {
@@ -180,5 +195,17 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn a_runtime_that_only_answers_like_node_is_not_node() {
+        let r = parse_probe(
+            Path::new("bun"),
+            r#"["v24.3.0","2025b","77.1","function","Bun"]"#,
+        );
+        match r {
+            Some(Err(NodeMissing::Broken { stderr, .. })) => assert!(stderr.contains("Bun")),
+            other => panic!("{other:?}"),
+        }
     }
 }
