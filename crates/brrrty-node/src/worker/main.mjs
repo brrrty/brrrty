@@ -2,10 +2,13 @@
 // it records. Runs as `node --input-type=module --eval <encode.mjs + this>`
 // with the project folder as its working directory.
 //
-// Requests are JSON lines on stdin, one at a time. Replies go to stdout as
-// frames: "\x1eBRRRTY <byte length>\n<json>". Nothing else may reach stdout,
-// so before any site code loads, the worker keeps its own writer for the
-// frames and points `process.stdout.write` (and so `console.log`) at stderr.
+// Requests are JSON lines on stdin, one at a time. Replies go as frames,
+// "\x1eBRRRTY <byte length>\n<json>", to their own descriptor, which Brrrty
+// names in BRRRTY_FRAMES_FD: a pipe of their own on Unix, where stdout joins stderr so a
+// child process writing to fd 1 is only noise. Where the frames share
+// stdout, nothing else may reach it, so before any site code loads, the
+// worker keeps its own writer for the frames and points
+// `process.stdout.write` (and so `console.log`) at stderr.
 //
 // The import logic is ported from Eleventy 3.1.8 (src/Util/Require.js and
 // src/Data/TemplateData.js), MIT licensed, copyright Zach Leatherman and
@@ -22,6 +25,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // --- Frames, written before anything else can touch stdout. ---
 
 const writeFd = fs.writeSync;
+const framesFd = Number(process.env.BRRRTY_FRAMES_FD) || 1;
+delete process.env.BRRRTY_FRAMES_FD;
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
 
 function out(text) {
@@ -29,7 +34,7 @@ function out(text) {
   let done = 0;
   while (done < bytes.length) {
     try {
-      done += writeFd(1, bytes, done, bytes.length - done);
+      done += writeFd(framesFd, bytes, done, bytes.length - done);
     } catch (e) {
       if (e && e.code === "EAGAIN") {
         Atomics.wait(sleepCell, 0, 0, 1);

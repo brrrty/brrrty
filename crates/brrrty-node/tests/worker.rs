@@ -251,21 +251,21 @@ fn a_slow_data_file_is_reported_and_waited_for() {
 }
 
 #[test]
-fn a_raw_write_to_the_output_stops_the_worker_loudly() {
+fn raw_writes_to_stdout_are_noise_not_a_failure() {
     let Some(node) = node() else { return };
     let t = site(&[(
         "raw.js",
-        r#"require("fs").writeSync(1, "garbage\n"); module.exports = 1;"#,
+        r#"const fs = require("fs");
+fs.writeSync(1, "garbage\n");
+require("child_process").execSync("echo hello-from-child", { stdio: "inherit" });
+fs.writeSync(1, "\x1eBRRRTY 2\n{}");
+module.exports = { a: 1 };"#,
     )]);
     let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
-    match w.load(&t.path().join("raw.js"), true) {
-        JsResult::Failed(f) => assert!(
-            f.message.contains("something other than the worker"),
-            "{}",
-            f.message
-        ),
-        other => panic!("{other:?}"),
-    }
+    let d = ok(w.load(&t.path().join("raw.js"), true));
+    assert_eq!(get(&d.value, "a"), &Value::Number(1.0));
+    let again = ok(w.load(&t.path().join("raw.js"), true));
+    assert_eq!(get(&again.value, "a"), &Value::Number(1.0));
 }
 
 #[test]

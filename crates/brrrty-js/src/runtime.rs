@@ -140,9 +140,6 @@ mod tests {
     #[test]
     fn a_very_deep_path_keeps_its_ends() {
         let p: Vec<PathPart> = (0..40).map(|_| PathPart::Key("c".into())).collect();
-        assert_eq!(
-            path_text(&p),
-            "data.c.c.c.c.c.c<28 levels>.c.c.c.c.c.c"
-        );
+        assert_eq!(path_text(&p), "data.c.c.c.c.c.c<28 levels>.c.c.c.c.c.c");
     }
 }

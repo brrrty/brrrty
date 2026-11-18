@@ -65,8 +65,16 @@ impl std::fmt::Display for WorkerError {
     }
 }
 
-/// One reply frame, or why there is none.
-type Reply = Result<Json, String>;
+/// One reply frame, its value already decoded on the reader's thread (see
+/// [`REPLY_STACK`]), or why there is none.
+type Reply = Result<Frame, String>;
+
+struct Frame {
+    /// The reply without its value.
+    head: Json,
+    /// The decoded `ok` value, when the reply has one.
+    ok: Option<Result<Decoded, String>>,
+}
 
 /// A running worker. Dropping it closes Node's stdin, waits up to 2 s for
 /// it to exit, then kills it.
@@ -90,20 +98,17 @@ impl Worker {
     /// Start Node with the worker, in `root` (the project folder), with
     /// 11ty's environment variables added to Brrrty's own.
     pub fn start(node: &NodeInfo, root: &Path, run_mode: RunMode) -> Result<Worker, WorkerError> {
-        let mut child = Command::new(&node.path)
-            .args(["--input-type=module", "--eval", WORKER_SOURCE])
+        let mut cmd = Command::new(&node.path);
+        cmd.args(["--input-type=module", "--eval", WORKER_SOURCE])
             .current_dir(root)
             .env("ELEVENTY_ROOT", root)
             .env("ELEVENTY_SOURCE", "cli")
             .env("ELEVENTY_RUN_MODE", run_mode.as_str())
             .env("ELEVENTY_VERSION", ELEVENTY_VERSION)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| WorkerError(format!("cannot start {}: {e}", node.path.display())))?;
-        let stdout = child.stdout.take().expect("piped stdout");
-        let stderr = child.stderr.take().expect("piped stderr");
+            .stdin(Stdio::piped());
+        let cannot =
+            |e: std::io::Error| WorkerError(format!("cannot start {}: {e}", node.path.display()));
+        let (mut child, frames, stderr) = spawn(cmd).map_err(cannot)?;
         let (tx, replies) = mpsc::channel();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
@@ -111,8 +116,12 @@ impl Worker {
         std::thread::Builder::new()
             .name("brrrty-node-replies".into())
             .stack_size(REPLY_STACK)
-            .spawn(move || read_frames(stdout, tx))
-            .map_err(|e| WorkerError(format!("cannot read Node's replies: {e}")))?;
+            .spawn(move || read_frames(frames, tx))
+            .map_err(|e| {
+                let _ = child.kill();
+                let _ = child.wait();
+                WorkerError(format!("cannot read Node's replies: {e}"))
+            })?;
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
         let tail = stderr_tail.clone();
         let stderr_thread = std::thread::spawn(move || drain_stderr(stderr, tail));
@@ -154,7 +163,7 @@ impl Worker {
 
     /// Send one request and wait for its reply. `what` names it in the
     /// notes about a slow reply.
-    fn request(&mut self, mut req: Json, what: &str) -> JsResult<Json> {
+    fn request(&mut self, mut req: Json, what: &str) -> JsResult<Decoded> {
         if let Some(f) = &self.failed {
             return JsResult::Failed(f.clone());
         }
@@ -187,7 +196,7 @@ impl Worker {
                 }
             }
         };
-        let reply = match reply {
+        let Frame { head: reply, ok } = match reply {
             Ok(r) => r,
             Err(why) => return JsResult::Failed(self.fail(&why)),
         };
@@ -205,8 +214,9 @@ impl Worker {
         if let Some(t) = reply.get("thrown") {
             return JsResult::Thrown(js_error(t, &self.root));
         }
-        match reply.get("ok") {
-            Some(v) => JsResult::Ok(v.clone()),
+        match ok {
+            Some(Ok(d)) => JsResult::Ok(d),
+            Some(Err(e)) => JsResult::Failed(self.fail(&format!("a value Brrrty can't read: {e}"))),
             None => JsResult::Failed(self.fail(&format!("a reply with no value: {reply}"))),
         }
     }
@@ -251,17 +261,6 @@ impl Worker {
         failure
     }
 
-    fn decoded(&mut self, r: JsResult<Json>) -> JsResult<Decoded> {
-        match r {
-            JsResult::Ok(v) => match decode(&v) {
-                Ok(d) => JsResult::Ok(d),
-                Err(e) => JsResult::Failed(self.fail(&format!("a value Brrrty can't read: {e}"))),
-            },
-            JsResult::Thrown(e) => JsResult::Thrown(e),
-            JsResult::Failed(f) => JsResult::Failed(f),
-        }
-    }
-
     fn shown(&self, file: &Path) -> String {
         file.strip_prefix(&self.root)
             .unwrap_or(file)
@@ -284,20 +283,18 @@ impl JsRuntime for Worker {
 
     fn load(&mut self, file: &Path, call: bool) -> JsResult<Decoded> {
         let what = self.shown(file);
-        let r = self.request(
+        self.request(
             json!({"op": "load", "path": file.to_string_lossy(), "call": call}),
             &what,
-        );
-        self.decoded(r)
+        )
     }
 
     fn call(&mut self, f: FnHandle, args: &[Value]) -> JsResult<Decoded> {
         let args: Vec<Json> = args.iter().map(encode).collect();
-        let r = self.request(
+        self.request(
             json!({"op": "call", "handle": f.0, "args": args}),
             "a data function",
-        );
-        self.decoded(r)
+        )
     }
 
     fn vars_used(&mut self, f: FnHandle, data: &Value) -> JsResult<Vec<String>> {
@@ -306,12 +303,10 @@ impl JsRuntime for Worker {
             "a computed data function",
         );
         match r {
-            JsResult::Ok(Json::Array(a)) if a.iter().all(Json::is_string) => JsResult::Ok(
-                a.iter()
-                    .filter_map(|s| s.as_str().map(str::to_string))
-                    .collect(),
-            ),
-            JsResult::Ok(other) => JsResult::Failed(self.fail(&format!("varsUsed gave {other}"))),
+            JsResult::Ok(d) => match strings(&d.value) {
+                Some(list) => JsResult::Ok(list),
+                None => JsResult::Failed(self.fail(&format!("varsUsed gave {:?}", d.value))),
+            },
             JsResult::Thrown(e) => JsResult::Thrown(e),
             JsResult::Failed(f) => JsResult::Failed(f),
         }
@@ -319,12 +314,10 @@ impl JsRuntime for Worker {
 
     fn reads(&mut self) -> JsResult<Vec<PathBuf>> {
         match self.request(json!({"op": "reads"}), "the list of files read") {
-            JsResult::Ok(Json::Array(a)) => JsResult::Ok(
-                a.iter()
-                    .filter_map(|s| s.as_str().map(PathBuf::from))
-                    .collect(),
-            ),
-            JsResult::Ok(other) => JsResult::Failed(self.fail(&format!("reads gave {other}"))),
+            JsResult::Ok(d) => match strings(&d.value) {
+                Some(list) => JsResult::Ok(list.into_iter().map(PathBuf::from).collect()),
+                None => JsResult::Failed(self.fail(&format!("reads gave {:?}", d.value))),
+            },
             JsResult::Thrown(e) => JsResult::Thrown(e),
             JsResult::Failed(f) => JsResult::Failed(f),
         }
@@ -354,6 +347,55 @@ impl Drop for Worker {
             let _ = t.join();
         }
     }
+}
+
+/// Start the worker. Its replies come on a pipe of their own, which Node
+/// inherits under the descriptor number it has here, and its stdout joins
+/// its stderr: a child process or logger writing to fd 1 is only noise, as
+/// it is under 11ty.
+#[cfg(unix)]
+fn spawn(mut cmd: Command) -> std::io::Result<(Child, std::io::PipeReader, std::io::PipeReader)> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+    let (frames_r, frames_w) = std::io::pipe()?;
+    // A copy is numbered 3 or above, clear of the standard three.
+    let frames_w = frames_w.try_clone()?;
+    let (err_r, err_w) = std::io::pipe()?;
+    let fd = frames_w.as_raw_fd();
+    cmd.stdout(err_w.try_clone()?)
+        .stderr(err_w)
+        .env("BRRRTY_FRAMES_FD", fd.to_string());
+    // SAFETY: fcntl is async-signal-safe, and the descriptor is this
+    // process's own, open until after the spawn.
+    unsafe {
+        cmd.pre_exec(move || {
+            // Keep it open across exec in Node only.
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = cmd.spawn();
+    // The parent's write ends close here, so the reads end when Node's do.
+    drop(cmd);
+    drop(frames_w);
+    Ok((child?, frames_r, err_r))
+}
+
+/// Start the worker, its replies on stdout.
+#[cfg(not(unix))]
+fn spawn(
+    mut cmd: Command,
+) -> std::io::Result<(Child, std::process::ChildStdout, std::process::ChildStderr)> {
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("BRRRTY_FRAMES_FD", "1")
+        .spawn()?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    Ok((child, stdout, stderr))
 }
 
 #[cfg(unix)]
@@ -399,15 +441,35 @@ fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>) {
             let _ = tx.send(Err(format!("a cut-off reply: {e}")));
             return;
         }
-        let parsed = parse_reply(&body);
+        let parsed = parse_reply(&body).map(|mut head| {
+            let ok = head
+                .as_object_mut()
+                .and_then(|o| o.remove("ok"))
+                .map(|v| decode(&v));
+            Frame { head, ok }
+        });
         if tx.send(parsed).is_err() {
             return;
         }
     }
 }
 
+/// A list of strings, as `reads` and `varsUsed` reply.
+fn strings(v: &Value) -> Option<Vec<String>> {
+    match v {
+        Value::Array(a) => a
+            .iter()
+            .map(|s| match s {
+                Value::String(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
 /// One reply body, without serde's nesting limit (see [`REPLY_STACK`]).
-fn parse_reply(body: &[u8]) -> Reply {
+fn parse_reply(body: &[u8]) -> Result<Json, String> {
     let mut de = serde_json::Deserializer::from_slice(body);
     de.disable_recursion_limit();
     let v = serde::Deserialize::deserialize(&mut de)
