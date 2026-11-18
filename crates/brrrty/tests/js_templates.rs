@@ -751,3 +751,86 @@ fn an_unused_javascript_layout_never_runs() {
         assert_eq!(read(t.path(), "probe/index.html"), "unused=no", "{body}");
     }
 }
+
+/// 11ty runs each template's module code as its file finishes loading, in
+/// an order of its own: state the modules share (a counter in a helper)
+/// follows it, and Brrrty refuses rather than guess.
+#[test]
+fn module_state_shared_at_load_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let counter = (
+        "src/lib/counter.js",
+        "let n = 0;\nmodule.exports = () => ++n;\n",
+    );
+    // In module code, printed by render.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        counter,
+        (
+            "src/a.11ty.js",
+            "const id = require('./lib/counter.js')();\nmodule.exports = () => `a${id}`;\n",
+        ),
+        (
+            "src/b.11ty.js",
+            "const id = require('./lib/counter.js')();\nmodule.exports = () => `b${id}`;\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert!(!t.path().join("_site/a/index.html").exists(), "{out}");
+    // In `data()`.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        counter,
+        (
+            "src/a.11ty.js",
+            "const next = require('./lib/counter.js');\nmodule.exports = { data: () => ({ id: next() }), render: (d) => `a${d.id}` };\n",
+        ),
+        (
+            "src/b.11ty.js",
+            "const next = require('./lib/counter.js');\nmodule.exports = { data: () => ({ id: next() }), render: (d) => `b${d.id}` };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("in another order"), "{out}");
+    // In directory data, read by a page with no function in sight.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        counter,
+        (
+            "src/x/x.11tydata.js",
+            "module.exports = { id: require('../lib/counter.js')() };\n",
+        ),
+        (
+            "src/y/y.11tydata.js",
+            "module.exports = { id: require('../lib/counter.js')() };\n",
+        ),
+        ("src/x/p.njk", "{{ id }}"),
+        ("src/y/p.njk", "{{ id }}"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("in another order"), "{out}");
+    // Module code that shares nothing builds.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/a.11ty.js",
+            "const when = new Date().getFullYear() > 2000;\nmodule.exports = () => `a${when}`;\n",
+        ),
+        (
+            "src/b.11ty.js",
+            "const r = Math.random() < 2;\nmodule.exports = () => `b${r}`;\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "b/index.html"), "btrue");
+}

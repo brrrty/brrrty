@@ -89,6 +89,15 @@ pub(crate) struct Frame {
     pub raw: Option<Json>,
 }
 
+/// One request that loaded data or a template, with its reply, for the
+/// replay check.
+#[derive(Clone)]
+pub(crate) struct LoadRecord {
+    pub req: Json,
+    pub head: Json,
+    pub raw: Option<Json>,
+}
+
 /// One request made after the data files loaded, with its reply, for the
 /// replay check.
 #[derive(Clone)]
@@ -135,8 +144,12 @@ pub struct Worker {
     run_mode: RunMode,
     /// Keep each reply's value as sent, as well as decoded.
     pub(crate) keep_raw: Arc<std::sync::atomic::AtomicBool>,
-    /// The requests that loaded the data, in order.
-    load_log: Vec<Json>,
+    /// The requests that loaded the data, in order, with their replies.
+    load_log: Vec<LoadRecord>,
+    /// How many of them loaded global data (the rest are template and
+    /// directory data files and templates, which 11ty loads as their
+    /// files finish loading).
+    global_end: usize,
     /// The requests made since, with their replies.
     call_log: Vec<Record>,
     /// Set once the data files loaded: see [`JsRuntime::begin_calls`].
@@ -176,7 +189,8 @@ impl Worker {
         let (mut child, frames, stderr, answers) = spawn(cmd).map_err(cannot)?;
         live(child.id(), true);
         let (tx, replies) = mpsc::channel();
-        let keep_raw = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // Replies are kept as sent too: the replay check compares loads.
+        let keep_raw = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let keep = keep_raw.clone();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
@@ -212,6 +226,7 @@ impl Worker {
             run_mode,
             keep_raw,
             load_log: Vec::new(),
+            global_end: 0,
             call_log: Vec::new(),
             calls_begun: false,
             clock: Json::Array(Vec::new()),
@@ -280,14 +295,18 @@ impl Worker {
                 | "exportsFinal"
                 | "describe"
         );
-        if logged && !self.calls_begun {
-            self.load_log.push(req.clone());
-        }
         self.asked.clear();
         let frame = match self.exchange_with(req.clone(), what, filters) {
             Ok(f) => f,
             Err(f) => return JsResult::Failed(f),
         };
+        if logged && !self.calls_begun {
+            self.load_log.push(LoadRecord {
+                req: req.clone(),
+                head: frame.head.clone(),
+                raw: frame.raw.clone(),
+            });
+        }
         if logged && self.calls_begun {
             let (unit, label) = match brrrty_js::functions::unit() {
                 Some(u) => u,
@@ -692,6 +711,7 @@ impl JsRuntime for Worker {
     }
 
     fn loads_changed(&mut self) -> JsResult<Vec<(PathBuf, Decoded)>> {
+        self.global_end = self.load_log.len();
         let d = match self.request(json!({"op": "loadsChanged"}), "the data files") {
             JsResult::Ok(d) => d,
             JsResult::Thrown(e) => return JsResult::Thrown(e),
@@ -841,6 +861,7 @@ impl JsRuntime for Worker {
             root: &self.root,
             run_mode: self.run_mode,
             loads: &self.load_log,
+            global_end: self.global_end,
             clock: &self.clock,
             load_handles: self.load_handles,
             calls: &self.call_log,

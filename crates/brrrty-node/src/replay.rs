@@ -27,7 +27,7 @@ use std::sync::Arc;
 use brrrty_js::runtime::RuntimeFailure;
 use serde_json::{Value as Json, json};
 
-use crate::client::{Record, RunMode, Worker};
+use crate::client::{LoadRecord, Record, RunMode, Worker};
 use crate::find::NodeInfo;
 
 /// What a build recorded.
@@ -35,7 +35,9 @@ pub(crate) struct Log<'a> {
     pub node: &'a NodeInfo,
     pub root: &'a Path,
     pub run_mode: RunMode,
-    pub loads: &'a [Json],
+    pub loads: &'a [LoadRecord],
+    /// How many of `loads` loaded global data.
+    pub global_end: usize,
     pub clock: &'a Json,
     pub load_handles: u64,
     pub calls: &'a [Record],
@@ -62,16 +64,27 @@ struct Unit {
 
 impl Log<'_> {
     pub fn check(&self) -> Result<(), Failure> {
-        if self.calls.is_empty() {
+        // Template and directory data files and templates load in an order
+        // of 11ty's own: with any, the reverse order is checked even when
+        // no page calls a function.
+        if self.calls.is_empty() && self.loads.len() <= self.global_end {
             return Ok(());
         }
         let units = self.units();
         let reverse: Vec<usize> = (0..units.len()).rev().collect();
         let mut named: Vec<usize> = (0..units.len()).collect();
         named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
+        // With no calls, only the load order is checked: one worker.
+        let both = !self.calls.is_empty();
         let (a, b) = std::thread::scope(|s| {
             let a = s.spawn(|| self.replay(&units, &reverse, true));
-            let b = s.spawn(|| self.replay(&units, &named, false));
+            let b = s.spawn(|| {
+                if both {
+                    self.replay(&units, &named, false)
+                } else {
+                    Ok(())
+                }
+            });
             (a.join(), b.join())
         });
         let joined = |r: std::thread::Result<Result<(), Failure>>| {
@@ -153,9 +166,13 @@ impl Log<'_> {
                 }
             })
         };
-        send(&mut w, json!({"op": "feedClock", "values": self.clock}))?;
-        for req in self.loads {
-            send(&mut w, req.clone())?;
+        if interleave {
+            self.loads_reversed(&mut w, &send)?;
+        } else {
+            send(&mut w, json!({"op": "feedClock", "values": self.clock}))?;
+            for r in self.loads {
+                send(&mut w, r.req.clone())?;
+            }
         }
         let begun = send(&mut w, json!({"op": "callsBegin"}))?;
         let handles = begun
@@ -248,6 +265,105 @@ impl Log<'_> {
                 for &i in &units[u].records {
                     self.step(&mut w, &mut st, i, &send)?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Load the data again with the template and directory data files and
+    /// the templates evaluated in the reverse of the first run's order, as
+    /// 11ty evaluates each when its file finishes loading, in an order of
+    /// its own; then their loads in the first run's order, each compared
+    /// with the first run's reply. Each load gets the clock and random
+    /// values it read the first time.
+    fn loads_reversed(
+        &self,
+        w: &mut Worker,
+        send: &dyn Fn(&mut Worker, Json) -> Result<crate::client::Frame, Failure>,
+    ) -> Result<(), Failure> {
+        let feed = |r: &LoadRecord| r.head.get("loadClock").cloned().unwrap_or(json!([]));
+        // A replay worker, handed no clock of its own: each load brings its own.
+        send(w, json!({"op": "feedClock", "values": []}))?;
+        let split = self.global_end.min(self.loads.len());
+        for r in &self.loads[..split] {
+            let mut req = r.req.clone();
+            req["feed"] = feed(r);
+            send(w, req)?;
+        }
+        let tail = &self.loads[split..];
+        let op = |r: &LoadRecord| {
+            r.req
+                .get("op")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        let mut items: Vec<(usize, Json)> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (i, r) in tail.iter().enumerate() {
+            let path = r
+                .req
+                .get("path")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string();
+            let kind = match op(r).as_str() {
+                "templateLoad" => "template",
+                // A data file's module runs once, on its first load.
+                "load" if seen.insert(path.clone()) => "data",
+                _ => continue,
+            };
+            items.push((i, json!({"kind": kind, "path": path, "feed": feed(r)})));
+        }
+        items.reverse();
+        let got = send(
+            w,
+            json!({"op": "preload", "items": items.iter().map(|(_, j)| j.clone()).collect::<Vec<_>>()}),
+        )?;
+        let consumed: Vec<usize> = got
+            .raw
+            .as_ref()
+            .and_then(Json::as_array)
+            .map(|a| a.iter().map(|n| n.as_u64().unwrap_or(0) as usize).collect())
+            .unwrap_or_default();
+        let mut used: HashMap<usize, usize> = HashMap::new();
+        for ((i, _), n) in items.iter().zip(consumed) {
+            used.insert(*i, n);
+        }
+        let strip = |h: &Json| {
+            let mut h = h.clone();
+            if let Some(o) = h.as_object_mut() {
+                o.remove("id");
+                o.remove("loadClock");
+            }
+            h
+        };
+        for (i, r) in tail.iter().enumerate() {
+            let mut req = r.req.clone();
+            // What its module code read ran already.
+            let rest: Vec<Json> = feed(r)
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .skip(used.get(&i).copied().unwrap_or(0))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            req["feed"] = Json::Array(rest);
+            let got = send(w, req)?;
+            if strip(&got.head) != strip(&r.head) || got.raw != r.raw {
+                let what = r.req.get("path").and_then(Json::as_str).unwrap_or("a file");
+                let shown = Path::new(what)
+                    .strip_prefix(self.root)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| what.to_string());
+                return Err(Failure::Differs(
+                    format!(
+                        "{shown} gives different data when the templates and template and directory data files load in another order: 11ty runs each one's module code as its file finishes loading, in an order of its own, so module state they share (a counter, a registry) follows that order, which Brrrty can't know"
+                    ),
+                    None,
+                ));
             }
         }
         Ok(())

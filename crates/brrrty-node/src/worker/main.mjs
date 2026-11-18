@@ -926,14 +926,18 @@ function dynamicImportAbsolutePath(absolutePath, type) {
   });
 }
 
+// How 11ty imports a data file: ESM for `.mjs`, and `.js` in a
+// `"type": "module"` project; CommonJS otherwise.
+function dataType(absolutePath) {
+  const ext = path.extname(absolutePath).slice(1);
+  return ext === "mjs" || (ext === "js" && isEsm) ? "esm" : "cjs";
+}
+
 // `getDataValue` from src/Data/TemplateData.js, for JavaScript files.
 // `changed` is set when a data function changed its argument.
 async function getDataValue(absolutePath, call, state) {
   if (!fs.existsSync(absolutePath)) return {};
-  const ext = path.extname(absolutePath).slice(1);
-  let type = "cjs";
-  if (ext === "mjs" || (ext === "js" && isEsm)) type = "esm";
-  let value = await dynamicImportAbsolutePath(absolutePath, type);
+  let value = await dynamicImportAbsolutePath(absolutePath, dataType(absolutePath));
   if (call && typeof value === "function") {
     if (argumentText === undefined) argumentText = argumentPrint();
     value = await value(argument || {});
@@ -1056,12 +1060,36 @@ function invalidTemplate(message) {
 // `getJavaScriptData` reads it, copied as `#getFrontMatterData` copies it
 // (`Object.assign({}, extraData)`).
 async function loadTemplate(req) {
-  const shown = relFile(req.path);
+  let made;
+  const early = preloaded.get(req.path);
+  if (early) {
+    preloaded.delete(req.path);
+    if (early.error) throw early.error;
+    made = early.made;
+  } else {
+    made = await makeTemplate(req.path);
+  }
+  const { inst, data } = made;
+  const root = Object.assign({}, data);
+  loadedRoots.set(root, req.path);
+  loadRecords.set(root, completeRecord(root, false));
+  templates.push({ inst, file: req.path, layout: req.layout === true, pageSet: false });
+  return { template: templates.length - 1, okText: JSON.stringify(encodeValue(root, register)) };
+}
+
+// Templates and data files the replay check imported ahead of their
+// loads, in another order than the build's (`preload`), by path.
+const preloaded = new Map();
+
+// Import a template and make its instance and data, as 11ty does when
+// its file has loaded.
+async function makeTemplate(filePath) {
+  const shown = relFile(filePath);
   let mod;
   try {
-    mod = await importTemplate(req.path);
+    mod = await importTemplate(filePath);
   } catch (e) {
-    throw placeSyntaxError(e, req.path);
+    throw placeSyntaxError(e, filePath);
   }
   let inst;
   try {
@@ -1079,11 +1107,7 @@ async function loadTemplate(req) {
       throw invalidTemplate(`Invalid data format returned from ${shown}: typeof ${typeof data}`);
     }
   }
-  const root = Object.assign({}, data);
-  loadedRoots.set(root, req.path);
-  loadRecords.set(root, completeRecord(root, false));
-  templates.push({ inst, file: req.path, layout: req.layout === true, pageSet: false });
-  return { template: templates.length - 1, okText: JSON.stringify(encodeValue(root, register)) };
+  return { inst, data };
 }
 
 // One line from Brrrty's answers pipe, waiting for it.
@@ -1593,6 +1617,37 @@ async function handle(req) {
     }
     case "templateLoad":
       return loadTemplate(req);
+    case "preload": {
+      // The replay check: run the module code of these templates and data
+      // files now, in this order (each handed the clock and random values
+      // it read the first time), as 11ty runs each when its file finishes
+      // loading. Their loads then take what this made.
+      const consumed = [];
+      for (const item of req.items || []) {
+        const saved = clockFeed;
+        clockFeed = Array.isArray(item.feed) ? item.feed.slice() : [];
+        const before = clockFeed.length;
+        try {
+          if (item.kind === "template") {
+            try {
+              preloaded.set(item.path, { made: await makeTemplate(item.path) });
+            } catch (e) {
+              preloaded.set(item.path, { error: e });
+            }
+          } else if (fs.existsSync(item.path)) {
+            try {
+              await dynamicImportAbsolutePath(item.path, dataType(item.path));
+            } catch {
+              // Its load reports it.
+            }
+          }
+        } finally {
+          consumed.push(before - clockFeed.length);
+          clockFeed = saved;
+        }
+      }
+      return { ok: consumed };
+    }
     case "render": {
       const t = templates[req.template];
       if (!t) throw new Error(`no template ${req.template}`);
@@ -1630,6 +1685,11 @@ lines.on("line", (line) => {
       callClock = [];
       clockFeed = Array.isArray(req.feed) ? req.feed.slice() : null;
     }
+    // A load's own reads, recorded with its reply, and handed back to it
+    // alone when the replay check sends them.
+    const loadStart = clockRecord.length;
+    const savedFeed = clockFeed;
+    if (!calling && Array.isArray(req.feed)) clockFeed = req.feed.slice();
     try {
       reply = await handle(req);
     } catch (e) {
@@ -1643,6 +1703,11 @@ lines.on("line", (line) => {
       clockFeed = null;
       if (callClock.length) reply = { ...reply, clock: callClock };
       callClock = [];
+    } else {
+      if (Array.isArray(req.feed)) clockFeed = savedFeed;
+      if (clockRecord.length > loadStart && req.op !== "callsBegin") {
+        reply = { ...reply, loadClock: clockRecord.slice(loadStart) };
+      }
     }
     frame({ id: req.id, ...reply });
     // What the call changed, checked once its reply is on its way.
