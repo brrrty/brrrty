@@ -12,12 +12,18 @@ lang = "en_US.UTF-8"
 "src/invalid.liquid" = "invalid/index.html"
 "src/function.liquid" = "function/index.html"
 "src/getter.liquid" = "getter/index.html"
+"src/inlist.liquid" = "inlist/index.html"
+"src/frozen.liquid" = "frozen/index.html"
 
 # Probed with 11ty 3.1.8:
 # - a hole in an array prints exactly as `undefined` does (Liquid and Nunjucks
 #   `for`, `size`/`length`, `json`/`dump`, `join`, `compact`), so a hole
 #   crosses as `undefined` (sparse-* and undef-* pages match);
-# - 11ty reads a getter several times (getter prints "read 3"), so a getter
+# - 11ty reads a getter several times (getter prints "read 4"), so a getter
 #   whose value changes between reads is refused;
+# - 11ty copies a plain object's enumerable keys, but keeps arrays, the
+#   objects in them, and frozen objects as they are, so an object there
+#   with a hidden key or a well-known symbol is refused (inlist, frozen),
+#   and one inside a plain object crosses without them (nested);
 # - a circular reference in global data stops 11ty with "Maximum call stack
 #   size exceeded" in its merge, so it isn't in this fixture; Brrrty refuses it.

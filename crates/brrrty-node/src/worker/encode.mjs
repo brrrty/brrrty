@@ -43,6 +43,30 @@ function describeObject(value) {
   return `${article(name)} ${name} object`;
 }
 
+// Symbols that change how JavaScript reads an object: printing it, listing
+// it, iterating it.
+const WELL_KNOWN = new Set(
+  Object.getOwnPropertyNames(Symbol)
+    .map((name) => Symbol[name])
+    .filter((v) => typeof v === "symbol"),
+);
+
+// What a template could see on `v` that its enumerable string keys don't
+// carry: own non-enumerable string keys (other than an array's indexes and
+// `length`) and own well-known symbols. 11ty hands some objects to
+// templates as they are, where these stay readable.
+function unseen(v, isArray) {
+  const hidden = Object.getOwnPropertyNames(v).filter((k) => {
+    if (isArray && (k === "length" || (String(k >>> 0) === k && (k >>> 0) !== 4294967295))) return false;
+    const d = Object.getOwnPropertyDescriptor(v, k);
+    return d && !d.enumerable;
+  });
+  const symbols = Object.getOwnPropertySymbols(v)
+    .filter((s) => WELL_KNOWN.has(s))
+    .map((s) => s.description);
+  return [...hidden, ...symbols];
+}
+
 function pathText(path) {
   let out = "data";
   for (const part of path) {
@@ -61,7 +85,10 @@ function encodeValue(value, register) {
     return LONE_SURROGATE.test(s) ? { $x: "a string with a lone surrogate" } : s;
   }
 
-  function enc(v) {
+  // `shared`: 11ty hands this value to templates as it is rather than
+  // copying its enumerable keys (`getMergedItem` in @11ty/eleventy-utils
+  // keeps arrays, and frozen plain objects, by reference).
+  function enc(v, shared) {
     switch (typeof v) {
       case "undefined":
         return { $u: 1 };
@@ -103,6 +130,8 @@ function encodeValue(value, register) {
       // Templates can read a property set on an array (`list.total`).
       const extra = Object.keys(v).filter((k) => !(String(k >>> 0) === k && (k >>> 0) !== 4294967295));
       if (extra.length) return { $x: `an array with other properties (${extra.join(", ")})` };
+      const hidden = unseen(v, true);
+      if (hidden.length) return { $x: `an array with properties Brrrty can't list (${hidden.join(", ")}), which 11ty passes to templates as they are` };
       stack.push(v);
       stackPaths.push(path.slice());
       const out = [];
@@ -112,7 +141,7 @@ function encodeValue(value, register) {
           continue;
         }
         path.push(i);
-        out.push(enc(v[i]));
+        out.push(enc(v[i], true));
         path.pop();
       }
       stack.pop();
@@ -120,6 +149,11 @@ function encodeValue(value, register) {
       return out;
     }
     if (proto === Object.prototype || proto === null) {
+      const byReference = shared || Object.isFrozen(v);
+      if (byReference) {
+        const hidden = unseen(v, false);
+        if (hidden.length) return { $x: `an object with properties Brrrty can't list (${hidden.join(", ")}), which 11ty passes to templates as they are` };
+      }
       stack.push(v);
       stackPaths.push(path.slice());
       const entries = [];
@@ -133,11 +167,11 @@ function encodeValue(value, register) {
           if (desc && desc.get) {
             // 11ty reads a getter as many times as it copies the data, so
             // one that changes between reads has no single value.
-            const first = enc(v[key]);
-            const second = enc(v[key]);
+            const first = enc(v[key], byReference);
+            const second = enc(v[key], byReference);
             item = JSON.stringify(first) === JSON.stringify(second) ? first : { $x: "a getter that returns a different value each time it is read" };
           } else {
-            item = enc(desc ? desc.value : v[key]);
+            item = enc(desc ? desc.value : v[key], byReference);
           }
         }
         entries.push([key, item]);
@@ -150,5 +184,5 @@ function encodeValue(value, register) {
     return { $x: describeObject(v) };
   }
 
-  return enc(value);
+  return enc(value, false);
 }

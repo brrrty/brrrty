@@ -17,6 +17,16 @@ pub enum PathPart {
     Index(usize),
 }
 
+/// What the worker's encoding says of a plain object it refused for holding
+/// properties templates could see but Brrrty can't list.
+pub const UNLISTED_OBJECT: &str = "an object with properties Brrrty can't list";
+
+/// Whether a refusal is of a plain object, which 11ty merges as data, as
+/// opposed to a value 11ty ignores as a data file's whole result.
+pub fn refused_plain_object(what: &str) -> bool {
+    what.starts_with(UNLISTED_OBJECT)
+}
+
 /// A path inside a data file's value, shown as `data.posts[3].date`.
 pub fn path_text(path: &[PathPart]) -> String {
     // A very deep path keeps its first and last parts.

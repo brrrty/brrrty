@@ -240,6 +240,55 @@ fn symbol_keys_and_hidden_keys_are_dropped() {
 }
 
 #[test]
+fn objects_11ty_shares_keep_hidden_and_symbol_keys_so_they_are_refused() {
+    // 11ty copies a plain object's enumerable keys, but hands arrays, and
+    // the objects in them, and frozen objects, to templates as they are.
+    let Some(d) = through_node(
+        r#"(() => {
+            const hidden = () => { const o = { a: 1 }; Object.defineProperty(o, "hid", { value: 5, enumerable: false }); return o; };
+            const prim = () => ({ a: 1, [Symbol.toPrimitive]: () => "PRIM" });
+            const list = [1, 2]; Object.defineProperty(list, "total", { value: 2, enumerable: false });
+            return {
+                copied: { inner: hidden(), sym: prim(), tag: { [Symbol("mine")]: 1, b: 2 } },
+                inList: [hidden()],
+                symInList: [prim()],
+                deepInList: [{ x: { y: hidden() } }],
+                inFrozen: Object.freeze({ inner: hidden() }),
+                frozenHidden: Object.freeze(hidden()),
+                list,
+                plainList: [{ ok: 1, [Symbol("mine")]: 2 }],
+            };
+        })()"#,
+    ) else {
+        return;
+    };
+    let refused: Vec<String> = d
+        .refused
+        .iter()
+        .map(|(p, _)| brrrty_js::runtime::path_text(p))
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            "data.inList[0]",
+            "data.symInList[0]",
+            "data.deepInList[0].x.y",
+            "data.inFrozen.inner",
+            "data.frozenHidden",
+            "data.list",
+        ]
+    );
+    assert!(brrrty_js::runtime::refused_plain_object(&d.refused[0].1));
+    assert!(d.refused[0].1.contains("hid"), "{:?}", d.refused[0].1);
+    assert!(
+        d.refused[1].1.contains("Symbol.toPrimitive"),
+        "{:?}",
+        d.refused[1].1
+    );
+    assert_eq!(keys(get(get(&d.value, "copied"), "inner")), ["a"]);
+}
+
+#[test]
 fn a_steady_getter_is_read_and_a_changing_one_refused() {
     let Some(d) = through_node(
         r#"(() => { let n = 0; return {get steady() { return "s"; }, get counter() { n += 1; return n; }}; })()"#,
