@@ -22,6 +22,14 @@ These projects are released under the MIT License. Their notices:
   (`ComputedDataProxy.js`)
   Copyright (c) 2017–2024 Zach Leatherman @zachleat
 
+- @11ty/eleventy-utils 2.0.7: `isPlainObject`, in brrrty-node's computed
+  data proxy
+  Copyright (c) 2022–2024 Zach Leatherman @zachleat
+
+- lodash 4.17.21 (as @11ty/lodash-custom): `get` and `set`, in brrrty-node's
+  computed data proxy
+  Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
+
 - @11ty/eleventy-plugin-rss 3.1.0: the feed plugin and its virtual templates
   Copyright (c) 2018 Zach Leatherman @zachleat
 

@@ -1,0 +1,8792 @@
+[
+ {
+  "fn": "async (d) => [d.n === null, [...d.tags].length, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.page.fileSlug, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.page.fileSlug, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.collections.post, d.flag ? d.site.name : d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.links.length, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => typeof d.site",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [typeof d.site, d.tags, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [Object.keys(d.site).length, d.tags, [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => Object.keys(d.site).length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.n === null",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.site.links.length, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [Object.keys(d.site).length, d.site.links.length, d.a]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.flag ? d.site.name : d.title",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.a]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), [...d.tags].length, d.n === null]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.list.filter(Boolean).length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [[...d.tags].length, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath",
+   "nested.y"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [...d.tags].length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 1,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => typeof d.site",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.flag ? d.site.name : d.title, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.title, d.tags, d.tags.includes('a')]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.nested.x, d.site.links.length, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.tags.includes('a'), [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => typeof d.site",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.n === null",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.title, d.tags]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.count + 1, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.tags]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [Object.keys(d.site).length, d.tags.includes('a'), d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.title, Object.keys(d.site).length, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.missing && d.missing.deep",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.page.fileSlug",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, [...d.tags].length, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.n === null",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.title, d.list.filter(Boolean).length, d.tags]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [[...d.tags].length, [...d.tags].length, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.nested.x, d.site.links.length, d.n === null]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.count + 1, d.nested.x, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, Object.keys(d.site).length, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.n === null, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.missing && d.missing.deep",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.a",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.name",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.a, d.list.filter(Boolean).length, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.missing && d.missing.deep, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [typeof d.site, Object.keys(d.site).length, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.flag ? d.site.name : d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.count + 1",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.a]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.a, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.page.fileSlug",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, typeof d.site, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.n === null",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.page.fileSlug, d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.count + 1",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [Object.keys(d.site).length, d.list.filter(Boolean).length, typeof d.site]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.tags.includes('a'), Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.count + 1, d.flag ? d.site.name : d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.flag ? d.site.name : d.title",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.nested.x",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.page.fileSlug, d.nested.x, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.a]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [...d.tags].length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.tags.includes('a'), d.page.fileSlug]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.links.length, d.tags.includes('a'), d.n === null]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.n === null, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath",
+   "nested.x"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [...d.tags].length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags.includes('a')",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => typeof d.site",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.page.fileSlug",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.list.filter(Boolean).length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags.includes('a')",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.name",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.list.filter(Boolean).length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [Object.keys(d.site).length, d.a, d.flag ? d.site.name : d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [typeof d.site, d.title, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.missing && d.missing.deep, d.tags]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.count + 1",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.missing && d.missing.deep, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.a]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.flag ? d.site.name : d.title",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.nested.x",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "x",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.title, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags.includes('a')",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.a, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.list.filter(Boolean).length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.page.fileSlug]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.collections.post, [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": true,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.tags.includes('a')]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.tags, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.site.links.length, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.list.filter(Boolean).length, d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => typeof d.site",
+  "keys": [
+   "page.url",
+   "page.outputPath",
+   "title"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.a, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, typeof d.site]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [typeof d.site, d.site.links.length, d.a]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [typeof d.site, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.list.filter(Boolean).length, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.links.length, typeof d.site]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.a, d.missing && d.missing.deep, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, Object.keys(d.site).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, d.missing && d.missing.deep, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.flag ? d.site.name : d.title",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [[...d.tags].length, d.page.fileSlug, d.n === null]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.page.fileSlug",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.flag ? d.site.name : d.title, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.list.filter(Boolean).length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags.includes('a')",
+  "keys": [
+   "page.url",
+   "page.outputPath",
+   "nested.x"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags.includes('a')",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), d.a, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": true,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.page.fileSlug]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.page.fileSlug, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.tags, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.count + 1",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => typeof d.site",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.count + 1",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.flag ? d.site.name : d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.links.length, [...d.tags].length, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), d.site.links.length, d.count + 1]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.nested.x",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.a, d.n === null, typeof d.site]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, d.tags]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.missing && d.missing.deep, d.tags]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.map((l) => l.href).join()",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.page.fileSlug",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.links.length, [...d.tags].length, d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.nested.x, d.site.links.length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [[...d.tags].length, d.missing && d.missing.deep, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.n === null, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), d.collections.post, d.page.fileSlug]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.page.fileSlug]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, d.collections.post, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.name, [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, d.nested.x, typeof d.site]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.flag ? d.site.name : d.title, d.site.links.length, d.flag ? d.site.name : d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.tags.includes('a')",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [Object.keys(d.site).length, d.tags.includes('a'), d.missing && d.missing.deep]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.count + 1",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.title",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.collections.post, d.site.name]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.page.fileSlug, typeof d.site, d.n === null]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.collections.post",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.a",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [typeof d.site, d.a, d.title]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.site.links.length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags, typeof d.site]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.site.links.length, [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.list.filter(Boolean).length, [...d.tags].length, d.nested.x]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.tags.includes('a'), d.site.name, [...d.tags].length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.nested.x, d.list.filter(Boolean).length]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.page.fileSlug, d.collections.post]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 6,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [d.missing && d.missing.deep, d.tags.includes('a')]",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 2,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "nested": {
+    "y": 1
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.missing && d.missing.deep",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 0,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => [...d.tags].length",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 8,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ },
+ {
+  "fn": "async (d) => d.a",
+  "keys": [
+   "page.url",
+   "page.outputPath"
+  ],
+  "data": {
+   "title": "Hello",
+   "count": 4,
+   "flag": false,
+   "n": 0,
+   "when": "2026-01-02",
+   "site": {
+    "name": "S",
+    "links": [
+     {
+      "href": "/a"
+     },
+     {
+      "href": "/b"
+     }
+    ]
+   },
+   "tags": [
+    "a",
+    "b"
+   ],
+   "list": [
+    1,
+    0,
+    {
+     "v": 3
+    }
+   ],
+   "page": {
+    "fileSlug": "f",
+    "inputPath": "./f.md"
+   },
+   "collections": {
+    "post": []
+   }
+  }
+ }
+]
