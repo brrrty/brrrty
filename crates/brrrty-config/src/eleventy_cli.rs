@@ -347,9 +347,25 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
         "bun" => match get(1) {
             "x" => i = 2,
             "run" if scripts.contains_key(get(2)) => return Step::Other,
+            // `bun run <bin>` runs a package's bin, `bun run <file>` a file.
+            "run" if is_program(get(2)) => i = 2,
+            "run" => return Step::Runs(get(2).to_string()),
             _ => i = usize::MAX,
         },
         "node" | "tsx" | "ts-node" => i = usize::MAX,
+        // A file run directly, through its shebang.
+        f if f.ends_with("@11ty/eleventy/cmd.cjs") || f.ends_with("@11ty/eleventy/cmd.js") => {
+            return Step::Eleventy(w[1..].to_vec());
+        }
+        f if !is_program(f)
+            && !mentions(f)
+            && (f.contains('/')
+                || f.ends_with(".js")
+                || f.ends_with(".mjs")
+                || f.ends_with(".cjs")) =>
+        {
+            return Step::Runs(f.to_string());
+        }
         _ => {}
     }
     if i == usize::MAX {
@@ -398,25 +414,97 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
     unreadable(&w)
 }
 
-/// Whether the file a script runs uses 11ty's JavaScript API; its hash when it does.
+/// The most files [`uses_api`] reads, following a file's local imports.
+const MAX_FILES: usize = 64;
+
+/// The file Node runs for `spec` (relative to `base`, a path inside `root`):
+/// the path itself, then with `.js`, `.mjs` or `.cjs`, then a folder's `index`.
+fn resolve(root: &Path, base: &Path, spec: &str) -> Option<std::path::PathBuf> {
+    let rel = normalize(&base.join(spec))?;
+    let mut tries = vec![rel.clone()];
+    for ext in ["js", "mjs", "cjs"] {
+        let mut name = rel.as_os_str().to_owned();
+        name.push(format!(".{ext}"));
+        tries.push(name.into());
+    }
+    for ext in ["js", "mjs", "cjs"] {
+        tries.push(rel.join(format!("index.{ext}")));
+    }
+    tries
+        .into_iter()
+        .find(|t| std::fs::metadata(root.join(t)).is_ok_and(|m| m.is_file()))
+}
+
+/// `p` with `.` and `..` worked out, `None` if it leaves the project.
+fn normalize(p: &Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::Normal(x) => out.push(x),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Whether the file a script runs uses 11ty's JavaScript API, itself or
+/// through the site's own modules it loads (Node's resolution, up to
+/// [`MAX_FILES`] files); a hash of every file read when it does.
 fn uses_api(root: &Path, file: &str) -> Option<String> {
     use std::io::Read as _;
-    if !crate::markers::is_inside(file) {
-        return None;
-    }
-    let path = root.join(file);
-    if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    std::fs::File::open(&path)
-        .ok()?
-        .take(1 << 20)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let text = String::from_utf8_lossy(&bytes);
     let api = regex::Regex::new(r#"@11ty/eleventy["'`/]"#).expect("valid");
-    api.is_match(&text).then(|| source_hash(&bytes))
+    let local = regex::Regex::new(r#"["'`](\.{1,2}/[^"'`\s]+)["'`]"#).expect("valid");
+    let first = resolve(root, Path::new(""), file)?;
+    let mut queue = vec![first];
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let mut all = Vec::new();
+    let mut found = false;
+    while let Some(rel) = queue.pop() {
+        if seen.contains(&rel) || seen.len() >= MAX_FILES {
+            continue;
+        }
+        seen.push(rel.clone());
+        let mut bytes = Vec::new();
+        let Ok(f) = std::fs::File::open(root.join(&rel)) else {
+            continue;
+        };
+        if f.take(1 << 20).read_to_end(&mut bytes).is_err() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        found |= api.is_match(&text);
+        let dir = rel.parent().unwrap_or(Path::new("")).to_path_buf();
+        for c in local.captures_iter(&text) {
+            if let Some(next) = resolve(root, &dir, &c[1]) {
+                queue.push(next);
+            }
+        }
+        all.extend_from_slice(&bytes);
+        all.push(0);
+    }
+    found.then(|| source_hash(&all))
+}
+
+/// Flags in a fixed order: by name, repeated ones in the order given. The
+/// order flags are written in doesn't change what minimist gives 11ty.
+fn canonical(flags: &[(String, Option<String>)]) -> Vec<(String, Option<String>)> {
+    let mut f = flags.to_vec();
+    f.sort_by(|a, b| a.0.cmp(&b.0));
+    f
+}
+
+/// Whether 11ty is in `package.json`'s dependencies.
+pub fn depends_on_11ty(pkg: &serde_json::Value) -> bool {
+    ["dependencies", "devDependencies"]
+        .iter()
+        .any(|k| pkg.get(k).and_then(|d| d.get("@11ty/eleventy")).is_some())
 }
 
 fn shown(flags: &[(String, Option<String>)]) -> String {
@@ -506,18 +594,39 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
         );
     }
     let Some(chosen) = tiers.into_iter().find(|t| !t.is_empty()) else {
+        // 11ty is a dependency and the site has a build script of its own, but no script
+        // runs 11ty's command and nothing above says how 11ty runs: the build may reach
+        // 11ty's JavaScript API in a way this can't see. Without a build script of the
+        // site's own, 11ty is run by hand, as `npx @11ty/eleventy` with no flags.
+        let own_build = ["build", "build:11ty"].into_iter().find_map(|n| {
+            let c = scripts.get(n)?.as_str()?;
+            (!c.trim_start().starts_with("brrrty ")).then_some((n, c))
+        });
+        if cli.todos.is_empty()
+            && depends_on_11ty(pkg)
+            && let Some((name, cmd)) = own_build
+        {
+            cli.facts.push("no 11ty command".into());
+            cli.todo(
+                "@11ty/eleventy is a dependency, but no script runs 11ty's command, so Brrrty can't tell how 11ty builds this site; if a script builds it through 11ty's JavaScript API, port the options it passes, then delete this line".into(),
+                name,
+                cmd,
+            );
+        }
         return (!cli.todos.is_empty()).then_some(cli);
     };
     let (script, command, args) = chosen[0].clone();
     let flags = significant(&args);
+    let key = canonical(&flags);
     cli.script = script.clone();
     cli.command = command.clone();
-    if let Some((other, other_cmd, other_args)) =
-        chosen.iter().find(|(_, _, a)| significant(a) != flags)
+    if let Some((other, other_cmd, other_args)) = chosen
+        .iter()
+        .find(|(_, _, a)| canonical(&significant(a)) != key)
     {
         let mut sets: Vec<String> = chosen
             .iter()
-            .map(|(_, _, a)| shown(&significant(a)))
+            .map(|(_, _, a)| shown(&canonical(&significant(a))))
             .collect();
         sets.sort();
         sets.dedup();
@@ -533,7 +642,7 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
         return Some(cli);
     }
     if !flags.is_empty() {
-        cli.facts.push(format!("11ty {}", shown(&flags)));
+        cli.facts.push(format!("11ty {}", shown(&key)));
     }
     let mut seen: Vec<&str> = Vec::new();
     for (name, value) in &flags {
@@ -629,11 +738,44 @@ pub fn current_config(root: &Path) -> Option<String> {
     match read(root).and_then(|c| c.config) {
         Some(c) if c.is_empty() => None,
         Some(c) => {
-            let c = c.trim_start_matches("./").to_string();
+            let c = config_path(root, &c);
             (crate::markers::is_inside(&c) && root.join(&c).is_file()).then_some(c)
         }
         None => crate::markers::default_config(root).map(str::to_string),
     }
+}
+
+/// A `--config` value as a path relative to `root`: `./` dropped, and an
+/// absolute path inside the project made relative. Anything else as given.
+pub fn config_path(root: &Path, value: &str) -> String {
+    let p = Path::new(value);
+    if p.is_absolute() {
+        let real = |x: &Path| std::fs::canonicalize(x).unwrap_or_else(|_| x.to_path_buf());
+        if let Ok(rel) = real(p).strip_prefix(real(root)) {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+        return value.to_string();
+    }
+    value.trim_start_matches("./").to_string()
+}
+
+/// Whether the site has left 11ty: `@11ty/eleventy` isn't a dependency, and
+/// no config file 11ty would read is there. Then a port has nothing left to
+/// be checked against.
+pub fn left_11ty(root: &Path) -> bool {
+    use std::io::Read as _;
+    let mut text = String::new();
+    let depends = std::fs::File::open(root.join("package.json"))
+        .ok()
+        .and_then(|f| f.take(1 << 20).read_to_string(&mut text).ok())
+        .and_then(|_| {
+            serde_json::from_str::<serde_json::Value>(
+                text.strip_prefix('\u{feff}').unwrap_or(&text),
+            )
+            .ok()
+        })
+        .is_some_and(|v| depends_on_11ty(&v));
+    !depends && current_config(root).is_none()
 }
 
 #[cfg(test)]
@@ -890,5 +1032,118 @@ mod tests {
             r#"{"scripts":{"build":"eleventy --config="}}"#,
         );
         assert_eq!(current_config(t.path()), None);
+    }
+
+    #[test]
+    fn bun_run_a_bin_is_read() {
+        assert_eq!(
+            args_of("bun run eleventy --input=src"),
+            [("input".to_string(), Some("src".to_string()))]
+        );
+        assert_eq!(
+            args_of("node_modules/@11ty/eleventy/cmd.cjs --input=src"),
+            [("input".to_string(), Some("src".to_string()))]
+        );
+    }
+
+    #[test]
+    fn api_files_are_found_as_node_finds_them() {
+        let t = site();
+        let w = |n: &str, s: &str| {
+            let p = t.path().join(n);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, s).unwrap();
+        };
+        w("scripts/b.js", "const E = require(\"@11ty/eleventy\");\n");
+        w(
+            "scripts/c.mjs",
+            "#!/usr/bin/env node\nimport E from \"@11ty/eleventy\";\n",
+        );
+        w(
+            "scripts/d/index.mjs",
+            "import { run } from \"../../lib/run.mjs\";\nrun();\n",
+        );
+        w(
+            "lib/run.mjs",
+            "import Eleventy from '@11ty/eleventy';\nexport const run = () => {};\n",
+        );
+        w("scripts/plain.mjs", "import x from \"./other.mjs\";\n");
+        w("scripts/other.mjs", "export default 1;\n");
+        for build in [
+            "node scripts/b",
+            "./scripts/c.mjs",
+            "scripts/c.mjs --x",
+            "node scripts/d",
+            "bun run scripts/b.js",
+            "tsx ./scripts/d/index.mjs",
+        ] {
+            let c = find(&json!({ "scripts": { "build": build } }), t.path())
+                .unwrap_or_else(|| panic!("{build}: silent"));
+            assert!(
+                c.todos[0].why.contains("JavaScript API"),
+                "{build}: {:?}",
+                c.todos
+            );
+        }
+        assert_eq!(
+            find(
+                &json!({ "scripts": { "build": "node scripts/plain.mjs" } }),
+                t.path()
+            ),
+            None
+        );
+        // An edit to a module it loads is a change.
+        let pkg = json!({ "scripts": { "build": "node scripts/d" } });
+        let before = find(&pkg, t.path()).unwrap().fingerprint();
+        w(
+            "lib/run.mjs",
+            "import Eleventy from '@11ty/eleventy';\nexport const run = () => 2;\n",
+        );
+        assert_ne!(find(&pkg, t.path()).unwrap().fingerprint(), before);
+    }
+
+    #[test]
+    fn a_dependency_no_script_runs_is_a_todo_on_build() {
+        let t = site();
+        let deps = json!({ "@11ty/eleventy": "3" });
+        for pkg in [
+            json!({ "devDependencies": deps, "scripts": { "build": "node scripts/x.mjs" } }),
+            json!({ "dependencies": deps, "scripts": { "build": "make site", "test": "node --test" } }),
+        ] {
+            let c = find(&pkg, t.path()).unwrap_or_else(|| panic!("{pkg}: silent"));
+            assert_eq!(c.todos.len(), 1);
+            assert_eq!(c.todos[0].script, "build");
+            assert!(c.todos[0].why.contains("no script runs 11ty's command"));
+        }
+        // No build script of the site's own: 11ty is run by hand, with no flags.
+        for scripts in [
+            json!({}),
+            json!({ "build": "brrrty build", "test": "node --test" }),
+        ] {
+            let pkg = json!({ "devDependencies": deps, "scripts": scripts });
+            assert_eq!(find(&pkg, t.path()), None, "{pkg}");
+        }
+        // A script running 11ty elsewhere is read instead.
+        let pkg = json!({ "devDependencies": deps, "scripts": { "build": "sass a b", "site": "eleventy" } });
+        assert_eq!(find(&pkg, t.path()), None);
+    }
+
+    #[test]
+    fn an_absolute_config_inside_the_site_is_that_file() {
+        let t = site();
+        std::fs::write(t.path().join("site.js"), "x").unwrap();
+        let abs = t.path().join("site.js");
+        assert_eq!(config_path(t.path(), &abs.to_string_lossy()), "site.js");
+        std::fs::write(
+            t.path().join("package.json"),
+            json!({ "scripts": { "build": format!("eleventy --config={}", abs.display()) } })
+                .to_string(),
+        )
+        .unwrap();
+        assert_eq!(current_config(t.path()).as_deref(), Some("site.js"));
+        assert_eq!(
+            config_path(t.path(), "/elsewhere/site.js"),
+            "/elsewhere/site.js"
+        );
     }
 }

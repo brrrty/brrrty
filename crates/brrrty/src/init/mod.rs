@@ -278,7 +278,7 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     let named = cli.and_then(|c| c.config.clone());
     let config: Option<String> = match &named {
         Some(n) if n.is_empty() => None,
-        Some(n) => Some(n.trim_start_matches("./").to_string()),
+        Some(n) => Some(brrrty_config::eleventy_cli::config_path(&root, n)),
         None => ELEVENTY_CONFIGS
             .iter()
             .find(|n| present(&root, n))

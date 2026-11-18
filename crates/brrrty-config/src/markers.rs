@@ -274,6 +274,10 @@ pub fn unported_problem(src: &str) -> Option<Problem> {
 /// question, and that warns too.
 pub fn stale_problem(root: &Path, src: &str) -> Option<Problem> {
     let (line, name, recorded) = ported_from(src)?;
+    // Moved off 11ty: nothing left to check the port against.
+    if crate::eleventy_cli::left_11ty(root) {
+        return None;
+    }
     let warn = |message: String, help: String| {
         Problem::warning(codes::CONFIG_STALE, message)
             .with_path(CONFIG_FILE)
@@ -288,7 +292,9 @@ pub fn stale_problem(root: &Path, src: &str) -> Option<Problem> {
     let Some(current) = crate::eleventy_cli::current_config(root) else {
         return Some(warn(
             format!("11ty reads no config file now, but {CONFIG_FILE} was ported from {name}"),
-            format!("Take out of {CONFIG_FILE} what 11ty no longer does, then delete this line."),
+            format!(
+                "If you still build with 11ty, its output no longer has what {name} did, so Brrrty's may differ: run `brrrty init` in a copy of the site to see the port it gives now, or check {CONFIG_FILE} against 11ty's output (`brrrty doctor --verify`) and then delete this line. If you've moved off 11ty, remove @11ty/eleventy from package.json and its config file: Brrrty stops checking then, and nothing in {CONFIG_FILE} needs to change.",
+            ),
         ));
     };
     let now = hash_of(root, &current)?;
@@ -344,6 +350,9 @@ fn flags_line(src: &str) -> Option<(usize, &str)> {
 /// scripts that pass nothing, as for a config written before the line existed.
 pub fn flags_problem(root: &Path, src: &str) -> Option<Problem> {
     use crate::eleventy_cli::{FLAGS_LINE, read};
+    if crate::eleventy_cli::left_11ty(root) {
+        return None;
+    }
     let recorded = flags_line(src);
     let now = read(root).map(|c| c.fingerprint());
     let line = recorded.map_or(1, |(l, _)| l);
@@ -360,7 +369,9 @@ pub fn flags_problem(root: &Path, src: &str) -> Option<Problem> {
         ),
         (Some(_), None) => (
             format!("package.json's scripts no longer pass the 11ty flags {CONFIG_FILE} records"),
-            format!("Take out of {CONFIG_FILE} what those flags set, then delete this line."),
+            format!(
+                "If you still build with 11ty, its output no longer has what those flags did, so Brrrty's may differ: run `brrrty init` in a copy of the site to see the port it gives now, or check {CONFIG_FILE} against 11ty's output (`brrrty doctor --verify`) and then delete this line. If you've moved off 11ty, remove @11ty/eleventy from package.json and its config file: Brrrty stops checking then, and nothing in {CONFIG_FILE} needs to change."
+            ),
         ),
         (Some(_), Some(n)) => (
             format!(
@@ -482,9 +493,28 @@ mod tests {
         assert_eq!(p.code, codes::CONFIG_STALE);
         assert_eq!(p.line, Some(2));
         assert!(p.help.unwrap().contains(&source_hash(b"b")));
-        // Gone: 11ty reads no config, so what the port sets is in question.
+        // Gone while 11ty is still a dependency: 11ty reads no config, so what the port
+        // sets is in question; the help never says to take ported settings out.
+        std::fs::write(
+            t.path().join("package.json"),
+            r#"{"devDependencies":{"@11ty/eleventy":"3"}}"#,
+        )
+        .unwrap();
         std::fs::remove_file(t.path().join("eleventy.config.js")).unwrap();
         let p = stale_problem(t.path(), &ok).unwrap();
+        let help = p.help.clone().unwrap();
+        assert!(
+            help.contains("brrrty init") && !help.contains("Take out"),
+            "{help}"
+        );
+        // 11ty gone too: the site has moved off it, so nothing is said.
+        std::fs::write(t.path().join("package.json"), r#"{"devDependencies":{}}"#).unwrap();
+        assert!(stale_problem(t.path(), &ok).is_none());
+        std::fs::write(
+            t.path().join("package.json"),
+            r#"{"devDependencies":{"@11ty/eleventy":"3"}}"#,
+        )
+        .unwrap();
         assert!(
             p.message.starts_with("11ty reads no config file now"),
             "{}",
@@ -582,10 +612,14 @@ mod tests {
         std::fs::create_dir(t.path().join("src")).unwrap();
         let w = |s: &str| std::fs::write(t.path().join("package.json"), s).unwrap();
         // No flags and no line: nothing to say, as for a config from before the line.
-        w(r#"{"scripts":{"build":"npx @11ty/eleventy --quiet"}}"#);
+        w(
+            r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"npx @11ty/eleventy --quiet"}}"#,
+        );
         assert!(flags_problem(t.path(), "x\n").is_none());
         // Flags with no line: a hand port, or an old init, that doesn't port them.
-        w(r#"{"scripts":{"build":"eleventy --pathprefix=/blog/ --input=src"}}"#);
+        w(
+            r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"eleventy --pathprefix=/blog/ --input=src"}}"#,
+        );
         let p = flags_problem(t.path(), "x\n").unwrap();
         assert_eq!(p.code, codes::CONFIG_STALE);
         let now = read(t.path()).unwrap().fingerprint();
@@ -593,16 +627,31 @@ mod tests {
         let recorded = format!("// a\n{FLAGS_LINE}{now}\n");
         assert!(flags_problem(t.path(), &recorded).is_none());
         // Changed, then gone.
-        w(r#"{"scripts":{"build":"eleventy --input=src"}}"#);
+        w(
+            r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"eleventy --input=src"}}"#,
+        );
         let p = flags_problem(t.path(), &recorded).unwrap();
         assert_eq!(p.line, Some(2));
         assert!(
             p.message
                 .starts_with("the flags package.json's scripts pass to 11ty changed")
         );
-        w(r#"{"scripts":{"build":"eleventy"}}"#);
+        w(r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"eleventy"}}"#);
         let p = flags_problem(t.path(), &recorded).unwrap();
         assert!(p.message.contains("no longer pass"), "{}", p.message);
+        assert!(!p.help.unwrap().contains("Take out"));
+        // Moved off 11ty: no dependency, no config file. Nothing to say.
+        w(r#"{"scripts":{"build":"brrrty build"}}"#);
+        assert!(flags_problem(t.path(), &recorded).is_none());
+        // Flag order doesn't matter to minimist, so it doesn't change the hash.
+        w(
+            r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"eleventy --output=dist --input=src"}}"#,
+        );
+        let now = read(t.path()).unwrap().fingerprint();
+        w(
+            r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"eleventy --input=src --output=dist"}}"#,
+        );
+        assert_eq!(read(t.path()).unwrap().fingerprint(), now);
     }
 
     #[test]
