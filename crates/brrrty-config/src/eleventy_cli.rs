@@ -900,11 +900,11 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
             if let Some(v) = a.strip_prefix("TZ=") {
                 extra.push(format!("\0env TZ={v}"));
             }
-            // A locale 11ty formats dates in, which Brrrty doesn't (it formats in English).
+            // A locale Node takes as its default (LC_ALL, LC_MESSAGES, LANG) other than
+            // en-US: 11ty formats dates like %x for it; Brrrty formats for en-US.
             if let Some((k, v)) = a.split_once('=')
-                && (k.starts_with("LC_") || k == "LANG" || k == "LANGUAGE")
-                && brrrty_core::non_english_locale(|n| (n == "LANG").then(|| v.to_string()))
-                    .is_some()
+                && matches!(k, "LC_ALL" | "LC_MESSAGES" | "LANG")
+                && brrrty_js::locale::default_locale_check(Some((k, v))).is_err()
             {
                 extra.push(format!("\0locale {a}"));
             }
@@ -1636,9 +1636,13 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 "cwd" => Some(format!(
                     "11ty starts in {v}, not the site's folder, so its flags and config are read from there; port them as they apply there, then delete this line"
                 )),
-                "locale" => Some(format!(
-                    "11ty runs with {v} here, so it formats dates in that locale, and Brrrty formats them in English (en-US); run 11ty with an English locale, or check the dates on the pages, then delete this line"
-                )),
+                "locale" => {
+                    let (k, val) = v.split_once('=').unwrap_or((v, ""));
+                    Some(format!(
+                        "11ty runs with {}; run 11ty with LANG=en_US.UTF-8, or check the dates on the pages, then delete this line",
+                        brrrty_core::locale_message(k, val)
+                    ))
+                }
                 "nodepath" => Some(format!(
                     "11ty runs with {v}, which changes where Node finds modules (plugins, the config's imports); check what it changes, then delete this line"
                 )),
@@ -3077,20 +3081,32 @@ mod tests {
         for build in [
             "LANG=de_DE.UTF-8 eleventy --input=src",
             "LC_ALL=fr_FR.UTF-8 eleventy --input=src",
-            "LC_TIME=fr_FR.UTF-8 eleventy --input=src",
-            "LANGUAGE=fr_FR eleventy --input=src",
+            "LANG=en_GB.UTF-8 eleventy --input=src",
+            "LANG=en_CA.UTF-8 eleventy --input=src",
+            "LANG= eleventy --input=src",
+            "LC_ALL= LANG=en_US.UTF-8 eleventy --input=src",
             "env LANG=de_DE.UTF-8 eleventy --input=src",
             "cross-env LANG=de_DE.UTF-8 eleventy --input=src",
         ] {
             let c = find(&json!({ "scripts": { "build": build } }), t.path()).unwrap();
             assert!(
-                whys(&c)
-                    .iter()
-                    .any(|w| w.contains("Brrrty formats them in English (en-US)")),
+                whys(&c).iter().any(|w| w.contains("Brrrty uses en-US")),
                 "{build}: {:?}",
                 c.todos
             );
         }
+        let c = find(
+            &json!({ "scripts": { "build": "LANG=en_GB.UTF-8 eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert!(
+            whys(&c)[0].contains(
+                "11ty formats dates like %x in en-GB (15/03/2024); Brrrty uses en-US (3/15/2024)"
+            ),
+            "{:?}",
+            c.todos
+        );
         let c = find(
             &json!({ "scripts": { "build": "NODE_PATH=./lib eleventy" } }),
             t.path(),
@@ -3101,10 +3117,11 @@ mod tests {
             "{:?}",
             c.todos
         );
-        // English and C locales format as Brrrty does.
+        // en-US and C format as Brrrty does; LC_TIME and LANGUAGE don't set Node's locale.
         for build in [
             "LANG=C.UTF-8 eleventy --input=src",
-            "LC_ALL=en_GB.UTF-8 eleventy --input=src",
+            "LC_ALL=en_US.UTF-8 eleventy --input=src",
+            "LC_TIME=fr_FR.UTF-8 LANGUAGE=fr eleventy --input=src",
         ] {
             let c = find(&json!({ "scripts": { "build": build } }), t.path()).unwrap();
             assert!(c.todos.is_empty(), "{build}: {:?}", c.todos);

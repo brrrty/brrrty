@@ -36,7 +36,8 @@ mod templates;
 mod yaml;
 
 pub use build::{
-    BuildReport, WrittenPage, build, content_hash, non_english_locale, survey, tz_problem,
+    BuildReport, WrittenPage, build, content_hash, locale_message, locale_mismatch, survey,
+    tz_problem,
 };
 pub use discover::{Discovery, discover};
 pub use filters::register_nunjucks_filters;

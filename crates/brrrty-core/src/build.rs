@@ -1549,33 +1549,74 @@ const RENDER_STACK: usize = 16 * 1024 * 1024;
 /// Build the site described by `opts`.
 /// The local time zone can't be used: `TZ` names no zone in the bundled
 /// tz data, or `/etc/localtime` can't be read as one.
-/// The locale Node's ICU takes as its default from the environment, when it isn't
-/// English: the first of `LC_ALL`, `LC_MESSAGES` and `LANG` that is set to a real
-/// locale (an empty value, `C`, `POSIX` and `C.*` fall through). `LC_TIME` and
-/// `LANGUAGE` don't count, as Node's `Intl` showed: `LC_TIME=fr_FR.UTF-8` alone gives
-/// `en-US`, `LANGUAGE=fr_FR` too.
-pub fn non_english_locale(get: impl Fn(&str) -> Option<String>) -> Option<String> {
-    let v = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|k| {
-        get(k).filter(|v| !(v.is_empty() || v == "C" || v == "POSIX" || v.starts_with("C.")))
-    })?;
-    let lang = v.split(['.', '@']).next().unwrap_or_default();
-    let english = lang == "en" || lang.starts_with("en_") || lang.starts_with("en-");
-    (!english).then_some(v)
+/// The first of `LC_ALL`, `LC_MESSAGES` and `LANG` that is set (an empty value counts)
+/// and doesn't make Node's default locale exactly `en-US`, by
+/// [`brrrty_js::locale::default_locale_check`]: `(name, value)`. Every set one is
+/// checked, not only the first: which one wins differs between platforms (on macOS,
+/// `LC_ALL=C LANG=fr_FR.UTF-8` gives `und-FR`). `LC_TIME` and `LANGUAGE` don't set
+/// Node's default locale.
+pub fn locale_mismatch(get: impl Fn(&str) -> Option<String>) -> Option<(String, String)> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|k| {
+        let v = get(k)?;
+        brrrty_js::locale::default_locale_check(Some((k, &v)))
+            .is_err()
+            .then(|| (k.to_string(), v))
+    })
+}
+
+/// How 11ty formats a date with `%x` (`toLocaleDateString()`) in the locale `value`,
+/// when Node has been checked for it: 15 March 2024.
+fn locale_sample(value: &str) -> Option<&'static str> {
+    if value.is_empty() {
+        return Some("M03 for %B, as Node reads an empty value as `und`");
+    }
+    let base = value.split(['.', '@']).next().unwrap_or_default();
+    match base {
+        "en_GB" | "en_AU" => Some("15/03/2024"),
+        "en_CA" => Some("2024-03-15"),
+        "en_IN" | "en_IE" => Some("15/3/2024"),
+        "de_DE" => Some("15.3.2024"),
+        "fr_FR" => Some("15/03/2024"),
+        _ => None,
+    }
+}
+
+/// What a message says about the locale `name=value`.
+pub fn locale_message(name: &str, value: &str) -> String {
+    let tag = value
+        .split(['.', '@'])
+        .next()
+        .unwrap_or_default()
+        .replace('_', "-");
+    let shown = if value.is_empty() {
+        format!("{name} is empty, so")
+    } else {
+        format!("{name}={value}, so")
+    };
+    match locale_sample(value) {
+        Some(s) if value.is_empty() => format!(
+            "{shown} 11ty formats dates for the locale `und` ({s}); Brrrty uses en-US (March, 3/15/2024)"
+        ),
+        Some(s) => format!(
+            "{shown} 11ty formats dates like %x in {tag} ({s}); Brrrty uses en-US (3/15/2024)"
+        ),
+        None => format!(
+            "{shown} 11ty formats dates like %c, %x and %X in {tag}; Brrrty uses en-US (3/15/2024)"
+        ),
+    }
 }
 
 /// The warning when 11ty, run in this environment, would format dates in a locale
-/// other than English.
+/// other than en-US.
 fn locale_problem() -> Option<Problem> {
-    let v = non_english_locale(|k| std::env::var(k).ok())?;
+    let (name, value) = locale_mismatch(|k| std::env::var(k).ok())?;
     Some(
         Problem::warning(
             codes::LOCALE_DIFFERS,
-            format!(
-                "11ty run here would format dates in {v} (from LC_ALL, LC_MESSAGES or LANG); Brrrty formats them in English (en-US)"
-            ),
+            format!("11ty run here: {}", locale_message(&name, &value)),
         )
         .with_help(
-            "A page that formats a date with the locale (`toLocaleDateString`, `Intl`) differs from 11ty's run in this environment. Build with an English locale, such as LANG=C.UTF-8 or en_US.UTF-8, to compare with 11ty.",
+            "Liquid's %c, %x and %X, and toLocaleString(), format with Node's default locale, so a page that uses them differs from 11ty's run in this environment. Build with LANG=en_US.UTF-8 (and LC_ALL, LC_MESSAGES unset or the same) to compare with 11ty.",
         ),
     )
 }
@@ -2817,7 +2858,7 @@ mod tests {
 
     /// From `Template.getMappedDate`: which pages read their date from disk.
     #[test]
-    fn the_locale_node_takes_is_lc_all_then_lc_messages_then_lang() {
+    fn the_locale_must_be_en_us_in_every_variable_node_may_take() {
         let env = |pairs: &'static [(&'static str, &'static str)]| {
             move |k: &str| {
                 pairs
@@ -2826,39 +2867,39 @@ mod tests {
                     .map(|(_, v)| v.to_string())
             }
         };
-        assert_eq!(non_english_locale(env(&[])), None);
-        assert_eq!(non_english_locale(env(&[("LANG", "C.UTF-8")])), None);
-        assert_eq!(non_english_locale(env(&[("LANG", "en_GB.UTF-8")])), None);
-        assert_eq!(non_english_locale(env(&[("LANG", "POSIX")])), None);
+        let m = |p| locale_mismatch(env(p)).map(|(n, v)| format!("{n}={v}"));
+        assert_eq!(m(&[]), None);
+        assert_eq!(m(&[("LANG", "en_US.UTF-8")]), None);
+        assert_eq!(m(&[("LANG", "C.UTF-8")]), None);
+        assert_eq!(m(&[("LC_ALL", "POSIX"), ("LANG", "C")]), None);
         assert_eq!(
-            non_english_locale(env(&[("LANG", "de_DE.UTF-8")])).as_deref(),
-            Some("de_DE.UTF-8")
+            m(&[("LANG", "en_GB.UTF-8")]).as_deref(),
+            Some("LANG=en_GB.UTF-8")
         );
         assert_eq!(
-            non_english_locale(env(&[("LC_ALL", "fr_FR.UTF-8"), ("LANG", "de_DE.UTF-8")]))
-                .as_deref(),
-            Some("fr_FR.UTF-8")
+            m(&[("LANG", "en_CA.UTF-8")]).as_deref(),
+            Some("LANG=en_CA.UTF-8")
+        );
+        assert_eq!(m(&[("LANG", "")]).as_deref(), Some("LANG="));
+        assert_eq!(
+            m(&[("LC_ALL", ""), ("LANG", "en_US.UTF-8")]).as_deref(),
+            Some("LC_ALL=")
         );
         assert_eq!(
-            non_english_locale(env(&[
-                ("LC_MESSAGES", "fr_FR.UTF-8"),
-                ("LANG", "en_US.UTF-8")
-            ]))
-            .as_deref(),
-            Some("fr_FR.UTF-8")
-        );
-        // An empty or C LC_ALL falls through to LANG, as node gave `und-DE` for it.
-        assert_eq!(
-            non_english_locale(env(&[("LC_ALL", "C"), ("LANG", "de_DE.UTF-8")])).as_deref(),
-            Some("de_DE.UTF-8")
+            m(&[("LC_ALL", "C"), ("LANG", "fr_FR.UTF-8")]).as_deref(),
+            Some("LANG=fr_FR.UTF-8")
         );
         assert_eq!(
-            non_english_locale(env(&[("LC_ALL", "en_US.UTF-8"), ("LANG", "de_DE.UTF-8")])),
-            None
+            m(&[("LC_MESSAGES", "de_DE.UTF-8"), ("LANG", "en_US.UTF-8")]).as_deref(),
+            Some("LC_MESSAGES=de_DE.UTF-8")
         );
-        // LC_TIME and LANGUAGE don't set node's default locale.
-        assert_eq!(non_english_locale(env(&[("LC_TIME", "fr_FR.UTF-8")])), None);
-        assert_eq!(non_english_locale(env(&[("LANGUAGE", "fr_FR")])), None);
+        // LC_TIME and LANGUAGE don't set Node's default locale.
+        assert_eq!(m(&[("LC_TIME", "fr_FR.UTF-8"), ("LANGUAGE", "fr")]), None);
+        assert_eq!(
+            locale_message("LANG", "en_GB.UTF-8"),
+            "LANG=en_GB.UTF-8, so 11ty formats dates like %x in en-GB (15/03/2024); Brrrty uses en-US (3/15/2024)"
+        );
+        assert!(locale_message("LANG", "").contains("`und` (M03"));
     }
 
     #[test]
