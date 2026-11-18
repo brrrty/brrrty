@@ -1,0 +1,4 @@
+---
+permalink: /sparse-njk/
+---
+{% for x in v_sparse.list %}[{{ x }}]{% endfor %} {{ v_sparse.list | length }} {{ v_sparse.list | dump | safe }} {{ v_sparse.list }} {{ v_sparse.list | join("-") }} {{ v_sparse.list[1] }}|{{ v_sparse.list[1] is defined }}

@@ -1,0 +1,14 @@
+---
+permalink: /nunjucks/
+---
+obj: {{ obj | dump | safe }}
+keys: {% for k, v in obj %}{{ k }}={{ v }};{% endfor %}
+when: {{ obj.when }}
+negz: {{ obj.negz }} big: {{ obj.big }} frac: {{ obj.frac }}
+list: {{ obj.list }}
+nul: [{{ obj.nul }}] und: [{{ obj.und }}]
+esm: {{ esm | dump | safe }}
+fn: {{ fn | dump | safe }}
+async: {{ async | dump | safe }}
+env: {{ env | dump | safe }}
+arg: {{ arg | dump | safe }}

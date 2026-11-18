@@ -1,0 +1,6 @@
+---
+permalink: /
+---
+{{ libs | dump(2) | safe }}
+{% for row in files %}{{ row.name }}: {{ row.price }}
+{% endfor %}

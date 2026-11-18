@@ -1,0 +1,15 @@
+module.exports = {
+  b: 1,
+  a: 2,
+  2: 3,
+  1: 4,
+  "-1": 5,
+  list: [1, [2, 3], "x", { deep: true }],
+  nul: null,
+  und: undefined,
+  negz: -0,
+  big: 1e21,
+  frac: 0.1 + 0.2,
+  text: "quote \" slash \\ tab \t snow ☃",
+  when: new Date(Date.UTC(2026, 1, 3, 4, 5, 6, 7)),
+};

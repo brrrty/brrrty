@@ -35,6 +35,13 @@ enum Cmd {
     FixturesRefresh {
         /// Only refresh this fixture.
         name: Option<String>,
+        /// Build in Docker instead, once per `--image`, with no network, and
+        /// keep the output only when every image agrees. Needs a fixture name.
+        #[arg(long, requires = "name")]
+        docker: bool,
+        /// The images for `--docker`.
+        #[arg(long = "image", default_values = ["node:22", "node:24"])]
+        images: Vec<String>,
     },
     /// Build one site with Eleventy and Brrrty and compare the output.
     Compat {
@@ -134,7 +141,14 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let root = repo_root();
     let result = match cli.command {
-        Cmd::FixturesRefresh { name } => fixtures::refresh(&root, name.as_deref()),
+        Cmd::FixturesRefresh {
+            name,
+            docker,
+            images,
+        } => match (docker, name) {
+            (true, Some(n)) => fixtures::refresh_docker(&root, &n, &images),
+            (_, name) => fixtures::refresh(&root, name.as_deref()),
+        },
         Cmd::Compat {
             site,
             dirs,

@@ -1,0 +1,23 @@
+# Built by 11ty 3.1.8 on node:22 and node:24 (cargo xtask fixtures-refresh --docker js-data-values):
+# both give the same bytes. Brrrty builds it with config.set_js_data("node").
+node = true
+input = "src"
+tz = "America/Chicago"
+lang = "en_US.UTF-8"
+
+[refused]
+"src/map.liquid" = "map/index.html"
+"src/luxon.liquid" = "luxon/index.html"
+"src/bigint.liquid" = "bigint/index.html"
+"src/invalid.liquid" = "invalid/index.html"
+"src/function.liquid" = "function/index.html"
+"src/getter.liquid" = "getter/index.html"
+
+# Probed with 11ty 3.1.8:
+# - a hole in an array prints exactly as `undefined` does (Liquid and Nunjucks
+#   `for`, `size`/`length`, `json`/`dump`, `join`, `compact`), so a hole
+#   crosses as `undefined` (sparse-* and undef-* pages match);
+# - 11ty reads a getter several times (getter prints "read 3"), so a getter
+#   whose value changes between reads is refused;
+# - a circular reference in global data stops 11ty with "Maximum call stack
+#   size exceeded" in its merge, so it isn't in this fixture; Brrrty refuses it.

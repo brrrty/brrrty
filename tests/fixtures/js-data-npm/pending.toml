@@ -1,0 +1,6 @@
+# Built by 11ty 3.1.8 on node:22 and node:24 (cargo xtask fixtures-refresh --docker js-data-npm):
+# both give the same bytes. Brrrty builds it with config.set_js_data("node").
+node = true
+input = "src"
+tz = "America/Chicago"
+lang = "en_US.UTF-8"

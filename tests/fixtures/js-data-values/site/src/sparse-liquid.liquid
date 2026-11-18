@@ -1,0 +1,4 @@
+---
+permalink: /sparse-liquid/
+---
+{% for x in v_sparse.list %}[{{ x }}]{% endfor %} {{ v_sparse.list | size }} {{ v_sparse.list | json }} {{ v_sparse.list }} {{ v_sparse.list | join: "-" }} {{ v_sparse.list | compact | size }} {{ v_sparse.list[1] }}

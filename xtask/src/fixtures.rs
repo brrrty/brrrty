@@ -187,3 +187,168 @@ pub fn refresh(root: &Path, name: Option<&str>) -> Result<bool, String> {
     }
     Ok(all_ok)
 }
+
+/// `fixtures-refresh --docker`: build one fixture with 11ty 3.1.8 in each
+/// image (`node:22`, `node:24` by default), with no network and the
+/// fixture's zone and locale, and keep the output only when every image
+/// gives the same bytes. Packages are installed with `--ignore-scripts` in
+/// the image, with the network, before the build; nothing runs on the host.
+pub fn refresh_docker(root: &Path, name: &str, images: &[String]) -> Result<bool, String> {
+    if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
+        return Err(format!("invalid fixture name: {name:?}"));
+    }
+    let fixture = root.join("tests").join("fixtures").join(name);
+    let toml_file = ["fixture.toml", "pending.toml"]
+        .iter()
+        .map(|f| fixture.join(f))
+        .find(|f| f.is_file())
+        .ok_or_else(|| format!("{name} has no fixture.toml or pending.toml"))?;
+    let table: toml::Table = fs::read_to_string(&toml_file)
+        .map_err(|e| format!("cannot read {}: {e}", toml_file.display()))?
+        .parse()
+        .map_err(|e| format!("bad {}: {e}", toml_file.display()))?;
+    let get = |k: &str| table.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let tz = get("tz").unwrap_or_else(|| crate::clock::COMPAT_TZ.to_string());
+    let lang = get("lang").unwrap_or_else(|| crate::clock::COMPAT_LOCALE.to_string());
+    let input = get("input");
+
+    let scratch = tempfile::tempdir().map_err(|e| format!("cannot make a temp folder: {e}"))?;
+    let mut outputs = Vec::new();
+    for (i, image) in images.iter().enumerate() {
+        let work = scratch.path().join(format!("site{i}"));
+        copy_dir(&fixture.join("site"), &work)?;
+        // Brrrty's own files mean nothing to 11ty.
+        let _ = fs::remove_dir_all(work.join("node_modules"));
+        remove_rhai(&work)?;
+        let vol = format!("{}:/w", work.display());
+        if work.join("package-lock.json").is_file() {
+            docker(&[
+                "run",
+                "--rm",
+                "-v",
+                &vol,
+                "-w",
+                "/w",
+                image,
+                "npm",
+                "ci",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--silent",
+            ])?;
+        }
+        let out = scratch.path().join(format!("out{i}"));
+        fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
+        let input_flag = input
+            .as_ref()
+            .map(|i| format!("--input={i}"))
+            .unwrap_or_default();
+        let script = format!(
+            "mkdir -p /e && cd /e && npm init -y >/dev/null && npm install --no-audit --no-fund --silent {ELEVENTY} >/dev/null 2>&1 || exit 9"
+        );
+        // 11ty is installed with the network, then the build runs without it.
+        let eleventy = scratch.path().join(format!("eleventy{i}"));
+        fs::create_dir_all(&eleventy).map_err(|e| format!("cannot create folder: {e}"))?;
+        let evol = format!("{}:/e", eleventy.display());
+        docker(&["run", "--rm", "-v", &evol, image, "sh", "-c", &script])?;
+        let evol_ro = format!("{}:/e:ro", eleventy.display());
+        let ovol = format!("{}:/out", out.display());
+        let build = format!(
+            "node /e/node_modules/@11ty/eleventy/cmd.cjs --quiet {input_flag} --output=/tmp/o && cp -R /tmp/o/. /out/"
+        );
+        docker(&[
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "-e",
+            &format!("TZ={tz}"),
+            "-e",
+            &format!("LC_ALL={lang}"),
+            "-v",
+            &evol_ro,
+            "-v",
+            &vol,
+            "-v",
+            &ovol,
+            "-w",
+            "/w",
+            image,
+            "sh",
+            "-c",
+            &build,
+        ])?;
+        outputs.push(out);
+    }
+    for (i, out) in outputs.iter().enumerate().skip(1) {
+        let same = Command::new("diff")
+            .arg("-r")
+            .arg(&outputs[0])
+            .arg(out)
+            .status()
+            .map_err(|e| format!("cannot run diff: {e}"))?
+            .success();
+        if !same {
+            eprintln!(
+                "{name}: {} and {} differ; keeping old expected/",
+                images[0], images[i]
+            );
+            return Ok(false);
+        }
+    }
+    let expected = fixture.join("expected");
+    if expected.exists() {
+        fs::remove_dir_all(&expected)
+            .map_err(|e| format!("cannot delete {}: {e}", expected.display()))?;
+    }
+    copy_dir(&outputs[0], &expected)?;
+    println!("{name}: {} agree", images.join(" and "));
+    Ok(true)
+}
+
+fn docker(args: &[&str]) -> Result<(), String> {
+    let out = Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|e| format!("cannot run docker: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "docker {} failed ({}):\n{}{}",
+            args.first().unwrap_or(&""),
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    fs::create_dir_all(to).map_err(|e| format!("cannot create {}: {e}", to.display()))?;
+    for entry in fs::read_dir(from).map_err(|e| format!("cannot read {}: {e}", from.display()))? {
+        let entry = entry.map_err(|e| format!("cannot read {}: {e}", from.display()))?;
+        let target = to.join(entry.file_name());
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target)
+                .map_err(|e| format!("cannot copy {}: {e}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_rhai(dir: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))? {
+        let entry = entry.map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            remove_rhai(&path)?;
+        } else if path.extension().is_some_and(|e| e == "rhai") {
+            fs::remove_file(&path).map_err(|e| format!("cannot delete {}: {e}", path.display()))?;
+        }
+    }
+    Ok(())
+}

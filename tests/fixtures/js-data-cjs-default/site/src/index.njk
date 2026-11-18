@@ -1,0 +1,6 @@
+---
+permalink: /
+---
+{% for name in ["c_false", "c_true", "c_null", "c_undefined", "c_one", "c_string", "c_object", "c_array", "c_two", "c_named", "c_default_key", "c_fn_config", "c_cjs", "m_named", "m_both"] -%}
+{{ name }}: {% for k, v in [c_false, c_true, c_null, c_undefined, c_one, c_string, c_object, c_array, c_two, c_named, c_default_key, c_fn_config, c_cjs, m_named, m_both][loop.index0] %}{{ k }}={{ v | dump | safe }};{% endfor %}
+{% endfor %}

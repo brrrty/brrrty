@@ -1,0 +1,4 @@
+---
+permalink: /undef-liquid/
+---
+{% for x in v_undef.list %}[{{ x }}]{% endfor %} {{ v_undef.list | size }} {{ v_undef.list | json }} {{ v_undef.list }} {{ v_undef.list | join: "-" }} {{ v_undef.list | compact | size }} {{ v_undef.list[1] }}

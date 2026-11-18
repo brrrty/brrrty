@@ -1,0 +1,4 @@
+---
+permalink: /undef-njk/
+---
+{% for x in v_undef.list %}[{{ x }}]{% endfor %} {{ v_undef.list | length }} {{ v_undef.list | dump | safe }} {{ v_undef.list }} {{ v_undef.list | join("-") }} {{ v_undef.list[1] }}|{{ v_undef.list[1] is defined }}

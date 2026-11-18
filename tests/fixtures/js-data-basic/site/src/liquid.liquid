@@ -1,0 +1,16 @@
+---
+permalink: /liquid/
+---
+obj: {{ obj | json }}
+keys: {% for kv in obj %}{{ kv[0] }}={{ kv[1] }};{% endfor %}
+when: {{ obj.when }}
+date: {{ obj.when | date: "%Y-%m-%d %H:%M" }}
+negz: {{ obj.negz }} big: {{ obj.big }} frac: {{ obj.frac }}
+list: {{ obj.list }} size: {{ obj.list | size }}
+text: {{ obj.text }}
+nul: [{{ obj.nul }}] und: [{{ obj.und }}]
+esm: {{ esm.kind }} {{ esm.n | join: "," }}
+fn: {{ fn.sync }} {{ fn.made }}
+async: {{ async.sum }}
+env: {{ env.root }} {{ env.source }} {{ env.runMode }} {{ env.version }}
+arg: {{ arg.frozen }} {{ arg.frozenEnv }} {{ arg.thisType }} {{ arg.thisIsGlobal }} {{ arg.keys | join: "," }} / {{ arg.envKeys | join: "," }} / {{ arg.dirKeys | join: "," }} / {{ arg.serverless }} {{ arg.serverlessListed }}
