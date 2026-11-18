@@ -43,6 +43,7 @@ Nothing runs until the whole script has. An error in the script stops the build 
 | `config.add_filter(name, fn)` | `addFilter`. Adds a filter to Liquid and Nunjucks. |
 | `config.add_nondeterministic_filter(name)` | Stands in for a filter that uses `Math.random` in your JavaScript config. Its output can never match 11ty's, so pages that use it are refused. |
 | `config.add_collection(name, fn)` | `addCollection`. Adds a collection. |
+| `config.add_layout_alias(name, file)` | `addLayoutAlias`. `layout: name` uses `file`, relative to the layouts folder. |
 | `config.add_plugin(name, options)` | `addPlugin`, for the plugins Brrrty has its own version of: `rss` and `syntaxhighlight`. `options` is optional. |
 
 Passthrough copy takes a file or folder, not a glob; a glob is refused with `passthrough-unsupported`.
@@ -53,7 +54,7 @@ The script's last expression is a map with these keys, all optional. A script ca
 
 | Key | Values |
 |---|---|
-| `dir` | `input` and `output` folders. `includes`, `data` and `layouts` are accepted only with their defaults, `_includes`, `_data` and `_includes`. |
+| `dir` | `input` and `output` folders, and `includes` and `layouts`: folders inside the input folder, relative to it. `layouts` defaults to the includes folder. `data` is accepted only as `_data`. |
 | `markdownTemplateEngine` | `"liquid"` (the default), `"njk"` or `false` |
 | `htmlTemplateEngine` | `"liquid"` (the default), `"njk"` or `false` |
 

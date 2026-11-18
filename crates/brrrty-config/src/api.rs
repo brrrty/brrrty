@@ -76,6 +76,8 @@ pub struct State {
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
     /// `add_plugin("rss", #{ feed: false })`: the plugin's filters, without a feed.
     pub rss_filters: bool,
+    /// `add_layout_alias(from, to)`, by alias; a later one replaces an earlier one.
+    pub layout_aliases: IndexMap<String, String>,
     /// 11ty's markdown-it, once `amend_library("md", ...)` has been called.
     pub markdown_lib: Option<crate::markdown_rules::MdLib>,
     /// Where a `config` call made once the script has run (from a filter, a collection or a
@@ -330,6 +332,22 @@ pub fn engine_for(
                 ));
             }
             state.collections.insert(name.to_string(), (f, pos));
+            Ok(())
+        },
+    );
+    // 11ty's `addLayoutAlias`: `layout: from` names the layout file `to`,
+    // relative to the layouts folder.
+    e.register_fn(
+        "add_layout_alias",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         from: ImmutableString,
+         to: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            let mut state = open(&c.0, "config.add_layout_alias", ctx.call_position());
+            state
+                .layout_aliases
+                .insert(from.to_string(), to.to_string());
             Ok(())
         },
     );

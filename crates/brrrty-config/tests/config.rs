@@ -106,13 +106,57 @@ fn unsupported_returned_keys_are_refused() {
     let p = err(r#"#{ dir: #{ input: "src" }, pathPrefix: "/x/" }"#);
     assert_eq!(p.code, codes::CONFIG_UNSUPPORTED);
     assert!(p.message.contains("pathPrefix"), "{}", p.message);
-    let p = err(r#"#{ dir: #{ includes: "parts" } }"#);
+    let p = err(r#"#{ dir: #{ data: "data" } }"#);
     assert_eq!(p.code, codes::CONFIG_UNSUPPORTED);
-    assert!(p.message.contains("includes"), "{}", p.message);
+    assert!(p.message.contains("data"), "{}", p.message);
     let p = err(r#"#{ dir: #{ input: 3 } }"#);
     assert_eq!(p.code, codes::CONFIG_INVALID);
     let p = err(r#""src""#);
     assert_eq!(p.code, codes::CONFIG_INVALID);
+}
+
+/// `dir.includes` and `dir.layouts` are folders inside the input folder.
+#[test]
+fn includes_and_layouts_folders_are_read() {
+    let c = ok(r#"#{ dir: #{ includes: "./parts/", layouts: "parts/layouts" } }"#);
+    assert_eq!(c.dir.includes.as_deref(), Some("parts"));
+    assert_eq!(c.dir.layouts.as_deref(), Some("parts/layouts"));
+    let o = c.build_options();
+    assert_eq!(o.includes_dir(), "parts");
+    assert_eq!(o.layouts_dir(), "parts/layouts");
+    let c = ok(r#"#{ dir: #{ includes: "parts" } }"#);
+    assert_eq!(c.build_options().layouts_dir(), "parts");
+    assert_eq!(ok("").build_options().layouts_dir(), "_includes");
+    for (v, part) in [
+        ("../shared", "inside the input folder"),
+        ("/abs", "inside the input folder"),
+        ("", "inside the input folder"),
+        (".", "inside the input folder"),
+        ("a/../b", "inside the input folder"),
+        ("a\\\\b", "inside the input folder"),
+    ] {
+        let p = err(&format!("#{{ dir: #{{ layouts: \"{v}\" }} }}"));
+        assert_eq!(p.code, codes::CONFIG_UNSUPPORTED, "{v}");
+        assert!(p.message.contains(part), "{v}: {}", p.message);
+    }
+}
+
+/// 11ty's `addLayoutAlias`: a later alias of the same name wins.
+#[test]
+fn layout_aliases_are_kept() {
+    let c = ok(r#"
+        config.add_layout_alias("post", "layouts/post.njk");
+        config.add_layout_alias("page", "page.liquid");
+        config.add_layout_alias("post", "layouts/article.njk");
+    "#);
+    let o = c.build_options();
+    assert_eq!(
+        o.layout_aliases.iter().collect::<Vec<_>>(),
+        [
+            (&"post".to_string(), &"layouts/article.njk".to_string()),
+            (&"page".to_string(), &"page.liquid".to_string())
+        ]
+    );
 }
 
 #[test]

@@ -19,7 +19,7 @@ Pages, layouts and includes can be in any mix: a Markdown page in a Nunjucks lay
 
 ## What works across all of them
 
-- **Layouts.** `layout` in front matter or data, looked up in `_includes` with 11ty's extension order. Layouts can have their own layout, and their front matter merges under the page's.
+- **Layouts.** `layout` in front matter or data, looked up in the layouts folder (`_includes`, or `dir.layouts`/`dir.includes`) with 11ty's extension order, after `add_layout_alias` aliases. Layouts can have their own layout, and their front matter merges under the page's.
 - **The data cascade.** Global data from `_data` (JSON and `.rhai`), layout data, folder and template data files, front matter and `eleventyComputed`, merged deeply in 11ty's order. Pages get `page`, `eleventy`, `pkg` and `collections`.
 - **Permalinks**, including templated and computed ones.
 - **Pagination** over lists and objects, with `size`, `alias`, `reverse`, `filter`, `resolve: values` and `generatePageOnEmptyData`.
@@ -32,11 +32,11 @@ The tags are LiquidJS's: `assign`, `capture`, `case`, `comment`, `cycle`, `decre
 
 The filters are LiquidJS's standard set: string filters such as `append`, `capitalize`, `downcase`, `escape`, `remove`, `replace`, `split`, `strip_html`, `truncate` and `truncatewords`; array filters such as `concat`, `first`, `group_by`, `join`, `map`, `reverse`, `sort`, `sort_natural`, `uniq`, `where` and their `_exp` forms; math filters such as `plus`, `minus`, `times`, `divided_by`, `round` and `at_most`; and `date`, `default`, `json`, `url_encode` and the rest.
 
-`{% include %}` and `{% render %}` find files in `_includes`, then in the input folder. A name can't reach outside those folders through `..`, an absolute path or a symbolic link.
+`{% include %}` and `{% render %}` find files in the includes folder (`_includes`, or `dir.includes`), then in the input folder. A name can't reach outside those folders through `..`, an absolute path or a symbolic link.
 
 ## Nunjucks
 
-Autoescaping is on, and includes are looked up in `_includes`, then in the project folder, with `./` relative to the including template, as in 11ty. Expressions follow JavaScript: truthiness, `==` and `===`, `+` on strings and numbers, how `undefined` and `null` print, and the string, array, number and date methods a template calls.
+Autoescaping is on, and includes are looked up in the includes folder, then in the project folder, with `./` relative to the including template, as in 11ty. Expressions follow JavaScript: truthiness, `==` and `===`, `+` on strings and numbers, how `undefined` and `null` print, and the string, array, number and date methods a template calls.
 
 `if`, `for` (with `else`, `loop` and objects), `set`, `macro`, `call` and `caller`, `import` and `from`, `include` (with `ignore missing`), `extends`, `block` and `super()`, `raw`, `verbatim`, `filter` and `switch` all work, with whitespace control. So does every built-in Nunjucks filter, with the exceptions below, and regular expression literals such as `r/\d+/g`.
 

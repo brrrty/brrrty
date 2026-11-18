@@ -341,6 +341,18 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
     let input = dot_dir(input_rel);
     let output = crate::options::normalize(&opts.output);
     let output_shown = dot_dir(&output);
+    // 11ty's `directories`: `layouts` only when the config sets it.
+    let mut directories = serde_json::Map::new();
+    directories.insert("input".into(), input.clone().into());
+    directories.insert("data".into(), format!("{input}_data/").into());
+    directories.insert(
+        "includes".into(),
+        format!("{input}{}/", opts.config.includes_dir()).into(),
+    );
+    if let Some(layouts) = &opts.config.layouts {
+        directories.insert("layouts".into(), format!("{input}{layouts}/").into());
+    }
+    directories.insert("output".into(), output_shown.clone().into());
     let eleventy = serde_json::json!({
         "version": ELEVENTY_VERSION,
         "generator": format!("Eleventy v{ELEVENTY_VERSION}"),
@@ -349,12 +361,7 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
             "runMode": opts.run_mode.as_str(),
             "root": root.display().to_string(),
         },
-        "directories": {
-            "input": input,
-            "data": format!("{input}_data/"),
-            "includes": format!("{input}_includes/"),
-            "output": output_shown,
-        },
+        "directories": directories,
     });
     let pkg = fs::read_to_string(root.join("package.json"))
         .ok()
@@ -794,7 +801,7 @@ fn load_page_inner(
     })?;
     let order_files = shared.dir_data.files(rel);
     let js_data = order_files.iter().any(|f| is_js(&f.to_string_lossy()));
-    let includes = shared.input_rel.join("_includes");
+    let includes = shared.layouts.dir_shown();
     let mut order_layouts: Vec<(String, OrderLayout)> = Vec::new();
     let mut name = match data_layout {
         Some(Value::String(s)) => Some(s.to_string()),
@@ -1925,15 +1932,16 @@ fn build_once(
         autoescape: true,
     });
     crate::filters::register_nunjucks_filters(&mut nunjucks, &opts.config.filters, rss);
-    let includes = input.join("_includes");
+    let includes_rel = opts.config.includes_dir();
+    let includes = input.join(includes_rel);
     let includes = includes.canonicalize().unwrap_or(includes);
     let loader = FsLoader::new(
         includes.clone(),
-        input_rel.join("_includes"),
+        input_rel.join(includes_rel),
         input.clone(),
         input_rel.clone(),
     );
-    let nunjucks_loader = FsLoader::nunjucks(includes, input_rel.join("_includes"), root.clone());
+    let nunjucks_loader = FsLoader::nunjucks(includes, input_rel.join(includes_rel), root.clone());
     let langs = Langs {
         liquid: &engine,
         liquid_loader: &loader,
@@ -1944,7 +1952,14 @@ fn build_once(
             .is_some_and(|p| p.options.has_format("njk")),
     };
     let template_engines = opts.config.template_engines;
-    let layouts = Layouts::new(&langs, template_engines, input.clone(), input_rel.clone());
+    let layouts = Layouts::new(
+        &langs,
+        template_engines,
+        input.clone(),
+        input_rel.clone(),
+        PathBuf::from(opts.config.layouts_dir()),
+        opts.config.layout_aliases.clone(),
+    );
     let data_dir = input_rel.join("_data");
     let (globals, output_shown) = globals(opts, &root, &input_rel);
     // 11ty sets the config's `addGlobalData` values, adds its `eleventy`

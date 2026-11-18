@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `dir.includes` and `dir.layouts` can name folders other than `_includes` inside the input folder, as in 11ty: includes and layouts are looked up there, the folders aren't built as pages (and `_includes` is, when it's no longer the includes folder), and `eleventy.directories` shows them. `config.add_layout_alias(name, file)` is 11ty's `addLayoutAlias`. Both were refused before. `dir.data` still has to be `_data`. The layouts-dir fixture is built by real 11ty and matches byte for byte.
 - `brrrty init` reads a `/` inside a template literal's `${}` (`` `${s.replace(/x/g, "")}` ``, `` `${a / b}` ``) and non-ASCII characters inside a regular expression (`/[éà]/`). Each made it give up on the whole config before. A `/` it can't tell apart (a regular expression or a division) is still never guessed.
 - `brrrty init` ports a CommonJS config that sets `module.exports.config = { ... }` after `module.exports = function ...`, as 11ty reads it. It gave up on the whole file, saying the file mixed `module.exports` with `export`. That message is now only for a file that really does.
 - `config.add_plugin("rss", #{ feed: false })` adds the RSS plugin's filters without a feed: `dateToRfc3339`, `dateToRfc822`, `getNewestCollectionItemDate`, `absoluteUrl` and `htmlToAbsoluteUrls` in Nunjucks, and `htmlBaseUrl`, `addPathPrefixToFullUrl` and the `eleventyFeed*` filters everywhere. It is 11ty's `addPlugin(pluginRss)`, the plugin's default export, for a site with a feed template of its own. Before, the filters came only with a feed.

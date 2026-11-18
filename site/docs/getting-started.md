@@ -83,7 +83,7 @@ my-site/
     posts/
 ```
 
-Brrrty reads `_includes` and `_data` from the input folder, under those names. A config that moves them elsewhere is refused with a message saying so.
+Brrrty reads `_includes` and `_data` from the input folder. `dir.includes` and `dir.layouts` can move includes and layouts to other folders inside the input folder; a config that moves `_data` is refused with a message saying so.
 
 ## 1. Port the config
 

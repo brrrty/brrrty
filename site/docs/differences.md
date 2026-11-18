@@ -21,7 +21,7 @@ What isn't there yet:
 - `.11ty.js` templates, and JavaScript data files without a `.rhai` port.
 - Shortcodes, and plugins other than `rss` and `syntaxhighlight`.
 - 11ty's `getCollectionItem`, `getPreviousCollectionItem`, `getNextCollectionItem`, `getCollectionItemIndex`, `inputPathToUrl` and `renderTransforms` filters.
-- `dir.includes`, `dir.data` and `dir.layouts` other than their defaults.
+- `dir.data` other than `_data`, and `dir.includes` or `dir.layouts` outside the input folder.
 - Passthrough copy with a glob.
 - `addWatchTarget`, `setServerOptions` and `serverPassthroughCopyBehavior`.
 

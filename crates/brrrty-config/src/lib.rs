@@ -197,6 +197,8 @@ pub struct SiteConfig {
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
     /// `add_plugin("rss", #{ feed: false })`: the RSS plugin's filters without a feed.
     pub rss_filters: bool,
+    /// `add_layout_alias` aliases: a layout name and the file it stands for.
+    pub layout_aliases: indexmap::IndexMap<String, String>,
     /// Renderer rules `amend_library("md", ...)` set on 11ty's library.
     pub markdown_rules: Option<brrrty_core::MarkdownRules>,
     /// What the script read from the project, and its filters and collections read later.
@@ -224,6 +226,9 @@ impl SiteConfig {
             markdown_rules: self.markdown_rules.clone(),
             feeds: self.feeds.clone(),
             rss_filters: self.rss_filters,
+            includes: self.dir.includes.clone(),
+            layouts: self.dir.layouts.clone(),
+            layout_aliases: self.layout_aliases.clone(),
             template_engines: self.template_engines,
             reads: self.reads.clone(),
             late_problems: self.late_problems.clone(),
@@ -423,6 +428,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         markdown_rules,
         feeds: state.feeds,
         rss_filters: state.rss_filters,
+        layout_aliases: state.layout_aliases,
         reads,
         late_problems,
         unported: None,
@@ -653,25 +659,59 @@ fn read_returned(
             }
         }
     }
-    // Brrrty reads `_includes` and `_data` only.
-    for (name, value, default) in [
-        ("includes", &dir.includes, "_includes"),
-        ("data", &dir.data, "_data"),
-        ("layouts", &dir.layouts, "_includes"),
+    // Brrrty reads `_data` only.
+    if let Some(v) = &dir.data
+        && v.trim_start_matches("./").trim_end_matches('/') != "_data"
+    {
+        return Err(vec![
+            Problem::error(
+                codes::CONFIG_UNSUPPORTED,
+                format!(
+                    "`dir.data` is `{v}`, and Brrrty only reads the default `_data` folder so far"
+                ),
+            )
+            .with_help("rename the folder to `_data` inside the input folder"),
+        ]);
+    }
+    // Includes and layouts: a folder inside the input folder.
+    for (name, value) in [
+        ("includes", &mut dir.includes),
+        ("layouts", &mut dir.layouts),
     ] {
-        if let Some(v) = value
-            && v.trim_start_matches("./").trim_end_matches('/') != default
-        {
-            return Err(vec![
-                Problem::error(
-                    codes::CONFIG_UNSUPPORTED,
-                    format!(
-                        "`dir.{name}` is `{v}`, and Brrrty only reads the default `{default}` folder so far"
-                    ),
-                )
-                .with_help(format!("rename the folder to `{default}` inside the input folder")),
-            ]);
+        if let Some(v) = value.as_mut() {
+            match inside_input(v) {
+                Some(clean) => *v = clean,
+                None => {
+                    return Err(vec![
+                        Problem::error(
+                            codes::CONFIG_UNSUPPORTED,
+                            format!(
+                                "`dir.{name}` is `{v}`, and Brrrty only reads a folder inside the input folder for it so far"
+                            ),
+                        )
+                        .with_help(format!(
+                            "give `dir.{name}` a folder inside the input folder, like `_includes`, relative to it"
+                        )),
+                    ]);
+                }
+            }
         }
     }
     Ok((dir, engines))
+}
+
+/// `folder`, relative to the input folder, written plainly (`./parts/` is
+/// `parts`); `None` when it isn't a folder inside the input folder.
+fn inside_input(folder: &str) -> Option<String> {
+    if folder.starts_with('/') || folder.contains('\\') {
+        return None;
+    }
+    let parts: Vec<&str> = folder
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    if parts.is_empty() || parts.contains(&"..") {
+        return None;
+    }
+    Some(parts.join("/"))
 }

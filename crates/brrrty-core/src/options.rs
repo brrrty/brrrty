@@ -82,6 +82,13 @@ pub struct ConfigOptions {
     /// The RSS plugin's filters without a feed (its default export,
     /// `rssPlugin`). A feed adds them too.
     pub rss_filters: bool,
+    /// `dir.includes`, relative to the input folder; `None` is `_includes`.
+    pub includes: Option<String>,
+    /// `dir.layouts`, relative to the input folder; `None` is the includes folder.
+    pub layouts: Option<String>,
+    /// `addLayoutAlias` aliases: a layout name and the file it stands for,
+    /// relative to the layouts folder.
+    pub layout_aliases: indexmap::IndexMap<String, String>,
     /// `markdownTemplateEngine` and `htmlTemplateEngine`.
     pub template_engines: TemplateEngines,
     /// What the config's and the data files' scripts read from the project folder.
@@ -92,6 +99,19 @@ pub struct ConfigOptions {
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
     /// nothing is written or copied.
     pub unported: Option<Problem>,
+}
+
+impl ConfigOptions {
+    /// The includes folder, relative to the input folder.
+    pub fn includes_dir(&self) -> &str {
+        self.includes.as_deref().unwrap_or("_includes")
+    }
+
+    /// The layouts folder, relative to the input folder: `dir.layouts`, or
+    /// the includes folder.
+    pub fn layouts_dir(&self) -> &str {
+        self.layouts.as_deref().unwrap_or(self.includes_dir())
+    }
 }
 
 /// Warnings a script raises while pages render, each kept once. Shared by the config's engine

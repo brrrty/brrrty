@@ -48,7 +48,9 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     };
     let rules = Arc::new(rules);
 
-    let includes = input.join("_includes");
+    // 11ty never reads its includes and layouts folders as templates.
+    let includes = input.join(opts.config.includes_dir());
+    let layouts = input.join(opts.config.layouts_dir());
     let data = input.join("_data");
 
     let out_dir = output.clone();
@@ -60,7 +62,9 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         .filter_entry(move |e| {
             let p = e.path();
             let is_dir = e.file_type().is_some_and(|t| t.is_dir());
-            if is_dir && (p == output || p == write_dir || p == includes || p == data) {
+            if is_dir
+                && (p == output || p == write_dir || p == includes || p == layouts || p == data)
+            {
                 return false;
             }
             if e.file_name() == "node_modules" {

@@ -96,6 +96,10 @@ pub(crate) struct Layouts<'a> {
     input: PathBuf,
     /// The input folder relative to the project root.
     input_shown: PathBuf,
+    /// The layouts folder, relative to the input folder.
+    dir: PathBuf,
+    /// `addLayoutAlias` aliases.
+    aliases: indexmap::IndexMap<String, String>,
     cache: Mutex<HashMap<PathBuf, Result<Arc<LayoutFile>, Failure>>>,
 }
 
@@ -110,14 +114,23 @@ impl<'a> Layouts<'a> {
         config: TemplateEngines,
         input: PathBuf,
         input_shown: PathBuf,
+        dir: PathBuf,
+        aliases: indexmap::IndexMap<String, String>,
     ) -> Layouts<'a> {
         Layouts {
             langs,
             config,
             input,
             input_shown,
+            dir,
+            aliases,
             cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The layouts folder, relative to the project root.
+    pub fn dir_shown(&self) -> PathBuf {
+        self.input_shown.join(&self.dir)
     }
 
     /// The layout chain for a page whose front matter has `layout: name`,
@@ -143,7 +156,7 @@ impl<'a> Layouts<'a> {
                             format!("layout `{name}` not found"),
                             format!(
                                 "layouts are looked up in {}; tried: {}",
-                                self.input_shown.join("_includes").display(),
+                                self.dir_shown().display(),
                                 tried.join(", ")
                             ),
                         ),
@@ -194,8 +207,10 @@ impl<'a> Layouts<'a> {
     }
 
     fn resolve(&self, name: &str) -> Result<Arc<LayoutFile>, Failure> {
-        // Names are relative to `_includes`, which is inside the input folder.
-        let rel = lexical(&format!("_includes/{name}")).ok_or(Failure::Outside)?;
+        // An alias stands for a file's name; names are relative to the
+        // layouts folder, which is inside the input folder.
+        let name = self.aliases.get(name).map_or(name, String::as_str);
+        let rel = lexical(&format!("{}/{name}", self.dir.display())).ok_or(Failure::Outside)?;
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(found) = cache.get(&rel) {
             return found.clone();

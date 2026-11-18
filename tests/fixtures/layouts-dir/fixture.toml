@@ -1,0 +1,4 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js: includes and layouts in folders of their own, and
+# layout aliases. `src/_includes` is then an ordinary folder of templates.
+source_date_epoch = 1767268800
