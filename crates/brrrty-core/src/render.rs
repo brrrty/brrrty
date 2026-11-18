@@ -151,6 +151,20 @@ pub(crate) fn engines_for(
     Ok((engine, syntax))
 }
 
+/// The keys a JavaScript template or layout can't read on this page: the
+/// withheld ones, and `collections` when it can't be built (a marker in the
+/// data, so it is still listed as 11ty lists it).
+fn js_traps(job: &Job<'_>) -> Vec<(String, String)> {
+    let mut traps = job.traps.to_vec();
+    if let Some(why) = job.gap {
+        traps.push((
+            "collections".to_string(),
+            format!("reads `collections`, but {why}"),
+        ));
+    }
+    traps
+}
+
 /// Render the JavaScript template or layout `id` with `data` in the site's
 /// Node (shown as `shown` in problems).
 fn js_render(
@@ -324,6 +338,9 @@ pub(crate) struct Job<'a> {
     /// Keys the page's data lacks because Brrrty can't supply them, and
     /// why: a JavaScript template or layout reading one is refused.
     pub traps: &'a [(String, String)],
+    /// Why the page has no `collections`, when the collections can't be
+    /// built: a JavaScript template or layout reading it is refused.
+    pub gap: Option<&'a str>,
 }
 
 /// A rendered page and the variables it read that nothing defined.
@@ -412,7 +429,7 @@ impl Pipeline<'_> {
         let html = match job.engines {
             Engines::Js(id) => {
                 let data = Value::Object(Arc::new(job.data.clone()));
-                return match js_render(id, &data, job.first, job.traps, job.shown)? {
+                return match js_render(id, &data, job.first, &js_traps(job), job.shown)? {
                     Value::String(s) => Ok(Output {
                         html: s.to_string(),
                         undefined,
@@ -470,7 +487,7 @@ impl Pipeline<'_> {
                     text(self.render_markdown(&out, &layout.shown, None)?)
                 }
                 Kind::Raw => text(layout.body.clone()),
-                Kind::Js(id) => js_render(*id, &layout_data, None, job.traps, &layout.shown)?,
+                Kind::Js(id) => js_render(*id, &layout_data, None, &js_traps(job), &layout.shown)?,
                 // Pages with such a layout are refused before they get here.
                 Kind::Unrenderable(p) => return Err(p.clone()),
             };

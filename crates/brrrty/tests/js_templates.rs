@@ -544,3 +544,55 @@ fn filters_on_this_are_brrrtys_own() {
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(read(t.path(), "f/index.html"), "a-b /x/ HI!");
 }
+
+/// When the collections can't be built, a JavaScript template or layout
+/// that reads them is refused with why, never handed `undefined`.
+#[test]
+fn a_javascript_read_of_collections_under_a_gap_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        // Refused by Brrrty, so the collections would lack its page.
+        (
+            "src/pk.njk",
+            "---\npagination:\n  data: collections\n  size: 1\n---\nx",
+        ),
+        (
+            "src/read.11ty.js",
+            "module.exports = (d) => `n=${d.collections ? d.collections.all.length : 'none'}`;\n",
+        ),
+        (
+            "src/keys.11ty.js",
+            "module.exports = (d) => Object.keys(d).join(',');\n",
+        ),
+        (
+            "src/_includes/l.11ty.js",
+            "module.exports = (d) => `${d.content}${d.collections ? 'yes' : 'no'}`;\n",
+        ),
+        ("src/in-layout.njk", "---\nlayout: l.11ty.js\n---\nx"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("src/read.11ty.js"), "{out}");
+    assert!(
+        out.contains("reads `collections`, but 1 template could not be built"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("11ty stops the whole build here. Fix the template."),
+        "{out}"
+    );
+    assert!(!t.path().join("_site/read/index.html").exists(), "{out}");
+    assert!(
+        !t.path().join("_site/in-layout/index.html").exists(),
+        "{out}"
+    );
+    // Listing the data's names lists `collections` where 11ty has it.
+    assert_eq!(
+        read(t.path(), "keys/index.html"),
+        "eleventy,pkg,page,collections"
+    );
+}

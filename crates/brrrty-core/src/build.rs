@@ -2944,6 +2944,16 @@ fn build_once(
                 p.data
                     .insert("collections".to_string(), Value::Object(c.clone()));
             }
+            // A JavaScript template or layout keeps the key, in its place,
+            // as a marker it can't read (see `render::js_traps`).
+            None if matches!(p.source.engines, Engines::Js(_))
+                || p.source
+                    .layouts
+                    .iter()
+                    .any(|l| matches!(l.kind, crate::layout::Kind::Js(_))) =>
+            {
+                p.data.insert("collections".to_string(), Value::Undefined);
+            }
             None => {
                 p.data.shift_remove("collections");
             }
@@ -3036,6 +3046,7 @@ fn build_once(
                 feed: p.source.feed.as_deref(),
                 first: first_pages.get(&Arc::as_ptr(&p.source)).copied(),
                 traps: &p.source.traps,
+                gap: gap.as_ref().map(|g| g.why.as_str()),
             },
             template: page_template[i],
             page_number: p.page_number,
