@@ -635,3 +635,60 @@ fn the_rss_filters_take_no_feed_options() {
         assert!(p.message.contains(part), "{options}: {}", p.message);
     }
 }
+
+/// Brrrty's `rss` plugin is version 3's: a site that installs another
+/// version is refused, and a version that changed since `brrrty init`
+/// recorded it warns.
+#[test]
+fn the_rss_plugin_version_is_checked_when_the_config_loads() {
+    let t = tempfile::tempdir().unwrap();
+    let pkg = |v: &str| {
+        write(
+            t.path(),
+            "package.json",
+            &format!(
+                "{{\"devDependencies\":{{\"@11ty/eleventy\":\"3.1.8\",\"@11ty/eleventy-plugin-rss\":\"{v}\"}}}}"
+            ),
+        )
+    };
+    for script in [
+        "config.add_plugin(\"rss\", #{ feed: false });\n",
+        &format!("{FEED}\n"),
+    ] {
+        write(
+            t.path(),
+            CONFIG_FILE,
+            &format!("// RSS plugin: ^3.1.0\n{script}"),
+        );
+        pkg("^3.1.0");
+        let c = load_with(t.path(), Clock::Fixed(NOON_MS)).unwrap().unwrap();
+        assert!(c.problems.is_empty(), "{:?}", c.problems);
+        pkg("~3.0.0");
+        let c = load_with(t.path(), Clock::Fixed(NOON_MS)).unwrap().unwrap();
+        assert_eq!(c.problems.len(), 1, "{:?}", c.problems);
+        assert_eq!(c.problems[0].code, codes::CONFIG_STALE);
+        pkg("^2.0.4");
+        let p = load_with(t.path(), Clock::Fixed(NOON_MS)).unwrap_err();
+        assert_eq!(p[0].code, codes::CONFIG_UNSUPPORTED, "{p:?}");
+        assert!(p[0].message.contains("version ^2.0.4"), "{}", p[0].message);
+    }
+}
+
+/// A feed's template can't be in the includes or layouts folder, wherever
+/// those are.
+#[test]
+fn a_feed_in_the_includes_folder_is_refused() {
+    let p = load_err(
+        "config.add_plugin(\"rss\", #{ input_path: \"parts/feed.njk\", collection: #{ name: \"p\" } });\n#{ dir: #{ includes: \"parts\" } }\n",
+    );
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert!(p.message.contains("`parts/feed.njk`"), "{}", p.message);
+    // `_includes` is an ordinary folder then.
+    let t = tempfile::tempdir().unwrap();
+    write(
+        t.path(),
+        CONFIG_FILE,
+        "config.add_plugin(\"rss\", #{ input_path: \"_includes/feed.njk\", collection: #{ name: \"p\" } });\n#{ dir: #{ includes: \"parts\" } }\n",
+    );
+    assert!(load_with(t.path(), Clock::Fixed(NOON_MS)).is_ok());
+}

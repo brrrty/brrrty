@@ -703,3 +703,30 @@ fn a_helper_module_is_followed_and_recorded() {
         "{err}"
     );
 }
+
+/// The RSS plugin's version `init` saw is recorded, for builds to check again.
+#[test]
+fn the_rss_plugin_version_is_recorded() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\n  \"type\": \"module\",\n  \"devDependencies\": { \"@11ty/eleventy\": \"3.1.8\", \"@11ty/eleventy-plugin-rss\": \"^3.1.0\" }\n}\n",
+        ),
+        (
+            "package-lock.json",
+            "{\"packages\":{\"node_modules/@11ty/eleventy-plugin-rss\":{\"version\":\"3.1.0\"}}}\n",
+        ),
+        (
+            "eleventy.config.js",
+            "import pluginRss from \"@11ty/eleventy-plugin-rss\";\nexport default function (eleventyConfig) {\n  eleventyConfig.addPlugin(pluginRss);\n}\n",
+        ),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(rhai.contains("\n// RSS plugin: 3.1.0\n"), "{rhai}");
+    assert!(
+        rhai.contains("config.add_plugin(\"rss\", #{ feed: false });"),
+        "{rhai}"
+    );
+}

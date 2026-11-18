@@ -132,6 +132,7 @@ mod markdown_rules;
 pub mod markers;
 mod object;
 mod plugins;
+pub mod rss_version;
 use brrrty_jsregex::matcher as regex;
 // Public for `tests/sort_probes.rs`, which checks it against V8 call by call.
 #[doc(hidden)]
@@ -383,6 +384,28 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         .map_err(|e| vec![runtime_problem(*e)])?;
     let mut problems = Vec::new();
     let (dir, template_engines) = read_returned(returned, &mut problems)?;
+    // A feed's template can't live where 11ty keeps includes and layouts.
+    let includes = dir.includes.as_deref().unwrap_or("_includes");
+    let layouts = dir.layouts.as_deref().unwrap_or(includes);
+    for feed in &state.feeds {
+        let path = Path::new(&feed.input_path);
+        if path.starts_with(includes) || path.starts_with(layouts) {
+            return Err(vec![Problem::error(
+                codes::CONFIG_INVALID,
+                format!(
+                    "add_plugin(\"rss\", ...): `input_path` is `{}`; Brrrty supports a `.njk` path inside the input folder, outside the includes, layouts and `_data` folders",
+                    feed.input_path
+                ),
+            )]);
+        }
+    }
+    // Brrrty's `rss` plugin is version 3's.
+    if state.rss_filters || !state.feeds.is_empty() {
+        match rss_version::check(root, src) {
+            Ok(warning) => problems.extend(warning),
+            Err(p) => return Err(vec![p]),
+        }
+    }
     // The script's filters run later, while pages render.
     let runtime = Arc::new(filters::Runtime { engine, ast });
     let filters = state

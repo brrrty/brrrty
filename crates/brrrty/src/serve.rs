@@ -296,6 +296,8 @@ pub struct Session {
     last_entries: Vec<Entry>,
     retired: Vec<Retired>,
     passthrough: Vec<PathBuf>,
+    /// The includes and layouts folders, as the last build's config set them.
+    template_dirs: Vec<PathBuf>,
     /// What the last build's config and data scripts read, listed or checked, as real paths.
     reads: Vec<PathBuf>,
     rules: Option<IgnoreRules>,
@@ -408,6 +410,7 @@ impl Session {
             last_entries: Vec::new(),
             retired: Vec::new(),
             passthrough: Vec::new(),
+            template_dirs: Vec::new(),
             reads: Vec::new(),
             rules: None,
             watcher: Some(watcher),
@@ -644,7 +647,10 @@ impl Session {
         let css_only = !changed.is_empty()
             && changed.iter().all(|p| {
                 p.extension().is_some_and(|e| e == "css")
-                    && !self.root.join(p).starts_with(self.input.join("_includes"))
+                    && !self
+                        .template_dirs
+                        .iter()
+                        .any(|d| self.root.join(p).starts_with(d))
             });
         let stylesheets = if served {
             built
@@ -701,6 +707,10 @@ impl Session {
             }
         };
         self.refresh(&opts);
+        self.template_dirs = vec![
+            self.input.join(opts.config.includes_dir()),
+            self.input.join(opts.config.layouts_dir()),
+        ];
         let now = stamps(&self.passthrough);
         let first = self.next_build == 0;
         let before = std::mem::replace(&mut self.copied, now);

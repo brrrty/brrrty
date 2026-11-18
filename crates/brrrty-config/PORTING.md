@@ -702,7 +702,9 @@ It takes no other options yet: `htmlBasePluginOptions` and
 (`@11ty/eleventy-plugin-rss` 3.0.0 to 3.1.0 have the same ones);
 version 2's `dateToRfc822` writes the time zone another way (`CST` for
 `-0600`), so `brrrty init` ports the call only for a site that installs
-version 3.
+version 3, and a config that adds the `rss` plugin is refused for a site
+that installs another version (feeds too). `init` records the version on a
+`// RSS plugin:` line, and a build warns (`config-stale`) when it changes.
 
 ## Regular expressions
 

@@ -1887,6 +1887,8 @@ fn build_once(
                 liquid_tag: p.options.has_format("liquid"),
                 nunjucks_tag: p.options.has_format("njk"),
                 global_data: &opts.config.global_data,
+                includes: Path::new(opts.config.includes_dir()),
+                layouts: Path::new(opts.config.layouts_dir()),
             },
         );
         all.extend(found.iter().cloned());

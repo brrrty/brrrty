@@ -59,6 +59,9 @@ pub struct Context<'a> {
     pub nunjucks_tag: bool,
     /// The config's global data (`addGlobalData`).
     pub global_data: &'a Data,
+    /// The includes and layouts folders, relative to the input folder.
+    pub includes: &'a Path,
+    pub layouts: &'a Path,
 }
 
 /// Larger files aren't templates anyone writes by hand; they are skipped.
@@ -143,7 +146,7 @@ pub fn scan(input: &Path, input_rel: &Path, skip: &Path, cx: Context<'_>) -> Vec
     }
     let global = Global::of(&files, cx.global_data);
     for f in &mut files {
-        decide(f, input, input_rel, cx.engines, &global);
+        decide(f, input, input_rel, &cx, &global);
     }
     includes(&mut files, &global);
 
@@ -267,15 +270,16 @@ fn is_page_ext(ext: &str) -> bool {
 }
 
 /// What reads `f`, before anything includes it.
-fn decide(f: &mut File, input: &Path, input_rel: &Path, engines: TemplateEngines, g: &Global) {
+fn decide(f: &mut File, input: &Path, input_rel: &Path, cx: &Context<'_>, g: &Global) {
+    let engines = cx.engines;
     let top = f.rel.components().next().map(|c| c.as_os_str().to_owned());
     let ext = extension(&f.rel);
     // Includes and layouts are read by whatever includes them; data by
     // the language a page's permalink or computed values, or
     // `dataTemplateEngine`, runs; JavaScript could be a template.
-    if top
-        .as_deref()
-        .is_some_and(|t| t == "_includes" || t == "_data")
+    if f.rel.starts_with(cx.includes)
+        || f.rel.starts_with(cx.layouts)
+        || top.as_deref().is_some_and(|t| t == "_data")
         || matches!(ext.as_str(), "json" | "js" | "cjs" | "mjs" | "rhai")
     {
         f.front = Readers::ANY;
@@ -878,6 +882,8 @@ mod tests {
             liquid_tag: formats.0,
             nunjucks_tag: formats.1,
             global_data: global,
+            includes: Path::new("_includes"),
+            layouts: Path::new("_includes"),
         };
         let mut got: Vec<String> =
             scan(dir.path(), Path::new("src"), &dir.path().join("_site"), cx)

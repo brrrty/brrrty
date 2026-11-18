@@ -36,6 +36,11 @@ const PORTING: &str = "https://github.com/brrrty/brrrty/blob/main/crates/brrrty-
 const SYNTAX_HIGHLIGHT: &str = "@11ty/eleventy-plugin-syntaxhighlight";
 const RSS: &str = "@11ty/eleventy-plugin-rss";
 
+/// The TODO for a declaration whose uses weren't all ported or quoted.
+const DECLARED: &str = "port this code along with the code that uses it";
+/// The TODO for code a call runs in its arguments, which Brrrty doesn't port.
+const ARGUMENTS: &str = "this runs code in its arguments that Brrrty doesn't port (it follows the rest of the call); port what that code does";
+
 /// How deep helpers, plugins and modules are followed.
 const MAX_FOLLOW: usize = 16;
 /// How many statements (loop turns included) are read before Brrrty stops.
@@ -55,6 +60,8 @@ pub(crate) struct Port {
     pub output: Option<String>,
     /// The site's own modules read while porting, by path, with their text.
     pub modules: Vec<(String, String)>,
+    /// It adds the RSS plugin, whose version a build checks.
+    pub uses_rss: bool,
 }
 
 /// Reads one of the site's files by its path from the site's folder.
@@ -151,6 +158,8 @@ struct Module {
     consumed_decls: RefCell<HashSet<String>>,
     /// [`Module::stable`] over the whole module, by name.
     stable_names: RefCell<HashMap<String, bool>>,
+    /// The site's modules it names in `require` or `import`, anywhere.
+    deps: Vec<String>,
 }
 
 /// A place in a module, for quoting.
@@ -827,6 +836,7 @@ impl Module {
             consumed: RefCell::new(HashSet::new()),
             consumed_decls: RefCell::new(HashSet::new()),
             stable_names: RefCell::new(HashMap::new()),
+            deps: Vec::new(),
             toks,
         };
         m.scan();
@@ -991,6 +1001,19 @@ impl Module {
                 continue;
             }
         }
+        // Every local module named after `require(`, `import` or `from`.
+        let mut deps = Vec::new();
+        for (k, tok) in t.iter().enumerate() {
+            let Tok::Str(Some(spec)) = &tok.tok else {
+                continue;
+            };
+            let named = k >= 2 && t[k - 1].is("(") && t[k - 2].is_ident("require")
+                || k >= 1 && (t[k - 1].is_ident("from") || t[k - 1].is_ident("import"));
+            if named && is_local(spec) && !deps.contains(spec) {
+                deps.push(spec.clone());
+            }
+        }
+        self.deps = deps;
         self.bindings = bindings;
         self.decls = decls;
         self.mutable = mutable;
@@ -1492,20 +1515,61 @@ impl<'o, 'l> Reader<'o, 'l> {
                 }
                 continue;
             }
-            let why = "port this code, or drop it if nothing below needs it";
+            let runs = format!("this runs when 11ty loads {}; port what it does", m.file);
             match self.declared(a, b) {
-                Some(names) => {
+                // A declaration runs nothing when its value is plain.
+                Some(names) if self.plain_declaration(a, b) => {
                     let at = self.src(a, b);
                     self.out.items.push(Item::Decl {
-                        why,
+                        why: DECLARED,
                         names,
                         at,
                         main: true,
                     });
                 }
-                None => self.todo(a, b, why, PORTING),
+                _ => self.todo(a, b, runs, PORTING),
             }
         }
+    }
+
+    /// Whether the declaration at `toks[a..b]` runs nothing: a function or
+    /// class, or `const x = ` a value that is data, a function or a module.
+    fn plain_declaration(&mut self, a: usize, b: usize) -> bool {
+        let m = self.m.clone();
+        let t = &m.toks;
+        if !matches!(t[a].ident(), Some("const" | "let" | "var")) {
+            return true;
+        }
+        if b <= a + 3 {
+            return false;
+        }
+        let mark = self.out.mark();
+        let v = self.eval(&Scope::default(), a + 3, b);
+        self.out.drop_touched(mark);
+        is_pure(&v)
+    }
+
+    /// A value 11ty works out and Brrrty neither ports nor quotes, at
+    /// `toks[a..b]`: `Ok` when working it out runs nothing and doesn't use the
+    /// config object; `Err(true)` when it uses the config object, `Err(false)`
+    /// when it runs code.
+    fn side_free(&mut self, scope: &Scope, a: usize, b: usize) -> Result<Val, bool> {
+        if self.mentions_config(scope, a, b) {
+            return Err(true);
+        }
+        let v = self.eval(scope, a, b);
+        if is_pure(&v) { Ok(v) } else { Err(false) }
+    }
+
+    /// Give up on the file: code Brrrty doesn't port, at `toks[a..b]`, uses
+    /// the config object.
+    fn config_escapes(&mut self, scope: &Scope, a: usize, b: usize) {
+        let p = self
+            .config_named(scope, a, b)
+            .unwrap_or_else(|| "the config object".to_string());
+        self.give_up(format!(
+            "code Brrrty can't port uses `{p}`, and could change any setting, so nothing here is certain"
+        ));
     }
 
     /// The names a top-level declaration at `toks[a..b]` declares, with the
@@ -1641,9 +1705,21 @@ impl<'o, 'l> Reader<'o, 'l> {
                     let v = match (&arg, default) {
                         (Val::Undefined, Some((x, y))) => {
                             let mark = self.out.mark();
-                            let v = self.eval(&scope, *x, *y);
+                            let v = self.side_free(&scope, *x, *y);
                             self.out.drop_touched(mark);
-                            v
+                            match v {
+                                Ok(v) => v,
+                                Err(true) => return self.config_escapes(&scope, *x, *y),
+                                Err(false) => {
+                                    self.todo(
+                                        *x,
+                                        *y,
+                                        "this default value runs code when the function is called without it; port what it does",
+                                        PORTING,
+                                    );
+                                    Val::Unknown
+                                }
+                            }
                         }
                         _ => arg,
                     };
@@ -2127,16 +2203,24 @@ impl<'o, 'l> Reader<'o, 'l> {
             return true;
         };
         let params = params(t, pat, pat_end);
+        if self.mentions_config(scope, source.0, source.1) {
+            self.config_escapes(scope, source.0, source.1);
+            return true;
+        }
         let mark = self.out.mark();
         let items = if of {
             self.iterate(scope, source.0, source.1)
         } else {
             let v = self.eval(scope, source.0, source.1);
-            self.entries_of(&v).map(|es| {
-                es.into_iter()
-                    .map(|e| Val::Lit(Lit::Str(e.key)))
-                    .collect::<Vec<_>>()
-            })
+            if is_pure(&v) {
+                self.entries_of(&v).map(|es| {
+                    es.into_iter()
+                        .map(|e| Val::Lit(Lit::Str(e.key)))
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                None
+            }
         };
         let stmts = js::statements(t, body.0, body.1);
         let def = FnDef {
@@ -2212,6 +2296,12 @@ impl<'o, 'l> Reader<'o, 'l> {
     /// The values `toks[a..b]` goes over: an array, or `Object.keys(...)`,
     /// `Object.values(...)` or `Object.entries(...)` of an object or module.
     fn iterate(&mut self, scope: &Scope, a: usize, b: usize) -> Option<Vec<Val>> {
+        let items = self.iterate_inner(scope, a, b)?;
+        // Working the list out must run nothing.
+        items.iter().all(is_pure).then_some(items)
+    }
+
+    fn iterate_inner(&mut self, scope: &Scope, a: usize, b: usize) -> Option<Vec<Val>> {
         let m = self.m.clone();
         let t = &m.toks;
         if b > a + 4
@@ -2224,6 +2314,10 @@ impl<'o, 'l> Reader<'o, 'l> {
         {
             let method = t[a + 2].ident()?;
             let v = self.eval(scope, a + 4, b - 1);
+            // Working the object out must run nothing, even for its keys alone.
+            if !is_pure(&v) {
+                return None;
+            }
             let es = self.entries_of(&v)?;
             return match method {
                 "keys" => Some(es.into_iter().map(|e| Val::Lit(Lit::Str(e.key))).collect()),
@@ -2263,8 +2357,12 @@ impl<'o, 'l> Reader<'o, 'l> {
             return None;
         }
         let args = js::split_commas(t, open + 1, b - 1);
-        if args.is_empty() || args.len() > 2 {
+        if args.len() != 1 {
             return None;
+        }
+        if self.mentions_config(scope, a, open - 2) {
+            self.config_escapes(scope, a, open - 2);
+            return Some(true);
         }
         let mark = self.out.mark();
         let items = self.iterate(scope, a, open - 2);
@@ -2334,11 +2432,35 @@ impl<'o, 'l> Reader<'o, 'l> {
         };
         let args_mark = self.out.mark();
         let mut args = Vec::new();
+        let mut runs_code = false;
         for (x, y) in js::split_commas(t, open + 1, b - 1) {
-            args.push(self.eval(scope, x, y));
+            // The config object itself is what the helper is followed with.
+            let bare = y == x + 1
+                && t[x]
+                    .ident()
+                    .is_some_and(|n| matches!(scope.vars.get(n), Some(Val::Config)));
+            if bare {
+                args.push(Val::Config);
+                continue;
+            }
+            match self.side_free(scope, x, y) {
+                Ok(v) => args.push(v),
+                Err(true) => {
+                    self.out.drop_touched(mark);
+                    self.config_escapes(scope, x, y);
+                    return Some(true);
+                }
+                Err(false) => {
+                    runs_code = true;
+                    args.push(Val::Unknown);
+                }
+            }
         }
         self.out.drop_touched(args_mark);
         self.out.commit(mark);
+        if runs_code {
+            self.todo(a, b, ARGUMENTS, PORTING);
+        }
         self.follow(fm, def, env, args, Kind::Helper, None);
         Some(true)
     }
@@ -2569,9 +2691,38 @@ impl<'o, 'l> Reader<'o, 'l> {
     /// The site's module `spec`, as `how` brings it in.
     fn module_val(&mut self, spec: &str, how: How) -> Val {
         match self.load(spec) {
+            // In a cycle, one of the modules gets the other's exports before
+            // it has finished loading: what it sees depends on the order.
+            Some(m) if self.cyclic(&m) => Val::Unknown,
             Some(m) => Val::Module(m, how),
             None => Val::Unknown,
         }
+    }
+
+    /// Whether `target` names this reader's module again, directly or
+    /// through the modules it names.
+    fn cyclic(&mut self, target: &Rc<Module>) -> bool {
+        let me = self.m.file.clone();
+        let mut seen = HashSet::new();
+        let mut stack = vec![target.clone()];
+        while let Some(m) = stack.pop() {
+            if m.file == me {
+                return true;
+            }
+            if !seen.insert(m.file.clone()) || seen.len() > 256 {
+                continue;
+            }
+            for spec in m.deps.clone() {
+                let mut child = Reader {
+                    m: m.clone(),
+                    out: &mut *self.out,
+                };
+                if let Some(d) = child.load(&spec) {
+                    stack.push(d);
+                }
+            }
+        }
+        false
     }
 
     /// Read the site's module `spec`, once, noting what runs when it loads.
@@ -2626,10 +2777,7 @@ impl<'o, 'l> Reader<'o, 'l> {
     fn load_top(&mut self) {
         let m = self.m.clone();
         let t = &m.toks;
-        let runs = format!(
-            "this runs when 11ty loads {}; port what it does, or drop it if nothing needs it",
-            m.file
-        );
+        let runs = format!("this runs when 11ty loads {}; port what it does", m.file);
         let push = |r: &mut Self, item: Item| r.out.loaded_items.push(item);
         for (a, b) in js::statements(t, 0, t.len()) {
             if b == a + 1 && matches!(t[a].tok, Tok::Str(_)) {
@@ -2714,7 +2862,7 @@ impl<'o, 'l> Reader<'o, 'l> {
                     let at = self.src(a, b);
                     let item = if pure {
                         Item::Decl {
-                            why: "port this code, or drop it if nothing below needs it",
+                            why: DECLARED,
                             names: vec![(name, at_tok)],
                             at,
                             main: false,
@@ -2761,7 +2909,7 @@ impl<'o, 'l> Reader<'o, 'l> {
                     push(
                         self,
                         Item::Decl {
-                            why: "port this code, or drop it if nothing below needs it",
+                            why: DECLARED,
                             names,
                             at,
                             main: false,
@@ -2945,13 +3093,22 @@ impl<'o, 'l> Reader<'o, 'l> {
                     Lit::Str(s) => Some(s),
                     _ => None,
                 });
+            // The last argument with a place to quote; every other argument
+            // must run nothing, as the loop's own code isn't quoted.
             let mut target = None;
+            let mut others_plain = true;
             for &(x, y) in args.iter().rev() {
                 let v = self.eval(scope, x, y);
-                if let Some(at) = self.where_val(&v) {
+                if target.is_none()
+                    && let Some(at) = self.where_val(&v)
+                {
                     target = Some(at);
-                    break;
+                    continue;
                 }
+                others_plain &= is_pure(&v);
+            }
+            if !others_plain {
+                target = None;
             }
             if let (Some(name), Some(at)) = (name, target) {
                 let line = lp.m.line_of(lp.span.0);
@@ -3207,9 +3364,23 @@ impl<'o, 'l> Reader<'o, 'l> {
         let mark = self.out.mark();
         let v = self.eval(scope, first.0, first.1);
         if let Some((fm, def, env)) = self.plugin_fn(v) {
+            // Options that use the config object can change any setting;
+            // options that run code get a TODO, and the plugin is still followed.
+            if let Some(&(x, y)) = args.get(1)
+                && self.mentions_config(scope, x, y)
+            {
+                self.out.drop_touched(mark);
+                self.config_escapes(scope, x, y);
+                return true;
+            }
+            let mut runs_code = false;
             let options = match args.get(1) {
                 None => Some(Val::Obj(Vec::new())),
-                Some(&(x, y)) if args.len() == 2 => Some(self.eval(scope, x, y)),
+                Some(&(x, y)) if args.len() == 2 => {
+                    let v = self.eval(scope, x, y);
+                    runs_code = !is_pure(&v);
+                    Some(v)
+                }
                 Some(_) => None,
             };
             // `immediate` runs the plugin at once, outside 11ty's plugin stage.
@@ -3231,6 +3402,9 @@ impl<'o, 'l> Reader<'o, 'l> {
             };
             self.out.commit(mark);
             self.out.keep = true;
+            if runs_code {
+                self.todo(a, b, ARGUMENTS, link);
+            }
             if immediate || self.out.in_plugin || self.out.cond > 0 || self.out.deferred.is_none() {
                 let was = self.out.in_plugin;
                 // 11ty runs a plugin added while plugins run, or with `immediate`, at
@@ -3744,6 +3918,7 @@ impl Out<'_> {
                 input: None,
                 output: None,
                 modules: Vec::new(),
+                uses_rss: false,
             };
         }
         // `--input` and `--output` in the build script win over the config.
@@ -3877,6 +4052,9 @@ impl Out<'_> {
             input: dir("dir.input"),
             output: dir("dir.output"),
             modules: std::mem::take(&mut self.read),
+            uses_rss: items
+                .iter()
+                .any(|i| matches!(i, Item::Rhai(l) if l.starts_with("config.add_plugin(\"rss\""))),
         }
     }
 }
@@ -3972,7 +4150,7 @@ module.exports = function (eleventyConfig) {
         let t = port(src, ".eleventy.js").text;
         assert!(t.contains("config.add_passthrough_copy(\"a\");"), "{t}");
         assert!(
-            t.contains("// TODO(brrrty): port this code, or drop it"),
+            t.contains("// TODO(brrrty): port this code along with the code that uses it."),
             "{t}"
         );
         assert!(!t.contains("module.exports"), "{t}");
@@ -4274,7 +4452,7 @@ module.exports = function (eleventyConfig) {
         assert!(
             todos
                 .iter()
-                .any(|t| t.starts_with("port this code, or drop it")),
+                .any(|t| t.starts_with("port this code along with the code that uses it")),
             "{}",
             p.text
         );
@@ -4335,6 +4513,98 @@ module.exports = function (eleventyConfig) {
             p.text
         );
         assert_eq!(p.todos, 1, "{}", p.text);
+    }
+
+    /// Values 11ty works out on the way (arguments, options, defaults, loop
+    /// sources) are never dropped: code in them that uses the config object
+    /// refuses the file, other code gets a TODO.
+    #[test]
+    fn values_worked_out_on_the_way_are_never_dropped() {
+        let p_js = (
+            "p.js",
+            "module.exports = function (c, o) { c.addPassthroughCopy(\"a\"); };\n",
+        );
+        // Refused: the config object is used where Brrrty doesn't follow it.
+        for src in [
+            // 11ty builds from `elsewhere`.
+            "function h(c, opts) { c.addPassthroughCopy(\"a\"); }\nmodule.exports = function (c) {\n  h(c, c.setInputDirectory(\"elsewhere\"));\n};\n",
+            // 11ty copies `secret`.
+            "const p = require(\"./p.js\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { x: c.addPassthroughCopy(\"secret\") });\n};\n",
+            "function setup(c) { c.addPassthroughCopy(\"secret\"); return 1; }\nfunction h(c, n) { c.addPassthroughCopy(\"a\"); }\nmodule.exports = function (c) {\n  h(c, setup(c));\n};\n",
+            "function setup(c) { c.addPassthroughCopy(\"secret\"); return \"a\"; }\nmodule.exports = function (c) {\n  [setup(c), \"b\"].forEach(() => c.addPassthroughCopy(\"z\"));\n};\n",
+            "function h(c, x = c.setOutputDirectory(\"o\")) { c.addPassthroughCopy(\"a\"); }\nmodule.exports = function (c) { h(c); };\n",
+        ] {
+            let p = port_files(src, &[p_js]);
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert!(p.text.contains("TODO(brrrty-file)"), "{src}\n{}", p.text);
+        }
+        // A TODO quotes the code that runs; what can be followed still is.
+        for (src, quoted) in [
+            (
+                "const fs = require(\"fs\");\nconst p = require(\"./p.js\");\nmodule.exports = function (c) {\n  c.addPlugin(p, { x: fs.writeFileSync(\"src/gen.md\", \"# gen\") });\n};\n",
+                "eleventy.config.js, line 4:",
+            ),
+            (
+                "const fs = require(\"fs\");\nfunction h(c, n) { c.addPassthroughCopy(\"a\"); }\nmodule.exports = function (c) {\n  h(c, fs.rmSync(\"src/drafts\", { recursive: true, force: true }));\n};\n",
+                "eleventy.config.js, line 4:",
+            ),
+            (
+                "const fs = require(\"fs\");\nfunction h(c, x = fs.writeFileSync(\"src/g.md\", \"# g\")) { c.addPassthroughCopy(\"a\"); }\nmodule.exports = function (c) { h(c); };\n",
+                "eleventy.config.js, line 2:",
+            ),
+        ] {
+            let p = port_files(src, &[p_js]);
+            assert_eq!(
+                live(&p),
+                ["config.add_passthrough_copy(\"a\");"],
+                "{src}\n{}",
+                p.text
+            );
+            assert_eq!(p.todos, 1, "{src}\n{}", p.text);
+            assert!(p.text.contains(quoted), "{src}\n{}", p.text);
+        }
+        // A loop over a list or object whose making runs code is one TODO,
+        // and so is the top-level code that makes it.
+        for (src, todos) in [
+            (
+                "const fs = require(\"fs\");\nconst list = [fs.rmSync(\"src/drafts\", { recursive: true, force: true }), 1];\nmodule.exports = function (c) {\n  list.forEach(() => c.addPassthroughCopy(\"z\"));\n};\n",
+                2,
+            ),
+            (
+                "const fs = require(\"fs\");\nmodule.exports = function (c) {\n  for (const k of Object.keys({ a: fs.writeFileSync(\"src/gen.md\", \"# gen\") })) {\n    c.addPassthroughCopy(\"z\");\n  }\n};\n",
+                1,
+            ),
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+            assert_eq!(p.todos, todos, "{src}\n{}", p.text);
+            assert!(!p.text.contains("drop it"), "{src}\n{}", p.text);
+        }
+    }
+
+    /// In a cycle, a module gets the other's exports before it has finished
+    /// loading (here `{}`, as `module.exports` is replaced): unknown.
+    #[test]
+    fn a_module_cycle_is_never_followed() {
+        let src =
+            "const a = require(\"./a.js\");\nmodule.exports = function (c) { a.register(c); };\n";
+        let files = [
+            (
+                "a.js",
+                "const b = require(\"./b.js\");\nmodule.exports = { static: 1, register(c) { b(c); } };\n",
+            ),
+            (
+                "b.js",
+                "const a = require(\"./a.js\");\nmodule.exports = function (c) { Object.keys(a).forEach((k) => c.addPassthroughCopy(k)); };\n",
+            ),
+        ];
+        let p = port_files(src, &files);
+        assert!(
+            !p.text.contains("config.add_passthrough_copy(\"static\")"),
+            "{}",
+            p.text
+        );
+        assert!(p.todos >= 1, "{}", p.text);
     }
 
     #[test]

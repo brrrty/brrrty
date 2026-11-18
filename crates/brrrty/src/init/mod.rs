@@ -342,15 +342,24 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
                             Some(_) => Err(format!("{path} isn't UTF-8 text Brrrty reads")),
                         }
                     };
+                    let rss = rss_version(&root, &before_edit);
                     let site = port::Site {
                         cli,
                         load: Some(&load),
-                        rss: rss_major(&root, &before_edit),
+                        rss: rss.as_deref().and_then(brrrty_config::rss_version::major),
                     };
                     let mut p = port::port_site(src.strip_prefix(BOM).unwrap_or(&src), name, site);
                     record_source(&mut p.text, name, src.as_bytes());
                     for (module, text) in &p.modules {
                         record_module(&mut p.text, module, text.as_bytes());
+                    }
+                    // The plugin's version, which a build checks again.
+                    if p.uses_rss
+                        && let Some(v) = &rss
+                    {
+                        let line = format!("{}{}\n", brrrty_config::rss_version::RSS_LINE, one_line_version(v));
+                        let at = p.text.find("\n\n").map_or(p.text.len(), |i| i + 1);
+                        p.text.insert_str(at, &line);
                     }
                     p
                 }
@@ -453,44 +462,28 @@ fn record_module(text: &mut String, name: &str, bytes: &[u8]) {
     text.insert_str(at, &line);
 }
 
-/// The major version of `@11ty/eleventy-plugin-rss` the site installs: from
-/// package-lock.json, the installed package, or an exact or caret range in
-/// package.json.
-fn rss_major(root: &Path, package: &serde_json::Value) -> Option<u64> {
-    const NAME: &str = "@11ty/eleventy-plugin-rss";
-    let json = |name: &str| -> Option<serde_json::Value> {
+/// The version of `@11ty/eleventy-plugin-rss` the site installs: from
+/// package-lock.json, the installed package, or package.json's range.
+fn rss_version(root: &Path, package: &serde_json::Value) -> Option<String> {
+    use brrrty_config::rss_version::{PACKAGE, from_files};
+    let text = |name: &str| -> Option<String> {
         match read_inside(root, name) {
-            Ok(Some(Read::Text(t))) => serde_json::from_str(t.strip_prefix(BOM).unwrap_or(&t)).ok(),
+            Ok(Some(Read::Text(t))) => Some(t),
             _ => None,
         }
     };
-    let major = |v: &str| -> Option<u64> {
-        let v = v.trim();
-        let v = v.strip_prefix(['^', '~', '=', 'v']).unwrap_or(v);
-        if v.contains([' ', '|', '<', '>', '*']) {
-            return None;
-        }
-        let digits: String = v.chars().take_while(char::is_ascii_digit).collect();
-        if digits.is_empty() || !v[digits.len()..].is_empty() && !v[digits.len()..].starts_with('.')
-        {
-            return None;
-        }
-        digits.parse().ok()
-    };
-    if let Some(lock) = json("package-lock.json")
-        && let Some(v) = lock["packages"][format!("node_modules/{NAME}")]["version"].as_str()
-    {
-        return major(v);
-    }
-    if let Some(installed) = json(&format!("node_modules/{NAME}/package.json"))
-        && let Some(v) = installed["version"].as_str()
-    {
-        return major(v);
-    }
-    ["dependencies", "devDependencies"]
-        .iter()
-        .find_map(|d| package[d][NAME].as_str())
-        .and_then(major)
+    from_files(
+        text("package-lock.json").as_deref(),
+        text(&format!("node_modules/{PACKAGE}/package.json")).as_deref(),
+        Some(&package.to_string()),
+    )
+}
+
+/// A version as one safe comment line.
+fn one_line_version(v: &str) -> String {
+    v.chars()
+        .filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}' | '\u{85}'))
+        .collect()
 }
 
 /// Add the line recording what the scripts pass to 11ty: a build warns when they change.

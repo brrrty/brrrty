@@ -245,11 +245,10 @@ pub fn feed(options: &Value) -> Result<FeedOptions, String> {
     if !input_path.ends_with(".njk")
         || input_path.starts_with('/')
         || input_path.split('/').any(|p| p == ".." || p.is_empty())
-        || input_path.starts_with("_includes/")
         || input_path.starts_with("_data/")
     {
         return Err(format!(
-            "{call}: `input_path` is `{input_path}`; Brrrty supports a `.njk` path inside the input folder, outside `_includes` and `_data`"
+            "{call}: `input_path` is `{input_path}`; Brrrty supports a `.njk` path inside the input folder, outside the includes, layouts and `_data` folders"
         ));
     }
 
