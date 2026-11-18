@@ -122,6 +122,25 @@ pub fn place(name: &str) -> String {
     }
 }
 
+/// Whether a label is a CI file's (`.gitlab-ci.yml, line 8`, a GitHub workflow's).
+fn is_ci(name: &str) -> bool {
+    name.starts_with(".gitlab-ci.yml, ") || name.starts_with(".github/workflows/")
+}
+
+/// The file of a CI label: `.gitlab-ci.yml, line 8` is `.gitlab-ci.yml`.
+fn ci_file(label: &str) -> &str {
+    label.split_once(", line ").map_or(label, |(f, _)| f)
+}
+
+/// Whether a command runs a Brrrty build: `brrrty build`, `npx brrrty build`.
+fn runs_brrrty_build(cmd: &str) -> bool {
+    steps(cmd).iter().any(|step| {
+        let w = words(step);
+        w.windows(2)
+            .any(|p| p[0].ends_with("brrrty") && p[1] == "build")
+    })
+}
+
 /// Whether a script name is a deploy config's label (`netlify.toml, [build] command`).
 fn is_deploy(name: &str) -> bool {
     [
@@ -891,7 +910,14 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
     let package = scripts
         .iter()
         .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string(), false)));
-    for (name, cmd, unread) in package.chain(deploy_commands(root)) {
+    let deploys = deploy_commands(root);
+    // CI files that run a Brrrty build: their 11ty runs are there to compare with it.
+    let ci_brrrty: Vec<&str> = deploys
+        .iter()
+        .filter(|(label, cmd, _)| is_ci(label) && runs_brrrty_build(cmd))
+        .map(|(label, ..)| ci_file(label))
+        .collect();
+    for (name, cmd, unread) in package.chain(deploys.iter().cloned()) {
         if unread {
             unreadable.push((name, cmd));
             continue;
@@ -1031,11 +1057,27 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 .collect::<Vec<_>>()
         };
         let shaped = |r: &Run| r.sig.iter().any(|(n, _)| compare_only(n));
-        if let Some(reference) = chosen.iter().find(|r| !shaped(r)).map(core) {
-            chosen.retain(|r| !shaped(r) || core(r) != reference);
-        } else if brrrty_build {
-            for r in &mut chosen {
-                r.sig.retain(|(n, _)| !compare_only(n));
+        // Only a CI run or a package.json script other than `build` can be a comparison
+        // run; Netlify's and Vercel's commands are the deploy build. And only when the
+        // real build is clearly elsewhere: Brrrty's (`build`, or the same CI file), or
+        // another 11ty run writing to the usual output.
+        let reference = chosen.iter().find(|r| !shaped(r)).map(core);
+        let comparison = |r: &Run| {
+            shaped(r)
+                && (is_ci(&r.name) || (!is_deploy(&r.name) && r.name != "build"))
+                && (brrrty_build
+                    || (is_ci(&r.name) && ci_brrrty.contains(&ci_file(&r.name)))
+                    || reference.is_some())
+        };
+        match &reference {
+            Some(reference) => chosen.retain(|r| !comparison(r) || core(r) != *reference),
+            None => {
+                let marks: Vec<bool> = chosen.iter().map(comparison).collect();
+                for (r, m) in chosen.iter_mut().zip(marks) {
+                    if m {
+                        r.sig.retain(|(n, _)| !compare_only(n));
+                    }
+                }
             }
         }
     }
@@ -1883,5 +1925,79 @@ mod tests {
             "{why}"
         );
         assert!(!why.contains("JavaScript API"), "{why}");
+    }
+
+    #[test]
+    fn a_deploy_command_is_never_a_comparison_run() {
+        for (file, body) in [
+            (
+                "netlify.toml",
+                "[build]\ncommand = \"npx @11ty/eleventy --output=public\"\n",
+            ),
+            (
+                "vercel.json",
+                "{\"buildCommand\": \"npx @11ty/eleventy --output=public\"}",
+            ),
+        ] {
+            let t = site();
+            write(&t, file, body);
+            let pkg = json!({ "scripts": { "build": "eleventy" } });
+            let c = find(&pkg, t.path()).unwrap_or_else(|| panic!("{file}: silent"));
+            assert!(
+                c.todos[0].why.contains("both run 11ty"),
+                "{file}: {:?}",
+                c.todos
+            );
+            // Alone, its --output is the build's.
+            let c = find(&json!({}), t.path()).unwrap();
+            assert_eq!(c.output.as_deref(), Some("public"), "{file}");
+            // Even with Brrrty as `build`: the deploy runs 11ty, so it is 11ty's build.
+            let c = find(&json!({ "scripts": { "build": "brrrty build" } }), t.path()).unwrap();
+            assert_eq!(c.output.as_deref(), Some("public"), "{file}");
+        }
+    }
+
+    #[test]
+    fn a_ci_only_build_writes_its_real_output() {
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - npm ci\n    - npx @11ty/eleventy --output=public\n",
+        );
+        let pkg = json!({ "devDependencies": { "@11ty/eleventy": "3" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.output.as_deref(), Some("public"));
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        // With a non-Brrrty `build` that runs no 11ty, it is still the build.
+        let pkg = json!({ "scripts": { "build": "vite build" }, "devDependencies": { "@11ty/eleventy": "3" } });
+        assert_eq!(
+            find(&pkg, t.path()).unwrap().output.as_deref(),
+            Some("public")
+        );
+    }
+
+    #[test]
+    fn a_ci_file_that_runs_brrrty_marks_its_11ty_runs_as_comparisons() {
+        let t = site();
+        write(
+            &t,
+            ".github/workflows/c.yml",
+            "jobs:\n  c:\n    steps:\n      - run: npx brrrty build\n      - run: npx @11ty/eleventy --input=src --output=_site-11ty\n",
+        );
+        let c = find(&json!({}), t.path()).unwrap();
+        assert_eq!(c.input.as_deref(), Some("src"));
+        assert_eq!(c.output, None);
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        // Without the Brrrty build there, the run is the build.
+        write(
+            &t,
+            ".github/workflows/c.yml",
+            "jobs:\n  c:\n    steps:\n      - run: npx @11ty/eleventy --input=src --output=_site-11ty\n",
+        );
+        assert_eq!(
+            find(&json!({}), t.path()).unwrap().output.as_deref(),
+            Some("_site-11ty")
+        );
     }
 }
