@@ -1062,8 +1062,12 @@ const COMPARE_CI: &str = "build:\n  script:\n    - npm ci\n    - npm run build\n
 /// build and not API use: init marks nothing, and the page builds.
 #[test]
 fn a_ci_comparison_run_is_not_marked() {
+    // As the blog has it: Brrrty is the build already, and 11ty's command is kept.
     let dir = site(&[
-        ("package.json", &pkg("npx @11ty/eleventy")),
+        (
+            "package.json",
+            "{\"scripts\":{\"build\":\"brrrty build\",\"build:11ty\":\"npx @11ty/eleventy\"},\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+        ),
         ("eleventy.config.js", "module.exports = function () {};\n"),
         (".gitlab-ci.yml", COMPARE_CI),
         ("ci/compare.mjs", COMPARE_MJS),
@@ -1105,4 +1109,70 @@ fn a_config_0_0_19_recorded_stays_in_step() {
     let built = run(dir.path(), &["build"]);
     assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
     assert_eq!(stderr(&built), "");
+}
+
+/// Review: the standard GitLab Pages setup, through `init` and `doctor`. init rewrites
+/// `build` to Brrrty's, but reads the scripts as they were, so the pages job's
+/// `--output=public` is a conflict with `build`'s `_site`, not a comparison.
+#[test]
+fn a_gitlab_pages_site_is_marked_through_init() {
+    let dir = site(&[
+        ("package.json", &pkg("eleventy")),
+        (
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - npm ci\n    - npx @11ty/eleventy --output=public\n  artifacts:\n    paths:\n      - public\n",
+        ),
+        ("index.md", "# Hi\n"),
+    ]);
+    let init = run(dir.path(), &["init", "--yes"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains("// TODO(brrrty): 11ty writes to `_site`"),
+        "{rhai}"
+    );
+    assert!(
+        rhai.contains("but to `public` in .gitlab-ci.yml, line 4"),
+        "{rhai}"
+    );
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(
+        text.ends_with("0 of 1 page will build; 1 blocker, grouped below.\n"),
+        "{text}"
+    );
+    // Ported: `dir.output` set to `public` and the marker deleted. As package.json now
+    // has Brrrty as `build`, the job is a comparison from here on, and nothing warns.
+    let ported: String = rhai
+        .lines()
+        .filter(|l| !l.starts_with("// TODO(brrrty)"))
+        .map(|l| format!("{l}\n"))
+        .collect::<String>()
+        + "#{ dir: #{ output: \"public\" } }\n";
+    std::fs::write(dir.path().join("brrrty.config.rhai"), ported).unwrap();
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(stderr(&built), "");
+    assert!(dir.path().join("public/index.html").is_file());
+}
+
+/// Before the switch to Brrrty, the same compare job beside an 11ty `build` isn't a
+/// comparison with a Brrrty build: its other output is a conflict to resolve.
+#[test]
+fn a_compare_job_beside_an_11ty_build_is_marked() {
+    let dir = site(&[
+        ("package.json", &pkg("npx @11ty/eleventy")),
+        (".gitlab-ci.yml", COMPARE_CI),
+        ("ci/compare.mjs", COMPARE_MJS),
+        ("index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains(".gitlab-ci.yml, line 8 → ci/compare.mjs"),
+        "{rhai}"
+    );
+    assert!(
+        rhai.contains("// package.json, scripts.build:11ty:"),
+        "{rhai}"
+    );
 }
