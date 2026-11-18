@@ -1115,3 +1115,26 @@ fn a_build_or_a_second_session_leaves_a_live_session_alone() {
     assert!(finished.problems.is_empty(), "{:?}", finished.problems);
     assert!(!root.join("_site").join(STAGING_DIR).exists());
 }
+
+#[test]
+fn a_todo_marker_shows_why_until_it_is_deleted() {
+    let t = site();
+    write(
+        t.path(),
+        "brrrty.config.rhai",
+        "// TODO(brrrty): port this.\n",
+    );
+    with_session(t.path(), |live| {
+        let (status, body) = get(live.server, "/");
+        assert_eq!(status, 404);
+        assert!(body.contains("config-todo"), "{body}");
+        assert!(body.contains("brrrty.config.rhai:1"), "{body}");
+        // Nothing reaches the output folder.
+        assert!(!live.root.join("_site/index.html").exists());
+        live.settle();
+        write(live.root, "brrrty.config.rhai", "// Ported by hand.\n");
+        let r = live.next_rebuild();
+        assert!(r.ok, "{:?}", r.problems);
+        assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
+    });
+}

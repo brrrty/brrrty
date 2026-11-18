@@ -102,6 +102,9 @@ pub fn text(d: &Diagnosis) -> String {
             } else {
                 let _ = writeln!(out, "   {kind}: {at}: {}", p.message);
             }
+            if let Some(help) = &p.help {
+                let _ = writeln!(out, "     help: {help}");
+            }
         }
         out.push('\n');
     }

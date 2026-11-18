@@ -54,7 +54,7 @@ Pages that only wait on other pages aren't blockers of their own. A page that sh
 
 The last line is the verdict. "At least" means a template paginates data that a blocker stops, so Brrrty can't know how many pages it makes yet: it counts as one until that blocker is fixed. Every group with such a template says "at least" too, and the blockers that stop a pagination come first.
 
-Warnings and notes are listed after the groups. They stop nothing. One of them, `config-stale`, says your 11ty config changed after `brrrty init` ported it.
+Warnings and notes are listed after the groups, each with its help. They stop nothing. Two of them are about the config: `config-stale` says your 11ty config changed, or 11ty now reads another file, since `brrrty.config.rhai` recorded it as ported, and `config-unverified` says nothing records your 11ty config as ported. Each gives the `// Ported from:` line to put in `brrrty.config.rhai` once your port covers it.
 
 ## `--verify`
 

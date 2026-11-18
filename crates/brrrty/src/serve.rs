@@ -726,6 +726,14 @@ impl Session {
         let served = report.complete && (ok || !self.flags.strict);
         if !served {
             let _ = fs::remove_dir_all(&dir);
+        } else if let Some(p) = report
+            .problems
+            .iter()
+            .find(|p| p.code == brrrty_core::codes::CONFIG_TODO)
+        {
+            // Nothing was written: say why on every page instead of a bare 404. The page is
+            // only in the build folder, never mirrored to the output folder.
+            let _ = fs::write(dir.join("404.html"), unported_page(p));
         }
         self.watch_reads(&report.reads);
         let entries = report
@@ -1457,6 +1465,28 @@ fn same_bytes(a: &Path, b: &Path) -> bool {
         return false;
     }
     matches!((fs::read(a), fs::read(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// The page `brrrty serve` shows for every path while `brrrty init`'s TODO markers are left.
+fn unported_page(p: &Problem) -> String {
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let at = match (&p.path, p.line) {
+        (Some(path), Some(line)) => format!("{}:{line}", path.display()),
+        (Some(path), None) => path.display().to_string(),
+        _ => String::new(),
+    };
+    format!(
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Brrrty: config not ported yet</title>\n</head>\n<body>\n<h1>No pages yet: the config isn't fully ported</h1>\n<p><code>{}</code> ({}): {}</p>\n<p>{}</p>\n</body>\n</html>\n",
+        esc(p.code),
+        esc(&at),
+        esc(&p.message),
+        esc(p.help.as_deref().unwrap_or_default())
+    )
 }
 
 #[cfg(test)]

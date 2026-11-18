@@ -218,7 +218,7 @@ fn a_todo_init_left_blocks_every_page_and_comes_first() {
     let text = stdout(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("warning: brrrty.config.rhai:4:1: eleventy.config.js changed after `brrrty init` ported it"),
+        text.contains("warning: brrrty.config.rhai:4:1: eleventy.config.js changed since brrrty.config.rhai recorded it as ported"),
         "{text}"
     );
     assert!(text.ends_with("All 2 pages will build.\n"), "{text}");
@@ -599,4 +599,140 @@ fn a_page_that_reads_refused_content_is_listed_under_its_blocker() {
         text.ends_with("0 of 2 pages will build; 1 blocker, grouped below.\n"),
         "{text}"
     );
+}
+
+/// The review's repro: the build script passes 11ty `--input`, `--config` and `--pathprefix`.
+/// init reads the config `--config` names, ports `--input`, and marks the transform and the
+/// path prefix; nothing builds until they are dealt with.
+#[test]
+fn the_build_scripts_flags_are_ported_or_marked() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\"scripts\":{\"build\":\"eleventy --input=src --config=site.config.js --pathprefix=/blog/\"},\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+        ),
+        (
+            "site.config.js",
+            "module.exports = function (eleventyConfig) {\n  eleventyConfig.addTransform(\"up\", (c) => c.toUpperCase());\n};\n",
+        ),
+        ("src/index.md", "# Hi\n\n{{ \"/x/\" | url }}\n"),
+    ]);
+    let init = run(dir.path(), &["init", "--yes"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    for want in [
+        "// Written by `brrrty init` from site.config.js",
+        "// Ported from: site.config.js sha256:",
+        "// TODO(brrrty): port this to Rhai.",
+        "// TODO(brrrty): `--pathprefix=/blog/` sets 11ty's `pathPrefix`",
+        "// package.json, scripts.build:\n//     eleventy --input=src --config=site.config.js --pathprefix=/blog/\n",
+        "#{\n    dir: #{\n        input: \"src\",\n    },\n}\n",
+    ] {
+        assert!(rhai.contains(want), "missing {want:?} in:\n{rhai}");
+    }
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("has 2 `TODO(brrrty)` markers"), "{text}");
+    assert!(
+        text.ends_with("0 of 1 page will build; 1 blocker, grouped below.\n"),
+        "{text}"
+    );
+    // `--strict` stops too, and nothing is written.
+    let strict = run(dir.path(), &["build", "--strict"]);
+    assert_eq!(strict.status.code(), Some(1));
+    assert!(
+        stderr(&strict).contains("config-todo"),
+        "{}",
+        stderr(&strict)
+    );
+    assert!(!dir.path().join("_site").exists());
+}
+
+/// With markers left, a passthrough file isn't copied, and an old output folder keeps
+/// what it had (as 11ty never cleans it) but gets nothing new.
+#[test]
+fn markers_copy_nothing_into_an_existing_output_folder() {
+    let dir = site(&[
+        (
+            "brrrty.config.rhai",
+            "// TODO(brrrty): port this.\nconfig.add_passthrough_copy(\"img\");\n",
+        ),
+        ("img/a.png", "png"),
+        ("index.md", "# A\n"),
+        ("_site/old.html", "old"),
+    ]);
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(1));
+    assert!(
+        stdout(&built).starts_with("Wrote 0 files, copied 0 files"),
+        "{}",
+        stdout(&built)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("_site/old.html")).unwrap(),
+        "old"
+    );
+    assert!(!dir.path().join("_site/img").exists());
+    assert!(!dir.path().join("_site/index.html").exists());
+}
+
+/// A hand-written config with an 11ty config beside it warns until it records the port;
+/// then a change to the 11ty config, or a newer one 11ty reads first, warns through `build`.
+#[test]
+fn hand_ports_are_unverified_until_recorded_then_tracked() {
+    let js = "module.exports = function () {};\n";
+    let dir = site(&[
+        ("eleventy.config.js", js),
+        (
+            "brrrty.config.rhai",
+            "config.add_passthrough_copy(\"img\");\n",
+        ),
+        ("img/a.png", "png"),
+        ("index.md", "# A\n"),
+    ]);
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    let err = stderr(&built);
+    assert!(err.contains("config-unverified"), "{err}");
+    let hash = brrrty_config::markers::source_hash(js.as_bytes());
+    let line = format!("// Ported from: eleventy.config.js {hash}");
+    assert!(err.contains(&line), "{err}");
+    // Doctor shows the line to add too.
+    let doc = stdout(&run(dir.path(), &["doctor"]));
+    assert!(doc.contains(&line), "{doc}");
+
+    std::fs::write(
+        dir.path().join("brrrty.config.rhai"),
+        format!("{line}\nconfig.add_passthrough_copy(\"img\");\n"),
+    )
+    .unwrap();
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(stderr(&built), "", "{}", stderr(&built));
+    // CRLF line endings are the same file.
+    std::fs::write(
+        dir.path().join("eleventy.config.js"),
+        js.replace('\n', "\r\n"),
+    )
+    .unwrap();
+    assert_eq!(stderr(&run(dir.path(), &["build"])), "");
+    // A real change warns, with the new hash.
+    std::fs::write(
+        dir.path().join("eleventy.config.js"),
+        "module.exports = 1;\n",
+    )
+    .unwrap();
+    let err = stderr(&run(dir.path(), &["build"]));
+    assert!(err.contains("config-stale"), "{err}");
+    assert!(
+        err.contains(&brrrty_config::markers::source_hash(
+            b"module.exports = 1;\n"
+        )),
+        "{err}"
+    );
+    // So does an `.eleventy.js` beside it, which 11ty reads first.
+    std::fs::write(dir.path().join("eleventy.config.js"), js).unwrap();
+    std::fs::write(dir.path().join(".eleventy.js"), js).unwrap();
+    let err = stderr(&run(dir.path(), &["build"]));
+    assert!(err.contains("11ty now reads .eleventy.js"), "{err}");
 }
