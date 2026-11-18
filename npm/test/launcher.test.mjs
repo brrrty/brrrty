@@ -104,6 +104,14 @@ test('the binary is told which Node runs the launcher', async () => {
   assert.equal(r.stdout, process.execPath);
 });
 
+test('only Node itself is passed on as the Node for data files', () => {
+  const { isNode } = launcher;
+  assert.equal(isNode(process.versions, process.release), true);
+  assert.equal(isNode({ node: '22.0.0', bun: '1.2.0' }, { name: 'node' }), false);
+  assert.equal(isNode({ node: '22.0.0', deno: '2.0.0' }, { name: 'node' }), false);
+  assert.equal(isNode({ node: '22.0.0' }, null), false);
+});
+
 test('a BRRRTY_NODE already set is kept', async () => {
   const code = `require(${JSON.stringify(launcherPath)}).run(${JSON.stringify(fake)}, ["env", "BRRRTY_NODE"])`;
   const child = spawn(process.execPath, ['-e', code], {

@@ -72,6 +72,20 @@ function binaryPath(platform = process.platform, arch = process.arch, resolve = 
   return path.join(path.dirname(manifest), 'bin', 'brrrty');
 }
 
+// True when this runtime is Node itself, not one that answers like it
+// (Bun, Deno), whose module and fs behaviour data files would then see.
+function isNode(versions = process.versions, release = process.release) {
+  return !versions.bun && !versions.deno && !!release && release.name === 'node';
+}
+
+// The binary's environment: the launcher's process id, and this Node for
+// JavaScript data files unless BRRRTY_NODE names one already.
+function childEnv() {
+  const env = { ...process.env, [LAUNCHER_PID_VAR]: String(process.pid) };
+  if (!env[NODE_VAR] && isNode()) env[NODE_VAR] = process.execPath;
+  return env;
+}
+
 // Runs the binary, passes signals on, and ends this process the way the
 // binary ended.
 function run(bin, args, { coalesceMs = COALESCE_MS } = {}) {
@@ -81,11 +95,7 @@ function run(bin, args, { coalesceMs = COALESCE_MS } = {}) {
   const child = childProcess.spawn(bin, args, {
     stdio: 'inherit',
     detached: process.platform !== 'win32',
-    env: {
-      ...process.env,
-      [LAUNCHER_PID_VAR]: String(process.pid),
-      [NODE_VAR]: process.env[NODE_VAR] || process.execPath,
-    },
+    env: childEnv(),
   });
 
   const lastSent = new Map();
@@ -142,4 +152,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { PACKAGES, FORWARDED, LAUNCHER_PID_VAR, LauncherError, binaryPath, run };
+module.exports = { PACKAGES, FORWARDED, LAUNCHER_PID_VAR, LauncherError, binaryPath, isNode, run };
