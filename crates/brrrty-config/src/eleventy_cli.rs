@@ -1059,15 +1059,15 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         let shaped = |r: &Run| r.sig.iter().any(|(n, _)| compare_only(n));
         // Only a CI run or a package.json script other than `build` can be a comparison
         // run; Netlify's and Vercel's commands are the deploy build. And only when the
-        // real build is clearly elsewhere: Brrrty's (`build`, or the same CI file), or
-        // another 11ty run writing to the usual output.
+        // real build is Brrrty's: `build` is a Brrrty command, or the same CI file (the
+        // file, not the job) runs a Brrrty build.
+        // Only Brrrty's build makes a run a comparison: a GitLab Pages job's
+        // `--output=public` beside an 11ty `build` may well be what's deployed.
         let reference = chosen.iter().find(|r| !shaped(r)).map(core);
         let comparison = |r: &Run| {
             shaped(r)
                 && (is_ci(&r.name) || (!is_deploy(&r.name) && r.name != "build"))
-                && (brrrty_build
-                    || (is_ci(&r.name) && ci_brrrty.contains(&ci_file(&r.name)))
-                    || reference.is_some())
+                && (brrrty_build || (is_ci(&r.name) && ci_brrrty.contains(&ci_file(&r.name))))
         };
         match &reference {
             Some(reference) => chosen.retain(|r| !comparison(r) || core(r) != *reference),
@@ -1094,13 +1094,42 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         cli.facts
             .extend(sets.into_iter().map(|s| format!("11ty {s}")));
         cli.sources.extend(chosen.iter().map(|r| place(&r.chain)));
-        let why = format!(
-            "{} and {} both run 11ty, with {} and with {}, so Brrrty can't tell which one builds the site; port the flags of the one that does",
-            place(&first.chain),
-            place(&other.chain),
-            shown(&flags),
-            shown(&other.sig)
-        );
+        let without_output = |sig: &[(String, Option<String>)]| {
+            canonical(sig)
+                .into_iter()
+                .filter(|(n, _)| !compare_only(n))
+                .collect::<Vec<_>>()
+        };
+        let writes = |sig: &[(String, Option<String>)]| {
+            if sig
+                .iter()
+                .any(|(n, v)| n == "dryrun" && v.as_deref() != Some("false"))
+            {
+                "nothing (`--dryrun`)".to_string()
+            } else {
+                match sig.iter().find(|(n, _)| n == "output") {
+                    Some((_, Some(o))) => format!("`{o}`"),
+                    _ => "`_site` (its default, unless the config sets `dir.output`)".to_string(),
+                }
+            }
+        };
+        let why = if without_output(&flags) == without_output(&other.sig) {
+            format!(
+                "11ty writes to {} in {} but to {} in {}; set `dir.output` to the one you deploy, then delete this line",
+                writes(&flags),
+                place(&first.chain),
+                writes(&other.sig),
+                place(&other.chain)
+            )
+        } else {
+            format!(
+                "{} and {} both run 11ty, with {} and with {}, so Brrrty can't tell which one builds the site; port the flags of the one that does",
+                place(&first.chain),
+                place(&other.chain),
+                shown(&flags),
+                shown(&other.sig)
+            )
+        };
         cli.todo(why, &script, &command);
         return Some(cli);
     }
@@ -1943,10 +1972,17 @@ mod tests {
             write(&t, file, body);
             let pkg = json!({ "scripts": { "build": "eleventy" } });
             let c = find(&pkg, t.path()).unwrap_or_else(|| panic!("{file}: silent"));
-            assert!(
-                c.todos[0].why.contains("both run 11ty"),
-                "{file}: {:?}",
-                c.todos
+            let label = if file == "netlify.toml" {
+                "netlify.toml, [build] command"
+            } else {
+                "vercel.json, buildCommand"
+            };
+            assert_eq!(
+                c.todos[0].why,
+                format!(
+                    "11ty writes to `_site` (its default, unless the config sets `dir.output`) in package.json, scripts.build but to `public` in {label}; set `dir.output` to the one you deploy, then delete this line"
+                ),
+                "{file}"
             );
             // Alone, its --output is the build's.
             let c = find(&json!({}), t.path()).unwrap();
@@ -1999,5 +2035,26 @@ mod tests {
             find(&json!({}), t.path()).unwrap().output.as_deref(),
             Some("_site-11ty")
         );
+    }
+
+    #[test]
+    fn a_gitlab_pages_job_writing_public_is_a_conflict() {
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - npm ci\n    - npx @11ty/eleventy --output=public\n  artifacts:\n    paths:\n      - public\n",
+        );
+        let pkg = json!({ "scripts": { "build": "eleventy" }, "devDependencies": { "@11ty/eleventy": "3" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.output, None);
+        assert_eq!(c.todos.len(), 1, "{:?}", c.todos);
+        assert_eq!(
+            c.todos[0].why,
+            "11ty writes to `_site` (its default, unless the config sets `dir.output`) in package.json, scripts.build but to `public` in .gitlab-ci.yml, line 4; set `dir.output` to the one you deploy, then delete this line"
+        );
+        // With Brrrty as the build, the same job is a comparison run.
+        let pkg = json!({ "scripts": { "build": "brrrty build", "build:11ty": "eleventy" } });
+        assert_eq!(find(&pkg, t.path()), None);
     }
 }
