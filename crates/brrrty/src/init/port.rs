@@ -14,9 +14,12 @@ use std::collections::HashMap;
 
 use brrrty_config::markers::{TODO, TODO_FILE};
 
+use super::flags::Cli;
 use super::js::{self, Lit, Tok, Token};
 
 const DOCS: &str = "https://brrrty.com/docs/configuration/";
+const RUNS_ON_LOAD: &str = "this loads a module whose own code runs when 11ty loads the config; port what it does if it changes files 11ty reads or any setting, or delete this line";
+const GETTING_STARTED: &str = "https://brrrty.com/docs/getting-started/#1-port-the-config";
 const PORTING: &str = "https://github.com/brrrty/brrrty/blob/main/crates/brrrty-config/PORTING.md";
 const SYNTAX_HIGHLIGHT: &str = "@11ty/eleventy-plugin-syntaxhighlight";
 const RSS: &str = "@11ty/eleventy-plugin-rss";
@@ -69,6 +72,10 @@ struct Reader<'a> {
     left_data_engine: bool,
     /// Set when nothing can be ported: the whole file becomes one TODO.
     whole: Option<String>,
+    /// The flags the build script passes to 11ty.
+    cli: Option<Cli>,
+    /// 11ty reads no config file.
+    no_config: bool,
 }
 
 struct Setting {
@@ -114,7 +121,13 @@ fn one_line(text: &str) -> String {
 }
 
 /// Port the 11ty config file `file`, whose text is `src`.
+#[cfg(test)]
 pub(crate) fn port(src: &str, file: &str) -> Port {
+    port_with(src, file, None)
+}
+
+/// [`port`], with the flags the build script passes to 11ty, which win over the config.
+pub(crate) fn port_with(src: &str, file: &str, cli: Option<&Cli>) -> Port {
     let toks = match js::tokenize(src) {
         Ok(t) => t,
         Err(why) => {
@@ -122,18 +135,30 @@ pub(crate) fn port(src: &str, file: &str) -> Port {
                 src,
                 file,
                 &format!("Brrrty couldn't read this file ({why})"),
+                cli,
             );
         }
     };
     let mut r = Reader::new(src, file, toks);
+    r.cli = cli.cloned();
     r.read();
     r.finish()
 }
 
 /// A port that is one TODO quoting all of `src`.
-pub(crate) fn unreadable(src: &str, file: &str, why: &str) -> Port {
+pub(crate) fn unreadable(src: &str, file: &str, why: &str, cli: Option<&Cli>) -> Port {
     let mut r = Reader::new(src, file, Vec::new());
     r.whole = Some(why.to_string());
+    r.cli = cli.cloned();
+    r.finish()
+}
+
+/// The config for a site 11ty builds with no config file: the build script's
+/// flags, if any.
+pub(crate) fn no_config(cli: Option<&Cli>) -> Port {
+    let mut r = Reader::new("", "", Vec::new());
+    r.cli = cli.cloned();
+    r.no_config = true;
     r.finish()
 }
 
@@ -174,6 +199,8 @@ impl<'a> Reader<'a> {
             settings: Vec::new(),
             left_data_engine: false,
             whole: None,
+            cli: None,
+            no_config: false,
         }
     }
 
@@ -275,10 +302,15 @@ impl<'a> Reader<'a> {
             if t.is_ident("import") {
                 if !self.import(a, b) {
                     self.todo(a, b, "Brrrty couldn't read this import", PORTING);
+                } else if b == a + 2 || self.local_module(a, b) {
+                    self.todo(a, b, RUNS_ON_LOAD, PORTING);
                 }
                 continue;
             }
             if matches!(t.ident(), Some("const" | "let" | "var")) && self.require(a, b) {
+                if self.local_module(a, b) {
+                    self.todo(a, b, RUNS_ON_LOAD, PORTING);
+                }
                 continue;
             }
             if a == export_at {
@@ -311,6 +343,14 @@ impl<'a> Reader<'a> {
                 PORTING,
             );
         }
+    }
+
+    /// Whether the import or `require` at `toks[a..b]` loads one of the site's own files
+    /// (a path starting `.` or `/`).
+    fn local_module(&self, a: usize, b: usize) -> bool {
+        self.toks[a..b].iter().any(
+            |t| matches!(&t.tok, Tok::Str(Some(m)) if m.starts_with('.') || m.starts_with('/')),
+        )
     }
 
     /// The name of the function declared at `a`, if it is a declaration.
@@ -816,11 +856,23 @@ impl<'a> Reader<'a> {
             ),
             "setQuietMode" | "setWatchThrottleWaitTime" | "setServerOptions" | "addWatchTarget"
             | "setWatchJavaScriptDependencies" | "setChokidarConfig"
-            | "setServerPassthroughCopyBehavior" => self.left_out(
+            | "setServerPassthroughCopyBehavior"
+                if args.iter().all(|&arg| self.lit(arg).is_some()) =>
+            {
+                self.left_out(
+                    a,
+                    b,
+                    "this is for 11ty's watcher and dev server and doesn't change the files 11ty writes, and Brrrty's `serve` has no setting for it",
+                    "https://brrrty.com/docs/serve/",
+                )
+            }
+            "setQuietMode" | "setWatchThrottleWaitTime" | "setServerOptions" | "addWatchTarget"
+            | "setWatchJavaScriptDependencies" | "setChokidarConfig"
+            | "setServerPassthroughCopyBehavior" => self.todo(
                 a,
                 b,
-                "this is for 11ty's watcher and dev server and doesn't change the files 11ty writes, and Brrrty's `serve` has no setting for it",
-                "https://brrrty.com/docs/serve/",
+                "this only sets up 11ty's watcher or dev server, but its arguments run code when 11ty loads the config; port what they do if it changes files 11ty reads, or delete this line",
+                PORTING,
             ),
             _ => self.todo(a, b, "port this to Rhai", PORTING),
         }
@@ -1104,13 +1156,45 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// The TODOs for the build script's flags, quoting it. With `all`, the
+    /// folders it sets too, since nothing else is ported.
+    fn cli_todos(&self, out: &mut String, all: bool) -> usize {
+        let Some(cli) = &self.cli else { return 0 };
+        let mut whys = cli.todos.clone();
+        if all {
+            if let Some(i) = &cli.input {
+                whys.push(format!("port `--input={i}` to `dir.input`"));
+            }
+            if let Some(o) = &cli.output {
+                whys.push(format!("port `--output={o}` to `dir.output`"));
+            }
+        }
+        for why in &whys {
+            out.push_str(&format!(
+                "\n// {TODO}: {}.\n// See {GETTING_STARTED}\n// package.json, scripts.{}:\n//     {}\n",
+                one_line(why),
+                one_line(&cli.script),
+                one_line(&cli.command)
+            ));
+        }
+        whys.len()
+    }
+
     fn finish(mut self) -> Port {
-        let mut out = format!(
-            "// Written by `brrrty init` from {file}, which Brrrty doesn't run.\n\
-             // Brrrty reads this file instead; 11ty still reads {file}.\n\
-             // Reference: {DOCS}\n",
-            file = self.file
-        );
+        let mut out = if self.no_config {
+            format!(
+                "// Written by `brrrty init` from package.json. 11ty reads no config file\n\
+                 // for this site, only the flags its build script passes, below.\n\
+                 // Reference: {DOCS}\n"
+            )
+        } else {
+            format!(
+                "// Written by `brrrty init` from {file}, which Brrrty doesn't run.\n\
+                 // Brrrty reads this file instead; 11ty still reads {file}.\n\
+                 // Reference: {DOCS}\n",
+                file = self.file
+            )
+        };
         if let Some(why) = self.whole.take() {
             out.push_str(&format!(
                 "\n// {TODO_FILE}: port all of this file by hand: {}.\n// Brrrty builds no pages until you port it and delete this line.\n// See {DOCS}\n",
@@ -1119,12 +1203,32 @@ impl<'a> Reader<'a> {
             if !self.src.is_empty() {
                 self.quoted(&mut out, (0, self.src.len()));
             }
+            let todos = 1 + self.cli_todos(&mut out, true);
             return Port {
                 text: out,
-                todos: 1,
+                todos,
                 input: None,
                 output: None,
             };
+        }
+        // `--input` and `--output` in the build script win over the config.
+        let mut from_flags = Vec::new();
+        if let Some(cli) = &self.cli {
+            for (key, flag, v) in [
+                ("dir.input", "input", &cli.input),
+                ("dir.output", "output", &cli.output),
+            ] {
+                if let Some(v) = v {
+                    self.settings.retain(|s| s.key != key);
+                    self.settings.push(Setting {
+                        key,
+                        value: js::rhai_string(v),
+                        raw: Some(v.clone()),
+                        span: (0, 0),
+                    });
+                    from_flags.push(format!("--{flag}={v}"));
+                }
+            }
         }
         // A setting made more than once: 11ty's precedence decides, so neither is ported.
         let mut settings: Vec<&Setting> = Vec::new();
@@ -1184,6 +1288,22 @@ impl<'a> Reader<'a> {
             }
         }
         out.push_str(&body);
+        todos += self.cli_todos(&mut out, false);
+        if !from_flags.is_empty()
+            && let Some(cli) = &self.cli
+        {
+            out.push_str(&format!(
+                "\n// {} from package.json's scripts.{}, which passes {} to 11ty; flags win over its config:\n//     {}\n",
+                if from_flags.len() == 1 {
+                    "This folder comes"
+                } else {
+                    "These folders come"
+                },
+                one_line(&cli.script),
+                from_flags.join(" "),
+                one_line(&cli.command)
+            ));
+        }
         if self.left_data_engine {
             out.push_str("\n// Left out: `dataTemplateEngine`, which 11ty 3 doesn't read.\n");
         }
@@ -1337,6 +1457,27 @@ module.exports = function (eleventyConfig) {
             p.text
         );
         assert_eq!(p.output, None);
+    }
+
+    #[test]
+    fn watcher_calls_that_run_code_and_local_modules_are_todos() {
+        let src = "import \"./gen.js\";\nimport x from \"./x.js\";\nimport { a } from \"pkg\";\nconst y = require(\"../y\");\nconst z = require(\"z\");\nexport default function (c) {\n  c.addWatchTarget(\"src/css\");\n  c.setServerOptions({ port: 8080 });\n  c.addWatchTarget(build());\n}\n";
+        let p = port(src, "eleventy.config.js");
+        let t = &p.text;
+        // The three local modules and the watcher call with code in it.
+        assert_eq!(p.todos, 4, "{t}");
+        assert_eq!(
+            t.matches("// Left out: this is for 11ty's watcher").count(),
+            2,
+            "{t}"
+        );
+        assert_eq!(
+            t.matches("whose own code runs when 11ty loads the config")
+                .count(),
+            3,
+            "{t}"
+        );
+        assert!(t.contains("but its arguments run code"), "{t}");
     }
 
     #[test]

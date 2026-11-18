@@ -5,6 +5,7 @@
 //! reading that without running it. Those two files, in the site's folder,
 //! are all it ever writes, and it never overwrites a `brrrty.config.rhai`.
 
+mod flags;
 mod js;
 mod json;
 mod port;
@@ -66,7 +67,7 @@ pub struct Change {
 pub struct Plan {
     pub root: PathBuf,
     /// The 11ty config file read, if any.
-    pub config: Option<&'static str>,
+    pub config: Option<String>,
     pub changes: Vec<Change>,
     /// `// TODO(brrrty)` markers in the new `brrrty.config.rhai`.
     pub todos: usize,
@@ -233,37 +234,6 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         )));
     }
 
-    // brrrty.config.rhai
-    let config = ELEVENTY_CONFIGS.iter().copied().find(|n| present(&root, n));
-    let (rhai, todos, input, output) = match config {
-        Some(name) => {
-            let read = read_inside(&root, name)
-                .map_err(|why| Refusal::Refused(format!("{why}, so nothing was written.")))?;
-            let p = match read {
-                Some(Read::Text(src)) => {
-                    let mut p = port::port(src.strip_prefix(BOM).unwrap_or(&src), name);
-                    record_source(&mut p.text, name, src.as_bytes());
-                    p
-                }
-                Some(Read::Lossy(src)) => {
-                    port::unreadable(&src, name, "it isn't UTF-8, so Brrrty couldn't read it")
-                }
-                Some(Read::TooBig) | None => port::unreadable(
-                    "",
-                    name,
-                    &format!("it is larger than {} MiB, so Brrrty didn't read it", MAX_READ >> 20),
-                ),
-            };
-            (p.text, p.todos, p.input, p.output)
-        }
-        None => (
-            "// Written by `brrrty init`. This site has no 11ty config file, so\n// Brrrty uses 11ty's defaults, as 11ty does.\n// Reference: https://brrrty.com/docs/configuration/\n".to_string(),
-            0,
-            None,
-            None,
-        ),
-    };
-
     // package.json
     let old_package = match read_inside(&root, PACKAGE_JSON) {
         Ok(None) => None,
@@ -281,6 +251,81 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         }
         Err(why) => return Err(Refusal::Refused(format!("{why}, so nothing was written."))),
     };
+    // brrrty.config.rhai: from the config 11ty reads, which the build script's `--config`
+    // may name instead of the default.
+    let cli = old_package
+        .as_deref()
+        .and_then(|t| {
+            serde_json::from_str::<serde_json::Value>(t.strip_prefix(BOM).unwrap_or(t)).ok()
+        })
+        .and_then(|v| flags::find(&v, &root));
+    let cli = cli.as_ref();
+    let named = cli.and_then(|c| c.config.clone());
+    let config: Option<String> = match &named {
+        Some(n) if n.is_empty() => None,
+        Some(n) => Some(n.trim_start_matches("./").to_string()),
+        None => ELEVENTY_CONFIGS
+            .iter()
+            .find(|n| present(&root, n))
+            .map(|n| (*n).to_string()),
+    };
+    let (rhai, todos, input, output) = match &config {
+        Some(name) => {
+            let outside = !brrrty_config::markers::is_inside(name);
+            let read = if outside {
+                Err(format!("{name} is outside the site's folder"))
+            } else {
+                read_inside(&root, name)
+            };
+            let p = match read {
+                Ok(Some(Read::Text(src))) => {
+                    let mut p =
+                        port::port_with(src.strip_prefix(BOM).unwrap_or(&src), name, cli);
+                    record_source(&mut p.text, name, src.as_bytes());
+                    p
+                }
+                Ok(Some(Read::Lossy(src))) => port::unreadable(
+                    &src,
+                    name,
+                    "it isn't UTF-8, so Brrrty couldn't read it",
+                    cli,
+                ),
+                Ok(Some(Read::TooBig)) => port::unreadable(
+                    "",
+                    name,
+                    &format!("it is larger than {} MiB, so Brrrty didn't read it", MAX_READ >> 20),
+                    cli,
+                ),
+                Ok(None) => port::unreadable(
+                    "",
+                    name,
+                    "package.json's build script names it with `--config`, but it doesn't exist, so 11ty stops",
+                    cli,
+                ),
+                Err(why) if named.is_some() => port::unreadable(
+                    "",
+                    name,
+                    &format!("package.json's build script names it with `--config`, and {why}"),
+                    cli,
+                ),
+                Err(why) => {
+                    return Err(Refusal::Refused(format!("{why}, so nothing was written.")));
+                }
+            };
+            (p.text, p.todos, p.input, p.output)
+        }
+        None if cli.is_some() => {
+            let p = port::no_config(cli);
+            (p.text, p.todos, p.input, p.output)
+        }
+        None => (
+            "// Written by `brrrty init`. This site has no 11ty config file, so\n// Brrrty uses 11ty's defaults, as 11ty does.\n// Reference: https://brrrty.com/docs/configuration/\n".to_string(),
+            0,
+            None,
+            None,
+        ),
+    };
+
     let edited = match &old_package {
         Some(src) => match src.strip_prefix(BOM) {
             Some(rest) => {
@@ -778,7 +823,7 @@ pub fn summary(plan: &Plan) -> String {
     let mut out = String::new();
     let mut todo = Vec::new();
     if plan.todos > 0 {
-        let source = plan.config.unwrap_or("the 11ty config");
+        let source = plan.config.as_deref().unwrap_or("the 11ty config");
         todo.push(format!(
             "{CONFIG_FILE} has {} TODO(brrrty) marker{}: parts of {source} that Brrrty can't port by itself. Each quotes the JavaScript it stands in for. Brrrty builds no pages while one is left: port each one, or decide it changes nothing Brrrty writes, then delete its TODO line. `brrrty doctor` lists them.",
             plan.todos,
@@ -832,7 +877,7 @@ pub fn run(opts: &Options) -> u8 {
             return 1;
         }
     };
-    let from = plan.config.unwrap_or("package.json");
+    let from = plan.config.as_deref().unwrap_or("package.json");
     crate::say!(
         "Brrrty found an 11ty site in {} ({from}).\n",
         plan.root.display()
