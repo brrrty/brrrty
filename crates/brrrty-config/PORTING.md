@@ -7,7 +7,12 @@ test sites). This guide says what Brrrty guarantees, where Rhai is not
 JavaScript, and which helper to call when you need the JavaScript
 behavior.
 
-Start with `brrrty doctor`: it lists what is left to port, grouped by
+Start with the `// TODO(brrrty):` lines `brrrty init` left: while one is
+there, Brrrty builds no pages (`config-todo`), since each stands for
+something the 11ty config does that could change any page. Port each one,
+or decide it changes nothing Brrrty writes, and delete its line.
+
+Then run `brrrty doctor`: it lists what is left to port, grouped by
 cause, with every place each one shows up. A build stops each page at its
 first problem; doctor also reads each refused page's template, layouts,
 literal includes, `permalink` and `eleventyComputed` for every filter

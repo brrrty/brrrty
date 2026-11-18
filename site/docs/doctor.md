@@ -28,6 +28,7 @@ A build stops each page at its first problem. Doctor keeps going: for every page
 
 Unknown tags (a shortcode, say) are syntax errors to Liquid and Nunjucks: only the first one in each file is listed, as the build reports it. Other front matter values aren't templates in 11ty, so they aren't read. Each problem is grouped under its cause:
 
+- **Your 11ty config isn't fully ported.** While `brrrty.config.rhai` still has a `// TODO(brrrty)` line that `brrrty init` left, it blocks every page and comes first, with its line numbers: each TODO is something your 11ty config does that could change any page, so no page can be said to build. Until those are done, the other groups may be knock-ons of them (a layout not found because the folders weren't ported, say). See [Port the config](/docs/getting-started/#1-port-the-config).
 - **A filter** that neither Brrrty nor your `brrrty.config.rhai` defines, such as an 11ty filter you haven't ported yet.
 - **A JavaScript data file** a page reads. Brrrty doesn't run JavaScript, so each one is ported to a `.rhai` data file (see [Configuration](/docs/configuration/)).
 - **A template language** Brrrty doesn't run, such as `.11ty.js`.
@@ -53,7 +54,7 @@ Pages that only wait on other pages aren't blockers of their own. A page that sh
 
 The last line is the verdict. "At least" means a template paginates data that a blocker stops, so Brrrty can't know how many pages it makes yet: it counts as one until that blocker is fixed. Every group with such a template says "at least" too, and the blockers that stop a pagination come first.
 
-Warnings and notes are listed after the groups. They stop nothing.
+Warnings and notes are listed after the groups. They stop nothing. One of them, `config-stale`, says your 11ty config changed after `brrrty init` ported it.
 
 ## `--verify`
 
@@ -94,6 +95,6 @@ The last line is meant for pasting into an issue or a post. When files differ, t
 
 - `schema` (1, raised when a field changes meaning), `brrrty` (the version), `verdict`, `builds`, `blockers`;
 - `pages`: `total`, `building`, and `exact`, false when the total is a lower bound;
-- `groups`, each with its `cause` (`kind`: `filter`, `js-data`, `template-language`, `problem` or `follows`), `blocker`, `title`, `help`, `pages`, `pages_exact`, `hides_pages`, `templates`, `also_blocks` (`pages`, `pages_exact`, `templates`) and every `location` (`path`, `line`, `column`, `message`);
+- `groups`, each with its `cause` (`kind`: `filter`, `js-data`, `template-language`, `problem` or `follows`; an unported config is a `problem` with `code` `config-todo`), `blocker`, `title`, `help`, `pages`, `pages_exact`, `hides_pages`, `templates`, `also_blocks` (`pages`, `pages_exact`, `templates`) and every `location` (`path`, `line`, `column`, `message`);
 - `notes`: warnings and notes;
 - `verify`: `null` without `--verify`; `{ "error": ... }` when 11ty's build failed; otherwise the counts, `eleventy_seconds` and `brrrty_seconds`, `byte_compatible`, `verdict`, and every file that differs, with its diff.
