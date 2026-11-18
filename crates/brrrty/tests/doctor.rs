@@ -1194,6 +1194,15 @@ fn init_carries_the_build_scripts_tz() {
             "cross-env TZ=Asia/Tokyo eleventy --input=src",
             "cross-env TZ=Asia/Tokyo brrrty build",
         ),
+        (
+            "env TZ=Asia/Tokyo eleventy --input=src",
+            "TZ=Asia/Tokyo brrrty build",
+        ),
+        // Only TZ is carried: Brrrty isn't Node.
+        (
+            "NODE_ENV=production TZ=Asia/Tokyo eleventy --input=src",
+            "TZ=Asia/Tokyo brrrty build",
+        ),
     ] {
         let dir = site(&[("package.json", &pkg(build)), ("src/index.md", "# Hi\n")]);
         let init = run(dir.path(), &["init", "--yes"]);
@@ -1203,6 +1212,12 @@ fn init_carries_the_build_scripts_tz() {
         )
         .unwrap();
         assert_eq!(pkg["scripts"]["build"], want, "{build}");
+        // And `brrrty serve`, which writes the output folder too.
+        assert_eq!(
+            pkg["scripts"]["start"],
+            want.replace("brrrty build", "brrrty serve"),
+            "{build}"
+        );
         assert_eq!(pkg["scripts"]["build:11ty"], build);
         let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
         assert!(!rhai.contains("TODO(brrrty)"), "{build}:\n{rhai}");
