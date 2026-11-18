@@ -1,0 +1,6 @@
+---
+permalink: /contents/
+eleventyExcludeFromCollections: true
+---
+{% for p in collections.job %}[{{ p.data.title }}: {{ p.templateContent | safe }}]
+{% endfor %}

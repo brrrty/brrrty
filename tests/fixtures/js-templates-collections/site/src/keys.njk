@@ -1,0 +1,5 @@
+---
+permalink: /keys/
+eleventyExcludeFromCollections: true
+---
+{% for name, items in collections %}{{ name }}={{ items | length }};{% endfor %}

@@ -245,7 +245,7 @@ pub fn refresh_docker(root: &Path, name: &str, images: &[String]) -> Result<bool
             .map(|i| format!("--input={i}"))
             .unwrap_or_default();
         let script = format!(
-            "mkdir -p /e && cd /e && npm init -y >/dev/null && npm install --no-audit --no-fund --silent {ELEVENTY} >/dev/null 2>&1 || exit 9"
+            "mkdir -p /e && cd /e && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund --silent {ELEVENTY} >/dev/null 2>&1 || exit 9"
         );
         // 11ty is installed with the network, then the build runs without it.
         let eleventy = scratch.path().join(format!("eleventy{i}"));

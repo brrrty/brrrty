@@ -1,0 +1,2 @@
+/old/ /new/ 301
+/blog/* /posts/:splat 302
