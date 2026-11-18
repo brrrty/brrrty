@@ -242,6 +242,8 @@ struct Shared<'a> {
     /// JavaScript templates loaded in Node, by path in the input folder,
     /// or why one can't be used.
     js_templates: &'a HashMap<PathBuf, Result<JsTemplate, Problem>>,
+    /// Warnings found while pages are placed, for the report.
+    warnings: Mutex<Vec<Problem>>,
 }
 
 /// JavaScript templates loaded in Node, by path in the input folder, or why
@@ -1531,6 +1533,41 @@ impl Place<'_, '_> {
             out.extend(page);
         }
         self.check_undefined(&undefined)?;
+        // 11ty keeps one write flag for all of a template's pages
+        // (`Template.behavior`, which pagination's clones share): a page
+        // whose permalink function gives `false` (or `{ build: false }`)
+        // leaves the whole template unwritten (probed). A computed
+        // permalink that does it makes 11ty write `false` as a path, and
+        // stop.
+        let skipped = out.iter().filter(|p| p.output_rel.is_none()).count();
+        if skipped > 0 && skipped < out.len() {
+            let plain = !matches!(
+                values.get("permalink"),
+                None | Some(Value::Null | Value::Undefined)
+            );
+            if !plain {
+                return Err(Problem::error(
+                    codes::PERMALINK_INVALID,
+                    "the computed `permalink` gives `false` for some pages of this paginated template and a path for others, which 11ty tries to write as a path",
+                )
+                .with_path(&self.source.shown)
+                .with_help("11ty stops the whole build here (\"The \\\"path\\\" argument must be of type string\"). Return `false` for every page, or set `permalink` itself rather than in `eleventyComputed`."));
+            }
+            for p in &mut out {
+                p.output_rel = None;
+            }
+            lock(&self.shared.warnings).push(
+                Problem::warning(
+                    codes::PERMALINK_FALSE_PAGE,
+                    format!(
+                        "the `permalink` function gives `false` for {skipped} of this template's {} pages, so 11ty writes none of them, and says nothing",
+                        out.len()
+                    ),
+                )
+                .with_path(&self.source.shown)
+                .with_help("11ty keeps one write setting for all the pages of a template. Give every page a path, or `false` to every page."),
+            );
+        }
         Ok(out)
     }
 }
@@ -2627,6 +2664,7 @@ fn build_once(
         survey: log,
         items_withheld: Mutex::new(ItemsWithheld::default()),
         js_templates: &js_templates,
+        warnings: Mutex::new(Vec::new()),
     };
 
     let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
@@ -2966,6 +3004,9 @@ fn build_once(
         return finish(report, strict, start);
     }
 
+    report
+        .problems
+        .extend(std::mem::take(&mut *lock(&shared.warnings)));
     // Detect outputs that two or more pages claim.
     let mut by_output: BTreeMap<&Path, Vec<&Prepared>> = BTreeMap::new();
     for p in &prepared {

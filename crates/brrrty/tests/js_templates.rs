@@ -596,3 +596,83 @@ fn a_javascript_read_of_collections_under_a_gap_is_refused() {
         "eleventy,pkg,page,collections"
     );
 }
+
+/// 11ty keeps one write flag per template: a permalink function giving
+/// `false` (or `{ build: false }`) for any page writes none of them.
+#[test]
+fn a_permalink_function_false_for_one_page_writes_none() {
+    if !has_node() {
+        return;
+    }
+    let paged = |n: usize, other: &str| {
+        format!(
+            "module.exports = {{ data: {{ pagination: {{ data: 'list', size: 1 }}, list: [1, 2, 3], permalink: (d) => d.pagination.pageNumber === {n} ? {other} : `/p{n}/${{d.pagination.pageNumber}}/` }}, render: () => 'x' }};\n"
+        )
+    };
+    let f0 = paged(0, "false");
+    let f2 = paged(2, "false");
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/f0.11ty.js", &f0),
+        ("src/f2.11ty.js", &f2),
+        (
+            "src/dd/dd.11tydata.js",
+            "module.exports = { permalink: (d) => d.pagination.pageNumber === 1 ? false : `/dd/${d.pagination.pageNumber}/` };\n",
+        ),
+        (
+            "src/dd/p.njk",
+            "---\npagination:\n  data: list\n  size: 1\nlist: [1, 2, 3]\n---\nx",
+        ),
+        (
+            "src/ctl.11ty.js",
+            "module.exports = { data: { pagination: { data: 'list', size: 1 }, list: [1, 2], permalink: (d) => `/ctl/${d.pagination.pageNumber}/` }, render: () => 'c' };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert!(o.status.success(), "{out}");
+    assert!(out.contains("permalink-false-page"), "{out}");
+    let mut written: Vec<String> = Vec::new();
+    let mut stack = vec![t.path().join("_site")];
+    while let Some(d) = stack.pop() {
+        for e in fs::read_dir(&d).unwrap().flatten() {
+            if e.path().is_dir() {
+                stack.push(e.path());
+            } else {
+                written.push(
+                    e.path()
+                        .strip_prefix(t.path().join("_site"))
+                        .unwrap()
+                        .display()
+                        .to_string(),
+                );
+            }
+        }
+    }
+    written.sort();
+    assert_eq!(written, ["ctl/0/index.html", "ctl/1/index.html"], "{out}");
+}
+
+/// A computed permalink giving `false` for some pages makes 11ty write
+/// `false` as a path and stop.
+#[test]
+fn a_computed_permalink_false_for_one_page_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/cf.11ty.js",
+            "module.exports = { data: { pagination: { data: 'list', size: 1 }, list: [1, 2], eleventyComputed: { permalink: (d) => d.pagination.pageNumber === 1 ? false : '/cf/' } }, render: () => 'x' };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("the computed `permalink` gives `false` for some pages"),
+        "{out}"
+    );
+    assert!(!t.path().join("_site/cf/index.html").exists(), "{out}");
+}

@@ -93,6 +93,9 @@ pub mod codes {
     pub const PASSTHROUGH_MISSING: &str = "passthrough-missing";
     pub const PASSTHROUGH_OVERRIDES_PAGE: &str = "passthrough-overrides-page";
     pub const PASSTHROUGH_UNSUPPORTED: &str = "passthrough-unsupported";
+    /// Some pages of a paginated template get `permalink: false` from a
+    /// function: 11ty writes none of the template's pages.
+    pub const PERMALINK_FALSE_PAGE: &str = "permalink-false-page";
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
     pub const PERMALINK_UNSUPPORTED: &str = "permalink-unsupported";
