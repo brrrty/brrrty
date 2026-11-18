@@ -1,0 +1,28 @@
+# Built by 11ty 3.1.8 on node:22 and node:24 (cargo xtask fixtures-refresh --docker js-data-computed):
+# both give the same bytes. Brrrty builds it with config.set_js_data("node").
+node = true
+input = "src"
+tz = "America/Chicago"
+lang = "en_US.UTF-8"
+
+# 11ty prints a function's source text (here Nunjucks's own method
+# wrapper) and an unawaited Promise as "[object Promise]"; Brrrty refuses
+# both pages rather than guess at JavaScript's text for them.
+[refused]
+"src/print-fn.njk" = "print-fn/index.html"
+"src/promise.njk" = "promise/index.html"
+
+# Probed with 11ty 3.1.8:
+# - computed functions run in dependency order whatever order they are
+#   listed in (a, b, c), async ones awaited, nested ones too;
+# - a computed `permalink` function decides page.url, and a computed value
+#   reading page.url sees it;
+# - Liquid calls a function it reads as a property, with no arguments and
+#   the object as `this` (who:Price), and awaits what it returns;
+# - Nunjucks calls with arguments, the object as `this`, and doesn't await;
+# - with a function among the computed values, 11ty's proxy pass sets every
+#   computed key not set yet to "": a Liquid value reading one inside a tag
+#   (unseen, so not waited for) sees "" (order/page prints "empty");
+# - a computed permalink function giving undefined falls back to
+#   `eleventyComputed.permalink` (`??`), and so to the default permalink;
+# - a computed function may return functions, called later (order/calls).

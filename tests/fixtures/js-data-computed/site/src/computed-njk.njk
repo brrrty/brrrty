@@ -1,0 +1,8 @@
+---
+permalink: /computed-njk/
+price: 5
+eleventyComputed:
+  summary: "{{ fmt.money(price) }} for {{ title }}"
+  title: "Item"
+---
+{{ summary }}

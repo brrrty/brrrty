@@ -1,0 +1,11 @@
+---
+permalink: /calls/
+---
+{{ fmt.money(1234.5) }}
+{{ fmt.upper("abc") }}
+{{ fmt.who() }}
+{{ fmt.list("a", 1, true) }}
+{{ i18n.en.homeAriaLabel("Example") }}
+{{ i18n.t("es", "home") }} {{ i18n.t("en", "posts") }}
+{% set m = fmt.money %}{{ fmt.money(2) | upper }}
+{% if fmt.money %}has money{% endif %}
