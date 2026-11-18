@@ -67,6 +67,9 @@ enum Cmd {
         /// JSON results file; existing entries for other sites are kept.
         #[arg(long)]
         results: PathBuf,
+        /// A brrrty binary to test, instead of building this checkout's.
+        #[arg(long)]
+        brrrty: Option<PathBuf>,
         /// A Linux build of brrrty, for timing it in the same container as 11ty.
         #[arg(long)]
         linux_brrrty: Option<PathBuf>,
@@ -150,6 +153,7 @@ fn main() -> ExitCode {
             work_dir,
             output_dir,
             results,
+            brrrty,
             linux_brrrty,
             only,
             limit,
@@ -168,6 +172,7 @@ fn main() -> ExitCode {
                 work_dir: work_dir.unwrap_or_else(|| sites_dir.join("_work")),
                 sites_dir,
                 results,
+                brrrty,
                 linux_brrrty,
                 only,
                 limit,

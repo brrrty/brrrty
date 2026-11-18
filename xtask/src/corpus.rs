@@ -104,6 +104,8 @@ pub struct Options {
     /// here, so it can be a case-sensitive volume Docker can't see.
     pub output_dir: PathBuf,
     pub results: PathBuf,
+    /// A prebuilt brrrty; built from this checkout when unset.
+    pub brrrty: Option<PathBuf>,
     pub linux_brrrty: Option<PathBuf>,
     pub only: Vec<String>,
     pub limit: Option<usize>,
@@ -1445,7 +1447,13 @@ pub fn run_corpus(root: &Path, opts: Options) -> Result<bool, String> {
         output_dir,
         ..opts
     };
-    let brrrty = build_release(root)?;
+    let brrrty = match &opts.brrrty {
+        Some(b) if b.is_file() => b
+            .canonicalize()
+            .map_err(|e| format!("cannot resolve {}: {e}", b.display()))?,
+        Some(b) => return Err(format!("no brrrty at {}", b.display())),
+        None => build_release(root)?,
+    };
     if let Some(l) = &opts.linux_brrrty
         && !l.is_file()
     {
