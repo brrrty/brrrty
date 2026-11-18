@@ -13,12 +13,14 @@ mod cascade;
 mod computed;
 mod dir;
 mod global;
+mod js;
 mod jskeys;
 mod rhai;
 pub(crate) use cascade::{clean_tags, frozen_keys, page_data};
 pub(crate) use computed::{Plan as ComputedPlan, set_path};
 pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
+pub(crate) use js::{JsSession, value_problem};
 pub(crate) use rhai::{is_js, port_of};
 
 pub(crate) const OVERRIDE_PREFIX: &str = "override:";

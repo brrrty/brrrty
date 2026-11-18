@@ -42,7 +42,7 @@ Pages that only wait on other pages aren't blockers of their own. A page that sh
 1. JavaScript data file src/_data/catalog.js (at least 3 pages, 3 templates)
    src/index.njk:5:10: this template reads `catalog`, which src/_data/catalog.js, a JavaScript data file, sets
    src/item.njk: this page uses `catalog` from src/_data/catalog.js, a JavaScript data file
-   Fix: Brrrty doesn't run JavaScript data files; port src/_data/catalog.js to src/_data/catalog.rhai, a Rhai script whose last expression is the data (see PORTING.md).
+   Fix: Turn on JavaScript data with config.set_js_data("node") in brrrty.config.rhai, which runs it in your own Node (18 or later), or port src/_data/catalog.js to src/_data/catalog.rhai, a Rhai script whose last expression is the data (see PORTING.md).
 
 2. Filter `usd` isn't defined (2 pages, 2 templates)
    src/index.njk:12:31: Error: filter not found: usd

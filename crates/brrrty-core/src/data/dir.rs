@@ -103,6 +103,14 @@ impl DirDataIndex {
         index
     }
 
+    /// Whether any page has a JavaScript data file Brrrty didn't run.
+    pub fn has_js(&self) -> bool {
+        self.files.values().any(|f| matches!(f, LocalFile::Js(_)))
+            || self.files.iter().any(|(p, f)| {
+                matches!(f, LocalFile::Failed(_)) && rhai::is_js(&p.to_string_lossy())
+            })
+    }
+
     /// The template and directory data files of the template at `rel`,
     /// lowest priority first.
     pub fn files(&self, rel: &Path) -> &[PathBuf] {
@@ -144,7 +152,7 @@ impl DirDataIndex {
 /// of the port that would stand in for it.
 pub(crate) fn js_help(file: &Path) -> String {
     format!(
-        "Brrrty doesn't run JavaScript data files; port {} to {}, a Rhai script whose last expression is the data (see PORTING.md).",
+        "Turn on JavaScript data with config.set_js_data(\"node\") in brrrty.config.rhai, which runs it in your own Node (18 or later), or port {} to {}, a Rhai script whose last expression is the data (see PORTING.md).",
         file.display(),
         port_of(file).display()
     )

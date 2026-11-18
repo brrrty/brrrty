@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use brrrty_js::Value;
 
+use super::js::{JsLoad, JsSession, first_inexact};
 use super::rhai;
 use super::{js_object, merged_item, reserved_keys, reserved_problem};
 use crate::discover::{broken_link_warning, loop_warning};
@@ -21,11 +22,23 @@ pub(crate) struct JsDataRef {
     pub file: PathBuf,
 }
 
+/// A JavaScript data file that ran, but whose value has a part that can't
+/// cross exactly: pages that read its key are refused.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct JsValueRef {
+    pub key_path: Vec<String>,
+    pub file: PathBuf,
+    /// Where in the file's value, and what it is.
+    pub at: Vec<brrrty_js::runtime::PathPart>,
+    pub what: String,
+}
+
 #[derive(Debug)]
 pub(crate) struct GlobalData {
     /// An object of everything loaded from JSON files.
     pub value: Value,
     pub js_keys: Vec<JsDataRef>,
+    pub js_values: Vec<JsValueRef>,
     /// Notes, such as a JavaScript file a `.rhai` port stands in for.
     pub notes: Vec<Problem>,
     pub problems: Vec<Problem>,
@@ -47,16 +60,19 @@ const EXTENSIONS: [&str; 5] = ["json", "mjs", "cjs", "js", "rhai"];
 ///
 /// `.rhai` files are run by `runner`, given `initial` (what 11ty hands an
 /// exported function). A `.js` file is ignored, with a note, when a `.rhai`
-/// file has the same key.
+/// file has the same key; otherwise it runs in `js` when JavaScript data is
+/// on, one file at a time in this order, as 11ty runs them.
 pub(crate) fn load_global(
     input: &Path,
     root: &Path,
     runner: Option<&DataRunner>,
     initial: &Data,
+    js: &mut JsSession<'_>,
 ) -> GlobalData {
     let mut out = GlobalData {
         value: Value::Object(Default::default()),
         js_keys: Vec::new(),
+        js_values: Vec::new(),
         notes: Vec::new(),
         problems: Vec::new(),
         unavailable: BTreeSet::new(),
@@ -121,14 +137,31 @@ pub(crate) fn load_global(
             Some("js" | "cjs" | "mjs") => {
                 if ported.contains(&path) {
                     out.notes.push(rhai::shadowed(&shown));
-                } else {
-                    out.js_keys.push(JsDataRef {
-                        key_path: path,
-                        file: shown,
-                    });
-                    out.unavailable.insert(root_key);
+                    continue;
                 }
-                continue;
+                match js.load(&file, &shown, true) {
+                    JsLoad::Value(d) => {
+                        if let Some((at, what)) = first_inexact(&d) {
+                            out.js_values.push(JsValueRef {
+                                key_path: path.clone(),
+                                file: shown.clone(),
+                                at,
+                                what,
+                            });
+                            out.unavailable.insert(root_key.clone());
+                        }
+                        Ok(d.value)
+                    }
+                    JsLoad::Thrown(p) => Err(p),
+                    JsLoad::Unavailable => {
+                        out.js_keys.push(JsDataRef {
+                            key_path: path,
+                            file: shown,
+                        });
+                        out.unavailable.insert(root_key);
+                        continue;
+                    }
+                }
             }
             _ => {
                 // The glob matches names like `Up.JSON` and `.json`, and 11ty
@@ -344,7 +377,14 @@ mod tests {
     }
 
     fn load(t: &tempfile::TempDir) -> GlobalData {
-        load_global(&t.path().join("src"), t.path(), None, &Data::new())
+        let off = crate::options::JsOptions::default();
+        let mut js = JsSession::new(
+            &off,
+            crate::options::RunMode::Build,
+            t.path(),
+            Value::Undefined,
+        );
+        load_global(&t.path().join("src"), t.path(), None, &Data::new(), &mut js)
     }
 
     fn j(v: serde_json::Value) -> Value {

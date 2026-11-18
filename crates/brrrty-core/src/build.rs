@@ -17,9 +17,9 @@ use serde_json::Value as Json;
 use crate::collections::{self, Entry, Membership, Page};
 use crate::content::{self, ContentPage};
 use crate::data::{
-    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, Local, OVERRIDE_PREFIX, clean_tags,
-    config_global, frozen_keys, frozen_problem, is_js, js_help, js_object, key_line, load_global,
-    merge, page_data, reserved_keys, reserved_problem,
+    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, JsSession, Local, OVERRIDE_PREFIX,
+    clean_tags, config_global, frozen_keys, frozen_problem, is_js, js_help, js_object, key_line,
+    load_global, merge, page_data, reserved_keys, reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::{Data, split_front_matter};
@@ -236,6 +236,13 @@ struct Shared<'a> {
 enum Withheld {
     /// This JavaScript data file sets it.
     Js(PathBuf),
+    /// This JavaScript data file ran, and a part of its value at `at` can't
+    /// cross to Brrrty exactly (it is `what`).
+    JsValue {
+        file: PathBuf,
+        at: Vec<brrrty_js::runtime::PathPart>,
+        what: String,
+    },
     /// A global data file under it failed to load, and was reported.
     Failed,
 }
@@ -258,6 +265,10 @@ impl Shared<'_> {
                 )
                 .with_path(file)
                 .with_help(js_help(file)),
+                Withheld::JsValue { file, at, what } => {
+                    crate::data::value_problem(&format!("`{key}`"), file, at, what)
+                        .with_path(file)
+                }
                 Withheld::Failed => Problem::error(
                     codes::DATA_UNSUPPORTED,
                     format!(
@@ -372,6 +383,72 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
     g.insert("eleventy".to_string(), Value::from_json(&eleventy));
     g.insert("pkg".to_string(), Value::from_json(&pkg));
     (g, output_shown)
+}
+
+/// What 11ty hands an exported data function: the config's global data, then
+/// `eleventy` laid out as 11ty lays it out (`env.config` when the project
+/// has an 11ty config file; `directories` with every key 11ty lists, those
+/// it doesn't set as `undefined`).
+fn js_argument(initial: &Data, root: &Path) -> Value {
+    let mut arg = initial.clone();
+    if let Some(Value::Object(e)) = initial.get("eleventy") {
+        let mut eleventy = Data::new();
+        for (k, v) in e.iter() {
+            let v = match (k.as_str(), v) {
+                ("env", Value::Object(env)) => {
+                    let mut out = Data::new();
+                    for key in ["source", "runMode"] {
+                        if let Some(v) = env.get(key) {
+                            out.insert(key.into(), v.clone());
+                        }
+                    }
+                    if let Some(config) = [
+                        ".eleventy.js",
+                        "eleventy.config.js",
+                        "eleventy.config.mjs",
+                        "eleventy.config.cjs",
+                    ]
+                    .iter()
+                    .map(|f| root.join(f))
+                    .find(|f| f.exists())
+                    {
+                        out.insert(
+                            "config".into(),
+                            Value::String(config.to_string_lossy().as_ref().into()),
+                        );
+                    }
+                    for (key, v) in env.iter() {
+                        if !out.contains_key(key) {
+                            out.insert(key.clone(), v.clone());
+                        }
+                    }
+                    Value::Object(Arc::new(out))
+                }
+                ("directories", Value::Object(dirs)) => {
+                    let mut out = Data::new();
+                    for key in [
+                        "input",
+                        "inputFile",
+                        "inputGlob",
+                        "data",
+                        "includes",
+                        "layouts",
+                        "output",
+                    ] {
+                        out.insert(
+                            key.into(),
+                            dirs.get(key).cloned().unwrap_or(Value::Undefined),
+                        );
+                    }
+                    Value::Object(Arc::new(out))
+                }
+                _ => v.clone(),
+            };
+            eleventy.insert(k.clone(), v);
+        }
+        arg.insert("eleventy".into(), Value::Object(Arc::new(eleventy)));
+    }
+    Value::Object(Arc::new(arg))
 }
 
 /// The version of 11ty whose output Brrrty reproduces.
@@ -1405,6 +1482,18 @@ fn missing_data_problem(
             .collect::<Vec<_>>()
             .join(", ")
     };
+    if let Some((key, Withheld::JsValue { file, at, what })) = used
+        .iter()
+        .copied()
+        .find(|(_, w)| matches!(w, Withheld::JsValue { .. }))
+    {
+        return Some(crate::data::value_problem(
+            &format!("`{key}`"),
+            file,
+            at,
+            what,
+        ));
+    }
     let mut files: Vec<&PathBuf> = Vec::new();
     for (_, w) in &used {
         if let Withheld::Js(f) = w
@@ -1989,15 +2078,21 @@ fn build_once(
         initial.insert("eleventy".to_string(), v.clone());
     }
     let initial = js_object(&initial);
+    let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
     let GlobalData {
         value: user_value,
         js_keys,
+        js_values,
         notes: data_notes,
         problems: data_problems,
         unavailable,
-    } = load_global(&input, &root, opts.config.data.as_ref(), &initial);
+    } = load_global(&input, &root, opts.config.data.as_ref(), &initial, &mut js);
     report.problems.extend(data_notes);
     report.problems.extend(data_problems);
+    if let Some(p) = js.failed.take() {
+        report.problems.push(p);
+        return finish(report, strict, start);
+    }
     let user_data = match user_value {
         Value::Object(o) => Arc::unwrap_or_clone(o),
         _ => Data::new(),
@@ -2005,10 +2100,16 @@ fn build_once(
     let withheld: BTreeMap<String, Withheld> = unavailable
         .into_iter()
         .map(|key| {
+            let value = js_values.iter().find(|r| r.key_path.first() == Some(&key));
             let js = js_keys.iter().find(|r| r.key_path.first() == Some(&key));
-            let why = match js {
-                Some(r) => Withheld::Js(r.file.clone()),
-                None => Withheld::Failed,
+            let why = match (value, js) {
+                (_, Some(r)) => Withheld::Js(r.file.clone()),
+                (Some(v), None) => Withheld::JsValue {
+                    file: v.file.clone(),
+                    at: v.at.clone(),
+                    what: v.what.clone(),
+                },
+                (None, None) => Withheld::Failed,
             };
             (key, why)
         })
@@ -2057,6 +2158,32 @@ fn build_once(
         &initial,
     );
     report.problems.extend(dir_data.notes.iter().cloned());
+    // What the JavaScript data read inside the project: `serve` rebuilds when one changes.
+    for p in js.reads() {
+        if p.is_relative() {
+            opts.config.reads.add(p);
+        }
+    }
+    // JavaScript data is on, but there is no Node to run it in.
+    if let Some(missing) = js.missing()
+        && (!js_keys.is_empty() || dir_data.has_js())
+    {
+        let code = if missing.too_old {
+            codes::JS_DATA_NODE_OLD
+        } else {
+            codes::JS_DATA_NODE_MISSING
+        };
+        report.problems.push(
+            Problem::error(
+                code,
+                format!(
+                    "JavaScript data is on, but it can't run: {}",
+                    missing.message
+                ),
+            )
+            .with_help("Install Node 18 or later, set BRRRTY_NODE to its path, or port the data files to Rhai: `brrrty init` lists which it can translate. Pages that need them are refused; the rest build."),
+        );
+    }
     let shared = Shared {
         langs: &langs,
         template_engines,
@@ -2686,7 +2813,7 @@ fn build_once(
         .iter()
         .filter_map(|(k, w)| match w {
             Withheld::Js(f) => Some((k.clone(), f.clone())),
-            Withheld::Failed => None,
+            Withheld::JsValue { .. } | Withheld::Failed => None,
         })
         .collect();
     let mut report = finish(report, strict, start);

@@ -11,6 +11,34 @@ fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
 }
 
+/// Whether Node is here to run the fixture's JavaScript data, with its npm
+/// packages installed (`npm ci --ignore-scripts`, into the git-ignored
+/// `node_modules`) when it has a lock file.
+fn node_ready(fixture: &Path) -> bool {
+    let ci = std::env::var_os("CI").is_some();
+    if Command::new("node").arg("--version").output().is_err() {
+        assert!(!ci, "CI needs Node for {}", fixture.display());
+        eprintln!("skipped {}: no node on PATH", fixture.display());
+        return false;
+    }
+    let site = fixture.join("site");
+    if site.join("package-lock.json").is_file() && !site.join("node_modules").is_dir() {
+        let out = Command::new("npm")
+            .args(["ci", "--ignore-scripts", "--no-audit", "--no-fund"])
+            .current_dir(&site)
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {}
+            other => {
+                assert!(!ci, "npm ci failed in {}: {other:?}", site.display());
+                eprintln!("skipped {}: npm ci failed: {other:?}", fixture.display());
+                return false;
+            }
+        }
+    }
+    true
+}
+
 #[test]
 fn every_fixture_matches_reference_output() {
     let mut names: Vec<PathBuf> = fs::read_dir(fixtures_dir())
@@ -25,6 +53,11 @@ fn every_fixture_matches_reference_output() {
     for fixture in names {
         let text = fs::read_to_string(fixture.join("fixture.toml")).expect("fixture.toml");
         let cfg: toml::Table = text.parse().expect("valid fixture.toml");
+        // JavaScript data runs in Node: CI has one; elsewhere a fixture
+        // that needs it is skipped, saying so.
+        if cfg.get("node").and_then(|v| v.as_bool()) == Some(true) && !node_ready(&fixture) {
+            continue;
+        }
         // Without `input`, the folders come from the fixture's config file.
         let input = cfg
             .get("input")
