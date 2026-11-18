@@ -293,15 +293,12 @@ impl<'a> Context<'a> {
                 return call(v.clone());
             }
         }
-        if let Some(v @ Value::Function(_)) = self.data_get(&k) {
-            return call(Val::V(v));
-        }
         if let Some(v) = self.data_get(&k) {
             // A marker for data Brrrty doesn't have yet counts as undefined.
             if matches!(v, Value::Undefined) {
                 self.undefined.borrow_mut().insert(k);
             }
-            return Val::V(v);
+            return call(Val::V(v));
         }
         // Recorded even for `size`, so a data key of that name can't be
         // shadowed without the caller knowing.

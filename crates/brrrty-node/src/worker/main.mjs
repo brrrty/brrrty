@@ -557,10 +557,17 @@ function fnPlace(fn) {
 }
 
 // "the function `money` (src/_data/fmt.js:3:10)".
+const described = new WeakMap();
+
 function describeFn(fn) {
-  const name = fn && fn.name ? ` \`${toWellFormed(String(fn.name))}\`` : "";
-  const place = fnPlace(fn);
-  return `the function${name}${place ? ` (${place})` : ""}`;
+  let text = described.get(fn);
+  if (text === undefined) {
+    const name = fn && fn.name ? ` \`${toWellFormed(String(fn.name))}\`` : "";
+    const place = fnPlace(fn);
+    text = `the function${name}${place ? ` (${place})` : ""}`;
+    described.set(fn, text);
+  }
+  return text;
 }
 
 // One inspector session for `fnKey`, kept open: it uses only the Runtime
@@ -694,7 +701,8 @@ function fingerprint(v, fnToken = (f) => `f${register(f)}`, accessors = true, ca
 async function runCall(fn, makeArgs, settle) {
   const { thisArg, args } = makeArgs();
   refusedInCall = null;
-  writes();
+  // A write since the last call, through data a call kept, counts too.
+  if (writes().shared) return { shared: true };
   let value;
   try {
     value = fn.apply(watch(thisArg), args.map(watch));
