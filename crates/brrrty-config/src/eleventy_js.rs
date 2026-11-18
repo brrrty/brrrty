@@ -227,16 +227,11 @@ fn trusted_array(src: &str, lits: &[Lit], open: usize, close: usize) -> bool {
     loop {
         let head = src[..open].trim_end();
         if let Some(c) = binding.captures(head) {
-            let mut names = vec![regex::escape(&c[1])];
-            // Through the element (`tool.args`), or a destructured name (`{ args }`).
-            names.extend(keys.iter().map(|k| format!(r"\b{}", regex::escape(k))));
-            return names.iter().all(|name| {
-                let changed = regex::Regex::new(&format!(
-                    r"{name}\b\s*(\.\s*(push|unshift|splice|concat|pop|shift|length)\b|\[[^\]]*\]\s*=[^=]|=[^=>])"
-                ))
-                .expect("valid");
-                !changed.is_match(&src[close..])
-            });
+            return match keys.as_slice() {
+                [] => plain_const_ok(src, lits, &c[1], close),
+                [key] => run_list_ok(src, lits, &c[1], key, close),
+                _ => false,
+            };
         }
         let key = property.captures(head).map(|c| c[1].to_string());
         let Some((b, at)) = enclosing(src, lits, open) else {
@@ -252,6 +247,160 @@ fn trusted_array(src: &str, lits: &[Lit], open: usize, close: usize) -> bool {
         }
         open = at;
     }
+}
+
+/// Where `name` is used after `from`, outside string literals.
+fn uses(src: &str, lits: &[Lit], name: &str, from: usize) -> Vec<(usize, usize)> {
+    let re = regex::Regex::new(&format!(r"(^|[^\w$.]){}\b", regex::escape(name))).expect("valid");
+    re.captures_iter(&src[from..])
+        .filter_map(|c| {
+            let m = c.get(0)?;
+            let start = from + m.end() - name.len();
+            let inside = lits.iter().any(|l| l.start <= start && start < l.end);
+            (!inside).then_some((start, from + m.end()))
+        })
+        .collect()
+}
+
+/// Whether the use at `start..end` is a whole argument of a process call: after
+/// its `(` or a `,`, and before a `,` or its `)`. Not spread, not in an
+/// expression.
+fn whole_spawn_arg(src: &str, lits: &[Lit], start: usize, end: usize) -> bool {
+    let pre = src[..start].trim_end();
+    let post = src[end..].trim_start();
+    (pre.ends_with('(') || (pre.ends_with(',') && !pre.ends_with("...,")))
+        && (post.starts_with(',') || post.starts_with(')'))
+        && enclosing(src, lits, start)
+            .is_some_and(|(b, at)| b == b'(' && is_process_call(call_name(src, at)))
+}
+
+/// A `const` argument array: trusted only when every use is a whole argument
+/// of a process call (no spread into another array, no other use at all).
+fn plain_const_ok(src: &str, lits: &[Lit], name: &str, close: usize) -> bool {
+    let all = uses(src, lits, name, close);
+    !all.is_empty() && all.iter().all(|&(s, e)| whole_spawn_arg(src, lits, s, e))
+}
+
+/// A `const` list of runs (`const tools = [{ cmd, args: [...] }]`), whose
+/// arrays are under `key`: trusted only when the list is looped over or
+/// destructured into element names, and each element's `key` is only ever
+/// passed whole to a process call as `spawnSync(tool.cmd, tool.args)` (or
+/// `spawnSync(cmd, args)` with names the loop header destructures). Other
+/// properties (`tool.name`, `tool.times.push(...)`) may be read and written.
+fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> bool {
+    let ident = r"[A-Za-z_$][\w$]*";
+    let loop_head = regex::Regex::new(&format!(
+        r"for\s*\(\s*(?:const|let|var)\s+({ident}|\{{[^}}]*\}})\s+of$"
+    ))
+    .expect("valid");
+    let destructure = regex::Regex::new(r"(?:const|let|var)\s+\[([^\]]*)\]\s*=$").expect("valid");
+    let mut elements: Vec<String> = Vec::new();
+    let mut aliases: Vec<String> = Vec::new();
+    // Where the names are bound (loop headers, destructuring patterns): uses there
+    // are the bindings themselves.
+    let mut patterns: Vec<(usize, usize)> = Vec::new();
+    let mut spawned = false;
+    for (s, e) in uses(src, lits, list, close) {
+        let pre = src[..s].trim_end();
+        let post = src[e..].trim_start();
+        if let Some(c) = loop_head.captures(pre) {
+            let m = c.get(1).expect("group");
+            patterns.push((m.start(), m.end()));
+            let pattern = c[1].trim();
+            if let Some(inner) = pattern.strip_prefix('{') {
+                // `for (const { cmd, args } of tools)`: the name `args` is bound to.
+                for part in inner.trim_end_matches('}').split(',') {
+                    let (k, v) = part.split_once(':').unwrap_or((part, part));
+                    let (k, v) = (k.trim(), v.trim());
+                    if k.starts_with("...") || v.contains(['{', '[', '=']) {
+                        return false;
+                    }
+                    if k == key {
+                        aliases.push(v.to_string());
+                    }
+                }
+            } else {
+                elements.push(pattern.to_string());
+            }
+        } else if let Some(c) = destructure.captures(pre) {
+            let m = c.get(1).expect("group");
+            patterns.push((m.start(), m.end()));
+            // `const [eleventy, brrrty] = tools`: element names, nothing nested.
+            for part in c[1].split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                if part.contains(['{', '[', ':', '=', '.']) {
+                    return false;
+                }
+                elements.push(part.to_string());
+            }
+        } else if post.starts_with('[') {
+            // `tools[0].name`: an element read in place, but never its `key`.
+            let Some(end) = post.find(']') else {
+                return false;
+            };
+            let after = post[end + 1..].trim_start();
+            let prop = after.strip_prefix('.').map(str::trim_start);
+            if prop.is_none_or(|p| {
+                p.starts_with(key)
+                    && !p[key.len()..]
+                        .starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
+            }) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+    // Each element name: only property reads and writes, and its `key` only as
+    // `spawn(el.x, el.key)`.
+    for el in &elements {
+        for (s, e) in uses(src, lits, el, close) {
+            if patterns.iter().any(|&(a, b)| a <= s && s < b) {
+                continue;
+            }
+            // The element itself, passed somewhere or spread: anything could happen to it.
+            let Some(prop) = src[e..].strip_prefix('.') else {
+                return false;
+            };
+            let name_len = prop
+                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                .unwrap_or(prop.len());
+            if &prop[..name_len] != key {
+                continue;
+            }
+            let end = e + 1 + name_len;
+            if !whole_spawn_arg(src, lits, s, end) {
+                return false;
+            }
+            // The program before it is the same element's own property.
+            let Some((_, paren)) = enclosing(src, lits, s) else {
+                return false;
+            };
+            let before_arg = src[paren + 1..s].trim().trim_end_matches(',').trim();
+            let own = regex::Regex::new(&format!(r"^{}\s*\.\s*{ident}$", regex::escape(el)))
+                .expect("valid");
+            if !own.is_match(before_arg) {
+                return false;
+            }
+            spawned = true;
+        }
+    }
+    // Each destructured `args` name: only as a whole spawn argument.
+    for a in &aliases {
+        for (s, e) in uses(src, lits, a, close) {
+            if patterns.iter().any(|&(a, b)| a <= s && s < b) {
+                continue;
+            }
+            if !whole_spawn_arg(src, lits, s, e) {
+                return false;
+            }
+            spawned = true;
+        }
+    }
+    spawned
 }
 
 /// The arguments of the spawn whose program token spans `start..end` (a
@@ -440,7 +589,7 @@ mod tests {
 
     /// The real blog's `ci/compare.mjs` keeps its runs in a `const` list of objects and
     /// loops over them.
-    const TOOLS: &str = "import { spawnSync } from \"node:child_process\";\nconst OUT_11TY = \"_site-11ty\";\nconst tools = [\n  {\n    name: \"11ty\",\n    out: OUT_11TY,\n    cmd: process.execPath,\n    args: [\n      \"--require\", \"./ci/freeze-time.cjs\",\n      \"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${OUT_11TY}`, \"--quiet\",\n    ],\n    times: [],\n  },\n  {\n    name: \"Brrrty\",\n    cmd: \"node_modules/.bin/brrrty\",\n    args: [\"build\", \"--quiet\"],\n  },\n];\nfor (const tool of tools) {\n  const result = spawnSync(tool.cmd, tool.args, { stdio: \"inherit\" });\n  tool.times.push(1);\n}\n";
+    const TOOLS: &str = "import { spawnSync } from \"node:child_process\";\nconst OUT_11TY = \"_site-11ty\";\nconst tools = [\n  {\n    name: \"11ty\",\n    out: OUT_11TY,\n    cmd: process.execPath,\n    args: [\n      \"--require\", \"./ci/freeze-time.cjs\",\n      \"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${OUT_11TY}`, \"--quiet\",\n    ],\n    times: [],\n  },\n  {\n    name: \"Brrrty\",\n    cmd: \"node_modules/.bin/brrrty\",\n    args: [\"build\", \"--quiet\"],\n  },\n];\nfor (const tool of tools) {\n  const result = spawnSync(tool.cmd, tool.args, { stdio: \"inherit\" });\n  tool.times.push(1);\n}\nconst [eleventy, brrrty] = tools;\nconsole.log(eleventy.times, brrrty.name);\n";
 
     #[test]
     fn a_const_list_of_runs_is_read() {
@@ -458,6 +607,51 @@ mod tests {
             let src = TOOLS.replace("tool.times.push(1);", change);
             assert_eq!(analyze(&src).spawns, [None], "{change}");
         }
+        // The review's: flags added at the call, through an alias, a destructured
+        // alias, or `Array.prototype.push.call`; and kin.
+        let npx = "import { spawnSync } from \"node:child_process\";\nconst tools = [{ cmd: \"npx\", args: [\"@11ty/eleventy\", \"--input=src\"] }];\n";
+        let ok = format!("{npx}for (const tool of tools) spawnSync(tool.cmd, tool.args);\n");
+        assert_eq!(analyze(&ok).spawns, [Some(vec!["--input=src".into()])]);
+        let destructured = format!(
+            "{npx}for (const {{ cmd, args }} of tools) spawnSync(cmd, args, {{ stdio: \"inherit\" }});\n"
+        );
+        assert_eq!(
+            analyze(&destructured).spawns,
+            [Some(vec!["--input=src".into()])]
+        );
+        for tail in [
+            "for (const tool of tools) spawnSync(tool.cmd, [...tool.args, \"--pathprefix=/b/\"]);",
+            "const a = tools[0].args; a.push(\"--pathprefix=/b/\"); for (const tool of tools) spawnSync(tool.cmd, tool.args);",
+            "const [{ args: x }] = tools; x.push(\"--pathprefix=/b/\"); for (const tool of tools) spawnSync(tool.cmd, tool.args);",
+            "Array.prototype.push.call(tools[0].args, \"--pathprefix=/b/\"); for (const tool of tools) spawnSync(tool.cmd, tool.args);",
+            "for (const tool of tools) { addFlags(tool); spawnSync(tool.cmd, tool.args); }",
+            "for (const tool of tools) spawnSync(tool.cmd, tool.args.concat(more));",
+            "for (const { cmd, args } of tools) spawnSync(cmd, [...args, \"--x\"]);",
+            "for (const { cmd, args } of tools) { args.push(\"--x\"); spawnSync(cmd, args); }",
+            "tools.forEach((t) => spawnSync(t.cmd, t.args));",
+            "for (const tool of tools) spawnSync(other.cmd, tool.args);",
+            "for (const tool of tools) console.log(tool.name);",
+        ] {
+            let src = format!("{npx}{tail}\n");
+            assert_eq!(analyze(&src).spawns, [None], "{tail}");
+        }
+        // A plain const array is held to the same: whole, and only as a spawn argument.
+        let plain = "const a = [\"@11ty/eleventy\", \"--input=src\"];\n";
+        assert_eq!(
+            analyze(&format!("{plain}spawnSync(\"npx\", a);")).spawns,
+            [Some(vec!["--input=src".into()])]
+        );
+        assert_eq!(
+            analyze(&format!("{plain}spawnSync(\"npx\", [...a, \"--x\"]);")).spawns,
+            [None]
+        );
+        assert_eq!(
+            analyze(&format!(
+                "{plain}const b = a; b.push(\"--x\"); spawnSync(\"npx\", a);"
+            ))
+            .spawns,
+            [None]
+        );
         // A check that the bin is there doesn't taint the file.
         let s = analyze(&format!(
             "import fs from \"node:fs\";\nif (!fs.existsSync(\"node_modules/.bin/eleventy\")) process.exit(1);\n{TOOLS}"
