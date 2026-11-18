@@ -267,14 +267,46 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     };
 
     // brrrty.config.rhai: from the config 11ty reads, which the build script's `--config`
-    // may name instead of the default. The scripts are read as a build will read them,
-    // after the edit above.
-    let cli = serde_json::from_str::<serde_json::Value>(
-        edited.text.strip_prefix(BOM).unwrap_or(&edited.text),
-    )
-    .ok()
-    .and_then(|v| brrrty_config::eleventy_cli::find(&v, &root));
+    // may name instead of the default. What 11ty is run with is read from the scripts as
+    // they are before the edit above: after it, `build` is Brrrty's, which would make
+    // every 11ty run that writes elsewhere (a GitLab Pages job's `--output=public`) look
+    // like a comparison with it. The `11ty flags` hash is of the scripts after the edit,
+    // as a build will read them.
+    let parse =
+        |t: &str| serde_json::from_str::<serde_json::Value>(t.strip_prefix(BOM).unwrap_or(t)).ok();
+    let before_edit = old_package
+        .as_deref()
+        .and_then(parse)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut cli = brrrty_config::eleventy_cli::find(&before_edit, &root);
+    // TODOs name the scripts as they are after the edit, which keeps 11ty's `build` as
+    // `build:11ty`.
+    if let (Some(c), Some(after)) = (cli.as_mut(), parse(&edited.text)) {
+        for name in ["build", "start"] {
+            let kept = format!("{name}:11ty");
+            let was = before_edit["scripts"].get(name);
+            if was.is_some()
+                && after["scripts"].get(&kept) == was
+                && after["scripts"].get(name) != was
+            {
+                let rename = |s: &mut String| {
+                    if s == name {
+                        *s = kept.clone();
+                    } else if let Some(rest) = s.strip_prefix(&format!("{name} → ")) {
+                        *s = format!("{kept} → {rest}");
+                    }
+                };
+                rename(&mut c.script);
+                for t in &mut c.todos {
+                    rename(&mut t.script);
+                }
+            }
+        }
+    }
     let cli = cli.as_ref();
+    let flags_hash = parse(&edited.text)
+        .and_then(|v| brrrty_config::eleventy_cli::find(&v, &root))
+        .map(|c| c.fingerprint());
     let named = cli.and_then(|c| c.config.clone());
     let config: Option<String> = match &named {
         Some(n) if n.is_empty() => None,
@@ -340,8 +372,8 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             None,
         ),
     };
-    if let Some(c) = cli {
-        record_flags(&mut rhai, c);
+    if let Some(h) = &flags_hash {
+        record_flags(&mut rhai, h);
     }
 
     let mut changes = Vec::new();
@@ -390,9 +422,9 @@ fn record_source(text: &mut String, name: &str, bytes: &[u8]) {
 }
 
 /// Add the line recording what the scripts pass to 11ty: a build warns when they change.
-fn record_flags(text: &mut String, cli: &brrrty_config::eleventy_cli::Cli) {
+fn record_flags(text: &mut String, hash: &str) {
     use brrrty_config::eleventy_cli::FLAGS_LINE;
-    let line = format!("{FLAGS_LINE}{}\n", cli.fingerprint());
+    let line = format!("{FLAGS_LINE}{hash}\n");
     let at = text.find("\n\n").map_or(text.len(), |i| i + 1);
     text.insert_str(at, &line);
 }

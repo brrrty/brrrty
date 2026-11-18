@@ -1065,9 +1065,14 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         // `--output=public` beside an 11ty `build` may well be what's deployed.
         let reference = chosen.iter().find(|r| !shaped(r)).map(core);
         let comparison = |r: &Run| {
+            // A script that runs a Brrrty build itself (`brrrty build && eleventy
+            // --output=_site-11ty`) runs 11ty beside it to compare.
+            let beside = runs_brrrty_build(&r.cmd);
             shaped(r)
-                && (is_ci(&r.name) || (!is_deploy(&r.name) && r.name != "build"))
-                && (brrrty_build || (is_ci(&r.name) && ci_brrrty.contains(&ci_file(&r.name))))
+                && (beside
+                    || ((is_ci(&r.name) || (!is_deploy(&r.name) && r.name != "build"))
+                        && (brrrty_build
+                            || (is_ci(&r.name) && ci_brrrty.contains(&ci_file(&r.name))))))
         };
         match &reference {
             Some(reference) => chosen.retain(|r| !comparison(r) || core(r) != *reference),
@@ -2056,5 +2061,18 @@ mod tests {
         // With Brrrty as the build, the same job is a comparison run.
         let pkg = json!({ "scripts": { "build": "brrrty build", "build:11ty": "eleventy" } });
         assert_eq!(find(&pkg, t.path()), None);
+    }
+
+    #[test]
+    fn an_11ty_run_beside_a_brrrty_build_in_one_script_is_a_comparison() {
+        let t = site();
+        let pkg = json!({ "scripts": { "build": "brrrty build && eleventy --output=_site-11ty" } });
+        assert_eq!(find(&pkg, t.path()), None);
+        let pkg = json!({ "scripts": { "build": "brrrty build && eleventy --input=src --output=_site-11ty" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(
+            (c.input.as_deref(), c.output.as_deref()),
+            (Some("src"), None)
+        );
     }
 }
