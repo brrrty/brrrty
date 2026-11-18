@@ -147,7 +147,10 @@ fn read_text(path: &Path) -> Option<String> {
 /// The build commands deploy configs in `root` run, as `(label, command)`: Netlify's
 /// `[build] command` and `[context.production] command`, Vercel's `buildCommand`, and
 /// the `run:` steps of GitHub Actions workflows and the `script:` lists of GitLab CI.
-fn deploy_commands(root: &Path) -> Vec<(String, String)> {
+///
+/// The third value is set for a line that mentions 11ty but isn't a command
+/// the scan could read: a TODO, whatever it says.
+fn deploy_commands(root: &Path) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
     if let Some(t) =
         read_text(&root.join("netlify.toml")).and_then(|t| toml::from_str::<toml::Table>(&t).ok())
@@ -163,7 +166,7 @@ fn deploy_commands(root: &Path) -> Vec<(String, String)> {
                 .and_then(|b| b.get("command"))
                 .and_then(|c| c.as_str())
             {
-                out.push((format!("netlify.toml, {label}"), c.to_string()));
+                out.push((format!("netlify.toml, {label}"), c.to_string(), false));
             }
         }
     }
@@ -171,7 +174,7 @@ fn deploy_commands(root: &Path) -> Vec<(String, String)> {
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .and_then(|v| v.get("buildCommand")?.as_str().map(str::to_string))
     {
-        out.push(("vercel.json, buildCommand".into(), c));
+        out.push(("vercel.json, buildCommand".into(), c, false));
     }
     if let Ok(dir) = std::fs::read_dir(root.join(".github/workflows")) {
         let mut files: Vec<_> = dir
@@ -182,15 +185,23 @@ fn deploy_commands(root: &Path) -> Vec<(String, String)> {
         files.sort();
         for f in files {
             if let Some(t) = read_text(&root.join(".github/workflows").join(&f)) {
-                for (line, cmd) in yaml_commands(&t, &["run"]) {
-                    out.push((format!(".github/workflows/{f}, line {line}"), cmd));
+                let (cmds, covered) = yaml_commands(&t, &["run"]);
+                for (line, cmd) in cmds {
+                    out.push((format!(".github/workflows/{f}, line {line}"), cmd, false));
+                }
+                for (line, text) in yaml_unread(&t, &covered) {
+                    out.push((format!(".github/workflows/{f}, line {line}"), text, true));
                 }
             }
         }
     }
     if let Some(t) = read_text(&root.join(".gitlab-ci.yml")) {
-        for (line, cmd) in yaml_commands(&t, &["script", "before_script", "after_script"]) {
-            out.push((format!(".gitlab-ci.yml, line {line}"), cmd));
+        let (cmds, covered) = yaml_commands(&t, &["script", "before_script", "after_script"]);
+        for (line, cmd) in cmds {
+            out.push((format!(".gitlab-ci.yml, line {line}"), cmd, false));
+        }
+        for (line, text) in yaml_unread(&t, &covered) {
+            out.push((format!(".gitlab-ci.yml, line {line}"), text, true));
         }
     }
     out
@@ -200,8 +211,9 @@ fn deploy_commands(root: &Path) -> Vec<(String, String)> {
 /// `key: command`, `key: [a, b]`, a block scalar (`key: |`), and a list of
 /// items (`- command`, `- |`) indented under the key. Gives each with its
 /// 1-based line.
-fn yaml_commands(text: &str, keys: &[&str]) -> Vec<(usize, String)> {
+fn yaml_commands(text: &str, keys: &[&str]) -> (Vec<(usize, String)>, Vec<bool>) {
     let lines: Vec<&str> = text.lines().collect();
+    let mut covered = vec![false; lines.len()];
     let indent = |l: &str| l.len() - l.trim_start().len();
     let unquote = |v: &str| {
         let v = v.trim();
@@ -215,41 +227,68 @@ fn yaml_commands(text: &str, keys: &[&str]) -> Vec<(usize, String)> {
         }
     };
     // The lines of a block scalar after `at`, more indented than `base`.
-    let block = |at: usize, base: usize, folded: bool| {
+    let block = |at: usize, base: usize, folded: bool, covered: &mut Vec<bool>| {
         let mut body = Vec::new();
-        for l in &lines[at + 1..] {
+        for (k, l) in lines.iter().enumerate().skip(at + 1) {
             if !l.trim().is_empty() && indent(l) <= base {
                 break;
             }
+            covered[k] = true;
             body.push(l.trim());
         }
         body.join(if folded { " " } else { "\n" })
+    };
+    // A plain scalar's continuation lines after `at`, more indented than `col`, folded
+    // in with spaces: not a list item, not a `key:`.
+    let plain = |at: usize, col: usize, first: String, covered: &mut Vec<bool>| {
+        let mut value = first;
+        for (k, l) in lines.iter().enumerate().skip(at + 1) {
+            let t = l.trim();
+            if t.is_empty()
+                || indent(l) <= col
+                || t.starts_with("- ")
+                || t.starts_with('#')
+                || t.split_once(':')
+                    .is_some_and(|(k, v)| !k.contains(' ') && (v.is_empty() || v.starts_with(' ')))
+            {
+                break;
+            }
+            covered[k] = true;
+            value.push(' ');
+            value.push_str(t);
+        }
+        value
     };
     let is_block = |v: &str| v.starts_with('|') || v.starts_with('>');
     let mut out = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let l = lines[i];
-        let t = l.trim_start();
-        let t = t.strip_prefix("- ").unwrap_or(t).trim_start();
+        let t0 = l.trim_start();
+        let item = t0.starts_with("- ");
+        let t = t0.strip_prefix("- ").unwrap_or(t0).trim_start();
         let Some((key, value)) = t.split_once(':') else {
             i += 1;
             continue;
         };
-        if t.starts_with('#') || !keys.contains(&key.trim()) {
+        let key = key.trim().trim_matches(['"', '\'']);
+        if t.starts_with('#') || !keys.contains(&key) {
             i += 1;
             continue;
         }
+        covered[i] = true;
         let base = indent(l);
+        let col = base + if item { 2 } else { 0 };
         let value = value.trim();
         if is_block(value) {
-            out.push((i + 1, block(i, base, value.starts_with('>'))));
+            out.push((i + 1, block(i, base, value.starts_with('>'), &mut covered)));
         } else if let Some(list) = value.strip_prefix('[') {
             for item in list.trim_end_matches(']').split(',') {
                 out.push((i + 1, unquote(item)));
             }
         } else if !value.is_empty() && !value.starts_with('#') {
-            out.push((i + 1, unquote(value)));
+            let v = plain(i, col, unquote(value), &mut covered);
+            out.push((i + 1, v));
         } else {
             // A list of items under the key.
             let mut k = i + 1;
@@ -265,22 +304,73 @@ fn yaml_commands(text: &str, keys: &[&str]) -> Vec<(usize, String)> {
                 let Some(item) = m.trim_start().strip_prefix("- ") else {
                     break;
                 };
+                covered[k] = true;
                 let item = item.trim();
                 if is_block(item) {
-                    out.push((k + 1, block(k, indent(m), item.starts_with('>'))));
+                    out.push((
+                        k + 1,
+                        block(k, indent(m), item.starts_with('>'), &mut covered),
+                    ));
                 } else {
-                    out.push((k + 1, unquote(item)));
+                    out.push((k + 1, plain(k, indent(m), unquote(item), &mut covered)));
                 }
+                // Past the item's own block or continuation lines.
                 k += 1;
+                while k < lines.len() && covered[k] {
+                    k += 1;
+                }
             }
         }
         i += 1;
+    }
+    (out, covered)
+}
+
+/// Lines of a CI file the scan didn't read as a command that still mention 11ty: an
+/// anchor, a `!reference`, a flow-style step. They are TODOs, never silence. Comments,
+/// and prose keys (`name:`, `description:`, `title:`), don't count.
+fn yaml_unread(text: &str, covered: &[bool]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, l) in text.lines().enumerate() {
+        let t = l.trim();
+        if covered.get(i).copied().unwrap_or(false) || t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let t = t.split(" #").next().unwrap_or(t);
+        let key = t
+            .strip_prefix("- ")
+            .unwrap_or(t)
+            .split_once(':')
+            .map(|(k, _)| k.trim().trim_matches(['"', '\'']));
+        if key.is_some_and(|k| matches!(k, "name" | "description" | "title")) {
+            continue;
+        }
+        if mentions(t) {
+            out.push((i + 1, t.to_string()));
+        }
     }
     out
 }
 
 /// How the line recording the scripts' 11ty flags starts.
 pub const FLAGS_LINE: &str = "// 11ty flags from package.json: ";
+
+/// `cmd` up to a shell comment: a `#` that starts an unquoted word.
+fn without_comment(cmd: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut prev_space = true;
+    for (i, c) in cmd.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == '#' && prev_space => return &cmd[..i],
+            None => {}
+        }
+        prev_space = quote.is_none() && c.is_whitespace();
+    }
+    cmd
+}
 
 /// A command line split into words, with `'...'` and `"..."` quoting.
 fn words(cmd: &str) -> Vec<String> {
@@ -462,11 +552,8 @@ fn steps(script: &str) -> Vec<String> {
 /// What `step` does. `scripts` are package.json's script names, which
 /// `pnpm x` and `yarn x` run before a bin of that name.
 fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) -> Step {
-    let mut w = without_redirections(words(step));
     // A shell comment ends the command.
-    if let Some(at) = w.iter().position(|x| x.starts_with('#')) {
-        w.truncate(at);
-    }
+    let mut w = without_redirections(words(without_comment(step)));
     let assignment = |x: &str| {
         x.split_once('=').is_some_and(|(k, _)| {
             !k.is_empty()
@@ -723,8 +810,12 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
     let mut api: Vec<(String, String, String, String)> = Vec::new();
     let package = scripts
         .iter()
-        .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string())));
-    for (name, cmd) in package.chain(deploy_commands(root)) {
+        .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string(), false)));
+    for (name, cmd, unread) in package.chain(deploy_commands(root)) {
+        if unread {
+            unreadable.push((name, cmd));
+            continue;
+        }
         let (name, cmd) = (&name, cmd.as_str());
         let mut found = Vec::new();
         let mut bad = false;
@@ -1338,7 +1429,7 @@ mod tests {
     fn reads_yaml_commands_a_line_at_a_time() {
         let gh = "jobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - name: Build\n        run: |\n          npm run css\n          npx @11ty/eleventy --input=src\n      - run: \"echo 'done'\"\n      # - run: eleventy --old\n";
         assert_eq!(
-            yaml_commands(gh, &["run"]),
+            yaml_commands(gh, &["run"]).0,
             [
                 (5, "npm ci".to_string()),
                 (7, "npm run css\nnpx @11ty/eleventy --input=src".to_string()),
@@ -1347,7 +1438,7 @@ mod tests {
         );
         let gl = "build:\n  before_script:\n    - npm ci\n  script:\n    # a comment\n    - npx @11ty/eleventy\n    - >\n      rsync a\n      b\n  artifacts:\n    paths:\n      - _site/\ntest:\n  script: npm test\nlint:\n  script: [\"npm run lint\", 'x']\n";
         assert_eq!(
-            yaml_commands(gl, &["script", "before_script"]),
+            yaml_commands(gl, &["script", "before_script"]).0,
             [
                 (3, "npm ci".to_string()),
                 (6, "npx @11ty/eleventy".to_string()),
@@ -1443,5 +1534,108 @@ mod tests {
         let c = find(&pkg, t.path()).unwrap();
         assert_eq!(c.todos.len(), 1);
         assert_eq!(c.todos[0].script, ".github/workflows/x.yaml, line 4");
+    }
+
+    #[test]
+    fn yaml_forms_the_scan_cant_read_are_todos() {
+        let unread = |file: &str, body: &str| {
+            let t = site();
+            write(&t, file, body);
+            let c = find(&json!({}), t.path()).unwrap_or_else(|| panic!("{body}: silent"));
+            c
+        };
+        // Continued on the next line without `|`: read, not just marked.
+        let c = unread(
+            ".github/workflows/d.yml",
+            "jobs:\n  b:\n    steps:\n      - run: npx @11ty/eleventy\n          --input=src --pathprefix=/blog/\n      - run: echo ok\n",
+        );
+        assert_eq!(c.input.as_deref(), Some("src"));
+        assert!(
+            c.todos[0].why.contains("--pathprefix=/blog/"),
+            "{:?}",
+            c.todos
+        );
+        let c = unread(
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - npx @11ty/eleventy\n      --input=src\n",
+        );
+        assert_eq!(c.input.as_deref(), Some("src"));
+        // An item after a `- |` block is read too (it was skipped, so a flag there was lost).
+        let c = unread(
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - |\n      npm ci\n      npm test\n    - npx @11ty/eleventy --input=src\n",
+        );
+        assert_eq!(c.input.as_deref(), Some("src"));
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        // A quoted key is a key.
+        let c = unread(
+            ".github/workflows/d.yml",
+            "jobs:\n  b:\n    steps:\n      - \"run\": npx @11ty/eleventy --input=src\n",
+        );
+        assert_eq!(c.input.as_deref(), Some("src"));
+        // An anchor, a `!reference` list, a flow-style step: marked, naming the line.
+        for (file, body, line) in [
+            (
+                ".gitlab-ci.yml",
+                ".build: &build\n  - npx @11ty/eleventy --input=src\npages:\n  script: *build\n",
+                2,
+            ),
+            (
+                ".gitlab-ci.yml",
+                ".setup:\n  build_cmds:\n    - npx @11ty/eleventy --input=src\npages:\n  script:\n    - !reference [.setup, build_cmds]\n",
+                3,
+            ),
+            (
+                ".github/workflows/d.yml",
+                "jobs:\n  b:\n    steps: [{run: \"npx @11ty/eleventy --input=src\"}]\n",
+                3,
+            ),
+        ] {
+            let c = unread(file, body);
+            assert_eq!(c.input, None, "{body}");
+            assert!(
+                c.todos
+                    .iter()
+                    .any(|t| t.script == format!("{file}, line {line}")
+                        && t.why.contains("couldn't read the flags")),
+                "{body}: {:?}",
+                c.todos
+            );
+        }
+    }
+
+    #[test]
+    fn yaml_comments_names_and_read_lines_never_trip_the_backstop() {
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "# eleventy.config.js stamps the sha\nbuild:\n  # runs eleventy\n  script:\n    - npm ci  # then eleventy\n    - npx @11ty/eleventy\n    - |\n      # eleventy dry run first\n      npx @11ty/eleventy\n",
+        );
+        write(
+            &t,
+            ".github/workflows/b.yml",
+            "name: Build with Eleventy\njobs:\n  b:\n    steps:\n      - name: Eleventy\n        run: npx @11ty/eleventy\n",
+        );
+        assert_eq!(
+            find(&json!({ "scripts": { "build": "eleventy" } }), t.path()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_quoted_hash_isnt_a_comment() {
+        assert_eq!(
+            args_of("eleventy --input=src --pathprefix '#/'"),
+            [
+                ("input".to_string(), Some("src".to_string())),
+                ("pathprefix".to_string(), Some("#/".to_string())),
+            ]
+        );
+        assert_eq!(
+            args_of("eleventy --input=src # --pathprefix=/x/"),
+            [("input".to_string(), Some("src".to_string()))]
+        );
+        assert_eq!(without_comment("a b#c 'd #e' #f"), "a b#c 'd #e' ");
     }
 }
