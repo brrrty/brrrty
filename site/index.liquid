@@ -71,7 +71,7 @@ description: Brrrty is a static site generator written in Rust. It builds your e
   <section class="band" aria-labelledby="port">
     <div class="band-text">
       <h2 id="port">Port the config. Keep the rest.</h2>
-      <p>Brrrty doesn't run JavaScript, so the same calls go in <code>brrrty.config.rhai</code>, a small <a href="https://rhai.rs">Rhai</a> script: 11ty's method names in snake_case, with <code>config</code> for <code>eleventyConfig</code>.</p>
+      <p>Brrrty doesn't run your JavaScript config, so the same calls go in <code>brrrty.config.rhai</code>, a small <a href="https://rhai.rs">Rhai</a> script: 11ty's method names in snake_case, with <code>config</code> for <code>eleventyConfig</code>.</p>
       <p><a class="more" href="/docs/getting-started/#1-port-the-config">Porting a config, step by step</a></p>
     </div>
     <div class="port">
@@ -101,7 +101,7 @@ config.add_collection("posts", |api|
   <section class="band" aria-labelledby="does">
     <div class="band-text">
       <h2 id="does">What it does</h2>
-      <p>Version {{ release }}, and early. Try it on a copy of your site and compare the output with 11ty's.</p>
+      <p>Version {{ release }}. It builds this site and <a href="https://joshtronic.com/">a 2,272-file blog</a>. It's still early, so try it on a copy of your site and compare the output with 11ty's.</p>
     </div>
     <dl class="spec">
       <div><dt>Output</dt><dd>Byte-compatible with 11ty 3.1.8, checked by building test sites with both and comparing every file.</dd></div>
