@@ -1,0 +1,282 @@
+// Brrrty's JavaScript data worker: the protocol, the loader and the reads
+// it records. Runs as `node --input-type=module --eval <encode.mjs + this>`
+// with the project folder as its working directory.
+//
+// Requests are JSON lines on stdin, one at a time. Replies go to stdout as
+// frames: "\x1eBRRRTY <byte length>\n<json>". Nothing else may reach stdout,
+// so before any site code loads, the worker keeps its own writer for the
+// frames and points `process.stdout.write` (and so `console.log`) at stderr.
+//
+// The import logic is ported from Eleventy 3.1.8 (src/Util/Require.js and
+// src/Data/TemplateData.js), MIT licensed, copyright Zach Leatherman and
+// contributors; see NOTICE.
+
+import fs from "node:fs";
+import path from "node:path";
+import util from "node:util";
+import nodeModule, { createRequire } from "node:module";
+import readline from "node:readline";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+// --- Frames, written before anything else can touch stdout. ---
+
+const writeFd = fs.writeSync;
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+function out(text) {
+  const bytes = Buffer.from(text, "utf8");
+  let done = 0;
+  while (done < bytes.length) {
+    try {
+      done += writeFd(1, bytes, done, bytes.length - done);
+    } catch (e) {
+      if (e && e.code === "EAGAIN") {
+        Atomics.wait(sleepCell, 0, 0, 1);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+function frame(obj) {
+  const json = JSON.stringify(obj);
+  out(`\x1eBRRRTY ${Buffer.byteLength(json, "utf8")}\n${json}`);
+}
+
+process.stdout.write = process.stderr.write.bind(process.stderr);
+
+// --- What the site's code reads. ---
+
+const root = process.cwd();
+const reads = new Set();
+
+function note(p) {
+  try {
+    if (p instanceof URL) {
+      if (p.protocol === "file:") reads.add(fileURLToPath(p));
+      return;
+    }
+    if (Buffer.isBuffer(p)) p = p.toString("utf8");
+    if (typeof p === "string") {
+      if (p.startsWith("file:")) {
+        reads.add(fileURLToPath(p));
+      } else {
+        reads.add(path.resolve(root, p));
+      }
+    }
+  } catch {
+    // A path the site can't use either; nothing to watch.
+  }
+}
+
+function wrap(obj, name) {
+  const original = obj[name];
+  if (typeof original !== "function") return;
+  const wrapped = function (p, ...rest) {
+    note(p);
+    return original.call(this, p, ...rest);
+  };
+  Object.defineProperty(wrapped, "name", { value: original.name });
+  obj[name] = wrapped;
+}
+
+for (const name of ["readFileSync", "readFile", "readdirSync", "readdir", "existsSync", "statSync", "stat", "lstatSync", "lstat", "opendir", "opendirSync", "createReadStream", "accessSync", "access"]) {
+  wrap(fs, name);
+}
+for (const name of ["readFile", "readdir", "stat", "lstat", "opendir", "access"]) {
+  wrap(fs.promises, name);
+}
+nodeModule.syncBuiltinESMExports();
+
+const requireHere = createRequire(path.join(root, "brrrty-worker.js"));
+const loadHooks = typeof nodeModule.registerHooks === "function";
+if (loadHooks) {
+  nodeModule.registerHooks({
+    load(url, context, nextLoad) {
+      if (url.startsWith("file:")) note(url.split("?")[0]);
+      return nextLoad(url, context);
+    },
+  });
+}
+
+function allReads() {
+  for (const key of Object.keys(requireHere.cache)) note(key);
+  return [...reads].sort();
+}
+
+// --- Decoding values Brrrty sends (the same wire forms as encode.mjs). ---
+
+const handles = [];
+
+function register(fn) {
+  const at = handles.indexOf(fn);
+  if (at !== -1) return at;
+  handles.push(fn);
+  return handles.length - 1;
+}
+
+function fromWire(w) {
+  if (w === null || typeof w !== "object") return w;
+  if (Array.isArray(w)) {
+    const outList = new Array(w.length);
+    for (let i = 0; i < w.length; i++) {
+      if (w[i] && typeof w[i] === "object" && !Array.isArray(w[i]) && "$hole" in w[i]) continue;
+      outList[i] = fromWire(w[i]);
+    }
+    return outList;
+  }
+  if ("$o" in w) {
+    const o = {};
+    for (const [k, v] of w.$o) o[k] = fromWire(v);
+    return o;
+  }
+  if ("$u" in w) return undefined;
+  if ("$n" in w) return Number(w.$n);
+  if ("$d" in w) return new Date(w.$d);
+  if ("$f" in w) return handles[w.$f];
+  throw new Error(`not a wire form: ${JSON.stringify(w)}`);
+}
+
+function deepFreeze(o) {
+  if (o && typeof o === "object" && !Object.isFrozen(o)) {
+    Object.freeze(o);
+    for (const k of Object.keys(o)) deepFreeze(o[k]);
+  }
+  return o;
+}
+
+// --- Loading data files as Eleventy 3.1.8 does. ---
+
+let isEsm = false;
+try {
+  isEsm = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).type === "module";
+} catch {
+  isEsm = false;
+}
+
+const requestPromiseCache = new Map();
+let argument;
+
+// `dynamicImportAbsolutePath` from src/Util/Require.js, without the JSON
+// and cache-busting paths Brrrty never takes.
+function dynamicImportAbsolutePath(absolutePath, type) {
+  let urlPath;
+  try {
+    urlPath = new URL(`file:${absolutePath}`).toString();
+  } catch {
+    urlPath = absolutePath;
+  }
+  let promise;
+  if (requestPromiseCache.has(urlPath)) {
+    promise = requestPromiseCache.get(urlPath);
+  } else {
+    promise = import(urlPath);
+    requestPromiseCache.set(urlPath, promise);
+  }
+  return promise.then((target) => {
+    if (Object.keys(target).length === 1 && "default" in target) {
+      return target.default;
+    }
+    if (type === "cjs" && "default" in target) {
+      let match = true;
+      for (const key in target) {
+        if (key === "default") continue;
+        if (key === "module.exports") continue;
+        if (target[key] !== target.default[key]) {
+          match = false;
+        }
+      }
+      if (match) {
+        return target.default;
+      }
+    }
+    return Object.assign({}, target);
+  });
+}
+
+// `getDataValue` from src/Data/TemplateData.js, for JavaScript files.
+async function getDataValue(absolutePath, call) {
+  if (!fs.existsSync(absolutePath)) return {};
+  const ext = path.extname(absolutePath).slice(1);
+  let type = "cjs";
+  if (ext === "mjs" || (ext === "js" && isEsm)) type = "esm";
+  let value = await dynamicImportAbsolutePath(absolutePath, type);
+  if (call && typeof value === "function") {
+    value = await value(argument || {});
+  }
+  return value;
+}
+
+// --- Errors. ---
+
+function thrown(e) {
+  if (e instanceof Error || (e && typeof e === "object" && typeof e.stack === "string")) {
+    return {
+      name: String(e.name || "Error"),
+      message: String(e.message ?? ""),
+      stack: String(e.stack || ""),
+      inspect: util.inspect(e),
+    };
+  }
+  const text = typeof e === "string" ? JSON.stringify(e) : util.inspect(e);
+  return { name: "", message: `Uncaught ${text}`, stack: "", inspect: "" };
+}
+
+// --- The request loop. ---
+
+async function handle(req) {
+  switch (req.op) {
+    case "setArg": {
+      const arg = fromWire(req.value);
+      if (arg && typeof arg === "object" && arg.eleventy) deepFreeze(arg.eleventy);
+      argument = arg;
+      return { ok: null };
+    }
+    case "load": {
+      const value = await getDataValue(req.path, req.call);
+      return { ok: encodeValue(value, register) };
+    }
+    case "call": {
+      const fn = handles[req.handle];
+      if (typeof fn !== "function") throw new Error(`no function ${req.handle}`);
+      const args = req.args.map(fromWire);
+      const value = await fn(...args);
+      return { ok: encodeValue(value, register) };
+    }
+    case "varsUsed": {
+      const fn = handles[req.handle];
+      if (typeof fn !== "function") throw new Error(`no function ${req.handle}`);
+      return { ok: await varsUsed(fn, fromWire(req.data)) };
+    }
+    case "reads":
+      return { ok: allReads() };
+    case "info":
+      return { ok: { loadHooks } };
+    default:
+      return { protocol: `unknown request ${JSON.stringify(req.op)}` };
+  }
+}
+
+let queue = Promise.resolve();
+const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+lines.on("line", (line) => {
+  queue = queue.then(async () => {
+    let req;
+    try {
+      req = JSON.parse(line);
+    } catch {
+      frame({ id: null, protocol: "a request that isn't JSON" });
+      return;
+    }
+    if (req.op === "bye") process.exit(0);
+    let reply;
+    try {
+      reply = await handle(req);
+    } catch (e) {
+      reply = { thrown: thrown(e) };
+    }
+    frame({ id: req.id, ...reply });
+  });
+});
+lines.on("close", () => process.exit(0));

@@ -19,3 +19,7 @@ serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[[bench]]
+name = "hundred"
+harness = false

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `brrrty-node` runs the data in one Node process per build, started with the worker module passed on the command line (nothing is written to disk). Requests go one at a time, in build order; replies come back in framed messages on Node's stdout, and the site's own logging (`console.log`, `process.stdout.write`) goes to stderr, where Brrrty passes it through. A data file that takes more than 10 seconds gets a note naming it (then every 30 seconds) and is waited for, as 11ty waits. A Node that exits or writes something else to its output stops the build, with its exit status and the last 20 lines of its stderr. The worker records every file the data's code reads or loads.
 - New crate `brrrty-node`: runs a site's JavaScript data files in the site's own Node. Its value encoding carries plain objects (in JavaScript key order), arrays, strings, numbers (`-0`, `NaN` and infinities included), `null`, `undefined` and `Date`s exactly, keeps functions as handles, and refuses everything else (a `Map`, a class instance such as a luxon `DateTime`, a `BigInt`, an invalid `Date`, a circular reference, a getter that changes between reads) naming the value's path.
 - For contributors: `cargo xtask fixtures-refresh --docker <name>` builds a fixture's reference output with 11ty 3.1.8 inside Docker, once per `--image` (`node:22` and `node:24` by default), with no network, and keeps it only when every image gives the same bytes.
 
