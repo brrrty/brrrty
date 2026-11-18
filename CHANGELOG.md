@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `brrrty doctor` counts a page refused because template or folder JavaScript data makes 11ty's own collections order depend on file reads as a blocker, with its fix (port those data files to `.11tydata.rhai` or `.11tydata.json`), rather than as a page waiting on other blockers. The verdict no longer says `0 blockers` above a list of pages that wait on nothing.
+
 ## 0.0.23 - 2026-11-18
 
 - Fixed: a global JavaScript data file that changes another file's value while it loads (`require("./a").list.push(2)`) now changes what pages see, as in 11ty; before, pages showed the value as first loaded, with no warning (in 0.0.22 too). A template or directory data file that does it stops the build (`js-data-impure`), since what 11ty's pages see then depends on its load order.

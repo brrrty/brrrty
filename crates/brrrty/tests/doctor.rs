@@ -1504,3 +1504,34 @@ fn a_site_without_javascript_data_has_no_section() {
         serde_json::from_slice(&run(dir.path(), &["doctor", "--json"]).stdout).unwrap();
     assert_eq!(json["jsData"]["files"], serde_json::json!([]));
 }
+
+/// Local JavaScript data makes 11ty's own collections order depend on file
+/// reads, so a page that reads `collections` is refused for that reason
+/// itself: a blocker with its fix, not a page waiting on one.
+#[test]
+fn collections_with_local_javascript_data_are_a_blocker_not_a_wait() {
+    if !has_node() {
+        return;
+    }
+    let dir = site(&[
+        ("brrrty.config.rhai", "config.set_js_data(\"node\");\n"),
+        (
+            "sharks/sharks.11tydata.js",
+            "module.exports = { tags: \"shark\" };\n",
+        ),
+        ("sharks/a.njk", "a\n"),
+        ("sharks/b.njk", "b\n"),
+        (
+            "sitemap.njk",
+            "{% for p in collections.all %}{{ p.url }}\n{% endfor %}",
+        ),
+    ]);
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert!(!text.contains("Waiting on the blockers above"), "{text}");
+    assert!(text.contains("Fix: Port the template and folder JavaScript data files to `.11tydata.rhai` or `.11tydata.json`"), "{text}");
+    assert!(
+        text.ends_with("2 of 3 pages will build; 1 blocker, grouped below.\n"),
+        "{text}"
+    );
+}
