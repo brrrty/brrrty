@@ -890,3 +890,26 @@ fn a_filter_called_after_its_render_names_its_template() {
         "{out}"
     );
 }
+
+/// `undefined` from a render reaches a JavaScript layout as `content`, as
+/// in 11ty, which prints it as JavaScript does.
+#[test]
+fn undefined_content_reaches_a_javascript_layout() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_includes/l.11ty.js",
+            "module.exports = (d) => `[${d.content}]`;\n",
+        ),
+        (
+            "src/u.11ty.js",
+            "module.exports = { data: { layout: 'l.11ty.js' }, render: () => undefined };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "u/index.html"), "[undefined]");
+}

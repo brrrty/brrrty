@@ -1399,9 +1399,13 @@ impl Encoder<'_> {
                     );
                 }
                 let mut entries = Vec::with_capacity(o.len());
+                // A render's own `content` (a layout's, given `undefined` by
+                // a template's render) is a value, not an item's marker.
+                let top = self.guard && self.no_keep == ptr_of(v);
                 for (k, x) in o.iter() {
                     let item = if matches!(x, Value::Undefined)
                         && brrrty_js::traps::TRAP_KEYS.contains(&k.as_str())
+                        && !(top && brrrty_js::traps::CONTENT_KEYS.contains(&k.as_str()))
                     {
                         json!({"$t": trap_reason(k)})
                     } else {
