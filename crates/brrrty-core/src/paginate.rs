@@ -212,6 +212,17 @@ impl Spec {
                         "Choose an alias other than `pagination` or `page`.",
                     ));
                 }
+                // 11ty reads each page's own `layout` when it writes it
+                // (probed: `alias: layout` over `[a.njk, b.njk]` wraps the
+                // pages in a and b); Brrrty picks one chain per template.
+                if path.first().map(String::as_str) == Some("layout") {
+                    return Err(unsupported(
+                        format!(
+                            "`pagination.alias` `{a}` gives each page its own layout, which Brrrty doesn't follow yet"
+                        ),
+                        "Set `layout` in the template's data instead, or make one template per layout.",
+                    ));
+                }
                 Some(path)
             }
             Some(other) => {

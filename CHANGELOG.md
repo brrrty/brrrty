@@ -11,6 +11,7 @@
 - A computed or permalink function's `this` is 11ty's filters, which run Brrrty's own (`permalink(d) { return \`/${this.slugify(d.title)}/\` }`), for templates and data files; `this.tmpl` is refused. Before, any read of `this` there refused the page.
 - When the collections can't be built, a JavaScript template or layout that reads `collections` is refused with the reason, where it read `undefined` before. A paginated page's data lists `pagination` first, as 11ty's does (`Object.keys(data)` in JavaScript). A filter a render calls from a timer that outlives it stops the build naming that template.
 - A build with many JavaScript-rendered pages keeps its record of calls as text: 4,000 pages from one paginated template went from 1.04 GB to 605 MB.
+- A paginated template whose `pagination.alias` is `layout` (each page its own layout, which 11ty follows) is refused, naming the alias; before, every page was written with the template's one layout, or none.
 - `fileSlug`, `filePathStem`, the default permalink and the template's own data file (`c.11tydata.json` for `c.11ty.js`) of a JavaScript template take off the whole `.11ty.js`, as 11ty does.
 - `brrrty init` writes `config.set_js_data("node");` when the site has JavaScript templates, listing them.
 - For contributors: the Docker fixture refresh installs 11ty with `--ignore-scripts`.

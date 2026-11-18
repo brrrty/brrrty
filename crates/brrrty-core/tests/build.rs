@@ -1223,3 +1223,34 @@ fn many_passthrough_files_and_pages_land_intact_and_report_in_walk_order() {
     assert_eq!((again.copied, again.unchanged), (0, 300));
     assert_eq!(again.passthrough, expected);
 }
+
+/// 11ty 3.1.8 wraps each page in the layout its pagination alias gives it
+/// (`alias: layout` over `[a.njk, b.njk]` writes `A[x]` and `B[x]`); Brrrty
+/// uses one layout chain per template, so it refuses the template rather
+/// than write every page with the same layout, or none.
+#[test]
+fn a_pagination_alias_of_layout_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(
+        root,
+        "src/p.njk",
+        "---\npagination:\n  data: ls\n  size: 1\n  alias: layout\nls: [a.njk, b.njk]\n---\nx",
+    );
+    write(root, "src/_includes/a.njk", "A[{{ content | safe }}]");
+    write(root, "src/_includes/b.njk", "B[{{ content | safe }}]");
+    write(root, "src/ok.md", "ok\n");
+    let r = build(&opts(root), &MarkdownIt::new());
+    let p = r
+        .problems
+        .iter()
+        .find(|p| {
+            p.message
+                .contains("`pagination.alias` `layout` gives each page its own layout")
+        })
+        .unwrap_or_else(|| panic!("{:#?}", r.problems));
+    assert_eq!(p.path.as_deref(), Some(Path::new("src/p.njk")));
+    assert!(!root.join("_site/p/index.html").exists());
+    assert!(!root.join("_site/p/1/index.html").exists());
+    assert!(root.join("_site/ok/index.html").exists());
+}
