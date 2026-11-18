@@ -1504,3 +1504,77 @@ fn a_site_without_javascript_data_has_no_section() {
         serde_json::from_slice(&run(dir.path(), &["doctor", "--json"]).stdout).unwrap();
     assert_eq!(json["jsData"]["files"], serde_json::json!([]));
 }
+
+/// Local JavaScript data makes 11ty's own collections order depend on file
+/// reads, so a page that reads `collections` is refused for that reason
+/// itself: a blocker with its fix, not a page waiting on one.
+#[test]
+fn collections_with_local_javascript_data_build_when_it_runs_and_block_when_it_is_off() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        (
+            "sharks/sharks.11tydata.js",
+            "module.exports = { tags: \"shark\" };\n",
+        ),
+        ("sharks/a.njk", "a\n"),
+        ("sharks/b.njk", "b\n"),
+        (
+            "sitemap.njk",
+            "{% for p in collections.all %}{{ p.url }}\n{% endfor %}",
+        ),
+    ];
+    // On, the data runs, and the collections are the same whatever order
+    // 11ty's file reads give: every page builds.
+    let mut on = files.to_vec();
+    on.push(("brrrty.config.rhai", "config.set_js_data(\"node\");\n"));
+    let dir = site(&on);
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(text.contains("All 3 pages will build."), "{text}");
+    // Off, the data file that sets `tags` is the blocker, with its fix, and
+    // the sitemap waits on the pages it refuses.
+    let dir = site(&files);
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(
+        text.contains("1. JavaScript data file sharks/sharks.11tydata.js"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Fix: Turn on JavaScript data with config.set_js_data(\"node\")"),
+        "{text}"
+    );
+    assert!(text.contains("2. Waiting on the blockers above"), "{text}");
+    assert!(
+        text.ends_with("0 of 3 pages will build; 1 blocker, grouped below.\n"),
+        "{text}"
+    );
+}
+
+/// Data that doesn't run and doesn't set a key that changes how pages are
+/// built still leaves the collections unknown (it may set `tags` at run
+/// time): the reading page is a blocker whose fix turns JavaScript on.
+#[test]
+fn collections_with_local_javascript_data_that_is_off_name_the_switch() {
+    let dir = site(&[
+        (
+            "sharks/sharks.11tydata.js",
+            "module.exports = { fin: 1 };\n",
+        ),
+        ("sharks/a.njk", "a\n"),
+        (
+            "sitemap.njk",
+            "{% for p in collections.all %}{{ p.url }}\n{% endfor %}",
+        ),
+    ]);
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(
+        text.contains("a JavaScript data file that doesn't run"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Fix: Turn JavaScript data on (`config.set_js_data(\"node\");`"),
+        "{text}"
+    );
+    assert!(!text.contains("depends on file reads"), "{text}");
+}

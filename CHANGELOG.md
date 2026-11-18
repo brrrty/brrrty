@@ -8,6 +8,7 @@
 - `fileSlug`, `filePathStem` and the default permalink of a JavaScript template take off the whole `.11ty.js`, as 11ty does.
 - `brrrty init` writes `config.set_js_data("node");` when the site has JavaScript templates, listing them.
 - For contributors: the Docker fixture refresh installs 11ty with `--ignore-scripts`.
+- `brrrty doctor` counts a page refused because template or folder JavaScript data doesn't run (JavaScript off) as a blocker, with its fix: turn JavaScript data on, or port those files to `.11tydata.rhai` or `.11tydata.json`. Before, it was filed under "Waiting on the blockers above", so the verdict could read "0 blockers".
 
 ## 0.0.23 - 2026-11-18
 

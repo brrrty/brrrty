@@ -1601,7 +1601,7 @@ fn computed_plan(
 #[derive(Clone, Copy, Default)]
 struct CollectionsState<'a> {
     /// Why the collections can't be built, when they can't.
-    gap: Option<&'a str>,
+    gap: Option<&'a Gap>,
     /// The site has an 11ty config file, which may add collections.
     has_config: bool,
     /// The collections come from Brrrty's own config file: it names every
@@ -1757,11 +1757,19 @@ fn collections_problem(
     }
     if undefined.contains("collections") {
         return Some(match gap {
-            Some(why) => Problem::error(
-                codes::DATA_UNSUPPORTED,
-                format!("this page uses `collections`, but {why}"),
-            )
-            .following("Fix the problems reported above."),
+            Some(g) => {
+                let p = Problem::error(
+                    codes::DATA_UNSUPPORTED,
+                    format!("this page uses `collections`, but {}", g.why),
+                );
+                if g.follows {
+                    p.following("Fix the problems reported above.")
+                } else if let Some(help) = g.help {
+                    p.with_help(help)
+                } else {
+                    p
+                }
+            }
             None => Problem::error(
                 codes::DATA_UNSUPPORTED,
                 "a permalink, `pagination` or computed value reads `collections`, which Brrrty doesn't support there yet",
@@ -2717,7 +2725,13 @@ fn build_once(
         templates.iter().any(|t| t.computed_membership),
         js_data_unrun,
     )
-    .or_else(|| imports_gap(&templates, &input_rel, has_config, &config_names));
+    .or_else(|| {
+        imports_gap(&templates, &input_rel, has_config, &config_names).map(|why| Gap {
+            why,
+            follows: false,
+            help: None,
+        })
+    });
     let input_dot = dot_dir(&input_rel);
     let mut slots: Vec<Slot> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
@@ -2865,22 +2879,30 @@ fn build_once(
         if clean {
             collections_value = Some(built.collections);
         } else {
-            gap = Some("a template that paginates a collection failed, so the collections would be missing its pages".to_string());
+            gap = Some(Gap {
+                why: "a template that paginates a collection failed, so the collections would be missing its pages".to_string(),
+                follows: true,
+                help: None,
+            });
         }
-    } else if let Some(why) = &gap {
+    } else if let Some(g) = &gap {
         for slot in &slots {
             if let Some(layout) = blocking_layout(slot) {
                 note_layout(log, slot, &layout);
                 layout_refusals.push(layout);
             } else if let Slot::Deferred(d) = slot {
-                report.problems.push(
-                    Problem::error(
-                        codes::PAGINATION_UNSUPPORTED,
-                        format!("this page paginates a collection, but {why}"),
-                    )
-                    .with_path(&d.shown)
-                    .following("Fix the problems reported above."),
-                );
+                let p = Problem::error(
+                    codes::PAGINATION_UNSUPPORTED,
+                    format!("this page paginates a collection, but {}", g.why),
+                )
+                .with_path(&d.shown);
+                report.problems.push(if g.follows {
+                    p.following("Fix the problems reported above.")
+                } else if let Some(help) = g.help {
+                    p.with_help(help)
+                } else {
+                    p
+                });
             }
         }
     }
@@ -3023,7 +3045,7 @@ fn build_once(
         .collect();
     let items_withheld = lock(&shared.items_withheld).reasons.clone();
     let state = CollectionsState {
-        gap: gap.as_deref(),
+        gap: gap.as_ref(),
         has_config,
         rhai_config: opts.config.file.is_some(),
         poisoned: Some(&poisoned),
@@ -3530,7 +3552,7 @@ fn collections_gap(
     javascript: usize,
     computed: bool,
     js_data_unrun: usize,
-) -> Option<String> {
+) -> Option<Gap> {
     let plural = |n: usize, one: &str, many: &str| {
         if n == 1 {
             one.to_string()
@@ -3538,15 +3560,25 @@ fn collections_gap(
             many.to_string()
         }
     };
+    let follows = |why: String| Gap {
+        why,
+        follows: true,
+        help: None,
+    };
+    let root = |why: String| Gap {
+        why,
+        follows: false,
+        help: None,
+    };
     if unbuilt > 0 {
-        return Some(format!(
+        return Some(follows(format!(
             "{unbuilt} {} could not be built, so the collections would be missing {}",
             plural(unbuilt, "template", "templates"),
             plural(unbuilt, "its page", "their pages")
-        ));
+        )));
     }
     if javascript > 0 {
-        return Some(format!(
+        return Some(follows(format!(
             "{javascript} JavaScript {} and JavaScript is off, so the collections would be missing {}",
             plural(
                 javascript,
@@ -3554,18 +3586,33 @@ fn collections_gap(
                 "templates (.11ty.js) are in the site"
             ),
             plural(javascript, "its pages", "their pages")
-        ));
+        )));
     }
     if js_data_unrun > 0 {
-        return Some(format!(
-            "{js_data_unrun} {} a JavaScript data file that doesn't run, which may set its `tags` or `date`, so the collections would be missing or misplace {}",
-            plural(js_data_unrun, "template uses", "templates use"),
-            plural(js_data_unrun, "its page", "their pages")
-        ));
+        return Some(Gap {
+            help: Some(
+                "Turn JavaScript data on (`config.set_js_data(\"node\");` in brrrty.config.rhai, or --js-data=node) so the files run, or port them to `.11tydata.rhai` or `.11tydata.json` and delete the `.js` ones.",
+            ),
+            ..root(format!(
+                "{js_data_unrun} {} a JavaScript data file that doesn't run, which may set its `tags` or `date`, so the collections would be missing or misplace {}",
+                plural(js_data_unrun, "template uses", "templates use"),
+                plural(js_data_unrun, "its page", "their pages")
+            ))
+        });
     }
     computed.then(|| {
-        "computed data sets `tags` or `eleventyExcludeFromCollections`, which Brrrty can't follow into the collections yet".to_string()
+        root("computed data sets `tags` or `eleventyExcludeFromCollections`, which Brrrty can't follow into the collections yet".to_string())
     })
+}
+
+/// Why the collections can't be built, and whether that's a knock-on of
+/// another problem (a template that failed) or the root cause itself.
+struct Gap {
+    why: String,
+    /// The pages wait on problems reported elsewhere.
+    follows: bool,
+    /// What fixes it, when it's the root cause.
+    help: Option<&'static str>,
 }
 
 /// Unregisters the open `collections` object when the build ends.
