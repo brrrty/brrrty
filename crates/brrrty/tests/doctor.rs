@@ -1054,7 +1054,9 @@ fn a_ci_line_the_scan_cant_read_is_marked() {
     assert!(text.contains("0 of 1 page will build"), "{text}");
 }
 
-const COMPARE_MJS: &str = "import { execFileSync } from \"node:child_process\";\nconst dir = process.env.OUT ?? \"/tmp/11ty\";\nexecFileSync(process.execPath, [\"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${dir}`, \"--quiet\"], { stdio: \"inherit\" });\n";
+/// The shape of the real blog's `ci/compare.mjs`: its runs in a `const` list of objects,
+/// with node's `--require` preload before 11ty's `cmd.cjs`, and a loop that spawns each.
+const COMPARE_MJS: &str = "import { spawnSync } from \"node:child_process\";\nimport { existsSync, rmSync } from \"node:fs\";\nimport { performance } from \"node:perf_hooks\";\n\nconst RUNS = Number(process.env.RUNS ?? 5);\nconst OUT_11TY = \"_site-11ty\";\nconst OUT_BRRRTY = \"_site-brrrty\";\nconst env = { ...process.env, SOURCE_DATE_EPOCH: \"1767268800\" };\nif (!existsSync(\"node_modules/@11ty/eleventy/cmd.cjs\")) process.exit(1);\n\nconst tools = [\n  {\n    name: \"11ty\",\n    out: OUT_11TY,\n    cmd: process.execPath,\n    args: [\n      \"--require\", \"./ci/freeze-time.cjs\",\n      \"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${OUT_11TY}`, \"--quiet\",\n    ],\n    times: [],\n  },\n  {\n    name: \"Brrrty\",\n    out: OUT_BRRRTY,\n    cmd: \"node_modules/.bin/brrrty\",\n    args: [\"build\", `--output=${OUT_BRRRTY}`, \"--quiet\"],\n    times: [],\n  },\n];\n\nfor (let run = 1; run <= RUNS; run++) {\n  for (const tool of tools) {\n    rmSync(tool.out, { recursive: true, force: true });\n    const start = performance.now();\n    const result = spawnSync(tool.cmd, tool.args, { env, stdio: \"inherit\" });\n    if (result.status !== 0) process.exit(1);\n    tool.times.push(performance.now() - start);\n  }\n}\nconst diff = spawnSync(\"diff\", [\"-r\", OUT_11TY, OUT_BRRRTY], { encoding: \"utf8\" });\nprocess.exit(diff.status);\n";
 const COMPARE_CI: &str = "build:\n  script:\n    - npm ci\n    - npm run build\ncompare:\n  script:\n    - npm ci\n    - node ci/compare.mjs\n";
 
 /// A synthetic copy of a real blog's setup: a CI job spawns 11ty's command line with
@@ -1132,7 +1134,9 @@ fn a_gitlab_pages_site_is_marked_through_init() {
         "{rhai}"
     );
     assert!(
-        rhai.contains("but to `public` in .gitlab-ci.yml, line 4"),
+        rhai.contains(
+            "in package.json, scripts.build:11ty but to `public` in .gitlab-ci.yml, line 4"
+        ),
         "{rhai}"
     );
     let text = stdout(&run(dir.path(), &["doctor"]));
