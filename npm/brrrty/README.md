@@ -4,7 +4,7 @@
 
 Brrrty is a fast, independent static site generator written in Rust that aims to build your existing 11ty site unchanged. Three Rs, like "go brrr".
 
-Status: early development. See the [repository](https://github.com/brrrty/brrrty) for what works today.
+Early (0.0.x), and already building brrrty.com and a 2,272-file blog. See the [repository](https://github.com/brrrty/brrrty) for benchmarks and what works today.
 
 ## Install
 

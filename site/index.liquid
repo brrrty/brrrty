@@ -40,7 +40,7 @@ description: Brrrty is a static site generator written in Rust. It builds your e
       <li class="run">
         <h3 class="run-env">MacBook Pro (Apple M4, 24&nbsp;GB)</h3>
         <div class="run-bars">
-          <p class="bar-row is-brrrty" style="--t: 0.85"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><span class="time">0.85 s</span></span></p>
+          <p class="bar-row is-brrrty" style="--t: 0.85"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><img class="bertie" src="/assets/brand/bertie.svg" alt="" width="35" height="20"><span class="time">0.85 s</span></span></p>
           <p class="bar-row" style="--t: 2.32"><span class="who">11ty 3.1.8</span><span class="track"><span class="bar"></span><span class="time">2.32 s</span></span></p>
         </div>
         <p class="run-x"><span class="x">2.7&times;</span> faster</p>
@@ -48,7 +48,7 @@ description: Brrrty is a static site generator written in Rust. It builds your e
       <li class="run">
         <h3 class="run-env">GitLab shared runner</h3>
         <div class="run-bars">
-          <p class="bar-row is-brrrty" style="--t: 1.47"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><span class="time">1.47 s</span></span></p>
+          <p class="bar-row is-brrrty" style="--t: 1.47"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><img class="bertie" src="/assets/brand/bertie.svg" alt="" width="35" height="20"><span class="time">1.47 s</span></span></p>
           <p class="bar-row" style="--t: 3.82"><span class="who">11ty 3.1.8</span><span class="track"><span class="bar"></span><span class="time">3.82 s</span></span></p>
         </div>
         <p class="run-x"><span class="x">2.6&times;</span> faster</p>
@@ -56,7 +56,7 @@ description: Brrrty is a static site generator written in Rust. It builds your e
       <li class="run">
         <h3 class="run-env">GitHub Actions runner</h3>
         <div class="run-bars">
-          <p class="bar-row is-brrrty" style="--t: 1.87"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><span class="time">1.87 s</span></span></p>
+          <p class="bar-row is-brrrty" style="--t: 1.87"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><img class="bertie" src="/assets/brand/bertie.svg" alt="" width="35" height="20"><span class="time">1.87 s</span></span></p>
           <p class="bar-row" style="--t: 4.80"><span class="who">11ty 3.1.8</span><span class="track"><span class="bar"></span><span class="time">4.80 s</span></span></p>
         </div>
         <p class="run-x"><span class="x">2.6&times;</span> faster</p>
@@ -71,7 +71,7 @@ description: Brrrty is a static site generator written in Rust. It builds your e
   <section class="band" aria-labelledby="port">
     <div class="band-text">
       <h2 id="port">Port the config. Keep the rest.</h2>
-      <p>Brrrty doesn't run JavaScript, so the same calls go in <code>brrrty.config.rhai</code>, a small <a href="https://rhai.rs">Rhai</a> script: 11ty's method names in snake_case, with <code>config</code> for <code>eleventyConfig</code>.</p>
+      <p>Brrrty doesn't run your JavaScript config, so the same calls go in <code>brrrty.config.rhai</code>, a small <a href="https://rhai.rs">Rhai</a> script: 11ty's method names in snake_case, with <code>config</code> for <code>eleventyConfig</code>.</p>
       <p><a class="more" href="/docs/getting-started/#1-port-the-config">Porting a config, step by step</a></p>
     </div>
     <div class="port">
@@ -101,7 +101,7 @@ config.add_collection("posts", |api|
   <section class="band" aria-labelledby="does">
     <div class="band-text">
       <h2 id="does">What it does</h2>
-      <p>Version {{ release }}, and early. Try it on a copy of your site and compare the output with 11ty's.</p>
+      <p>Version {{ release }}. It builds this site and <a href="https://joshtronic.com/">a 2,272-file blog</a>. It's still early, so try it on a copy of your site and compare the output with 11ty's.</p>
     </div>
     <dl class="spec">
       <div><dt>Output</dt><dd>Byte-compatible with 11ty 3.1.8, checked by building test sites with both and comparing every file.</dd></div>

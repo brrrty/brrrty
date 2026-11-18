@@ -1,81 +1,98 @@
-# Brrrty
+<p align="center">
+  <a href="https://brrrty.com/"><img src="https://brrrty.com/assets/brand/bertie.svg" width="168" alt="Bertie, the Brrrty tortoise, with motion lines behind him"></a>
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/brrrty/brrrty/ci.yml?branch=main&style=flat&label=CI)](https://github.com/brrrty/brrrty/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/brrrty?style=flat)](https://crates.io/crates/brrrty)
-[![npm](https://img.shields.io/npm/v/brrrty?style=flat)](https://www.npmjs.com/package/brrrty)
-[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/brrrty/brrrty/badges/coverage.json&style=flat)](https://github.com/brrrty/brrrty/actions/workflows/coverage.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat)](https://github.com/brrrty/brrrty/blob/main/LICENSE)
-[![MSRV 1.89](https://img.shields.io/badge/MSRV-1.89-blue?style=flat)](https://github.com/brrrty/brrrty/blob/main/Cargo.toml)
+<h1 align="center">Brrrty</h1>
 
-**Eleventy, but make it go brrr.**
+<p align="center"><strong>Eleventy, but make it go brrr.</strong></p>
 
-Brrrty is a fast, independent static site generator written in Rust that aims to build your existing 11ty site unchanged.
+<p align="center">
+  <a href="https://github.com/brrrty/brrrty/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/brrrty/brrrty/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
+  <a href="https://crates.io/crates/brrrty"><img src="https://img.shields.io/crates/v/brrrty?style=flat" alt="crates.io"></a>
+  <a href="https://www.npmjs.com/package/brrrty"><img src="https://img.shields.io/npm/v/brrrty?style=flat" alt="npm"></a>
+  <a href="https://github.com/brrrty/brrrty/actions/workflows/coverage.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/brrrty/brrrty/badges/coverage.json&style=flat" alt="coverage"></a>
+  <a href="https://github.com/brrrty/brrrty/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat" alt="license: MIT"></a>
+</p>
 
-Three Rs, like "go brrr".
+Brrrty is a static site generator written in Rust that builds your existing 11ty site, with byte-compatible output, in a fraction of the time. Templates, Markdown and data stay as they are. The config moves to a small Rhai script, and `brrrty init` writes most of it for you.
 
-Brrrty exists because Eleventy is great. See NOTICE.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://brrrty.com/assets/readme/bench-dark.svg">
+  <img src="https://brrrty.com/assets/readme/bench-light.svg" width="880" alt="Clean build of a 2,272-file blog. MacBook Pro, Apple M4: Brrrty 0.85 s, 11ty 3.1.8 2.32 s, 2.7 times faster. GitLab shared runner: 1.47 s vs 3.82 s, 2.6 times. GitHub Actions runner: 1.87 s vs 4.80 s, 2.6 times. Every output file is byte-identical to 11ty's.">
+</picture>
 
-Status: early development. Not ready for real sites yet.
+## Running in production
 
-## Install
+- [brrrty.com](https://brrrty.com/) is built with Brrrty, from [`site/`](site/) in this repo.
+- [joshtronic.com](https://joshtronic.com/), a 2,272-file blog, is built with Brrrty in GitLab CI on every push. It moved over from 11ty with no changes to its templates, and its output was compared file by file with 11ty's before the switch.
 
-In an 11ty site's folder, from npm, with a prebuilt binary for macOS (arm64, x64) or Linux (arm64, x64; static, so Alpine works too):
+It's early (0.0.x), so try it on a copy of your site first. `brrrty doctor --verify` builds the site with both and tells you whether every file matches.
 
-```sh
-npx brrrty init
-```
+## Try it on your site
 
-`brrrty init` adds `brrrty` to `devDependencies`, sets the `build` and `start` scripts (keeping ones that are just an 11ty command as `build:11ty` and `start:11ty`), and writes `brrrty.config.rhai` from the 11ty config, with a `// TODO(brrrty):` for each part it can't port; Brrrty builds no pages until those are ported and deleted. It reads the 11ty config without running it, shows the changes as a diff and asks first (`--yes` skips asking, `--dry-run` writes nothing), and never overwrites a `brrrty.config.rhai`. Then `npm install` and `npm run build`.
-
-To set it up by hand instead, `npm install --save-dev brrrty`, then `"build": "brrrty build"` in your `package.json` scripts, or `npx brrrty build`. No Rust toolchain or install scripts are needed.
-
-Anywhere Rust runs:
-
-```sh
-cargo install brrrty
-```
-
-Release binaries are also attached to each GitHub release.
-
-## `brrrty doctor`
+In your 11ty site's folder:
 
 ```sh
-brrrty doctor [--json] [--verify [--yes]]
+npx brrrty init      # adds brrrty to package.json, ports your config to brrrty.config.rhai
+npm install
+npx brrrty doctor    # lists anything that keeps a page from building, with file and line
+npm run build
 ```
 
-Lists what keeps your pages from building, without writing anything: filters that aren't defined, JavaScript data files to port, template languages Brrrty doesn't run, grouped by cause with the pages affected and each file and line. A build stops each page at its first problem; doctor also reads each refused page's template, layouts, includes, `permalink` and `eleventyComputed` for the rest, then a verdict such as `1,180 of 1,224 pages will build; 3 blockers, grouped below.`
+`init` reads your 11ty config without running it, shows its changes as a diff and asks first. What it can't port becomes a `// TODO(brrrty):` with the original code quoted, and Brrrty won't build pages until those are dealt with. Prebuilt binaries cover macOS (arm64, x64) and Linux (arm64, x64, static, so Alpine works). Or, anywhere Rust 1.89+ runs: `cargo install brrrty`.
 
-`--verify` also builds the site with your project's own 11ty and with Brrrty, in the system temp folder at one frozen time, compares every file, and prints a line to paste: `Your site is byte-compatible on Brrrty: 2,272 files, 0.89 s vs 2.39 s`. It runs your site's JavaScript through 11ty, so it asks first (or needs `--yes` off a terminal). Brrrty itself never runs JavaScript.
+## The config
 
-Exit status: 0 when every page builds (and, with `--verify`, every file is byte-identical), 1 when something is refused or differs, 2 for usage errors or a missing Node or 11ty.
+The same calls, in snake_case, with `config` for `eleventyConfig`:
 
-## Benchmark
-
-`bench/` builds a generated 1,000-post blog with 11ty and with Brrrty, times both, and checks that every output file is identical. Run it with `node bench/run.mjs`, or from the **Bench** workflow on GitHub; [bench/README.md](bench/README.md) explains how to run and read it.
-
-## `brrrty serve`
-
-```sh
-brrrty serve [--port 8080] [--host localhost] [--input DIR] [--output DIR] [--passthrough PATH] [--quiet] [--strict]
+```js
+// eleventy.config.js
+module.exports = function (eleventyConfig) {
+  eleventyConfig.addPassthroughCopy("src/images");
+  eleventyConfig.addFilter("shout", (s) => s.toUpperCase() + "!");
+  eleventyConfig.addCollection("posts", (api) =>
+    api.getFilteredByGlob("./src/posts/*.md").reverse()
+  );
+  return { dir: { input: "src" } };
+};
 ```
 
-Builds the site, serves it at `http://localhost:8080/`, and rebuilds whenever a source file changes, as `eleventy --serve` does. Open pages update by themselves: an edit to the page's own template is patched in without a reload, a stylesheet edit swaps the stylesheet, and anything else reloads the page. Build errors print in the terminal and in the browser console. A page whose template has an error keeps the version last served, so a typo never turns the page you're editing into a 404, while the rest of the site goes on updating. A page that has never built is a 404 until it does.
+```rust
+// brrrty.config.rhai
+config.add_passthrough_copy("src/images");
+config.add_filter("shout", |s| s.to_upper() + "!");
+config.add_collection("posts", |api|
+    api.get_filtered_by_glob("./src/posts/*.md").reverse());
 
-- `--port`: when it is taken, the next free port up to 10 above it is used, and the startup line says so.
-- `--host`: the address to listen on. The default only answers this machine; `--host 0.0.0.0` lets other devices on your network in.
-- `--output` is kept up to date after every build, so it holds the site while you work and after you stop. It gets exactly what `brrrty build` would write: the pages that built, never the older copies kept for pages with errors. As with `brrrty build`, files it didn't write are left alone. The one removal: when a build writes a file where the folder holds a folder by that name, or a folder where it holds a file, the old one is replaced (`brrrty build` stops with an error there instead).
-- `--quiet` prints only the `Server at` line, errors and warnings.
-- `--strict` stops each build at its first error, and exits with status 1 if the first build has errors, as `eleventy --serve` does. With it, a build with an error is never served; the last one stays up.
+#{ dir: #{ input: "src" } }
+```
 
-Ctrl-C stops cleanly: a build already running finishes, the output folder holds the last good build, the port is released, and the exit status is 0. A second Ctrl-C quits at once. SIGTERM stops the same way and then ends by the signal.
+JavaScript data files (`_data/*.js`, `*.11tydata.js`) can run in your site's own Node with `config.set_js_data("node")`, or be ported to `.rhai` data files. `init` translates the simple ones and `doctor` checks each port against the original.
 
-While it runs, each build goes into `<output>/.brrrty-serve/`, which is removed when it stops. A leftover one from a session that was killed is removed by the next `brrrty serve` or `brrrty build`. A running session holds a lock on it: `brrrty build` into the same output folder leaves it alone and says so, and a second `brrrty serve` there refuses to start. It is never served. If the first build fails and no build ever fills the output folder, a folder the session created is removed when it stops.
+## What it does
 
-Pages get a small script, `/.brrrty/reload-client.js`, so a site's own files at `/.brrrty/reload-client.js`, `/.brrrty/morphdom.js` and `/.brrrty/live` are hidden while serving.
+- **Templates:** Liquid, Nunjucks, Markdown and HTML in any mix, with 11ty's data cascade, layouts, pagination, permalinks and collections.
+- **Plugins:** RSS and syntax highlighting, built in.
+- **`brrrty serve`:** rebuilds on every change and updates open pages in place.
+- **Refusals:** where Brrrty can't match 11ty exactly, it refuses that page, says why with the file and line, and builds the rest. It never writes a page that might differ.
 
-Where it differs from `eleventy --serve`:
+The [differences from 11ty](https://brrrty.com/docs/differences/) page lists everything it refuses or does differently.
 
-- It listens on `localhost` only, unless you pass `--host`, and on that address answers only requests that name this machine (`localhost`, `127.0.0.1`, `[::1]`), so another website can't reach it through a DNS trick.
-- It never serves a file outside the output folder: `..` and its encoded forms get a 404, and so does a symlink that points outside. A malformed URL gets a 400.
-- A build with errors in some pages still serves the rest, and its pages that built are written to the output folder, as `brrrty build` writes them. `eleventy --serve` writes nothing from a build with an error, and exits when the first build has one (see `--strict`).
-- Any file under the input folder starts a rebuild, not only template, data and include files, and so does deleting one, so a deleted page disappears from what is served.
+## How it's checked
+
+Output is compared byte for byte against real 11ty 3.1.8. Test fixtures get their expected output from 11ty itself, run in Docker with no network, and the suite has over 1,400 tests. Parts of 11ty and its dependencies (LiquidJS, Nunjucks, markdown-it, Prism, Luxon and others) are ported closely enough to match their output, each credited in [NOTICE](NOTICE). Brrrty was built with [Claude Code](https://claude.com/claude-code): Claude wrote the code and Josh steered, with an independent review and a file-by-file comparison against 11ty before every merge. [How it was built](https://brrrty.com/#built) has the story and what it cost.
+
+## Docs
+
+- [Getting started](https://brrrty.com/docs/getting-started/): setting up, porting a config, checking the output
+- [Configuration](https://brrrty.com/docs/configuration/): everything `brrrty.config.rhai` can do
+- [Templates](https://brrrty.com/docs/templates/): what each language supports
+- [`brrrty doctor`](https://brrrty.com/docs/doctor/) and [`brrrty serve`](https://brrrty.com/docs/serve/)
+- [Changelog](CHANGELOG.md)
+- [Benchmark](bench/README.md): a generated 1,000-post blog you can run yourself
+
+## The name
+
+Brrr + Eleventy = Brrrty, as in "money printer go brrr". Three Rs. It's also a nod to Bertie, who holds the Guinness World Record for the fastest tortoise.
+
+Brrrty exists because Eleventy is great. Thank you to Zach Leatherman and the 11ty community. MIT licensed; see [LICENSE](LICENSE) and [NOTICE](NOTICE).

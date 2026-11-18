@@ -30,7 +30,7 @@ Unknown tags (a shortcode, say) are syntax errors to Liquid and Nunjucks: only t
 
 - **Your 11ty config isn't fully ported.** While `brrrty.config.rhai` still has a `// TODO(brrrty)` line that `brrrty init` left, it blocks every page and comes first, with its line numbers: each TODO is something your 11ty config does that could change any page, so no page can be said to build. Until those are done, the other groups may be knock-ons of them (a layout not found because the folders weren't ported, say). See [Port the config](/docs/getting-started/#1-port-the-config).
 - **A filter** that neither Brrrty nor your `brrrty.config.rhai` defines, such as an 11ty filter you haven't ported yet.
-- **A JavaScript data file** a page reads. Brrrty doesn't run JavaScript, so each one is ported to a `.rhai` data file (see [Configuration](/docs/configuration/)).
+- **A JavaScript data file** a page reads, while JavaScript data is off. Turn it on with `config.set_js_data("node")` to run the file in your own Node, or port it to a `.rhai` data file (see [Configuration](/docs/configuration/)).
 - **A template language** Brrrty doesn't run, such as `.11ty.js`.
 - **Anything else**, by the problem itself: a syntax error, a feature that isn't supported yet.
 
@@ -92,7 +92,7 @@ Your site is byte-compatible on Brrrty: 2,272 files, 0.89 s vs 2.39 s
 
 The last line is meant for pasting into an issue or a post. When files differ, the first diffs are shown, and the files only one build wrote are listed. A file that differs only in whitespace counts as different: the check is for byte-identical output.
 
-- **Your 11ty runs your site's JavaScript:** its config, data files and plugins, with your permissions. Doctor says so before it starts. On a terminal it asks first; anywhere else it needs `--yes`. Brrrty itself never runs JavaScript.
+- **Your 11ty runs your site's JavaScript:** its config, data files and plugins, with your permissions. Doctor says so before it starts. On a terminal it asks first; anywhere else it needs `--yes`. Brrrty's own build runs JavaScript only for data files, and only when you turn that on.
 - **Both builds write to the system temp folder,** which is removed afterwards. Your output folder is left alone. 11ty itself may still write caches in your project, as it does in a normal build.
 - **The clock is frozen.** Both builds run at the same instant: `SOURCE_DATE_EPOCH` when it is set, otherwise the time doctor starts. Brrrty reads it itself. 11ty gets it through a small preload script that makes `Date.now()` and `new Date()` return it, so a page that prints the build time matches.
 - **11ty runs with its config file and no other flags,** as `npx @11ty/eleventy` would, apart from the output folder. If your build script passes flags such as `--input` or `--pathprefix`, put them in the config instead, or the two builds won't match.

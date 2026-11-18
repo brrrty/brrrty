@@ -14,7 +14,7 @@ The same goes for the places where 11ty stops the whole build: a data file that 
 
 ## The config is Rhai
 
-Brrrty doesn't run JavaScript, so `eleventy.config.js` becomes `brrrty.config.rhai`; see [Getting started](/docs/getting-started/) and the [configuration reference](/docs/configuration/). Without a Rhai config, Brrrty builds with 11ty's defaults and warns that it isn't reading your JavaScript one. With one, the JavaScript file is ignored.
+Brrrty doesn't run your JavaScript config, so `eleventy.config.js` becomes `brrrty.config.rhai`; see [Getting started](/docs/getting-started/) and the [configuration reference](/docs/configuration/). Without a Rhai config, Brrrty builds with 11ty's defaults and warns that it isn't reading your JavaScript one. With one, the JavaScript file is ignored.
 
 What isn't there yet:
 
