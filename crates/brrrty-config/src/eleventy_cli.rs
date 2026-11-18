@@ -107,6 +107,178 @@ impl Cli {
     }
 }
 
+/// Where a script comes from, as a TODO quotes it: `package.json, scripts.build`, or a
+/// deploy config's own label.
+pub fn place(name: &str) -> String {
+    if is_deploy(name) {
+        name.to_string()
+    } else {
+        format!("package.json, scripts.{name}")
+    }
+}
+
+/// Whether a script name is a deploy config's label (`netlify.toml, [build] command`).
+fn is_deploy(name: &str) -> bool {
+    [
+        "netlify.toml, ",
+        "vercel.json, ",
+        ".gitlab-ci.yml, ",
+        ".github/workflows/",
+    ]
+    .iter()
+    .any(|p| name.starts_with(p))
+}
+
+/// A file in `root`, read up to 1 MiB, if it is one.
+fn read_text(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return None;
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(1 << 20)
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
+}
+
+/// The build commands deploy configs in `root` run, as `(label, command)`: Netlify's
+/// `[build] command` and `[context.production] command`, Vercel's `buildCommand`, and
+/// the `run:` steps of GitHub Actions workflows and the `script:` lists of GitLab CI.
+fn deploy_commands(root: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Some(t) =
+        read_text(&root.join("netlify.toml")).and_then(|t| toml::from_str::<toml::Table>(&t).ok())
+    {
+        for (table, label) in [
+            (t.get("build"), "[build] command"),
+            (
+                t.get("context").and_then(|c| c.get("production")),
+                "[context.production] command",
+            ),
+        ] {
+            if let Some(c) = table
+                .and_then(|b| b.get("command"))
+                .and_then(|c| c.as_str())
+            {
+                out.push((format!("netlify.toml, {label}"), c.to_string()));
+            }
+        }
+    }
+    if let Some(c) = read_text(&root.join("vercel.json"))
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("buildCommand")?.as_str().map(str::to_string))
+    {
+        out.push(("vercel.json, buildCommand".into(), c));
+    }
+    if let Ok(dir) = std::fs::read_dir(root.join(".github/workflows")) {
+        let mut files: Vec<_> = dir
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".yml") || n.ends_with(".yaml"))
+            .collect();
+        files.sort();
+        for f in files {
+            if let Some(t) = read_text(&root.join(".github/workflows").join(&f)) {
+                for (line, cmd) in yaml_commands(&t, &["run"]) {
+                    out.push((format!(".github/workflows/{f}, line {line}"), cmd));
+                }
+            }
+        }
+    }
+    if let Some(t) = read_text(&root.join(".gitlab-ci.yml")) {
+        for (line, cmd) in yaml_commands(&t, &["script", "before_script", "after_script"]) {
+            out.push((format!(".gitlab-ci.yml, line {line}"), cmd));
+        }
+    }
+    out
+}
+
+/// The shell commands under `keys` in a YAML file, read a line at a time:
+/// `key: command`, `key: [a, b]`, a block scalar (`key: |`), and a list of
+/// items (`- command`, `- |`) indented under the key. Gives each with its
+/// 1-based line.
+fn yaml_commands(text: &str, keys: &[&str]) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let unquote = |v: &str| {
+        let v = v.trim();
+        if v.len() >= 2
+            && ((v.starts_with('"') && v.ends_with('"'))
+                || (v.starts_with('\'') && v.ends_with('\'')))
+        {
+            v[1..v.len() - 1].to_string()
+        } else {
+            v.to_string()
+        }
+    };
+    // The lines of a block scalar after `at`, more indented than `base`.
+    let block = |at: usize, base: usize, folded: bool| {
+        let mut body = Vec::new();
+        for l in &lines[at + 1..] {
+            if !l.trim().is_empty() && indent(l) <= base {
+                break;
+            }
+            body.push(l.trim());
+        }
+        body.join(if folded { " " } else { "\n" })
+    };
+    let is_block = |v: &str| v.starts_with('|') || v.starts_with('>');
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        let t = l.trim_start();
+        let t = t.strip_prefix("- ").unwrap_or(t).trim_start();
+        let Some((key, value)) = t.split_once(':') else {
+            i += 1;
+            continue;
+        };
+        if t.starts_with('#') || !keys.contains(&key.trim()) {
+            i += 1;
+            continue;
+        }
+        let base = indent(l);
+        let value = value.trim();
+        if is_block(value) {
+            out.push((i + 1, block(i, base, value.starts_with('>'))));
+        } else if let Some(list) = value.strip_prefix('[') {
+            for item in list.trim_end_matches(']').split(',') {
+                out.push((i + 1, unquote(item)));
+            }
+        } else if !value.is_empty() && !value.starts_with('#') {
+            out.push((i + 1, unquote(value)));
+        } else {
+            // A list of items under the key.
+            let mut k = i + 1;
+            while k < lines.len() {
+                let m = lines[k];
+                if m.trim().is_empty() || m.trim_start().starts_with('#') {
+                    k += 1;
+                    continue;
+                }
+                if indent(m) < base || (indent(m) == base && !m.trim_start().starts_with("- ")) {
+                    break;
+                }
+                let Some(item) = m.trim_start().strip_prefix("- ") else {
+                    break;
+                };
+                let item = item.trim();
+                if is_block(item) {
+                    out.push((k + 1, block(k, indent(m), item.starts_with('>'))));
+                } else {
+                    out.push((k + 1, unquote(item)));
+                }
+                k += 1;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 /// How the line recording the scripts' 11ty flags starts.
 pub const FLAGS_LINE: &str = "// 11ty flags from package.json: ";
 
@@ -291,6 +463,10 @@ fn steps(script: &str) -> Vec<String> {
 /// `pnpm x` and `yarn x` run before a bin of that name.
 fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) -> Step {
     let mut w = without_redirections(words(step));
+    // A shell comment ends the command.
+    if let Some(at) = w.iter().position(|x| x.starts_with('#')) {
+        w.truncate(at);
+    }
     let assignment = |x: &str| {
         x.split_once('=').is_some_and(|(k, _)| {
             !k.is_empty()
@@ -537,12 +713,19 @@ fn glob(path: &str) -> bool {
 /// one that runs a file that uses 11ty's JavaScript API: those count when
 /// they are `build`, or when `build` doesn't run 11ty itself.
 pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
-    let scripts = pkg.get("scripts")?.as_object()?;
+    let empty = serde_json::Map::new();
+    let scripts = pkg
+        .get("scripts")
+        .and_then(|s| s.as_object())
+        .unwrap_or(&empty);
     let mut tiers: [Vec<(String, String, Vec<String>)>; 3] = Default::default();
     let mut unreadable: Vec<(String, String)> = Vec::new();
     let mut api: Vec<(String, String, String, String)> = Vec::new();
-    for (name, cmd) in scripts {
-        let Some(cmd) = cmd.as_str() else { continue };
+    let package = scripts
+        .iter()
+        .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string())));
+    for (name, cmd) in package.chain(deploy_commands(root)) {
+        let (name, cmd) = (&name, cmd.as_str());
         let mut found = Vec::new();
         let mut bad = false;
         let mut cd = false;
@@ -565,7 +748,9 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
             continue;
         }
         let Some(args) = found.pop() else { continue };
-        let tier = if name == "build" || name == "build:11ty" {
+        // A deploy config's command builds the site, as `build` does (Netlify's
+        // overrides it); where they disagree, that is a TODO below.
+        let tier = if name == "build" || name == "build:11ty" || is_deploy(name) {
             0
         } else if !serves(&args) {
             1
@@ -574,7 +759,7 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
         };
         tiers[tier].push((name.clone(), cmd.to_string(), args));
     }
-    let is_build = |n: &str| n == "build" || n == "build:11ty";
+    let is_build = |n: &str| n == "build" || n == "build:11ty" || is_deploy(n);
     let builds = !tiers[0].is_empty();
     let mut cli = Cli::default();
     for (name, cmd) in unreadable.iter().filter(|(n, _)| !builds || is_build(n)) {
@@ -633,7 +818,9 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
         cli.facts
             .extend(sets.into_iter().map(|s| format!("11ty {s}")));
         let why = format!(
-            "package.json's scripts `{script}` and `{other}` both run 11ty, with {} and with {}, so Brrrty can't tell which one builds the site; port the flags of the one that does",
+            "{} and {} both run 11ty, with {} and with {}, so Brrrty can't tell which one builds the site; port the flags of the one that does",
+            place(&script),
+            place(other),
             shown(&flags),
             shown(&significant(other_args))
         );
@@ -719,15 +906,9 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
 
 /// [`find`] on `root/package.json`, or `None` without one that parses.
 pub fn read(root: &Path) -> Option<Cli> {
-    use std::io::Read as _;
-    let mut text = String::new();
-    std::fs::File::open(root.join("package.json"))
-        .ok()?
-        .take(1 << 20)
-        .read_to_string(&mut text)
-        .ok()?;
-    let v: serde_json::Value =
-        serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()?;
+    let v: serde_json::Value = read_text(&root.join("package.json"))
+        .and_then(|t| serde_json::from_str(t.strip_prefix('\u{feff}').unwrap_or(&t)).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
     find(&v, root)
 }
 
@@ -1145,5 +1326,122 @@ mod tests {
             config_path(t.path(), "/elsewhere/site.js"),
             "/elsewhere/site.js"
         );
+    }
+
+    fn write(t: &tempfile::TempDir, rel: &str, body: &str) {
+        let p = t.path().join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+
+    #[test]
+    fn reads_yaml_commands_a_line_at_a_time() {
+        let gh = "jobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - name: Build\n        run: |\n          npm run css\n          npx @11ty/eleventy --input=src\n      - run: \"echo 'done'\"\n      # - run: eleventy --old\n";
+        assert_eq!(
+            yaml_commands(gh, &["run"]),
+            [
+                (5, "npm ci".to_string()),
+                (7, "npm run css\nnpx @11ty/eleventy --input=src".to_string()),
+                (10, "echo 'done'".to_string()),
+            ]
+        );
+        let gl = "build:\n  before_script:\n    - npm ci\n  script:\n    # a comment\n    - npx @11ty/eleventy\n    - >\n      rsync a\n      b\n  artifacts:\n    paths:\n      - _site/\ntest:\n  script: npm test\nlint:\n  script: [\"npm run lint\", 'x']\n";
+        assert_eq!(
+            yaml_commands(gl, &["script", "before_script"]),
+            [
+                (3, "npm ci".to_string()),
+                (6, "npx @11ty/eleventy".to_string()),
+                (7, "rsync a b".to_string()),
+                (14, "npm test".to_string()),
+                (16, "npm run lint".to_string()),
+                (16, "x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn deploy_configs_are_read_like_build_scripts() {
+        for (file, body) in [
+            (
+                "netlify.toml",
+                "[build]\ncommand = \"npx @11ty/eleventy --input=src --pathprefix=/blog/\"\npublish = \"_site\"\n",
+            ),
+            (
+                "netlify.toml",
+                "[context.production]\ncommand = \"npx @11ty/eleventy --input=src --pathprefix=/blog/\"\n",
+            ),
+            (
+                "vercel.json",
+                "{\"buildCommand\": \"npx @11ty/eleventy --input=src --pathprefix=/blog/\"}",
+            ),
+            (
+                ".github/workflows/deploy.yml",
+                "jobs:\n  b:\n    steps:\n      - run: npm ci\n      - run: npx @11ty/eleventy --input=src --pathprefix=/blog/\n",
+            ),
+            (
+                ".gitlab-ci.yml",
+                "pages:\n  script:\n    - npm ci\n    - npx @11ty/eleventy --input=src --pathprefix=/blog/ --output=public\n",
+            ),
+        ] {
+            let t = site();
+            write(&t, file, body);
+            // With no build script in package.json, and with a flagless one, both: the
+            // deploy config's flags are read (and disagree with the flagless one).
+            let c = find(&json!({}), t.path()).unwrap_or_else(|| panic!("{file}: silent"));
+            assert_eq!(c.input.as_deref(), Some("src"), "{file}");
+            assert!(
+                c.todos
+                    .iter()
+                    .any(|x| x.why.contains("--pathprefix=/blog/")),
+                "{file}: {:?}",
+                c.todos
+            );
+            assert!(
+                place(&c.todos[0].script).starts_with(file),
+                "{file}: {}",
+                c.todos[0].script
+            );
+            let c = find(&json!({ "scripts": { "build": "eleventy" } }), t.path()).unwrap();
+            assert_eq!(c.input, None, "{file}");
+            assert!(
+                c.todos[0].why.contains("both run 11ty"),
+                "{file}: {:?}",
+                c.todos
+            );
+            // A change to it is a change to the fingerprint.
+            let before = read(t.path()).unwrap().fingerprint();
+            write(&t, file, &body.replace("/blog/", "/b/"));
+            assert_ne!(read(t.path()).unwrap().fingerprint(), before, "{file}");
+        }
+    }
+
+    #[test]
+    fn a_deploy_config_that_runs_the_build_script_or_agrees_adds_nothing() {
+        let t = site();
+        write(&t, "netlify.toml", "[build]\ncommand = \"npm run build\"\n");
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "b:\n  script:\n    - npm ci\n    - npm test\n    - npx @11ty/eleventy --input=src # same flags\n",
+        );
+        write(
+            &t,
+            ".github/workflows/x.yaml",
+            "jobs:\n  a:\n    steps:\n      - run: |\n          # eleventy --old is a comment\n          npm run build\n",
+        );
+        let pkg =
+            json!({ "scripts": { "build": "eleventy --input=src", "test": "eleventy --dryrun" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.input.as_deref(), Some("src"));
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        // An unreadable mention in a workflow is a TODO naming it.
+        write(
+            &t,
+            ".github/workflows/x.yaml",
+            "jobs:\n  a:\n    steps:\n      - run: cd site && eleventy\n",
+        );
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.todos.len(), 1);
+        assert_eq!(c.todos[0].script, ".github/workflows/x.yaml, line 4");
     }
 }

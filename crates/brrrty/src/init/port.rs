@@ -1176,9 +1176,9 @@ impl<'a> Reader<'a> {
         }
         for t in &todos {
             out.push_str(&format!(
-                "\n// {TODO}: {}.\n// See {GETTING_STARTED}\n// package.json, scripts.{}:\n//     {}\n",
+                "\n// {TODO}: {}.\n// See {GETTING_STARTED}\n// {}:\n//     {}\n",
                 one_line(&t.why),
-                one_line(&t.script),
+                one_line(&brrrty_config::eleventy_cli::place(&t.script)),
                 one_line(&t.command)
             ));
         }
@@ -1298,13 +1298,13 @@ impl<'a> Reader<'a> {
             && let Some(cli) = &self.cli
         {
             out.push_str(&format!(
-                "\n// {} from package.json's scripts.{}, which passes {} to 11ty; flags win over its config:\n//     {}\n",
+                "\n// {} from {}, which passes {} to 11ty; flags win over its config:\n//     {}\n",
                 if from_flags.len() == 1 {
                     "This folder comes"
                 } else {
                     "These folders come"
                 },
-                one_line(&cli.script),
+                one_line(&brrrty_config::eleventy_cli::place(&cli.script)),
                 from_flags.join(" "),
                 one_line(&cli.command)
             ));

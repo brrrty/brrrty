@@ -247,6 +247,7 @@ dependencies = [
  "sha2",
  "stacker",
  "tempfile",
+ "toml",
  "url",
 ]
 
