@@ -21,6 +21,7 @@ import nodeModule, { createRequire } from "node:module";
 import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 import inspector from "node:inspector";
+import { AsyncLocalStorage } from "node:async_hooks";
 import nodeCrypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -1137,9 +1138,26 @@ function readAnswer() {
   }
 }
 
+// The request each piece of code runs for (timers and promises keep the
+// one they were made in), and the one in flight: a filter called from a
+// timer a render left behind is not that request's.
+const requestContext = new AsyncLocalStorage();
+let activeRequest = null;
+let strayFilter = null;
+
 // Ask Brrrty to run one of its filters, as 11ty's own would run in
 // JavaScript, and wait for the result.
 function askFilter(name, args) {
+  const ctx = requestContext.getStore();
+  if (!ctx || ctx.id !== activeRequest) {
+    // Its answer would be counted against another request: say so at the
+    // end of the build instead, naming where it came from.
+    if (strayFilter === null) {
+      const where = ctx && typeof ctx.template === "number" && templates[ctx.template] ? ` in ${relFile(templates[ctx.template].file)}` : "";
+      strayFilter = `\`this.${name}\` is called${where} after its render ended (from a timer or a promise it didn't wait for), where Brrrty can't tell which page it belongs to`;
+    }
+    return undefined;
+  }
   if (answersFd === null) {
     throw refuse(`calls \`this.${name}\`, one of the filters 11ty gives a JavaScript template, which Brrrty can't run here`);
   }
@@ -1538,6 +1556,7 @@ async function handle(req) {
       return { okText: JSON.stringify(encodeValue(out, register)) };
     }
     case "exportsFinal": {
+      if (strayFilter !== null) return { refused: strayFilter, impure: true };
       if (exportChange !== null) return { refused: exportChange, impure: true };
       if (quickRecords === null) return { ok: null };
       for (const [v, file] of loadedRoots) {
@@ -1701,7 +1720,8 @@ lines.on("line", (line) => {
     const savedFeed = clockFeed;
     if (!calling && Array.isArray(req.feed)) clockFeed = req.feed.slice();
     try {
-      reply = await handle(req);
+      activeRequest = req.id;
+      reply = await requestContext.run({ id: req.id, template: req.template }, () => handle(req));
     } catch (e) {
       reply = e && e.brrrtyRefusal
         ? { refused: `a function ${e.brrrtyRefusal}` }
@@ -1719,6 +1739,7 @@ lines.on("line", (line) => {
         reply = { ...reply, loadClock: clockRecord.slice(loadStart) };
       }
     }
+    activeRequest = null;
     frame({ id: req.id, ...reply });
     // What the call changed, checked once its reply is on its way.
     if (calling && (req.op === "call" || req.op === "pageCall" || req.op === "pageVars")) {

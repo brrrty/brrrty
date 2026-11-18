@@ -856,3 +856,37 @@ fn permalink_and_computed_functions_call_filters_on_this() {
         "hello-world|undefined"
     );
 }
+
+/// A filter a render calls from a timer that outlives it is named where
+/// it comes from, never counted against another page.
+#[test]
+fn a_filter_called_after_its_render_names_its_template() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/timer.11ty.js".into(),
+            "module.exports = function () { setTimeout(() => this.slugify('late'), 0); return 'timer'; };\n".into(),
+        ),
+    ];
+    for i in 0..30 {
+        files.push((
+            format!("src/p{i}.11ty.js"),
+            "module.exports = async function () { await new Promise((r) => setTimeout(r, 2)); return this.slugify('A B'); };\n".into(),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&refs);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("in src/timer.11ty.js after its render ended"),
+        "{out}"
+    );
+}
