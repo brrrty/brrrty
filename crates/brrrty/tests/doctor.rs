@@ -883,3 +883,92 @@ fn an_empty_config_flag_is_not_unverified() {
     let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
     assert!(rhai.contains("11ty reads no config file"), "{rhai}");
 }
+
+/// Re-review 2: build scripts that still went silent are read or marked.
+#[test]
+fn bun_run_and_api_builds_are_not_silent() {
+    for build in [
+        "bun run eleventy --input=src --pathprefix=/blog/",
+        "node scripts/b",
+        "./scripts/c.mjs",
+        "node scripts/d.mjs",
+        "node scripts/plain.mjs",
+    ] {
+        let dir = site(&[
+            ("package.json", &pkg(build)),
+            ("scripts/b.js", "require(\"@11ty/eleventy\");\n"),
+            (
+                "scripts/c.mjs",
+                "#!/usr/bin/env node\nimport E from \"@11ty/eleventy\";\n",
+            ),
+            ("scripts/d.mjs", "import \"./lib.mjs\";\n"),
+            ("scripts/lib.mjs", "import E from \"@11ty/eleventy\";\n"),
+            // Nothing in it reaches 11ty: the dependency backstop marks it.
+            ("scripts/plain.mjs", "console.log(1);\n"),
+            ("src/index.md", "# Hi\n"),
+        ]);
+        let init = run(dir.path(), &["init", "--yes"]);
+        assert_eq!(init.status.code(), Some(0), "{build}: {}", stderr(&init));
+        let text = stdout(&run(dir.path(), &["doctor"]));
+        assert!(text.contains("0 of 1 page will build"), "{build}: {text}");
+    }
+}
+
+/// Re-review 2: once a site has moved off 11ty (no dependency, no config), the recorded
+/// lines say nothing. While 11ty is still a dependency, the warning stays, and its help
+/// never says to take ported settings out.
+#[test]
+fn moving_off_11ty_ends_the_checks() {
+    let dir = site(&[
+        ("package.json", &pkg("eleventy --input=src")),
+        ("eleventy.config.js", "module.exports = function () {};\n"),
+        ("src/index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    assert_eq!(stderr(&run(dir.path(), &["build"])), "");
+    // The 11ty config deleted while 11ty is still a dependency.
+    std::fs::remove_file(dir.path().join("eleventy.config.js")).unwrap();
+    let err = stderr(&run(dir.path(), &["build"]));
+    assert!(err.contains("11ty reads no config file now"), "{err}");
+    assert!(
+        err.contains("brrrty init") && !err.contains("Take out"),
+        "{err}"
+    );
+    // 11ty gone from package.json too: the migration is done.
+    std::fs::write(
+        dir.path().join("package.json"),
+        "{\"scripts\":{\"build\":\"brrrty build\",\"start\":\"brrrty serve\"}}\n",
+    )
+    .unwrap();
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(stderr(&built), "");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("_site/index.html")).unwrap(),
+        "<h1>Hi</h1>\n"
+    );
+}
+
+/// Re-review 2: an absolute `--config` inside the site is that file, at init and at build.
+#[test]
+fn an_absolute_config_path_is_the_file() {
+    let dir = site(&[
+        ("cfg/site.js", "module.exports = function () {};\n"),
+        ("index.md", "# Hi\n"),
+    ]);
+    let abs = dir.path().join("cfg/site.js");
+    std::fs::write(
+        dir.path().join("package.json"),
+        pkg(&format!("eleventy --config={}", abs.display())),
+    )
+    .unwrap();
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains("// Ported from: cfg/site.js sha256:"),
+        "{rhai}"
+    );
+    let built = run(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(stderr(&built), "");
+}
