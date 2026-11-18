@@ -810,19 +810,22 @@ fn computed_functions_refuse_what_brrrty_cannot_hand_them() {
     let o = build(t.path(), &[], &[]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     let out = text(&o);
-    assert!(out.contains("this.slugify"), "{out}");
-    assert!(out.contains("11ty's filters and shortcodes"), "{out}");
     assert!(out.contains("reads `collections`"), "{out}");
     assert!(out.contains("changes the data it is given"), "{out}");
     assert!(out.contains("Cannot read properties of undefined"), "{out}");
     assert!(out.contains("src/throw/throw.11tydata.js:3:"), "{out}");
-    for page in ["this", "coll", "poke", "throw"] {
+    for page in ["coll", "poke", "throw"] {
         assert_eq!(
             written(&t, &format!("{page}/page/index.html")),
             None,
             "{page}"
         );
     }
+    // `this` is 11ty's filters, Brrrty's own.
+    assert_eq!(
+        written(&t, "this/page/index.html").as_deref(),
+        Some("function")
+    );
     assert_eq!(written(&t, "fine/index.html").as_deref(), Some("fine"));
 }
 

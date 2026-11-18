@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use brrrty_js::Value;
 use brrrty_js::runtime::{
-    Decoded, FilterCall, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PathPart,
-    Refusal, RuntimeFailure, Settle, TemplateId, This,
+    Decoded, FilterCall, Filters, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId,
+    PathPart, Refusal, RuntimeFailure, Settle, TemplateId, This,
 };
 use serde_json::{Value as Json, json};
 
@@ -134,6 +134,8 @@ pub struct Worker {
     pub(crate) answers_feed: Option<VecDeque<(Json, Json)>>,
     /// The questions the request in flight asked, with their answers.
     asked: Vec<(Json, Json)>,
+    /// Brrrty's filters, for the questions a request asks.
+    filters: Option<Filters>,
     replies: Receiver<Reply>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     stderr_thread: Option<JoinHandle<()>>,
@@ -221,6 +223,7 @@ impl Worker {
             answers,
             answers_feed: None,
             asked: Vec::new(),
+            filters: None,
             child,
             replies,
             stderr_tail,
@@ -273,11 +276,17 @@ impl Worker {
     /// Send one request and wait for its reply. `what` names it in the
     /// notes about a slow reply.
     fn request(&mut self, req: Json, what: &str) -> JsResult<Decoded> {
-        self.request_with(req, what, &mut |name: &str, _: &[Value]| {
-            Err(format!(
-                "calls `this.{name}` where Brrrty has no filters to run it"
-            ))
-        })
+        let filters = self.filters.clone();
+        self.request_with(
+            req,
+            what,
+            &mut |name: &str, args: &[Value]| match &filters {
+                Some(f) => f(name, args),
+                None => Err(format!(
+                    "calls `this.{name}` where Brrrty has no filters to run it"
+                )),
+            },
+        )
     }
 
     /// [`Worker::request`], answering the worker's filter questions with
@@ -798,6 +807,10 @@ impl JsRuntime for Worker {
             });
         }
         JsResult::Ok(())
+    }
+
+    fn set_filters(&mut self, filters: Filters) {
+        self.filters = Some(filters);
     }
 
     fn template_setup(&mut self, filters: &[String]) -> JsResult<()> {

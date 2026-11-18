@@ -146,6 +146,9 @@ impl Refusal {
 /// `(name, arguments)`. `Err` refuses the render, with why.
 pub type FilterCall<'a> = dyn FnMut(&str, &[Value]) -> Result<Value, String> + 'a;
 
+/// Brrrty's filters by name, shared: see [`JsRuntime::set_filters`].
+pub type Filters = std::sync::Arc<dyn Fn(&str, &[Value]) -> Result<Value, String> + Send + Sync>;
+
 /// A JavaScript template or layout (`.11ty.js`) loaded in the runtime: its
 /// instance stays there, by this id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -213,6 +216,9 @@ pub trait JsRuntime: Send {
     /// `Refused` when a template or directory data file changed a value
     /// another file gave, or a built-in prototype.
     fn begin_calls(&mut self) -> JsResult<()>;
+    /// Brrrty's filters, which JavaScript calls on `this` (a template, a
+    /// computed or permalink function): `(name, arguments)`.
+    fn set_filters(&mut self, filters: Filters);
     /// The names 11ty puts on a JavaScript template's `this` as functions
     /// (its filters and shortcodes), in its order. Sent before any template
     /// loads.

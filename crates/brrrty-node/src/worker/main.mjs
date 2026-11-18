@@ -1452,6 +1452,16 @@ function getPage(id) {
 // JavaScript filters and shortcodes (and `tmpl`, its Template).
 const FILTERS_THIS = "11ty's filters and shortcodes";
 
+// What 11ty hands a computed or permalink function as `this`
+// (`_renderFunction`): `Object.assign({}, javascriptFunctions)`, the
+// filters and shortcodes by name, which run Brrrty's own.
+function filtersThis() {
+  const out = filterFunctions();
+  // And `tmpl`, 11ty's Template object, which Brrrty has no copy of.
+  trapKey(out, "tmpl", "reads `this.tmpl`, 11ty's internal Template object");
+  return out;
+}
+
 // --- The request loop. ---
 
 async function handle(req) {
@@ -1574,7 +1584,7 @@ async function handle(req) {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
       const proxy = new ComputedDataProxy(req.keys);
-      const thisArg = opaqueThis(FILTERS_THIS);
+      const thisArg = filtersThis();
       refusedInCall = null;
       let vars;
       try {
@@ -1591,7 +1601,7 @@ async function handle(req) {
     case "pageCall": {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
-      const r = await runOnce(fn, opaqueThis(FILTERS_THIS), [p.data], "await");
+      const r = await runOnce(fn, filtersThis(), [p.data], "await");
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       if (typeof req.set === "string") {
         if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };

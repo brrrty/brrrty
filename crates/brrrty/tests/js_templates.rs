@@ -834,3 +834,25 @@ fn module_state_shared_at_load_is_refused() {
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(read(t.path(), "b/index.html"), "btrue");
 }
+
+/// A permalink or computed function's `this` is 11ty's filters
+/// (`_renderFunction`), which run Brrrty's own.
+#[test]
+fn permalink_and_computed_functions_call_filters_on_this() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/p.11ty.js",
+            "module.exports = { data: { title: 'Hello World', permalink(d) { return `/${this.slugify(d.title)}/`; }, eleventyComputed: { s: function (d) { return this.slug(d.title) + '|' + typeof this.page; } } }, render: (d) => d.s };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        read(t.path(), "hello-world/index.html"),
+        "hello-world|undefined"
+    );
+}

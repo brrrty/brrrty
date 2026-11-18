@@ -357,7 +357,6 @@ fn layout_name(data: &Data) -> Option<String> {
 #[allow(clippy::too_many_arguments)]
 fn load_js_templates(
     js: &mut JsSession<'_>,
-    filters: &[String],
     input: &Path,
     input_rel: &Path,
     root: &Path,
@@ -367,9 +366,6 @@ fn load_js_templates(
 ) -> Option<(JsTemplates, crate::layout::JsLayouts)> {
     let any_js_layout = !layouts.js_files().is_empty();
     if !js.on() || (templates.is_empty() && !any_js_layout) {
-        return None;
-    }
-    if !js.template_setup(filters) {
         return None;
     }
     let mut pages = HashMap::new();
@@ -2505,7 +2501,27 @@ fn build_once(
         initial.insert("eleventy".to_string(), v.clone());
     }
     let initial = js_object(&initial);
+    let js_names: Vec<String> = {
+        let mut names: Vec<String> = ELEVENTY_JS_FUNCTIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let config = opts.config.filters.iter().map(|f| f.name.clone());
+        let plugin = rss
+            .then(crate::plugins::rss::universal_filters)
+            .into_iter()
+            .flatten()
+            .map(|(n, _)| n.to_string());
+        for n in config.chain(plugin) {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+        names
+    };
+    let js_filter_fns = js_filters(&opts.config.filters, rss);
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
+    js.filters = Some((js_names, js_filter_fns.clone()));
     js.check_ports = log.is_some();
     let GlobalData {
         value: user_value,
@@ -2597,24 +2613,6 @@ fn build_once(
     }
     // JavaScript templates and layouts load now, with the data: their
     // instances stay in Node for the renders.
-    let js_names: Vec<String> = {
-        let mut names: Vec<String> = ELEVENTY_JS_FUNCTIONS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let config = opts.config.filters.iter().map(|f| f.name.clone());
-        let plugin = rss
-            .then(crate::plugins::rss::universal_filters)
-            .into_iter()
-            .flatten()
-            .map(|(n, _)| n.to_string());
-        for n in config.chain(plugin) {
-            if !names.contains(&n) {
-                names.push(n);
-            }
-        }
-        names
-    };
     let js_loaded = if js_wanted {
         // The layouts the other pages and the data name: only a JavaScript
         // layout some page uses is imported, as in 11ty.
@@ -2637,7 +2635,6 @@ fn build_once(
         }
         load_js_templates(
             &mut js,
-            &js_names,
             &input,
             &input_rel,
             &root,
@@ -2676,7 +2673,7 @@ fn build_once(
     // The filters a JavaScript template calls on `this` are Brrrty's own,
     // the ones its Liquid and Nunjucks get.
     if let Some(c) = &js_calls {
-        c.set_filters(js_filters(&opts.config.filters, rss));
+        c.set_filters(js_filter_fns.clone());
     }
     let js_hooks = matches!(&opts.js.node, Some(Ok(n)) if n.load_hooks);
     {

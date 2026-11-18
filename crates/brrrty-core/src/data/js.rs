@@ -49,6 +49,10 @@ pub(crate) struct JsSession<'a> {
     pub files: Vec<(PathBuf, JsFileState)>,
     /// Run a ported file too and compare it with its port (doctor).
     pub check_ports: bool,
+    /// The names on a JavaScript `this` (11ty's filters and shortcodes),
+    /// and Brrrty's filters that run them: given to the runtime when it
+    /// starts.
+    pub filters: Option<(Vec<String>, JsFilters)>,
 }
 
 /// What loading one JavaScript template or layout gave.
@@ -84,6 +88,7 @@ impl<'a> JsSession<'a> {
             loads: 0,
             files: Vec::new(),
             check_ports: false,
+            filters: None,
         }
     }
 
@@ -108,7 +113,24 @@ impl<'a> JsSession<'a> {
             let start = self.options.start.as_ref()?;
             match start(self.run_mode) {
                 Ok(mut rt) => match rt.set_argument(&self.argument) {
-                    JsResult::Ok(()) => self.runtime = Some(rt),
+                    JsResult::Ok(()) => {
+                        if let Some((names, f)) = &self.filters {
+                            rt.set_filters(f.clone());
+                            match rt.template_setup(names) {
+                                JsResult::Ok(()) => {}
+                                JsResult::Failed(f) => {
+                                    self.failed = Some(worker_failed_with(&f));
+                                    return None;
+                                }
+                                JsResult::Thrown(JsError { message: why, .. })
+                                | JsResult::Refused(Refusal { why, .. }) => {
+                                    self.failed = Some(worker_failed(&why));
+                                    return None;
+                                }
+                            }
+                        }
+                        self.runtime = Some(rt);
+                    }
                     JsResult::Thrown(JsError { message: why, .. })
                     | JsResult::Refused(Refusal { why, .. }) => {
                         self.failed = Some(worker_failed(&format!(
@@ -203,27 +225,6 @@ impl<'a> JsSession<'a> {
                 self.failed = Some(worker_failed_with(&f).with_path(shown));
                 self.runtime = None;
                 JsLoad::Unavailable
-            }
-        }
-    }
-
-    /// Tell the runtime the names 11ty puts on a JavaScript template's
-    /// `this`, before any template loads. False when there is no runtime.
-    pub fn template_setup(&mut self, filters: &[String]) -> bool {
-        let Some(rt) = self.runtime() else {
-            return false;
-        };
-        match rt.template_setup(filters) {
-            JsResult::Ok(()) => true,
-            JsResult::Failed(f) => {
-                self.failed = Some(worker_failed_with(&f));
-                self.runtime = None;
-                false
-            }
-            JsResult::Thrown(JsError { message: why, .. })
-            | JsResult::Refused(Refusal { why, .. }) => {
-                self.failed = Some(worker_failed(&why));
-                false
             }
         }
     }
@@ -368,7 +369,7 @@ pub(crate) struct JsCalls {
 /// Runs one of Brrrty's filters for a JavaScript template: `(name,
 /// arguments)`, the first argument the filter's input. `Err` is why the
 /// render is refused.
-pub(crate) type JsFilters = Arc<dyn Fn(&str, &[Value]) -> Result<Value, String> + Send + Sync>;
+pub(crate) type JsFilters = brrrty_js::runtime::Filters;
 
 thread_local! {
     static CALLS: RefCell<Option<Arc<JsCalls>>> = const { RefCell::new(None) };
