@@ -538,6 +538,7 @@ fn collection_input(
             .collect(),
         sorted: sorted.clone(),
         undated: undated.to_vec(),
+        unordered: None,
     }
 }
 
@@ -580,6 +581,7 @@ fn set(
 pub(crate) fn build(
     mut entries: Vec<Entry>,
     config: &[ConfigCollection],
+    unordered: Option<&str>,
     mut generate: impl FnMut(usize, &Arc<IndexMap<String, Value>>) -> Result<Vec<Page>, Problem>,
 ) -> Built {
     let config_names: Vec<String> = config.iter().map(|c| c.name.clone()).collect();
@@ -634,7 +636,8 @@ pub(crate) fn build(
         {
             // `setCollectionByTagName`: the config's function, given the
             // pages added so far.
-            let input = collection_input(&added, &mut sorted, &mut dirty, &undated);
+            let mut input = collection_input(&added, &mut sorted, &mut dirty, &undated);
+            input.unordered = unordered.map(str::to_string);
             let key = name.name.clone();
             match (name.run)(&input) {
                 Ok(v) => {

@@ -167,6 +167,12 @@ impl DirDataIndex {
             })
     }
 
+    /// Whether `file` (one of [`DirDataIndex::files`]) is a JavaScript file
+    /// that ran in Node.
+    pub fn ran(&self, file: &Path) -> bool {
+        matches!(self.files.get(file), Some(LocalFile::JsRan(..)))
+    }
+
     /// The template and directory data files of the template at `rel`,
     /// lowest priority first.
     pub fn files(&self, rel: &Path) -> &[PathBuf] {

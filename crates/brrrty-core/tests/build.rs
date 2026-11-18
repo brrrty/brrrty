@@ -100,11 +100,12 @@ fn unsupported_templates_are_errors() {
         .find(|p| p.code == codes::TEMPLATE_UNSUPPORTED)
         .unwrap();
     assert_eq!(
-        p.help.as_deref(),
-        Some(
-            "JavaScript templates are coming soon. Liquid, Nunjucks, Markdown and HTML templates work now."
-        )
+        p.message,
+        "this JavaScript template doesn't run while JavaScript is off"
     );
+    let help = p.help.as_deref().unwrap_or_default();
+    assert!(help.contains("config.set_js_data(\"node\")"), "{help}");
+    assert!(help.contains("--js-data=node"), "{help}");
     assert!(root.join("_site/ok/index.html").exists());
 }
 

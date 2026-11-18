@@ -426,6 +426,9 @@ the script's own statements don't run.
   HEAD` (which is `git_head()`) or imports other modules. There is no
   `import` in a data script; files are read with the helpers below. Such a
   file can keep running in Node instead: `config.set_js_data("node");`.
+- `.11ty.js` templates have no Rhai form. The same line runs them in Node,
+  as 11ty does; a template that only prints data can also become a
+  Nunjucks or Liquid template.
 
 ### Checking a port with doctor
 

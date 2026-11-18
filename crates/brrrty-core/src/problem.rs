@@ -57,6 +57,14 @@ pub mod codes {
     pub const JS_DATA_NOT_OBJECT: &str = "js-data-not-object";
     /// A value in JavaScript data can't cross to Brrrty exactly.
     pub const JS_DATA_VALUE: &str = "js-data-value";
+    /// A JavaScript template's `render` gave nothing (`undefined`): 11ty
+    /// writes no file for the page, and says nothing.
+    pub const JS_TEMPLATE_EMPTY: &str = "js-template-empty";
+    /// 11ty refuses a JavaScript template: no template in its exports, or
+    /// `data` that isn't an object.
+    pub const JS_TEMPLATE_INVALID: &str = "js-template-invalid";
+    /// A JavaScript template's `render` gave something other than text.
+    pub const JS_TEMPLATE_VALUE: &str = "js-template-value";
     /// The Node running JavaScript data stopped or broke the protocol.
     pub const JS_WORKER_FAILED: &str = "js-worker-failed";
     pub const LAYOUT_CYCLE: &str = "layout-cycle";

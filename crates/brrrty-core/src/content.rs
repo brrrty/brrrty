@@ -214,10 +214,18 @@ impl Run<'_, '_> {
         let state = match (refused, result) {
             (Some(j), _) => State::Needs(j),
             (None, Err(p)) => State::Failed(p),
-            (None, Ok(Output { html, undefined })) => match (self.check)(i, &undefined) {
+            (
+                None,
+                Ok(Output {
+                    html,
+                    undefined,
+                    js,
+                }),
+            ) => match (self.check)(i, &undefined) {
                 Some(p) => State::Failed(p),
                 None => State::Done {
-                    content: Value::String(html.into()),
+                    // What a JavaScript template gave, as it gave it.
+                    content: js.unwrap_or_else(|| Value::String(html.into())),
                     reads: ready,
                     highlight,
                 },
@@ -475,13 +483,11 @@ impl Contents {
     }
 
     /// Page `i`'s content, or why it has none, and the page whose problem
-    /// explains it, if another.
-    pub fn content(&self, i: usize) -> Result<&str, (Problem, Option<usize>)> {
+    /// explains it, if another. Text, except what a JavaScript template
+    /// gave that isn't (`undefined`, a number).
+    pub fn content(&self, i: usize) -> Result<&Value, (Problem, Option<usize>)> {
         match &self.states[i] {
-            State::Done { content, .. } if self.settled[i] => match content {
-                Value::String(s) => Ok(s),
-                _ => Ok(""),
-            },
+            State::Done { content, .. } if self.settled[i] => Ok(content),
             State::Done { .. } => Err(self.late_problem(i)),
             State::Failed(p) => Err((p.clone(), None)),
             State::Needs(j) => Err((self.needs_problem(i, *j), Some(*j))),

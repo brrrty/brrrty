@@ -322,7 +322,7 @@ fn decide(f: &mut File, input: &Path, input_rel: &Path, cx: &Context<'_>, g: &Gl
     };
     f.body_at = body_at;
     f.body = Readers::of(match body_engines {
-        Engines::Raw | Engines::Markdown { pre: None } => None,
+        Engines::Raw | Engines::Markdown { pre: None } | Engines::Js(_) => None,
         Engines::Template(l) | Engines::Markdown { pre: Some(l) } => Some(l),
     });
     f.front = Readers::of(data.lang);

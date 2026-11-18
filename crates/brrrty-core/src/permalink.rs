@@ -141,7 +141,18 @@ fn default_permalink(rel: &Path, subdir: Option<usize>) -> Permalink {
         })
         .collect();
     // 11ty's `_hasDuplicateFolder`: `posts/posts.md` is the folder's index.
-    if let Some(stem) = rel.file_stem().map(|s| s.to_string_lossy().into_owned())
+    // `.11ty.js` comes off whole (11ty's `removeTemplateExtension`).
+    let stem = rel.file_name().map(|n| {
+        let n = n.to_string_lossy();
+        match crate::page::without_js_extension(&n) {
+            Some(base) => base.to_string(),
+            None => rel
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        }
+    });
+    if let Some(stem) = stem
         && stem != "index"
         && segments.last() != Some(&stem)
     {

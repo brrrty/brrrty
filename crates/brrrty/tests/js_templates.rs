@@ -1,0 +1,526 @@
+//! JavaScript templates (`.11ty.js`, `.11ty.cjs`, `.11ty.mjs`) through the
+//! `brrrty` binary: off and on, what they render, what is refused, and the
+//! checks they share with JavaScript data.
+
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn has_node() -> bool {
+    let ok = Command::new("node").arg("--version").output().is_ok();
+    if !ok {
+        assert!(std::env::var_os("CI").is_none(), "CI needs Node");
+        eprintln!("skipped: no node on PATH");
+    }
+    ok
+}
+
+fn site(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let t = tempfile::tempdir().unwrap();
+    for (rel, body) in files {
+        let p = t.path().join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, body).unwrap();
+    }
+    t
+}
+
+fn build(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .current_dir(dir)
+        .args(["build", "--input", "src"])
+        .args(args)
+        .env_remove("BRRRTY_NODE")
+        .env_remove("SOURCE_DATE_EPOCH")
+        .output()
+        .expect("run brrrty")
+}
+
+fn text(o: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
+}
+
+fn read(dir: &Path, rel: &str) -> String {
+    fs::read_to_string(dir.join("_site").join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"))
+}
+
+const ON: &str = "config.set_js_data(\"node\");\n";
+
+#[test]
+fn off_refuses_javascript_templates_and_names_the_switch() {
+    let t = site(&[
+        ("src/a.11ty.js", "module.exports = () => 'a';\n"),
+        ("src/b.njk", "b"),
+    ]);
+    let o = build(t.path(), &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("src/a.11ty.js"), "{out}");
+    assert!(
+        out.contains("config.set_js_data(\\\"node\\\")")
+            || out.contains("config.set_js_data(\"node\")"),
+        "{out}"
+    );
+    assert!(out.contains("--js-data=node"), "{out}");
+    assert_eq!(read(t.path(), "b/index.html"), "b");
+    // The flag turns it off for one run.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/a.11ty.js", "module.exports = () => 'a';\n"),
+    ]);
+    let o = build(t.path(), &["--js-data=off"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(!t.path().join("_site/a/index.html").exists());
+}
+
+#[test]
+fn a_function_a_class_and_an_object_build() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/fn.11ty.js",
+            "module.exports = function (d) { return `${d.title}|${this.page.url}|${d.page.fileSlug}`; };\nmodule.exports.data = { title: 'Fn' };\n",
+        ),
+        (
+            "src/cls.11ty.cjs",
+            "module.exports = class { data() { return { title: 'Cls', permalink: '/c-{{ x }}/' }; } render(d) { return d.title + ' ' + d.page.url; } };\n",
+        ),
+        (
+            "src/obj.11ty.mjs",
+            "export default { data: { title: 'Obj' }, async render(d) { return d.title; } };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "fn/index.html"), "Fn|/fn/|fn");
+    assert_eq!(read(t.path(), "c-{{ x }}/index.html"), "Cls /c-{{ x }}/");
+    assert_eq!(read(t.path(), "obj/index.html"), "Obj");
+}
+
+#[test]
+fn a_render_that_sorts_its_data_in_place_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/list.js",
+            "module.exports = { items: [3, 1, 2] };\n",
+        ),
+        (
+            "src/sorted.11ty.js",
+            "module.exports = ({ list }) => list.items.sort().join(',');\n",
+        ),
+        ("src/other.njk", "{{ list.items | join(',') }}"),
+    ]);
+    let o = build(t.path(), &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("changes the data it is given"), "{out}");
+    assert!(out.contains("src/sorted.11ty.js"), "{out}");
+    assert!(!t.path().join("_site/sorted/index.html").exists());
+}
+
+#[test]
+fn state_kept_between_renders_is_caught_by_the_replay() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/count.11ty.js",
+            "let n = 0;\nmodule.exports = class { data() { return { pagination: { data: 'items', size: 1 }, items: [1, 2, 3, 4], permalink: (d) => `/c/${d.pagination.pageNumber}/` }; } render() { n += 1; return String(n); } };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert!(!t.path().join("_site/c/0/index.html").exists(), "{out}");
+}
+
+#[test]
+fn a_cache_that_gives_the_same_result_builds() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/cached.11ty.js",
+            "const cache = new Map();\nconst slow = (x) => { if (!cache.has(x)) cache.set(x, x.toUpperCase()); return cache.get(x); };\nmodule.exports = class { data() { return { pagination: { data: 'items', size: 1 }, items: ['a', 'b', 'a'], permalink: (d) => `/k/${d.pagination.pageNumber}/` }; } render(d) { return slow(d.pagination.items[0]); } };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "k/2/index.html"), "A");
+}
+
+#[test]
+fn undefined_writes_nothing_and_warns() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/none.11ty.js", "module.exports = () => undefined;\n"),
+        (
+            "src/wrapped.11ty.js",
+            "module.exports = { data: { layout: 'w.njk' }, render: () => undefined };\n",
+        ),
+        ("src/_includes/w.njk", "[{{ content }}]"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert!(o.status.success(), "{out}");
+    assert!(out.contains("js-template-empty"), "{out}");
+    assert!(!t.path().join("_site/none/index.html").exists());
+    // A layout prints it as 11ty's does.
+    assert_eq!(read(t.path(), "wrapped/index.html"), "[]");
+}
+
+#[test]
+fn a_number_is_refused_alone_and_printed_by_a_layout() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/n.11ty.js", "module.exports = () => 42;\n"),
+        (
+            "src/w.11ty.js",
+            "module.exports = { data: { layout: 'w.njk' }, render: () => [1, 'b'] };\n",
+        ),
+        ("src/_includes/w.njk", "[{{ content }}]"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("js-template-value"), "{out}");
+    assert!(out.contains("a number (42)"), "{out}");
+    assert_eq!(read(t.path(), "w/index.html"), "[1,b]");
+}
+
+#[test]
+fn errors_name_the_file_and_line() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/boom.11ty.js",
+            "module.exports = function (d) {\n  return d.missing.value;\n};\n",
+        ),
+        ("src/empty.11ty.js", "module.exports = {};\n"),
+        (
+            "src/str.11ty.js",
+            "module.exports = { data: () => 'x', render: () => 'y' };\n",
+        ),
+        ("src/ok.njk", "ok"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("src/boom.11ty.js:2:"), "{out}");
+    assert!(out.contains("TypeError"), "{out}");
+    assert!(
+        out.contains("No JavaScript template returned from src/empty.11ty.js"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Invalid data format returned from src/str.11ty.js: typeof string"),
+        "{out}"
+    );
+    assert!(out.contains("js-template-invalid"), "{out}");
+    assert_eq!(read(t.path(), "ok/index.html"), "ok");
+}
+
+#[test]
+fn what_brrrty_cannot_follow_is_refused_by_page() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/slug.11ty.js",
+            "module.exports = function () { return this.slugify('A B'); };\n",
+        ),
+        ("src/raw.njk", "{{ collections.all | length }}"),
+        (
+            "src/reads-raw.njk",
+            "{% for p in collections.all %}{{ p.rawInput }}{% endfor %}",
+        ),
+        (
+            "src/_includes/l.11ty.js",
+            "module.exports = { render(d) { return this.page.url + d.content; } };\n",
+        ),
+        ("src/uses.njk", "---\nlayout: l.11ty.js\n---\nx"),
+        ("src/ok.11ty.js", "module.exports = () => 'ok';\n"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("calls `this.slugify`"), "{out}");
+    assert!(out.contains("`rawInput`"), "{out}");
+    assert!(
+        out.contains("reads `this.page` in a JavaScript layout"),
+        "{out}"
+    );
+    assert_eq!(read(t.path(), "ok/index.html"), "ok");
+    assert_eq!(read(t.path(), "raw/index.html"), "5");
+    for gone in ["slug", "reads-raw", "uses"] {
+        assert!(
+            !t.path().join(format!("_site/{gone}/index.html")).exists(),
+            "{gone}: {out}"
+        );
+    }
+}
+
+#[test]
+fn layouts_go_both_ways() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_includes/js.11ty.js",
+            "module.exports = class { data() { return { layout: 'outer.njk', from: 'js' }; } render({ content, from, title }) { return `<js ${from} ${title}>${content}</js>`; } };\n",
+        ),
+        ("src/_includes/outer.njk", "<o>{{ content | safe }}</o>"),
+        ("src/a.md", "---\ntitle: A\nlayout: js\n---\n*{{ from }}*"),
+        (
+            "src/b.11ty.js",
+            "module.exports = { data: { title: 'B', layout: 'outer.njk' }, render: (d) => d.title };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        read(t.path(), "a/index.html"),
+        "<o><js js A><p><em>js</em></p>\n</js></o>"
+    );
+    assert_eq!(read(t.path(), "b/index.html"), "<o>B</o>");
+}
+
+#[test]
+fn the_clock_in_a_render_is_read_once_and_replayed() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/now.11ty.js",
+            "module.exports = () => String(new Date().getFullYear() > 2000);\n",
+        ),
+    ]);
+    for _ in 0..3 {
+        let o = build(t.path(), &[]);
+        assert!(o.status.success(), "{}", text(&o));
+        assert_eq!(read(t.path(), "now/index.html"), "true");
+    }
+}
+
+#[test]
+fn a_site_builds_the_same_bytes_every_time() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        ("src/_includes/base.njk".into(), "<main>{{ content | safe }}</main>".into()),
+        (
+            "src/list.11ty.js".into(),
+            "module.exports = class { data() { return { layout: 'base.njk', pagination: { data: 'collections.post', size: 3 }, permalink: (d) => `/list/${d.pagination.pageNumber}/` }; } render({ pagination }) { return pagination.items.map((p) => `${p.data.title}@${p.url}`).join(';'); } };\n".into(),
+        ),
+        (
+            "src/all.11ty.js".into(),
+            "module.exports = ({ collections }) => collections.all.map((p) => p.url).join('\\n');\n".into(),
+        ),
+    ];
+    for i in 0..40 {
+        files.push((
+            format!("src/posts/p{i:02}.md"),
+            format!(
+                "---\ntitle: P{i}\ntags: post\ndate: 2024-01-{:02}\n---\nBody {i}\n",
+                i % 28 + 1
+            ),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&refs);
+    let mut first: Option<Vec<(String, String)>> = None;
+    for _ in 0..5 {
+        let o = build(t.path(), &[]);
+        assert!(o.status.success(), "{}", text(&o));
+        let mut pages = Vec::new();
+        for dir in ["list/0", "list/5", "list/13", "all"] {
+            pages.push((
+                dir.to_string(),
+                read(t.path(), &format!("{dir}/index.html")),
+            ));
+        }
+        match &first {
+            None => first = Some(pages),
+            Some(f) => assert_eq!(f, &pages),
+        }
+    }
+}
+
+#[test]
+fn an_engine_override_on_a_javascript_template_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/over.11ty.js",
+            "module.exports = { data: { templateEngineOverride: 'njk' }, render: () => 'x' };\n",
+        ),
+        (
+            "src/fine.njk",
+            "---\ntemplateEngineOverride: 11ty.js\n---\nx",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("`templateEngineOverride` on a JavaScript template"),
+        "{out}"
+    );
+    assert!(
+        out.contains("templateEngineOverride `11ty.js` uses 11ty.js"),
+        "{out}"
+    );
+}
+
+#[test]
+fn collections_build_and_only_their_order_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/job.11ty.js",
+            "module.exports = { data: { tags: 'job', date: '2024-02-01', title: 'Js' }, render: () => 'js job' };\n",
+        ),
+        (
+            "src/a.md",
+            "---\ntags: job\ndate: 2024-01-01\ntitle: A\n---\na\n",
+        ),
+        (
+            "src/sitemap.njk",
+            "---\neleventyExcludeFromCollections: true\n---\n{% for p in collections.all %}{{ p.url }};{% endfor %}",
+        ),
+        (
+            "src/keys.njk",
+            "---\neleventyExcludeFromCollections: true\n---\n{% for k, v in collections %}{{ k }};{% endfor %}",
+        ),
+        (
+            "src/keys-js.11ty.js",
+            "module.exports = { data: { eleventyExcludeFromCollections: true }, render: ({ collections }) => Object.keys(collections).join(';') };\n",
+        ),
+        (
+            "src/jobs-js.11ty.js",
+            "module.exports = { data: { eleventyExcludeFromCollections: true }, render: ({ collections }) => collections.job.map((p) => p.data.title).join(';') };\n",
+        ),
+        (
+            "src/paged.njk",
+            "---\neleventyExcludeFromCollections: true\npagination:\n  data: collections.job\n  size: 1\npermalink: \"/paged/{{ pagination.pageNumber }}/\"\n---\n{{ pagination.items[0].url }}",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert_eq!(read(t.path(), "sitemap/index.html"), "/a/;/job/;");
+    assert_eq!(read(t.path(), "jobs-js/index.html"), "A;Js");
+    assert!(out.contains("src/keys.njk: this page lists the names in `collections`, whose order 11ty decides by file-read timing"), "{out}");
+    assert!(out.contains("src/keys-js.11ty.js"), "{out}");
+    assert_eq!(read(t.path(), "paged/1/index.html"), "/job/");
+    for gone in ["keys/index.html", "keys-js/index.html"] {
+        assert!(!t.path().join("_site").join(gone).exists(), "{gone}: {out}");
+    }
+}
+
+#[test]
+fn a_config_collection_in_added_order_is_refused_with_javascript_templates() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_data(\"node\");\nconfig.add_collection(\"added\", |api| api.get_all());\nconfig.add_collection(\"sorted\", |api| api.get_all_sorted());\n",
+        ),
+        (
+            "src/j.11ty.js",
+            "module.exports = { data: { date: '2024-01-02' }, render: () => 'j' };\n",
+        ),
+        ("src/a.md", "---\ndate: 2024-01-01\n---\na\n"),
+        (
+            "src/added.njk",
+            "---\neleventyExcludeFromCollections: true\n---\n{{ collections.added | length }}",
+        ),
+        (
+            "src/sorted.njk",
+            "---\neleventyExcludeFromCollections: true\n---\n{% for p in collections.sorted %}{{ p.url }};{% endfor %}",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("`get_all()` gives pages in the order 11ty added them"),
+        "{out}"
+    );
+    assert_eq!(read(t.path(), "sorted/index.html"), "/a/;/j/;");
+    assert!(!t.path().join("_site/added/index.html").exists(), "{out}");
+}
+
+#[test]
+fn local_javascript_data_that_ran_keeps_collections_readable() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "module.exports = () => ({ tags: ['post'] });\n",
+        ),
+        ("src/posts/a.md", "---\ndate: 2024-01-01\n---\na\n"),
+        ("src/posts/b.md", "---\ndate: 2024-01-02\n---\nb\n"),
+        (
+            "src/list.njk",
+            "{% for p in collections.post %}{{ p.url }};{% endfor %}",
+        ),
+        (
+            "src/keys.njk",
+            "{% for k, v in collections %}{{ k }};{% endfor %}",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert_eq!(read(t.path(), "list/index.html"), "/posts/a/;/posts/b/;");
+    assert!(out.contains("JavaScript data file (.11tydata.js)"), "{out}");
+    assert!(!t.path().join("_site/keys/index.html").exists(), "{out}");
+}

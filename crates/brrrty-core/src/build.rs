@@ -17,9 +17,9 @@ use serde_json::Value as Json;
 use crate::collections::{self, Entry, Membership, Page};
 use crate::content::{self, ContentPage};
 use crate::data::{
-    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, JsCalls, JsSession, Local, OVERRIDE_PREFIX,
-    clean_tags, config_global, frozen_keys, frozen_problem, is_js, js_help, js_object, key_line,
-    load_global, merge, page_data, reserved_keys, reserved_problem,
+    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, JsCalls, JsSession, JsTemplateLoad, Local,
+    OVERRIDE_PREFIX, clean_tags, config_global, frozen_keys, frozen_problem, is_js, js_help,
+    js_object, key_line, load_global, merge, page_data, reserved_keys, reserved_problem,
 };
 use crate::discover::{PLUGIN_ONLY_EXTS, discover};
 use crate::frontmatter::{Data, split_front_matter};
@@ -182,6 +182,8 @@ struct Templ {
     order_layouts: Vec<(String, OrderLayout)>,
     /// A JavaScript data file applies to it.
     js_data: bool,
+    /// A JavaScript data file that didn't run applies to it.
+    js_data_unrun: bool,
     pages: Pages,
     /// Why Brrrty can't date its pages. It has none, and the collections it
     /// is in are refused.
@@ -237,6 +239,103 @@ struct Shared<'a> {
     survey: Option<&'a Log>,
     /// Collection items whose `data` lacks keys Brrrty can't supply.
     items_withheld: Mutex<ItemsWithheld>,
+    /// JavaScript templates loaded in Node, by path in the input folder,
+    /// or why one can't be used.
+    js_templates: &'a HashMap<PathBuf, Result<JsTemplate, Problem>>,
+}
+
+/// JavaScript templates loaded in Node, by path in the input folder, or why
+/// one can't be used.
+type JsTemplates = HashMap<PathBuf, Result<JsTemplate, Problem>>;
+
+/// A JavaScript template loaded in the site's Node: its instance's id, and
+/// its data, which 11ty takes as its front matter.
+struct JsTemplate {
+    id: brrrty_js::runtime::TemplateId,
+    data: Data,
+}
+
+/// The names 11ty puts on a JavaScript template's `this` as functions
+/// before the config's (`Object.keys(this)` on 11ty 3.1.8: the bundle and
+/// `inputPathToUrl` plugins, then `defaultConfig.js`'s filters).
+const ELEVENTY_JS_FUNCTIONS: &[&str] = &[
+    "getBundle",
+    "getBundleFileUrl",
+    "inputPathToUrl",
+    "slug",
+    "slugify",
+    "url",
+    "log",
+    "getCollectionItemIndex",
+    "getCollectionItem",
+    "getPreviousCollectionItem",
+    "getNextCollectionItem",
+    "renderTransforms",
+];
+
+/// A JavaScript template's or layout's data as front matter, or why it
+/// can't be: a part of it that can't cross exactly.
+fn js_template_data(d: &brrrty_js::runtime::Decoded, shown: &Path) -> Result<Data, Problem> {
+    if let Some((at, what)) = crate::data::first_unusable(d) {
+        return Err(Problem::error(
+            codes::JS_DATA_VALUE,
+            format!(
+                "this template's `data` holds {what} at {}, which can't cross from JavaScript to Brrrty exactly",
+                brrrty_js::runtime::path_text(&at)
+            ),
+        )
+        .with_path(shown)
+        .with_help("Give `data` plain values there: objects, arrays, strings, numbers, booleans, null or Dates. For a luxon DateTime, use .toJSDate() or a formatted string."));
+    }
+    Ok(match &d.value {
+        Value::Object(o) => (**o).clone(),
+        _ => Data::new(),
+    })
+}
+
+/// Load every JavaScript template (`templates`, relative to the input
+/// folder) and JavaScript layout (`layouts`, absolute) in Node, in that
+/// order, after telling it the names on `this` (`filters`). `None` when
+/// JavaScript doesn't run.
+fn load_js_templates(
+    js: &mut JsSession<'_>,
+    filters: &[String],
+    input: &Path,
+    input_rel: &Path,
+    root: &Path,
+    templates: &[PathBuf],
+    layouts: &[PathBuf],
+) -> Option<(JsTemplates, crate::layout::JsLayouts)> {
+    if !js.on() || (templates.is_empty() && layouts.is_empty()) {
+        return None;
+    }
+    if !js.template_setup(filters) {
+        return None;
+    }
+    let mut pages = HashMap::new();
+    for rel in templates {
+        let shown = input_rel.join(rel);
+        let r = match js.load_template(&input.join(rel), &shown, false) {
+            JsTemplateLoad::Loaded(t) => {
+                js_template_data(&t.data, &shown).map(|data| JsTemplate { id: t.id, data })
+            }
+            JsTemplateLoad::Failed(p) => Err(p),
+            JsTemplateLoad::Unavailable => return None,
+        };
+        pages.insert(rel.clone(), r);
+    }
+    let mut found = HashMap::new();
+    for full in layouts {
+        let shown = crate::options::root_relative(root, full);
+        let r = match js.load_template(full, &shown, true) {
+            JsTemplateLoad::Loaded(t) => js_template_data(&t.data, &shown).map(|d| (t.id, d)),
+            JsTemplateLoad::Failed(p) => Err(p),
+            JsTemplateLoad::Unavailable => return None,
+        };
+        let real = full.canonicalize().unwrap_or_else(|_| full.clone());
+        found.insert(real, r);
+    }
+    Some((pages, found))
 }
 
 /// The `data` objects of collection items that lack keys Brrrty can't
@@ -673,7 +772,15 @@ fn load_page_inner(
     let shown = shared.input_rel.join(rel);
     let full = shared.input.join(rel);
     let feed = shared.virtuals.get(rel);
+    // A JavaScript template has no text: its data is its front matter.
+    let js = match shared.js_templates.get(rel) {
+        Some(Ok(t)) => Some(t),
+        Some(Err(p)) => return Err(p.clone()),
+        None if is_js_template(rel) => return Err(unsupported_template(&shown)),
+        None => None,
+    };
     let text = match feed {
+        _ if js.is_some() => String::new(),
         // A virtual template's text and data come from the config.
         Some(f) => f.content(),
         None => {
@@ -688,7 +795,10 @@ fn load_page_inner(
             })?
         }
     };
-    let (mut front, body) = split_front_matter(&text).map_err(|p| p.with_path(&shown))?;
+    let (mut front, body) = match js {
+        Some(t) => (t.data.clone(), ""),
+        None => split_front_matter(&text).map_err(|p| p.with_path(&shown))?,
+    };
     if let Some(f) = feed {
         // `Object.assign(frontMatterData, virtualTemplateData)`.
         for (k, v) in &f.data {
@@ -868,19 +978,34 @@ fn load_page_inner(
             key_line(&text, "templateEngineOverride"),
         )
     };
-    let (engines, syntax) =
-        engines_for(&ext, over, shared.template_engines).map_err(over_problem)?;
+    let (engines, syntax) = match js {
+        // 11ty would render the instance object as the override's text.
+        Some(_) if over.is_some() => {
+            return Err(over_problem(
+                Problem::error(
+                    codes::TEMPLATE_ENGINE_UNSUPPORTED,
+                    "`templateEngineOverride` on a JavaScript template: 11ty would render its instance object as a template",
+                )
+                .with_help("Remove `templateEngineOverride` from this template's data."),
+            ));
+        }
+        Some(t) => (Engines::Js(t.id), "11ty.js".to_string()),
+        None => engines_for(&ext, over, shared.template_engines).map_err(over_problem)?,
+    };
     if let Some(log) = shared.survey {
         log.lang(
             &shown,
             match engines {
-                Engines::Raw => None,
+                Engines::Raw | Engines::Js(_) => None,
                 Engines::Template(l) => Some(l),
                 Engines::Markdown { pre } => pre,
             },
         );
     }
-    let data_engine = DataEngine::new(&ext, over, shared.template_engines).map_err(over_problem)?;
+    let data_engine = match js {
+        Some(_) => DataEngine::raw(),
+        None => DataEngine::new(&ext, over, shared.template_engines).map_err(over_problem)?,
+    };
     if let Some(log) = shared.survey {
         let mut strings = Vec::new();
         for key in ["permalink", "eleventyComputed"] {
@@ -910,7 +1035,15 @@ fn load_page_inner(
     page.insert("outputFileExtension".into(), string("html".into()));
     page.insert("templateSyntax".into(), string(syntax));
     page.insert("date".into(), Value::Date(date.fixed_offset()));
-    page.insert("rawInput".into(), string(body.to_string()));
+    // A JavaScript template's `rawInput` is 11ty's instance object: a
+    // marker, which traps a read.
+    page.insert(
+        "rawInput".into(),
+        match js {
+            Some(_) => Value::Undefined,
+            None => string(body.to_string()),
+        },
+    );
     let plan = computed_plan(&data, &shown, &text, data_engine)?;
     let mut values = js_object(&data);
     values.insert("page".into(), Value::Object(Arc::new(page)));
@@ -968,7 +1101,11 @@ fn load_page_inner(
         pagination_problem(p, from("pagination"), key_line(&text, "pagination"), &shown)
     })?;
     let order_files = shared.dir_data.files(rel);
-    let js_data = order_files.iter().any(|f| is_js(&f.to_string_lossy()));
+    let js_files = || order_files.iter().filter(|f| is_js(&f.to_string_lossy()));
+    let js_data = js_files().next().is_some();
+    // One that didn't run may set `tags` or `date`: the collections can't
+    // be known at all.
+    let js_data_unrun = js_files().any(|f| !shared.dir_data.ran(f));
     let includes = shared.layouts.dir_shown();
     let mut order_layouts: Vec<(String, OrderLayout)> = Vec::new();
     let mut name = match data_layout {
@@ -1004,13 +1141,16 @@ fn load_page_inner(
         rel: rel.to_path_buf(),
         data_files: order_files.len(),
         layout: order_layouts.first().map(|(n, _)| n.clone()),
-        // A virtual template never reads the disk for its date.
+        // A virtual template never reads the disk for its date; a
+        // JavaScript template waits on `import()` whatever its date.
         dated: feed.is_some()
-            || reads_no_file_date(
-                data.get("date"),
-                &format!("{}{}", dot_dir(shared.input_rel), slash_path(rel)),
-            ),
+            || js.is_none()
+                && reads_no_file_date(
+                    data.get("date"),
+                    &format!("{}{}", dot_dir(shared.input_rel), slash_path(rel)),
+                ),
         added_last: feed.is_some(),
+        js: js.is_some(),
     };
     let templ = |pages| {
         Ok(Loaded::Template(Box::new(Templ {
@@ -1020,6 +1160,7 @@ fn load_page_inner(
             order: order_template.clone(),
             order_layouts: order_layouts.clone(),
             js_data,
+            js_data_unrun,
             pages,
             date_problem: date_problem.clone(),
         })))
@@ -1478,6 +1619,15 @@ fn collections_problem(
             .with_help("Brrrty has no equivalent; read the item's `data`, `url` or `inputPath`."),
         );
     }
+    if item("rawInput") {
+        return Some(
+            Problem::error(
+                codes::DATA_UNSUPPORTED,
+                "this page reads `rawInput` of a JavaScript template's page, which in 11ty is the template's instance object, not text",
+            )
+            .with_help("Brrrty has no equivalent; read the page's data or `url`."),
+        );
+    }
     if item("collections") {
         return Some(
             Problem::error(
@@ -1485,6 +1635,21 @@ fn collections_problem(
                 "this page reads `data.collections` of a collection item, which Brrrty doesn't build yet",
             )
             .with_help("Read `collections` directly instead."),
+        );
+    }
+    if let Some(why) = undefined
+        .iter()
+        .find_map(|n| n.strip_prefix(brrrty_js::traps::ORDER_PREFIX))
+    {
+        let what = if why.starts_with("reads ") {
+            format!("this page {why}")
+        } else {
+            format!("this page lists the names in `collections`, {why}")
+        };
+        return Some(
+            Problem::error(codes::DATA_UNSUPPORTED, what).with_help(
+                "11ty's output here changes with the order its files load; Brrrty refuses the page rather than guess it. Read one collection by name (`collections.post`), which is sorted by date and the same every time.",
+            ),
         );
     }
     let empty = BTreeMap::new();
@@ -2048,18 +2213,11 @@ fn build_once(
         }
     };
     report.problems.extend(discovery.warnings.iter().cloned());
-    for path in &discovery.unsupported {
-        let shown = input_rel.join(path);
-        let p = unsupported_template(&shown);
-        // A JavaScript template can make any number of pages: a survey counts it as one,
-        // and says there may be more.
-        if let Some(log) = log {
-            log.problem(&shown, &p);
-            log.paginates(&shown);
-            log.stopped(&shown, &p);
-            log.refused_at_least_once(&shown);
-        }
-        report.problems.push(p);
+    // JavaScript templates run in Node when JavaScript is on; otherwise each
+    // is refused, naming the switch.
+    let js_wanted = opts.js.mode == crate::options::JsData::Node;
+    if !js_wanted {
+        refuse_javascript(&discovery.unsupported, &input_rel, log, &mut report);
     }
     // 11ty skips these silently unless a plugin adds them; say so once per extension.
     let mut by_ext: std::collections::BTreeMap<String, Vec<&PathBuf>> = Default::default();
@@ -2177,7 +2335,7 @@ fn build_once(
             .is_some_and(|p| p.options.has_format("njk")),
     };
     let template_engines = opts.config.template_engines;
-    let layouts = Layouts::new(
+    let mut layouts = Layouts::new(
         &langs,
         template_engines,
         input.clone(),
@@ -2255,9 +2413,12 @@ fn build_once(
     if let Some(v) = globals.get("pkg") {
         global.insert("pkg".to_string(), v.clone());
     }
-    // JavaScript templates aren't loaded: their data is JavaScript.
-    let javascript = &discovery.unsupported;
+    // JavaScript templates load with the others when JavaScript runs: their
+    // directory data is found the same way.
     let mut loadable: Vec<PathBuf> = discovery.templates.clone();
+    if js_wanted {
+        loadable.extend(discovery.unsupported.iter().cloned());
+    }
     // The feeds' virtual templates come after every file, as 11ty adds
     // them. One that has a file's path is refused, as 11ty refuses it.
     let mut virtuals: HashMap<PathBuf, FeedOptions> = HashMap::new();
@@ -2299,6 +2460,51 @@ fn build_once(
         report.problems.push(p);
         return finish(report, strict, start);
     }
+    // JavaScript templates and layouts load now, with the data: their
+    // instances stay in Node for the renders.
+    let js_names: Vec<String> = {
+        let mut names: Vec<String> = ELEVENTY_JS_FUNCTIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let config = opts.config.filters.iter().map(|f| f.name.clone());
+        let plugin = rss
+            .then(crate::plugins::rss::universal_filters)
+            .into_iter()
+            .flatten()
+            .map(|(n, _)| n.to_string());
+        for n in config.chain(plugin) {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+        names
+    };
+    let js_loaded = if js_wanted {
+        load_js_templates(
+            &mut js,
+            &js_names,
+            &input,
+            &input_rel,
+            &root,
+            &discovery.unsupported,
+            &layouts.js_files(),
+        )
+    } else {
+        None
+    };
+    if let Some(p) = js.failed.take() {
+        report.problems.push(p);
+        return finish(report, strict, start);
+    }
+    let js_templates: HashMap<PathBuf, Result<JsTemplate, Problem>> = match js_loaded {
+        Some((pages, found)) => {
+            layouts.set_js(found);
+            pages
+        }
+        // Refused one by one as they load.
+        None => HashMap::new(),
+    };
     // What the JavaScript data read inside the project: `serve` rebuilds when one changes.
     for p in js.reads() {
         if p.is_relative() {
@@ -2320,7 +2526,10 @@ fn build_once(
     let _uninstall = UninstallCalls;
     // JavaScript data is on, but there is no Node to run it in.
     if let Some(missing) = js.missing()
-        && (!js_keys.is_empty() || dir_data.has_js())
+        && (!js_keys.is_empty()
+            || dir_data.has_js()
+            || !discovery.unsupported.is_empty()
+            || !layouts.js_files().is_empty())
     {
         let code = if missing.too_old {
             codes::JS_DATA_NODE_OLD
@@ -2338,6 +2547,13 @@ fn build_once(
             .with_help("Install Node 18 or later, set BRRRTY_NODE to its path, or port the data files to Rhai: `brrrty init` lists which it can translate. Pages that need them are refused; the rest build."),
         );
     }
+    // JavaScript templates that don't run, which the collections lack.
+    let javascript: Vec<PathBuf> = if js_wanted {
+        Vec::new()
+    } else {
+        discovery.unsupported.clone()
+    };
+    let javascript = &javascript;
     let shared = Shared {
         langs: &langs,
         template_engines,
@@ -2352,6 +2568,7 @@ fn build_once(
         virtuals: &virtuals,
         survey: log,
         items_withheld: Mutex::new(ItemsWithheld::default()),
+        js_templates: &js_templates,
     };
 
     let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
@@ -2418,6 +2635,20 @@ fn build_once(
     }
     let order_inputs: Vec<OrderTemplate> = templates.iter().map(|t| t.order.clone()).collect();
     let js_data = templates.iter().filter(|t| t.js_data).count();
+    let js_data_unrun = templates.iter().filter(|t| t.js_data_unrun).count();
+    let js_pages = templates.iter().filter(|t| t.order.js).count();
+    // 11ty adds a template whose data waits on `import()` (a JavaScript
+    // template, or local JavaScript data) when the file has loaded: its
+    // place in the template map, and so whatever follows that order, is
+    // file-read timing. Brrrty builds the collections, whose contents
+    // don't depend on it, and refuses the reads that do.
+    let order_unknown: Option<String> = if js_pages > 0 {
+        Some("whose order 11ty decides by file-read timing on this site: it adds a JavaScript template (.11ty.js) to its template map when the file has loaded".to_string())
+    } else if js_data > 0 {
+        Some("whose order 11ty decides by file-read timing on this site: it adds a template with a JavaScript data file (.11tydata.js) to its template map when that file has loaded".to_string())
+    } else {
+        None
+    };
     let mut by_index: Vec<Option<Templ>> = templates.into_iter().map(Some).collect();
     let templates: Vec<Templ> =
         crate::order::entry_order(&order_inputs, &order_layouts, &slash_path(&input_rel))
@@ -2434,7 +2665,7 @@ fn build_once(
         unbuilt,
         javascript.len(),
         templates.iter().any(|t| t.computed_membership),
-        js_data,
+        js_data_unrun,
     )
     .or_else(|| imports_gap(&templates, &input_rel, has_config, &config_names));
     let input_dot = dot_dir(&input_rel);
@@ -2479,21 +2710,54 @@ fn build_once(
     // Each template's place in 11ty's order, which is file order until the
     // collections give the real one.
     let mut template_order: Vec<usize> = (0..slots.len()).collect();
+    // The collection each deferred template paginates.
+    let targets: Vec<Option<String>> = entries
+        .iter()
+        .map(|e| e.membership.pagination.clone())
+        .collect();
     if gap.is_none() {
-        let built = collections::build(entries, &opts.config.collections, |i, so_far| {
-            let Slot::Deferred(d) = &slots[i] else {
-                return Ok(Vec::new());
-            };
-            let pages = d.run(&shared, so_far)?;
-            let items: Vec<Page> = pages
-                .iter()
-                .map(|p| Page::new(&p.data, p.page_number))
-                .collect();
-            lock(&shared.items_withheld).add(&items, &pages);
-            slot_items[i] = items.iter().map(|x| x.item.clone()).collect();
-            made[i] = Some(pages);
-            Ok(items)
-        });
+        let built = collections::build(
+            entries,
+            &opts.config.collections,
+            order_unknown.as_deref(),
+            |i, so_far| {
+                let Slot::Deferred(d) = &slots[i] else {
+                    return Ok(Vec::new());
+                };
+                // With the order unknown, the template gets the one collection
+                // it paginates, which is complete whatever the order (every
+                // template that adds to it comes first in 11ty's graph); any
+                // other is a snapshot that depends on the order, and reading it
+                // traps.
+                let partial = order_unknown.as_ref().map(|why| {
+                let mut only = IndexMap::new();
+                if let Some(t) = targets[i].as_deref()
+                    && let Some(v) = so_far.get(t)
+                {
+                    only.insert(t.to_string(), v.clone());
+                }
+                let only = Arc::new(only);
+                let guard = PartialGuard::new(
+                    brrrty_js::traps::object_id(&only),
+                    format!("reads a collection other than the one it paginates while 11ty places its pages, and 11ty fills those in an order {}", why.strip_prefix("whose order ").unwrap_or(why)),
+                );
+                (only, guard)
+            });
+                let pages = match &partial {
+                    Some((only, _)) => d.run(&shared, only)?,
+                    None => d.run(&shared, so_far)?,
+                };
+                drop(partial);
+                let items: Vec<Page> = pages
+                    .iter()
+                    .map(|p| Page::new(&p.data, p.page_number))
+                    .collect();
+                lock(&shared.items_withheld).add(&items, &pages);
+                slot_items[i] = items.iter().map(|x| x.item.clone()).collect();
+                made[i] = Some(pages);
+                Ok(items)
+            },
+        );
         for (place, &i) in built.order.iter().enumerate() {
             template_order[i] = place;
         }
@@ -2597,6 +2861,11 @@ fn build_once(
         .as_ref()
         .filter(|_| has_config || !poisoned.is_empty() || !broken.is_empty())
         .map(|c| OpenGuard::new(brrrty_js::traps::object_id(c)));
+    // With the order unknown, listing the names traps.
+    let _unordered = collections_value
+        .as_ref()
+        .zip(order_unknown.as_ref())
+        .map(|(c, why)| UnorderedGuard::new(brrrty_js::traps::object_id(c), why.clone()));
     for p in &mut prepared {
         match &collections_value {
             Some(c) => {
@@ -2670,6 +2939,16 @@ fn build_once(
         highlight: highlight.as_ref().filter(|p| p.options.has_format("md")),
         rules: opts.config.markdown_rules.as_ref().map(|r| r.0.as_ref()),
     };
+    // Each JavaScript template's first page's `page`, which 11ty's first
+    // render of it keeps as `this.page` for every page.
+    let mut first_pages: HashMap<*const Source, &Value> = HashMap::new();
+    for p in &prepared {
+        if matches!(p.source.engines, Engines::Js(_))
+            && let Some(page) = p.data.get("page")
+        {
+            first_pages.entry(Arc::as_ptr(&p.source)).or_insert(page);
+        }
+    }
     let jobs: Vec<ContentPage<'_>> = prepared
         .iter()
         .enumerate()
@@ -2683,6 +2962,8 @@ fn build_once(
                 data: &p.data,
                 layouts: &p.source.layouts,
                 feed: p.source.feed.as_deref(),
+                first: first_pages.get(&Arc::as_ptr(&p.source)).copied(),
+                traps: &p.source.traps,
             },
             template: page_template[i],
             page_number: p.page_number,
@@ -2712,6 +2993,9 @@ fn build_once(
     enum Refused {
         Page(Problem, Option<usize>),
         Layout(Problem),
+        /// A JavaScript template gave `undefined`: 11ty writes nothing, and
+        /// says nothing. The warning says so.
+        Empty(usize, Problem),
     }
     impl From<(Problem, Option<usize>)> for Refused {
         fn from((p, other): (Problem, Option<usize>)) -> Refused {
@@ -2787,6 +3071,31 @@ fn build_once(
                 }
                 (p, None)
             })?;
+            // What a JavaScript template or layout gave, when it isn't text.
+            if let Some(value) = &rendered.js {
+                if matches!(value, Value::Undefined) {
+                    let p = Problem::warning(
+                        codes::JS_TEMPLATE_EMPTY,
+                        "this template's `render` gave `undefined`, so no file is written for it, as in 11ty (which says nothing)",
+                    )
+                    .with_path(shown)
+                    .with_help("Return a string, or set `permalink: false` to keep the page out of the output on purpose.");
+                    return Err(Refused::Empty(i, p));
+                }
+                let p = Problem::error(
+                    codes::JS_TEMPLATE_VALUE,
+                    format!(
+                        "this template's `render` gave {}, which 11ty can't write: it stops the whole build (\"The return value from the render function for the 11ty.js template was not a String or Buffer\")",
+                        js_kind(value)
+                    ),
+                )
+                .with_path(shown)
+                .with_help("Return a string, or give the page a layout, which prints what `render` gave.");
+                if let Some(log) = log {
+                    log.problem(shown, &p);
+                }
+                return Err(Refused::Page(p, None));
+            }
             if let Some(problem) =
                 missing_data_problem(&rendered.undefined, &src.withheld, &data_dir, state)
             {
@@ -2881,6 +3190,8 @@ fn build_once(
     let mut pointed: Vec<usize> = Vec::new();
     let mut from_layouts = layout_refusals;
     let mut written_pages: HashSet<usize> = HashSet::new();
+    // Pages 11ty writes nothing for either: their `render` gave `undefined`.
+    let mut empty_pages: HashSet<usize> = HashSet::new();
     for r in results {
         match r {
             Ok((i, hash)) => {
@@ -2906,6 +3217,10 @@ fn build_once(
                 pointed.extend(other);
             }
             Err(Refused::Layout(p)) => from_layouts.push(p),
+            Err(Refused::Empty(i, p)) => {
+                empty_pages.insert(i);
+                report_problem(&mut report, p);
+            }
         }
     }
     report
@@ -2929,7 +3244,9 @@ fn build_once(
     let mut refused: BTreeSet<&Path> = prepared
         .iter()
         .enumerate()
-        .filter(|(i, p)| p.output_rel.is_some() && !written_pages.contains(i))
+        .filter(|(i, p)| {
+            p.output_rel.is_some() && !written_pages.contains(i) && !empty_pages.contains(i)
+        })
         .map(|(_, p)| p.source.shown.as_path())
         .collect();
     refused.extend(report.refused.iter().map(PathBuf::as_path));
@@ -2940,7 +3257,7 @@ fn build_once(
             if p.output_rel.is_none() {
                 continue;
             }
-            if written_pages.contains(&i) {
+            if written_pages.contains(&i) || empty_pages.contains(&i) {
                 log.written(&p.source.shown);
             } else {
                 log.refused(&p.source.shown);
@@ -3017,17 +3334,57 @@ fn build_once(
     report
 }
 
-/// The problem for a template in a language Brrrty doesn't render yet:
-/// JavaScript.
+/// What a JavaScript value is, for a message: "a number (42)".
+fn js_kind(v: &Value) -> String {
+    match v {
+        Value::Null => "`null`".to_string(),
+        Value::Bool(b) => format!("a boolean ({b})"),
+        Value::Number(_) => format!("a number ({})", v.to_js_string()),
+        Value::Array(_) => "an array".to_string(),
+        Value::Object(_) => "an object".to_string(),
+        Value::Date(_) => "a Date".to_string(),
+        Value::Function(_) => "a function".to_string(),
+        Value::String(_) => "a string".to_string(),
+        Value::Undefined => "`undefined`".to_string(),
+    }
+}
+
+/// Whether `rel` is a JavaScript template (`.11ty.js`, `.cjs`, `.mjs`).
+fn is_js_template(rel: &Path) -> bool {
+    rel.file_name()
+        .is_some_and(|n| crate::page::without_js_extension(&n.to_string_lossy()).is_some())
+}
+
+/// The problem for a JavaScript template while JavaScript doesn't run.
 fn unsupported_template(shown: &Path) -> Problem {
     Problem::error(
         codes::TEMPLATE_UNSUPPORTED,
-        "this template language is not supported yet",
+        "this JavaScript template doesn't run while JavaScript is off",
     )
     .with_path(shown)
-    .with_help(
-        "JavaScript templates are coming soon. Liquid, Nunjucks, Markdown and HTML templates work now.",
-    )
+    .with_help(crate::layout::JS_OFF_HELP)
+}
+
+/// Refuse every JavaScript template in `paths`: JavaScript doesn't run.
+fn refuse_javascript(
+    paths: &[PathBuf],
+    input_rel: &Path,
+    log: Option<&Log>,
+    report: &mut BuildReport,
+) {
+    for path in paths {
+        let shown = input_rel.join(path);
+        let p = unsupported_template(&shown);
+        // A JavaScript template can make any number of pages: a survey counts it as one,
+        // and says there may be more.
+        if let Some(log) = log {
+            log.problem(&shown, &p);
+            log.paginates(&shown);
+            log.stopped(&shown, &p);
+            log.refused_at_least_once(&shown);
+        }
+        report.problems.push(p);
+    }
 }
 
 /// The problem of a layout Brrrty can't render, when a template that
@@ -3122,7 +3479,7 @@ fn collections_gap(
     unbuilt: usize,
     javascript: usize,
     computed: bool,
-    js_data: usize,
+    js_data_unrun: usize,
 ) -> Option<String> {
     let plural = |n: usize, one: &str, many: &str| {
         if n == 1 {
@@ -3140,7 +3497,7 @@ fn collections_gap(
     }
     if javascript > 0 {
         return Some(format!(
-            "{javascript} JavaScript {}, whose data Brrrty can't read yet, so the collections would be missing {}",
+            "{javascript} JavaScript {} and JavaScript is off, so the collections would be missing {}",
             plural(
                 javascript,
                 "template (.11ty.js) is in the site",
@@ -3149,10 +3506,11 @@ fn collections_gap(
             plural(javascript, "its pages", "their pages")
         ));
     }
-    if js_data > 0 {
+    if js_data_unrun > 0 {
         return Some(format!(
-            "{js_data} {} a JavaScript data file, which 11ty loads from the disk while it decides the order of templates: 11ty orders these pages by file-read timing, so its own collections change order from one build to the next, and Brrrty can't match them",
-            plural(js_data, "template uses", "templates use")
+            "{js_data_unrun} {} a JavaScript data file that doesn't run, which may set its `tags` or `date`, so the collections would be missing or misplace {}",
+            plural(js_data_unrun, "template uses", "templates use"),
+            plural(js_data_unrun, "its page", "their pages")
         ));
     }
     computed.then(|| {
@@ -3175,6 +3533,38 @@ impl Drop for UninstallCalls {
 /// function gave different results for the same data.
 fn js_stop(calls: Option<&Arc<JsCalls>>) -> Vec<Problem> {
     calls.map(|c| c.stop_problems()).unwrap_or_default()
+}
+
+/// Registers an object as [`brrrty_js::traps::unordered`] until dropped.
+struct UnorderedGuard(usize);
+
+impl UnorderedGuard {
+    fn new(id: usize, why: String) -> UnorderedGuard {
+        brrrty_js::traps::unordered(id, why);
+        UnorderedGuard(id)
+    }
+}
+
+impl Drop for UnorderedGuard {
+    fn drop(&mut self) {
+        brrrty_js::traps::ordered(self.0);
+    }
+}
+
+/// Registers an object as [`brrrty_js::traps::partial`] until dropped.
+struct PartialGuard(usize);
+
+impl PartialGuard {
+    fn new(id: usize, why: String) -> PartialGuard {
+        brrrty_js::traps::partial(id, why);
+        PartialGuard(id)
+    }
+}
+
+impl Drop for PartialGuard {
+    fn drop(&mut self) {
+        brrrty_js::traps::ordered(self.0);
+    }
 }
 
 struct OpenGuard(usize);

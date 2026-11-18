@@ -106,6 +106,10 @@ pub(crate) struct OrderTemplate {
     /// A virtual template (a feed): 11ty adds them to the glob's list of
     /// files, after every file.
     pub added_last: bool,
+    /// A JavaScript template: 11ty waits on its `import()` before it can
+    /// add it, so it goes with the pages that read the disk, and its place
+    /// among them isn't known (see `build.rs`, `order_unknown`).
+    pub js: bool,
 }
 
 /// A layout file, by a name as written.
@@ -416,6 +420,7 @@ mod tests {
             layout: layout.map(str::to_string),
             dated: true,
             added_last: false,
+            js: false,
         }
     }
 

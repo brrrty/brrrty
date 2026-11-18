@@ -388,8 +388,8 @@ fn nunjucks_pages_are_read_and_placed() {
     }
 }
 
-/// A JavaScript template's data comes from running it, so collections
-/// stay refused while one is in the site.
+/// With JavaScript off, a JavaScript template's data is unknown, so
+/// collections stay refused while one is in the site.
 #[test]
 fn collections_are_refused_with_a_javascript_template() {
     let t = site("{{ collections.all | size }}");
@@ -397,7 +397,7 @@ fn collections_are_refused_with_a_javascript_template() {
     let r = run(t.path());
     assert_eq!(
         report_problem(&r).message,
-        "this page uses `collections`, but 1 JavaScript template (.11ty.js) is in the site, whose data Brrrty can't read yet, so the collections would be missing its pages"
+        "this page uses `collections`, but 1 JavaScript template (.11ty.js) is in the site and JavaScript is off, so the collections would be missing its pages"
     );
 }
 
@@ -696,10 +696,9 @@ fn add_all_pages_to_collections_stays_linear() {
     }
 }
 
-/// 11ty loads a JavaScript data file with `import()`, from the disk, while
-/// it decides the order of templates; Brrrty can't know when that finishes,
-/// so the order of the collections is unknown and reads of them are
-/// refused. Pages that don't read collections still build.
+/// A JavaScript data file that doesn't run (JavaScript is off) may set a
+/// page's `tags` or `date`, so the collections are unknown and reads of
+/// them are refused. Pages that don't read collections still build.
 #[test]
 fn a_javascript_data_file_refuses_collections() {
     let t = site("{{ collections.all | size }}");
@@ -718,7 +717,7 @@ fn a_javascript_data_file_refuses_collections() {
     assert!(
         report
             .message
-            .contains("1 template uses a JavaScript data file"),
+            .contains("1 template uses a JavaScript data file that doesn't run"),
         "{}",
         report.message
     );

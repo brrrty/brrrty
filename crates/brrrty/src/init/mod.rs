@@ -415,7 +415,7 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         record_flags(&mut rhai, h);
     }
 
-    let js_data = match input {
+    let js_data = match &input {
         Some(i) => match fs::canonicalize(root.join(i)) {
             Ok(input) if input.starts_with(&root) => js_data_files(&root, &input),
             _ => Vec::new(),
@@ -471,13 +471,30 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             data::DataClass::NeedsNode => js_node.push(f.clone()),
         }
     }
+    // JavaScript templates have no Rhai form: they run in Node too.
+    let js_templates = match &input {
+        Some(i) => match fs::canonicalize(root.join(i)) {
+            Ok(input) if input.starts_with(&root) => js_template_files(&root, &input),
+            _ => Vec::new(),
+        },
+        None => js_template_files(&root, &root),
+    };
     // Files left in JavaScript keep running, in the site's own Node.
-    if !js_hand.is_empty() || !js_node.is_empty() {
-        let mut line = String::from(
-            "// JavaScript data files Brrrty runs in your own Node, as 11ty does\n// (`brrrty init` couldn't translate them to Rhai):\n",
-        );
-        for f in js_hand.iter().map(|(f, _)| f).chain(&js_node) {
-            line.push_str(&format!("//   {f}\n"));
+    if !js_hand.is_empty() || !js_node.is_empty() || !js_templates.is_empty() {
+        let mut line = String::new();
+        if !js_hand.is_empty() || !js_node.is_empty() {
+            line.push_str(
+                "// JavaScript data files Brrrty runs in your own Node, as 11ty does\n// (`brrrty init` couldn't translate them to Rhai):\n",
+            );
+            for f in js_hand.iter().map(|(f, _)| f).chain(&js_node) {
+                line.push_str(&format!("//   {f}\n"));
+            }
+        }
+        if !js_templates.is_empty() {
+            line.push_str("// JavaScript templates Brrrty runs in your own Node, as 11ty does:\n");
+            for f in &js_templates {
+                line.push_str(&format!("//   {f}\n"));
+            }
         }
         line.push_str("config.set_js_data(\"node\");\n\n");
         match rhai.find("\n\n") {
@@ -908,6 +925,26 @@ fn js_data_files(root: &Path, input: &Path) -> Vec<String> {
         }
         let shown = p.strip_prefix(root).unwrap_or(p);
         found.push(shown.to_string_lossy().replace('\\', "/"));
+    });
+    found.sort();
+    found
+}
+
+/// JavaScript templates (`.11ty.js`, `.11ty.cjs`, `.11ty.mjs`) in the input
+/// folder, including JavaScript layouts.
+fn js_template_files(root: &Path, input: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut budget = 100_000usize;
+    walk(input, 0, &mut budget, &mut |p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let lower = name.to_ascii_lowercase();
+        if [".11ty.js", ".11ty.cjs", ".11ty.mjs"]
+            .iter()
+            .any(|x| lower.ends_with(x) && lower.len() > x.len())
+        {
+            let shown = p.strip_prefix(root).unwrap_or(p);
+            found.push(shown.to_string_lossy().replace('\\', "/"));
+        }
     });
     found.sort();
     found

@@ -408,10 +408,14 @@ fn layout_problems_are_clear_errors() {
         Some(Path::new("src/_includes/n.11ty.js"))
     );
     assert_eq!(
-        js.help.as_deref(),
-        Some(
-            "JavaScript layouts are coming soon. Liquid, Nunjucks, Markdown and HTML layouts work now. 1 page uses this layout and was not written."
-        )
+        js.message,
+        "this JavaScript layout doesn't run while JavaScript is off"
+    );
+    let help = js.help.as_deref().unwrap_or_default();
+    assert!(help.contains("--js-data=node"), "{help}");
+    assert!(
+        help.ends_with("1 page uses this layout and was not written."),
+        "{help}"
     );
     let invalid: Vec<_> = r
         .problems

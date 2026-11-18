@@ -36,6 +36,9 @@ pub struct CollectionApi {
     input: Arc<CollectionInput>,
     /// The first page Brrrty can't date that a call would have returned.
     undated: Arc<Mutex<Option<String>>>,
+    /// Set when `get_all()` was called while the order pages were added in
+    /// isn't known: why.
+    unordered: Arc<Mutex<Option<String>>>,
 }
 
 type Res<T> = Result<T, Box<EvalAltResult>>;
@@ -59,6 +62,15 @@ impl CollectionApi {
                     "its result would hold {}, a page whose date Brrrty can't read, so it can't tell the order",
                     path.strip_prefix("./").unwrap_or(&path)
                 ),
+                Position::NONE,
+            ));
+        }
+        if !sorted && let Some(why) = &self.input.unordered {
+            if let Ok(mut slot) = self.unordered.lock() {
+                slot.get_or_insert_with(|| why.clone());
+            }
+            return Err(invalid(
+                format!("`get_all()` gives pages in the order 11ty added them, {why}"),
                 Position::NONE,
             ));
         }
@@ -209,8 +221,10 @@ fn run(
     let api = CollectionApi {
         input: Arc::new(input.clone()),
         undated: Arc::new(Mutex::new(None)),
+        unordered: Arc::new(Mutex::new(None)),
     };
     let undated = api.undated.clone();
+    let unordered = api.unordered.clone();
     let call = || {
         stacker::maybe_grow(STACK_RED_ZONE, CALL_STACK, || {
             f.call::<Dynamic>(&rt.engine, &rt.ast, (api,))
@@ -220,6 +234,17 @@ fn run(
     let premature = crate::object::take_premature();
     if let Some(path) = undated.lock().ok().and_then(|mut u| u.take()) {
         return Err(CollectionError::Undated(path));
+    }
+    // Even when the config catches it: its result would follow that order.
+    if let Some(why) = unordered.lock().ok().and_then(|mut u| u.take()) {
+        let mut p = problem(
+            name,
+            format!("`get_all()` gives pages in the order 11ty added them, {why}"),
+            codes::DATA_UNSUPPORTED,
+            at,
+        );
+        p.help = Some("Use `get_all_sorted()`, `get_filtered_by_tag()` or `get_filtered_by_glob()`, which are sorted by date. Pages that read this collection were not written.".into());
+        return Err(CollectionError::Failed(p));
     }
     let failed = |message: String, code, pos| {
         Err(CollectionError::Failed(problem(name, message, code, pos)))

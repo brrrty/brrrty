@@ -40,6 +40,8 @@ pub(crate) enum Kind {
     Markdown(Option<Compiled>),
     /// `.html` when `htmlTemplateEngine` is `false`: the body as written.
     Raw,
+    /// A JavaScript layout (`.11ty.js`), loaded in the site's Node.
+    Js(brrrty_js::runtime::TemplateId),
     /// A layout Brrrty can't render: one that doesn't parse. Its front
     /// matter still joins the page's data and names the next layout, so
     /// the page takes its place in the collections and its content can be
@@ -101,7 +103,19 @@ pub(crate) struct Layouts<'a> {
     /// `addLayoutAlias` aliases.
     aliases: indexmap::IndexMap<String, String>,
     cache: Mutex<HashMap<PathBuf, Result<Arc<LayoutFile>, Failure>>>,
+    /// JavaScript layouts loaded in Node, by canonical path: the instance
+    /// and its data, or why it can't be used. `None` when JavaScript
+    /// doesn't run.
+    js: Option<JsLayouts>,
 }
+
+/// JavaScript layouts loaded in Node, by canonical path: each instance's id
+/// and its data, or why it can't be used.
+pub(crate) type JsLayouts =
+    HashMap<PathBuf, Result<(brrrty_js::runtime::TemplateId, Data), Problem>>;
+
+/// The help for a JavaScript template or layout while JavaScript is off.
+pub(crate) const JS_OFF_HELP: &str = "JavaScript templates run in your site's own Node: add `config.set_js_data(\"node\");` to brrrty.config.rhai, or build with --js-data=node. Liquid, Nunjucks, Markdown and HTML work without it.";
 
 /// The JavaScript spelling of a front matter value, for messages.
 fn shown_value(v: &Value) -> String {
@@ -125,7 +139,41 @@ impl<'a> Layouts<'a> {
             dir,
             aliases,
             cache: Mutex::new(HashMap::new()),
+            js: None,
         }
+    }
+
+    /// Every JavaScript layout file in the layouts folder (`.11ty.js`,
+    /// `.cjs`, `.mjs`), in path order: they load with the data, before any
+    /// page asks for one.
+    pub fn js_files(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![self.input.join(&self.dir)];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let path = e.path();
+                match e.file_type() {
+                    Ok(t) if t.is_dir() => stack.push(path),
+                    Ok(_) => {
+                        let name = e.file_name();
+                        if crate::page::without_js_extension(&name.to_string_lossy()).is_some() {
+                            out.push(path);
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// The JavaScript layouts as loaded, by canonical path.
+    pub fn set_js(&mut self, js: JsLayouts) {
+        self.js = Some(js);
     }
 
     /// The layouts folder, relative to the project root.
@@ -283,11 +331,23 @@ impl<'a> Layouts<'a> {
             .iter()
             .any(|x| lower.ends_with(x))
         {
-            return Err(file(
-                codes::LAYOUT_UNSUPPORTED,
-                "JavaScript layouts aren't supported yet".to_string(),
-                "JavaScript layouts are coming soon. Liquid, Nunjucks, Markdown and HTML layouts work now.",
-            ));
+            return match self.js.as_ref().and_then(|js| js.get(&real)) {
+                Some(Ok((id, data))) => Ok(Arc::new(LayoutFile {
+                    shown,
+                    real,
+                    kind: Kind::Js(*id),
+                    body: String::new(),
+                    data: data.clone(),
+                    body_line: 0,
+                    layout_line: None,
+                })),
+                Some(Err(p)) => Err(Failure::File(p.clone())),
+                None => Err(file(
+                    codes::LAYOUT_UNSUPPORTED,
+                    "this JavaScript layout doesn't run while JavaScript is off".to_string(),
+                    JS_OFF_HELP,
+                )),
+            };
         } else {
             return Err(file(
                 codes::LAYOUT_INVALID,

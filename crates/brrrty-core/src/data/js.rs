@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use brrrty_js::functions::{Caller, Settle, This};
 use brrrty_js::runtime::{
-    Decoded, JsError, JsResult, JsRuntime, PageId, PathPart, Refusal, RuntimeFailure, path_text,
+    Decoded, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PathPart, Refusal,
+    RuntimeFailure, TemplateId, path_text,
 };
 use brrrty_js::{FnHandle, Value};
 
@@ -48,6 +49,16 @@ pub(crate) struct JsSession<'a> {
     pub files: Vec<(PathBuf, JsFileState)>,
     /// Run a ported file too and compare it with its port (doctor).
     pub check_ports: bool,
+}
+
+/// What loading one JavaScript template or layout gave.
+pub(crate) enum JsTemplateLoad {
+    Loaded(LoadedTemplate),
+    /// 11ty refuses it, or its code threw: the problem names the file.
+    Failed(Problem),
+    /// No runtime: JavaScript is off, Node is missing, or the runtime
+    /// stopped.
+    Unavailable,
 }
 
 /// What loading one file gave.
@@ -192,6 +203,61 @@ impl<'a> JsSession<'a> {
                 self.failed = Some(worker_failed_with(&f).with_path(shown));
                 self.runtime = None;
                 JsLoad::Unavailable
+            }
+        }
+    }
+
+    /// Tell the runtime the names 11ty puts on a JavaScript template's
+    /// `this`, before any template loads. False when there is no runtime.
+    pub fn template_setup(&mut self, filters: &[String]) -> bool {
+        let Some(rt) = self.runtime() else {
+            return false;
+        };
+        match rt.template_setup(filters) {
+            JsResult::Ok(()) => true,
+            JsResult::Failed(f) => {
+                self.failed = Some(worker_failed_with(&f));
+                self.runtime = None;
+                false
+            }
+            JsResult::Thrown(JsError { message: why, .. })
+            | JsResult::Refused(Refusal { why, .. }) => {
+                self.failed = Some(worker_failed(&why));
+                false
+            }
+        }
+    }
+
+    /// Load the JavaScript template or layout `full` (shown as `shown`):
+    /// its instance stays in the runtime, its data comes back.
+    pub fn load_template(&mut self, full: &Path, shown: &Path, layout: bool) -> JsTemplateLoad {
+        let Some(rt) = self.runtime() else {
+            return JsTemplateLoad::Unavailable;
+        };
+        let full = full.canonicalize().unwrap_or_else(|_| full.to_path_buf());
+        let r = rt.load_template(&full, layout);
+        self.loads += 1;
+        match r {
+            JsResult::Ok(t) => JsTemplateLoad::Loaded(t),
+            JsResult::Thrown(e) if e.invalid => JsTemplateLoad::Failed(
+                Problem::error(codes::JS_TEMPLATE_INVALID, e.message)
+                    .with_path(shown)
+                    .with_help("11ty stops the whole build here. Export a function, a class with `render`, or an object with `render` and `data`."),
+            ),
+            JsResult::Thrown(e) => JsTemplateLoad::Failed(
+                thrown_problem(&e, shown, &self.root)
+                    .with_help(format!(
+                        "11ty stops the whole build on this template.{}",
+                        stack_help(&e, &self.root)
+                    )),
+            ),
+            JsResult::Refused(r) => JsTemplateLoad::Failed(
+                Problem::error(codes::JS_DATA_VALUE, r.why).with_path(shown),
+            ),
+            JsResult::Failed(f) => {
+                self.failed = Some(worker_failed_with(&f).with_path(shown));
+                self.runtime = None;
+                JsTemplateLoad::Unavailable
             }
         }
     }
@@ -414,6 +480,68 @@ impl JsCalls {
         })
     }
 }
+
+impl JsCalls {
+    /// Render the JavaScript template `t` with `data` (see
+    /// [`JsRuntime::render`]) for the page `shown`: what its `render` gave,
+    /// or why the page is refused.
+    pub fn render(
+        &self,
+        t: TemplateId,
+        data: &Value,
+        first: Option<&Value>,
+        traps: &[(String, String)],
+        shown: &Path,
+    ) -> Result<Value, Problem> {
+        let r = self.with(|rt| rt.render(t, data, first, traps));
+        let d = match r {
+            JsResult::Ok(d) => d,
+            JsResult::Thrown(e) => {
+                return Err(thrown_problem(&e, shown, &self.root).with_help(format!(
+                    "11ty stops the whole build here. Fix the template.{}",
+                    stack_help(&e, &self.root)
+                )));
+            }
+            JsResult::Refused(r) => {
+                let p = self.note_refusal(&r).with_path(shown);
+                return Err(if r.impure {
+                    p
+                } else {
+                    p.with_help(RENDER_REFUSED_HELP)
+                });
+            }
+            JsResult::Failed(f) => return Err(worker_failed_with(&f).with_path(shown)),
+        };
+        if let Some(why) = returned_problem(&d) {
+            return Err(Problem::error(
+                codes::JS_TEMPLATE_VALUE,
+                why.replacen(
+                    "a function from JavaScript data",
+                    "this template's `render`",
+                    1,
+                ),
+            )
+            .with_path(shown)
+            .with_help("Return a string."));
+        }
+        if let Some((at, _)) = d.functions.first() {
+            let place = if at.is_empty() {
+                String::new()
+            } else {
+                format!(" at {}", path_text(at).replacen("data", "its result", 1))
+            };
+            return Err(Problem::error(
+                codes::JS_TEMPLATE_VALUE,
+                format!("this template's `render` returns a function{place}, which 11ty would print as JavaScript's own text for it"),
+            )
+            .with_path(shown)
+            .with_help("Return a string."));
+        }
+        Ok(d.value)
+    }
+}
+
+const RENDER_REFUSED_HELP: &str = "11ty runs this in its own JavaScript, where Brrrty can't follow it; the rest of the site still builds.";
 
 const IMPURE_HELP: &str = "Brrrty builds pages in a different order than 11ty, so a function whose result depends on earlier calls gives different pages. Nothing was written. Make the function return the same thing for the same arguments: move counters, random values and the current time out of it.";
 

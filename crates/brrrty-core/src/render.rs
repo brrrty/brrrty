@@ -28,6 +28,9 @@ pub(crate) enum Engines {
     Template(Lang),
     /// Markdown, after `pre` when it is set.
     Markdown { pre: Option<Lang> },
+    /// A JavaScript template (`.11ty.js`), loaded in the site's Node: its
+    /// `render` makes the content.
+    Js(brrrty_js::runtime::TemplateId),
 }
 
 /// Template languages 11ty knows by default that Brrrty doesn't render.
@@ -106,7 +109,7 @@ fn override_language(name: &str, over: &Json) -> Result<Lang, Problem> {
             codes::TEMPLATE_ENGINE_UNSUPPORTED,
             format!("templateEngineOverride `{text}` uses {name}, which Brrrty doesn't support yet"),
         )
-        .with_help("JavaScript templates are coming soon. Until then, use `liquid`, `njk`, `md` or `html`."));
+        .with_help("A JavaScript template is a `.11ty.js` file; 11ty doesn't run another template's text as JavaScript in a way Brrrty can follow. Use `liquid`, `njk`, `md` or `html`."));
     }
     Err(override_error(format!(
         "templateEngineOverride `{text}` names an unknown template language `{name}`"
@@ -148,6 +151,26 @@ pub(crate) fn engines_for(
     Ok((engine, syntax))
 }
 
+/// Render the JavaScript template or layout `id` with `data` in the site's
+/// Node (shown as `shown` in problems).
+fn js_render(
+    id: brrrty_js::runtime::TemplateId,
+    data: &Value,
+    first: Option<&Value>,
+    traps: &[(String, String)],
+    shown: &Path,
+) -> Result<Value, Problem> {
+    let Some(calls) = crate::data::js_calls() else {
+        return Err(Problem::error(
+            codes::JS_WORKER_FAILED,
+            "this JavaScript template can't render: JavaScript stopped earlier in this build",
+        )
+        .with_path(shown)
+        .following("Fix the problem reported above."));
+    };
+    calls.render(id, data, first, traps, shown)
+}
+
 /// What renders a page's permalink and computed values, which 11ty
 /// compiles without Markdown (`bypassMarkdown`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +188,17 @@ pub(crate) struct DataEngine {
 }
 
 impl DataEngine {
+    /// The engine of a JavaScript template: 11ty's JavaScript engine makes
+    /// a template of a string that gives it back as written, so permalink
+    /// and computed strings aren't compiled.
+    pub fn raw() -> DataEngine {
+        DataEngine {
+            lang: None,
+            check: None,
+            symbols: None,
+        }
+    }
+
     /// The engine for a page with extension `ext` (lowercase).
     ///
     /// With an override, 11ty's `setEngineOverride` picks it: nothing for
@@ -284,12 +318,21 @@ pub(crate) struct Job<'a> {
     pub layouts: &'a [Arc<LayoutFile>],
     /// A feed's template, which Brrrty renders itself.
     pub feed: Option<&'a crate::plugins::rss::FeedTemplate>,
+    /// For a JavaScript template: the `page` of its first page, which 11ty
+    /// keeps as `this.page`.
+    pub first: Option<&'a Value>,
+    /// Keys the page's data lacks because Brrrty can't supply them, and
+    /// why: a JavaScript template or layout reading one is refused.
+    pub traps: &'a [(String, String)],
 }
 
 /// A rendered page and the variables it read that nothing defined.
 pub(crate) struct Output {
     pub html: String,
     pub undefined: BTreeSet<String>,
+    /// What a JavaScript template or layout gave, as it gave it, when that
+    /// isn't text: `undefined` (11ty writes no file), a number, an array.
+    pub js: Option<Value>,
 }
 
 pub(crate) struct Pipeline<'a> {
@@ -363,9 +406,25 @@ impl Pipeline<'_> {
             return Ok(Output {
                 html: r.text,
                 undefined: r.undefined,
+                js: None,
             });
         }
         let html = match job.engines {
+            Engines::Js(id) => {
+                let data = Value::Object(Arc::new(job.data.clone()));
+                return match js_render(id, &data, job.first, job.traps, job.shown)? {
+                    Value::String(s) => Ok(Output {
+                        html: s.to_string(),
+                        undefined,
+                        js: None,
+                    }),
+                    other => Ok(Output {
+                        html: String::new(),
+                        undefined,
+                        js: Some(other),
+                    }),
+                };
+            }
             Engines::Raw => job.body.to_string(),
             Engines::Template(lang) => page(lang, &mut undefined)?,
             Engines::Markdown { pre: Some(lang) } => {
@@ -379,38 +438,54 @@ impl Pipeline<'_> {
                 self.render_markdown(job.body, job.shown, Some(job.body_line))?
             }
         };
-        Ok(Output { html, undefined })
+        Ok(Output {
+            html,
+            undefined,
+            js: None,
+        })
     }
 
-    /// The page's layout chain around `content`, its rendered content.
-    pub fn layouts(&self, job: &Job<'_>, content: &str) -> Result<Output, Problem> {
+    /// The page's layout chain around `content`, its rendered content (text,
+    /// or what a JavaScript template gave). `js` in the result is what the
+    /// last layout gave when that isn't text.
+    pub fn layouts(&self, job: &Job<'_>, content: &Value) -> Result<Output, Problem> {
         let mut undefined = BTreeSet::new();
-        let mut content = content.to_string();
+        let mut content = content.clone();
         for layout in job.layouts {
             // 11ty renders a layout with `{ content, ...data }`.
             let mut with_content = IndexMap::with_capacity(job.data.len() + 1);
-            with_content.insert("content".to_string(), Value::String(content.into()));
+            with_content.insert("content".to_string(), content);
             for (k, v) in job.data {
                 with_content.insert(k.clone(), v.clone());
             }
             let layout_data = Value::Object(Arc::new(with_content));
+            let text = |s: String| Value::String(s.into());
             content = match &layout.kind {
-                Kind::Template(t) => self.render(t, &layout_data, &mut undefined, job)?,
+                Kind::Template(t) => text(self.render(t, &layout_data, &mut undefined, job)?),
                 Kind::Markdown(pre) => {
                     let out = match pre {
                         Some(t) => self.render(t, &layout_data, &mut undefined, job)?,
                         None => layout.body.clone(),
                     };
-                    self.render_markdown(&out, &layout.shown, None)?
+                    text(self.render_markdown(&out, &layout.shown, None)?)
                 }
-                Kind::Raw => layout.body.clone(),
+                Kind::Raw => text(layout.body.clone()),
+                Kind::Js(id) => js_render(*id, &layout_data, None, job.traps, &layout.shown)?,
                 // Pages with such a layout are refused before they get here.
                 Kind::Unrenderable(p) => return Err(p.clone()),
             };
         }
-        Ok(Output {
-            html: content,
-            undefined,
+        Ok(match content {
+            Value::String(s) => Output {
+                html: s.to_string(),
+                undefined,
+                js: None,
+            },
+            other => Output {
+                html: String::new(),
+                undefined,
+                js: Some(other),
+            },
         })
     }
 

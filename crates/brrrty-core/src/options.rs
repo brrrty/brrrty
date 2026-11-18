@@ -388,6 +388,9 @@ pub struct CollectionInput {
     /// Pages 11ty has added that Brrrty can't place (no date it can read):
     /// a result that holds one can't be given.
     pub undated: Vec<UndatedPage>,
+    /// Why the order pages were added in (`getAll`) isn't known, when it
+    /// isn't: then `get_all()` can't be given.
+    pub unordered: Option<String>,
 }
 
 /// One page of a [`CollectionInput`].

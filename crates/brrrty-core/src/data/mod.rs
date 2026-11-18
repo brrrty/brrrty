@@ -21,7 +21,9 @@ pub(crate) use computed::{Plan as ComputedPlan, set_path};
 pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
 pub use js::JsFileState;
-pub(crate) use js::{JsCalls, JsPage, JsSession, calls as js_calls, value_problem};
+pub(crate) use js::{
+    JsCalls, JsPage, JsSession, JsTemplateLoad, calls as js_calls, first_unusable, value_problem,
+};
 pub(crate) use rhai::{is_js, port_of};
 
 pub(crate) const OVERRIDE_PREFIX: &str = "override:";

@@ -836,3 +836,31 @@ fn two_files_for_one_key_are_never_translated() {
         assert!(rhai.contains(&format!("//   {f}\n")), "{f} in:\n{rhai}");
     }
 }
+
+#[test]
+fn javascript_templates_turn_javascript_on() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        ("index.md", "# Hi\n"),
+        ("jobs.11ty.js", "module.exports = () => 'jobs';\n"),
+        (
+            "_includes/base.11ty.cjs",
+            "module.exports = (d) => d.content;\n",
+        ),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(rhai.contains("config.set_js_data(\"node\");\n"), "{rhai}");
+    assert!(
+        rhai.contains("// JavaScript templates Brrrty runs in your own Node, as 11ty does:\n"),
+        "{rhai}"
+    );
+    for f in ["jobs.11ty.js", "_includes/base.11ty.cjs"] {
+        assert!(rhai.contains(&format!("//   {f}\n")), "{f} in:\n{rhai}");
+    }
+    assert!(
+        !rhai.contains("JavaScript data files Brrrty runs"),
+        "{rhai}"
+    );
+}

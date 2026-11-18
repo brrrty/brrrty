@@ -28,8 +28,27 @@ static SLUG_DATE: LazyLock<Regex> =
 static PATH_DATE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"([0-9]{4}-[0-9]{2}-[0-9]{2})").expect("valid regex"));
 
+/// The file name without its template extension: `.11ty.js` (and `.cjs`,
+/// `.mjs`) whole, as 11ty's `removeTemplateExtension` does, else the last
+/// extension.
 fn stem(path: &Path) -> &str {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if let Some(base) = without_js_extension(name) {
+        return base;
+    }
     path.file_stem().and_then(|s| s.to_str()).unwrap_or("")
+}
+
+/// `name` without `.11ty.js`, `.11ty.cjs` or `.11ty.mjs` (in any case),
+/// when it ends with one.
+pub(crate) fn without_js_extension(name: &str) -> Option<&str> {
+    [".11ty.js", ".11ty.cjs", ".11ty.mjs"]
+        .iter()
+        .find_map(|ext| {
+            let cut = name.len().checked_sub(ext.len())?;
+            (cut > 0 && name.as_bytes()[cut..].eq_ignore_ascii_case(ext.as_bytes()))
+                .then(|| &name[..cut])
+        })
 }
 
 /// 11ty's date strip: the text after the first `YYYY-MM-DD-` anywhere in `name`.
@@ -168,6 +187,15 @@ mod tests {
         let mut m = Data::new();
         m.insert("date".into(), Value::String(s.into()));
         m
+    }
+
+    #[test]
+    fn javascript_templates_lose_their_whole_extension() {
+        assert_eq!(file_slug(Path::new("jobs/list.11ty.js")), "list");
+        assert_eq!(file_slug(Path::new("a.11ty.cjs")), "a");
+        assert_eq!(file_slug(Path::new("blog/index.11ty.mjs")), "blog");
+        assert_eq!(file_path_stem(Path::new("jobs/List.11TY.JS")), "/jobs/List");
+        assert_eq!(file_slug(Path::new(".11ty.js")), ".11ty");
     }
 
     #[test]

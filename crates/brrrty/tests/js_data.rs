@@ -691,7 +691,7 @@ fn a_thrown_non_error_is_reported_at_the_data_file() {
 }
 
 #[test]
-fn collections_with_local_javascript_data_are_refused_as_11tys_own_nondeterminism() {
+fn collections_with_local_javascript_data_build_and_their_order_is_refused() {
     if !has_node() {
         return;
     }
@@ -701,18 +701,26 @@ fn collections_with_local_javascript_data_are_refused_as_11tys_own_nondeterminis
             "src/posts/posts.11tydata.js",
             "module.exports = { tags: \"post\" };",
         ),
-        ("src/posts/a.md", "a"),
-        ("src/posts/b.md", "b"),
+        ("src/posts/a.md", "---\ndate: 2024-01-01\n---\na"),
+        ("src/posts/b.md", "---\ndate: 2024-01-02\n---\nb"),
         (
             "src/list.njk",
             "{% for p in collections.post %}{{ p.url }}{% endfor %}",
+        ),
+        (
+            "src/keys.njk",
+            "{% for k, v in collections %}{{ k }}{% endfor %}",
         ),
     ]);
     let o = build(t.path(), &[], &[]);
     assert_eq!(o.status.code(), Some(1));
     let out = text(&o);
-    assert!(out.contains("11ty orders these pages by file"), "{out}");
-    assert!(t.path().join("_site/posts/a/index.html").exists());
+    assert!(out.contains("by file-read timing"), "{out}");
+    assert_eq!(
+        written(&t, "list/index.html").as_deref(),
+        Some("/posts/a//posts/b/")
+    );
+    assert_eq!(written(&t, "keys/index.html"), None);
 }
 
 /// What the build wrote at `rel` under `_site`, or nothing.
