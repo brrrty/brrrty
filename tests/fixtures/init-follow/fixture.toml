@@ -1,0 +1,7 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js. That config hands the config object to a helper in a
+# module of its own, loops over a module's exports for layout aliases and
+# over a list for passthrough copies, and adds the RSS plugin for its
+# filters: `brrrty init` follows all of it, and its port has no TODO.
+source_date_epoch = 1767268800
+tz = "America/Chicago"

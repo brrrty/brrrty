@@ -1,0 +1,7 @@
+---
+title: Home
+layout: base
+---
+<ul>{% for p in collections.post %}<li>{{ p.data.title }}, {{ p.date | dateToRfc822 }}</li>{% endfor %}</ul>
+<p>{{ collections.post | getNewestCollectionItemDate | dateToRfc3339 }}</p>
+{% include "footer.njk" %}

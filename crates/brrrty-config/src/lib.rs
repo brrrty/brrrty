@@ -308,6 +308,7 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         .or_else(|| markers::unverified_problem(root, &src))
         .into_iter()
         .chain(markers::flags_problem(root, &src))
+        .chain(markers::modules_problems(root, &src))
         .collect();
     let root = root.to_path_buf();
     let run = std::thread::Builder::new()

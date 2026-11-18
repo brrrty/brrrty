@@ -117,7 +117,8 @@ fn a_site_that_builds_exits_0() {
 }
 
 /// The corpus run's first repro: `brrrty init` can't port the 11ty config at all (it hands
-/// `eleventyConfig` to a helper), so the folders it sets are lost. 11ty writes `<h1>Hello</h1>`;
+/// `eleventyConfig` to a package's function, which could do anything), so the folders it
+/// sets are lost. 11ty writes `<h1>Hello</h1>`;
 /// with default folders Brrrty would write `<h1></h1>`.
 #[test]
 fn a_config_init_could_not_port_blocks_every_page() {
@@ -128,7 +129,7 @@ fn a_config_init_could_not_port_blocks_every_page() {
         ),
         (
             "eleventy.config.js",
-            "function addHelpers(eleventyConfig) {\n  eleventyConfig.addFilter(\"shout\", (s) => String(s).toUpperCase());\n}\n\nmodule.exports = function (eleventyConfig) {\n  addHelpers(eleventyConfig);\n  return { dir: { input: \"src\", data: \"data\" } };\n};\n",
+            "const addHelpers = require(\"eleventy-helpers\");\n\nmodule.exports = function (eleventyConfig) {\n  addHelpers(eleventyConfig);\n  return { dir: { input: \"src\", data: \"data\" } };\n};\n",
         ),
         ("src/data/site.json", "{\"title\":\"Hello\"}\n"),
         (

@@ -467,8 +467,11 @@ fn ported_fixtures_match_eleventy() {
         "basic",
         "data",
         "highlight-engine-false",
+        "init-follow",
+        "layouts-dir",
         "nunjucks",
         "pagination",
+        "rss-filters",
     ] {
         assert!(
             compared.iter().any(|n| n == must),
@@ -637,5 +640,66 @@ fn script_values_are_printed_escaped() {
             "scripts.build runs \"vite\\nbuild \\u{1b}[31mred\", which isn't an 11ty command"
         ),
         "{text}"
+    );
+}
+
+/// A helper module the config hands its config object to is followed, its
+/// hash is recorded, and a change to it afterwards warns.
+#[test]
+fn a_helper_module_is_followed_and_recorded() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\n  \"devDependencies\": { \"@11ty/eleventy\": \"3.1.8\" }\n}\n",
+        ),
+        (
+            "eleventy.config.js",
+            "const setup = require(\"./lib/setup\");\n\nmodule.exports = function (eleventyConfig) {\n  setup(eleventyConfig);\n  if (process.env.ELEVENTY_ENV === \"production\") {\n    eleventyConfig.addPassthroughCopy(\"prod\");\n  }\n  return { dir: { input: \"src\" } };\n};\n",
+        ),
+        (
+            "lib/setup.js",
+            "module.exports = (config) => {\n  [\"src/img\"].forEach((d) => config.addPassthroughCopy(d));\n};\n",
+        ),
+        ("src/index.md", "# Hi\n"),
+        ("src/img/a.txt", "a\n"),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(
+        rhai.contains("// Also ported from: lib/setup.js sha256:"),
+        "{rhai}"
+    );
+    assert!(
+        rhai.contains("config.add_passthrough_copy(\"src/img\");"),
+        "{rhai}"
+    );
+    assert!(
+        rhai.contains("// TODO(brrrty): 11ty runs this only when `process.env.ELEVENTY_ENV === \"production\"`"),
+        "{rhai}"
+    );
+    // Once the conditional is judged (here: the production build isn't compared), it builds.
+    let judged: String = rhai
+        .lines()
+        .filter(|l| !l.contains("TODO(brrrty)"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    fs::write(dir.path().join("brrrty.config.rhai"), judged).unwrap();
+    let out = run_in(dir.path(), &["build"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("config-stale"), "{}", stderr(&out));
+    assert_eq!(read(dir.path(), "_site/img/a.txt"), "a\n");
+    // The helper changes: the port may be out of date.
+    fs::write(
+        dir.path().join("lib/setup.js"),
+        "module.exports = (config) => {};\n",
+    )
+    .unwrap();
+    let out = run_in(dir.path(), &["build"]);
+    let err = stderr(&out);
+    assert!(err.contains("config-stale"), "{err}");
+    assert!(
+        err.contains("lib/setup.js changed since brrrty.config.rhai recorded it as ported"),
+        "{err}"
     );
 }

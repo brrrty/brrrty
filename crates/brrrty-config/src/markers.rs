@@ -24,6 +24,9 @@ pub const TODO: &str = "TODO(brrrty)";
 pub const TODO_FILE: &str = "TODO(brrrty-file)";
 /// How the line naming the ported 11ty config starts.
 pub const PORTED_FROM: &str = "// Ported from: ";
+/// How a line naming one of the site's own modules `init` read with the
+/// config (a helper or a plugin it follows) starts.
+pub const ALSO_PORTED_FROM: &str = "// Also ported from: ";
 
 /// The 11ty config file names a `Ported from` line may name.
 const ELEVENTY_CONFIGS: [&str; 4] = [
@@ -312,6 +315,47 @@ pub fn stale_problem(root: &Path, src: &str) -> Option<Problem> {
     })
 }
 
+/// The warnings for the site's own modules `init` read with the config, on
+/// `Also ported from` lines, that changed since or are gone.
+pub fn modules_problems(root: &Path, src: &str) -> Vec<Problem> {
+    if ported_from(src).is_none() || crate::eleventy_cli::left_11ty(root) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, l) in src.lines().enumerate() {
+        let Some(rest) = l.trim_end().strip_prefix(ALSO_PORTED_FROM) else {
+            continue;
+        };
+        let Some((name, recorded)) = rest.trim().rsplit_once(' ') else {
+            continue;
+        };
+        let name = name.trim();
+        if !inside(name) || !recorded.starts_with("sha256:") {
+            continue;
+        }
+        let warn = |message: String, help: String| {
+            Problem::warning(codes::CONFIG_STALE, message)
+                .with_path(CONFIG_FILE)
+                .at(i + 1, 1)
+                .with_help(help)
+        };
+        match hash_of(root, name) {
+            None => out.push(warn(
+                format!("{name} is gone, and {CONFIG_FILE} has what the 11ty config ran from it"),
+                format!("Check {CONFIG_FILE} against the 11ty config as it is now, then delete this line."),
+            )),
+            Some(now) if now != recorded => out.push(warn(
+                format!("{name} changed since {CONFIG_FILE} recorded it as ported"),
+                format!(
+                    "Port what changed to {CONFIG_FILE}, if it changes what 11ty writes, then set this line to `{ALSO_PORTED_FROM}{name} {now}`."
+                ),
+            )),
+            Some(_) => {}
+        }
+    }
+    out
+}
+
 /// The warning when the config 11ty reads exists and nothing records it as
 /// ported: a hand-written `brrrty.config.rhai`, or one written before the
 /// 11ty config was added. Brrrty can't check that it covers the 11ty config.
@@ -535,6 +579,33 @@ mod tests {
             let odd = format!("{PORTED_FROM}{odd} {}\n", source_hash(b"a"));
             assert!(ported_from(&odd).is_none(), "{odd}");
         }
+    }
+
+    #[test]
+    fn a_changed_module_warns() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("_config")).unwrap();
+        std::fs::write(t.path().join("eleventy.config.js"), "a").unwrap();
+        std::fs::write(t.path().join("_config/f.js"), "f").unwrap();
+        let rhai = format!(
+            "// x\n{PORTED_FROM}eleventy.config.js {}\n{ALSO_PORTED_FROM}_config/f.js {}\n{ALSO_PORTED_FROM}../out.js {}\n",
+            source_hash(b"a"),
+            source_hash(b"f"),
+            source_hash(b"o"),
+        );
+        assert!(modules_problems(t.path(), &rhai).is_empty());
+        std::fs::write(t.path().join("_config/f.js"), "g").unwrap();
+        let p = modules_problems(t.path(), &rhai);
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert_eq!(p[0].code, codes::CONFIG_STALE);
+        assert_eq!(p[0].line, Some(3));
+        assert!(p[0].help.as_ref().unwrap().contains(&source_hash(b"g")));
+        std::fs::remove_file(t.path().join("_config/f.js")).unwrap();
+        let p = modules_problems(t.path(), &rhai);
+        assert!(p[0].message.contains("is gone"), "{}", p[0].message);
+        // Without a `Ported from` line, nothing.
+        let alone = format!("{ALSO_PORTED_FROM}_config/f.js {}\n", source_hash(b"f"));
+        assert!(modules_problems(t.path(), &alone).is_empty());
     }
 
     #[test]

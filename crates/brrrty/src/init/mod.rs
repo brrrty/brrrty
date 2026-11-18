@@ -331,9 +331,27 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             };
             let p = match read {
                 Ok(Some(Read::Text(src))) => {
-                    let mut p =
-                        port::port_with(src.strip_prefix(BOM).unwrap_or(&src), name, cli);
+                    // The site's own modules the config uses, read with the same care.
+                    let load = |path: &str| -> Result<Option<String>, String> {
+                        if !brrrty_config::markers::is_inside(path) {
+                            return Ok(None);
+                        }
+                        match read_inside(&root, path)? {
+                            None => Ok(None),
+                            Some(Read::Text(s)) => Ok(Some(s)),
+                            Some(_) => Err(format!("{path} isn't UTF-8 text Brrrty reads")),
+                        }
+                    };
+                    let site = port::Site {
+                        cli,
+                        load: Some(&load),
+                        rss: rss_major(&root, &before_edit),
+                    };
+                    let mut p = port::port_site(src.strip_prefix(BOM).unwrap_or(&src), name, site);
                     record_source(&mut p.text, name, src.as_bytes());
+                    for (module, text) in &p.modules {
+                        record_module(&mut p.text, module, text.as_bytes());
+                    }
                     p
                 }
                 Ok(Some(Read::Lossy(src))) => port::unreadable(
@@ -424,6 +442,55 @@ fn record_source(text: &mut String, name: &str, bytes: &[u8]) {
     let line = format!("{PORTED_FROM}{name} {}\n", source_hash(bytes));
     let at = text.find("\n\n").map_or(text.len(), |i| i + 1);
     text.insert_str(at, &line);
+}
+
+/// Add an `Also ported from` line for one of the site's modules the config
+/// uses: a build warns when it changes.
+fn record_module(text: &mut String, name: &str, bytes: &[u8]) {
+    use brrrty_config::markers::{ALSO_PORTED_FROM, source_hash};
+    let line = format!("{ALSO_PORTED_FROM}{name} {}\n", source_hash(bytes));
+    let at = text.find("\n\n").map_or(text.len(), |i| i + 1);
+    text.insert_str(at, &line);
+}
+
+/// The major version of `@11ty/eleventy-plugin-rss` the site installs: from
+/// package-lock.json, the installed package, or an exact or caret range in
+/// package.json.
+fn rss_major(root: &Path, package: &serde_json::Value) -> Option<u64> {
+    const NAME: &str = "@11ty/eleventy-plugin-rss";
+    let json = |name: &str| -> Option<serde_json::Value> {
+        match read_inside(root, name) {
+            Ok(Some(Read::Text(t))) => serde_json::from_str(t.strip_prefix(BOM).unwrap_or(&t)).ok(),
+            _ => None,
+        }
+    };
+    let major = |v: &str| -> Option<u64> {
+        let v = v.trim();
+        let v = v.strip_prefix(['^', '~', '=', 'v']).unwrap_or(v);
+        if v.contains([' ', '|', '<', '>', '*']) {
+            return None;
+        }
+        let digits: String = v.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() || !v[digits.len()..].is_empty() && !v[digits.len()..].starts_with('.')
+        {
+            return None;
+        }
+        digits.parse().ok()
+    };
+    if let Some(lock) = json("package-lock.json")
+        && let Some(v) = lock["packages"][format!("node_modules/{NAME}")]["version"].as_str()
+    {
+        return major(v);
+    }
+    if let Some(installed) = json(&format!("node_modules/{NAME}/package.json"))
+        && let Some(v) = installed["version"].as_str()
+    {
+        return major(v);
+    }
+    ["dependencies", "devDependencies"]
+        .iter()
+        .find_map(|d| package[d][NAME].as_str())
+        .and_then(major)
 }
 
 /// Add the line recording what the scripts pass to 11ty: a build warns when they change.
