@@ -354,29 +354,39 @@ pub fn flags_problem(root: &Path, src: &str) -> Option<Problem> {
         return None;
     }
     let recorded = flags_line(src);
-    let now = read(root).map(|c| c.fingerprint());
+    let cli = read(root);
+    let now = cli.as_ref().map(|c| c.fingerprint());
+    // A hash 0.0.19 recorded, before comparison runs and spawned command lines were
+    // told apart, stays valid.
+    let legacy = crate::eleventy_cli::legacy_fingerprint(root);
+    let mut sources: Vec<String> = cli.map(|c| c.sources).unwrap_or_default();
+    sources.dedup();
+    let sources = match sources.as_slice() {
+        [] => "package.json's scripts".to_string(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
     let line = recorded.map_or(1, |(l, _)| l);
     let (message, help) = match (recorded.map(|(_, h)| h), now.as_deref()) {
         (None, None) => return None,
+        (Some(r), _) if legacy.as_deref() == Some(r) => return None,
         (Some(r), Some(n)) if r == n => return None,
         (None, Some(n)) => (
-            format!(
-                "package.json's scripts pass flags to 11ty that {CONFIG_FILE} doesn't record as ported"
-            ),
+            format!("the 11ty flags in {sources} aren't recorded as ported in {CONFIG_FILE}"),
             format!(
                 "11ty's flags win over its config, and Brrrty doesn't read them when it builds. `brrrty init --dry-run` in a copy of the site shows what they come to. Port them to {CONFIG_FILE}, then add this line to it: `{FLAGS_LINE}{n}`. {HELP_LINK}"
             ),
         ),
         (Some(_), None) => (
-            format!("package.json's scripts no longer pass the 11ty flags {CONFIG_FILE} records"),
+            format!(
+                "nothing in package.json's scripts or the deploy configs passes the 11ty flags {CONFIG_FILE} records any more"
+            ),
             format!(
                 "If you still build with 11ty, its output no longer has what those flags did, so Brrrty's may differ: run `brrrty init` in a copy of the site to see the port it gives now, or check {CONFIG_FILE} against 11ty's output (`brrrty doctor --verify`) and then delete this line. If you've moved off 11ty, remove @11ty/eleventy from package.json and its config file: Brrrty stops checking then, and nothing in {CONFIG_FILE} needs to change."
             ),
         ),
         (Some(_), Some(n)) => (
-            format!(
-                "the flags package.json's scripts pass to 11ty changed since {CONFIG_FILE} recorded them"
-            ),
+            format!("the 11ty flags in {sources} changed since {CONFIG_FILE} recorded them"),
             format!("Port what changed to {CONFIG_FILE}, then set this line to `{FLAGS_LINE}{n}`."),
         ),
     };
@@ -632,13 +642,13 @@ mod tests {
         );
         let p = flags_problem(t.path(), &recorded).unwrap();
         assert_eq!(p.line, Some(2));
-        assert!(
-            p.message
-                .starts_with("the flags package.json's scripts pass to 11ty changed")
+        assert_eq!(
+            p.message,
+            "the 11ty flags in package.json, scripts.build changed since brrrty.config.rhai recorded them"
         );
         w(r#"{"devDependencies":{"@11ty/eleventy":"3"},"scripts":{"build":"eleventy"}}"#);
         let p = flags_problem(t.path(), &recorded).unwrap();
-        assert!(p.message.contains("no longer pass"), "{}", p.message);
+        assert!(p.message.contains("passes the 11ty flags"), "{}", p.message);
         assert!(!p.help.unwrap().contains("Take out"));
         // Moved off 11ty: no dependency, no config file. Nothing to say.
         w(r#"{"scripts":{"build":"brrrty build"}}"#);

@@ -121,6 +121,7 @@ mod convert;
 pub mod csv;
 mod data;
 pub mod eleventy_cli;
+mod eleventy_js;
 mod files;
 mod filters;
 mod git;

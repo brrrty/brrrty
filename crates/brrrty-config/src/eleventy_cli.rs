@@ -87,6 +87,8 @@ pub struct Cli {
     /// scripts that couldn't be read and the API files with their hashes. No
     /// script names, so `init` renaming `build` to `build:11ty` changes nothing.
     facts: Vec<String>,
+    /// Where the facts come from, as messages name them.
+    pub sources: Vec<String>,
 }
 
 impl Cli {
@@ -110,6 +112,9 @@ impl Cli {
 /// Where a script comes from, as a TODO quotes it: `package.json, scripts.build`, or a
 /// deploy config's own label.
 pub fn place(name: &str) -> String {
+    if let Some((first, rest)) = name.split_once(" → ") {
+        return format!("{} → {rest}", place(first));
+    }
     if is_deploy(name) {
         name.to_string()
     } else {
@@ -800,14 +805,89 @@ fn glob(path: &str) -> bool {
 /// one that runs a file that uses 11ty's JavaScript API: those count when
 /// they are `build`, or when `build` doesn't run 11ty itself.
 pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
+    find_mode(pkg, root, false)
+}
+
+/// The `11ty flags` hash 0.0.19 gave the site in `root`, before comparison runs and
+/// spawned command lines were told apart: a config it recorded stays in step.
+pub fn legacy_fingerprint(root: &Path) -> Option<String> {
+    find_mode(&package(root), root, true).map(|c| c.fingerprint())
+}
+
+/// `root/package.json`, parsed, or `{}`.
+fn package(root: &Path) -> serde_json::Value {
+    read_text(&root.join("package.json"))
+        .and_then(|t| serde_json::from_str(t.strip_prefix('\u{feff}').unwrap_or(&t)).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// A run of 11ty a script makes: where from, the script it is in, and its arguments.
+struct Run {
+    /// The script's name (`build`) or a deploy config's label.
+    name: String,
+    /// Where it is, as messages say it: `.gitlab-ci.yml, line 59 → ci/compare.mjs`.
+    chain: String,
+    cmd: String,
+    sig: Vec<(String, Option<String>)>,
+}
+
+/// What a file a script runs does with 11ty, following the site's own modules it
+/// loads (Node's resolution, up to [`MAX_FILES`] files), with a hash of every file read.
+fn js_use(root: &Path, file: &str) -> Option<(crate::eleventy_js::JsUse, String)> {
+    use std::io::Read as _;
+    let local = regex::Regex::new(r#"["'`](\.{1,2}/[^"'`\s]+)["'`]"#).expect("valid");
+    let first = resolve(root, Path::new(""), file)?;
+    let mut queue = vec![first];
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let mut all = Vec::new();
+    let mut found = crate::eleventy_js::JsUse::default();
+    while let Some(rel) = queue.pop() {
+        if seen.contains(&rel) || seen.len() >= MAX_FILES {
+            continue;
+        }
+        seen.push(rel.clone());
+        let mut bytes = Vec::new();
+        let Ok(f) = std::fs::File::open(root.join(&rel)) else {
+            continue;
+        };
+        if f.take(1 << 20).read_to_end(&mut bytes).is_err() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let u = crate::eleventy_js::analyze(&text);
+        found.api |= u.api;
+        found.spawns.extend(u.spawns);
+        let dir = rel.parent().unwrap_or(Path::new("")).to_path_buf();
+        for c in local.captures_iter(&text) {
+            if let Some(next) = resolve(root, &dir, &c[1]) {
+                queue.push(next);
+            }
+        }
+        all.extend_from_slice(&bytes);
+        all.push(0);
+    }
+    (found.api || !found.spawns.is_empty()).then(|| (found, source_hash(&all)))
+}
+
+/// Whether flags name a comparison run's: `--output` (somewhere else to write) or
+/// `--dryrun` (nowhere).
+fn compare_only(name: &str) -> bool {
+    name == "output" || name == "dryrun"
+}
+
+/// [`find`], the way 0.0.19 read the scripts when `legacy`: files that spawn 11ty's
+/// command line count as using its API, and comparison runs count as builds. A config
+/// recorded by 0.0.19 has that hash, which stays valid.
+fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> {
     let empty = serde_json::Map::new();
     let scripts = pkg
         .get("scripts")
         .and_then(|s| s.as_object())
         .unwrap_or(&empty);
-    let mut tiers: [Vec<(String, String, Vec<String>)>; 3] = Default::default();
+    let mut tiers: [Vec<Run>; 3] = Default::default();
     let mut unreadable: Vec<(String, String)> = Vec::new();
-    let mut api: Vec<(String, String, String, String)> = Vec::new();
+    // (script, chain, command, fact, why)
+    let mut js: Vec<(String, String, String, String, String)> = Vec::new();
     let package = scripts
         .iter()
         .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string(), false)));
@@ -817,15 +897,62 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
             continue;
         }
         let (name, cmd) = (&name, cmd.as_str());
+        let tier_of = |args: &[String]| {
+            if name == "build" || name == "build:11ty" || is_deploy(name) {
+                0
+            } else if !serves(args) {
+                1
+            } else {
+                2
+            }
+        };
         let mut found = Vec::new();
         let mut bad = false;
         let mut cd = false;
         for step in steps(cmd) {
             match classify(&step, scripts) {
                 Step::Eleventy(args) => found.push(args),
-                Step::Runs(file) => {
+                Step::Runs(file) if legacy => {
                     if let Some(hash) = uses_api(root, &file) {
-                        api.push((name.clone(), cmd.to_string(), file, hash));
+                        js.push((
+                            name.clone(),
+                            String::new(),
+                            cmd.to_string(),
+                            format!("api {file} {hash}"),
+                            String::new(),
+                        ));
+                    }
+                }
+                Step::Runs(file) => {
+                    let Some((u, hash)) = js_use(root, &file) else {
+                        continue;
+                    };
+                    let chain = format!("{name} → {file}");
+                    if u.api {
+                        js.push((
+                            name.clone(),
+                            chain,
+                            cmd.to_string(),
+                            format!("api {file} {hash}"),
+                            format!("{} runs {file}, which uses 11ty's JavaScript API (`@11ty/eleventy`); port the input and output folders, config file and other options it gives 11ty, then delete this line", place(name)),
+                        ));
+                    } else if u.spawns.iter().any(Option::is_none) {
+                        js.push((
+                            name.clone(),
+                            chain,
+                            cmd.to_string(),
+                            format!("spawn {file} {hash}"),
+                            format!("{} runs {file}, which starts 11ty's command line with arguments Brrrty couldn't read; port the ones that change what 11ty writes, then delete this line", place(name)),
+                        ));
+                    } else {
+                        for args in u.spawns.into_iter().flatten() {
+                            tiers[tier_of(&args)].push(Run {
+                                name: name.clone(),
+                                chain: chain.clone(),
+                                cmd: cmd.to_string(),
+                                sig: significant(&args),
+                            });
+                        }
                     }
                 }
                 Step::Cd => cd = true,
@@ -841,35 +968,35 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
         let Some(args) = found.pop() else { continue };
         // A deploy config's command builds the site, as `build` does (Netlify's
         // overrides it); where they disagree, that is a TODO below.
-        let tier = if name == "build" || name == "build:11ty" || is_deploy(name) {
-            0
-        } else if !serves(&args) {
-            1
-        } else {
-            2
-        };
-        tiers[tier].push((name.clone(), cmd.to_string(), args));
+        tiers[tier_of(&args)].push(Run {
+            name: name.clone(),
+            chain: name.clone(),
+            cmd: cmd.to_string(),
+            sig: significant(&args),
+        });
     }
     let is_build = |n: &str| n == "build" || n == "build:11ty" || is_deploy(n);
     let builds = !tiers[0].is_empty();
     let mut cli = Cli::default();
     for (name, cmd) in unreadable.iter().filter(|(n, _)| !builds || is_build(n)) {
         cli.facts.push(format!("unreadable {cmd}"));
+        cli.sources.push(place(name));
         cli.todo(
             "Brrrty couldn't read the flags this script passes to 11ty; port the ones that change what 11ty writes (`--input` and `--output` go in `dir`), then delete this line".into(),
             name,
             cmd,
         );
     }
-    for (name, cmd, file, hash) in api.iter().filter(|(n, ..)| !builds || is_build(n)) {
-        cli.facts.push(format!("api {file} {hash}"));
-        cli.todo(
-            format!("this script runs {file}, which uses 11ty's JavaScript API (`@11ty/eleventy`); port the input and output folders, config file and other options it gives 11ty, then delete this line"),
-            name,
-            cmd,
-        );
+    for (name, chain, cmd, fact, why) in js.iter().filter(|(n, ..)| !builds || is_build(n)) {
+        cli.facts.push(fact.clone());
+        cli.sources.push(place(chain));
+        cli.todo(why.clone(), name, cmd);
     }
-    let Some(chosen) = tiers.into_iter().find(|t| !t.is_empty()) else {
+    let brrrty_build = scripts
+        .get("build")
+        .and_then(|c| c.as_str())
+        .is_some_and(|c| c.trim_start().starts_with("brrrty "));
+    let Some(mut chosen) = tiers.into_iter().find(|t| !t.is_empty()) else {
         // 11ty is a dependency and the site has a build script of its own, but no script
         // runs 11ty's command and nothing above says how 11ty runs: the build may reach
         // 11ty's JavaScript API in a way this can't see. Without a build script of the
@@ -891,36 +1018,53 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
         }
         return (!cli.todos.is_empty()).then_some(cli);
     };
-    let (script, command, args) = chosen[0].clone();
-    let flags = significant(&args);
+    // Comparison runs: 11ty writing somewhere else (`--output`) or nowhere (`--dryrun`)
+    // to compare with the build, as `npm run build:11ty -- --output=_site-11ty` does.
+    // With another run as the build, one that differs from it only in those flags isn't
+    // a build. With Brrrty as the build (`"build": "brrrty build"`), the comparison runs'
+    // other flags are what 11ty builds with.
+    if !legacy {
+        let core = |r: &Run| {
+            canonical(&r.sig)
+                .into_iter()
+                .filter(|(n, _)| !compare_only(n))
+                .collect::<Vec<_>>()
+        };
+        let shaped = |r: &Run| r.sig.iter().any(|(n, _)| compare_only(n));
+        if let Some(reference) = chosen.iter().find(|r| !shaped(r)).map(core) {
+            chosen.retain(|r| !shaped(r) || core(r) != reference);
+        } else if brrrty_build {
+            for r in &mut chosen {
+                r.sig.retain(|(n, _)| !compare_only(n));
+            }
+        }
+    }
+    let first = &chosen[0];
+    let (script, command) = (first.name.clone(), first.cmd.clone());
+    let flags = first.sig.clone();
     let key = canonical(&flags);
     cli.script = script.clone();
     cli.command = command.clone();
-    if let Some((other, other_cmd, other_args)) = chosen
-        .iter()
-        .find(|(_, _, a)| canonical(&significant(a)) != key)
-    {
-        let mut sets: Vec<String> = chosen
-            .iter()
-            .map(|(_, _, a)| shown(&canonical(&significant(a))))
-            .collect();
+    if let Some(other) = chosen.iter().find(|r| canonical(&r.sig) != key) {
+        let mut sets: Vec<String> = chosen.iter().map(|r| shown(&canonical(&r.sig))).collect();
         sets.sort();
         sets.dedup();
         cli.facts
             .extend(sets.into_iter().map(|s| format!("11ty {s}")));
+        cli.sources.extend(chosen.iter().map(|r| place(&r.chain)));
         let why = format!(
             "{} and {} both run 11ty, with {} and with {}, so Brrrty can't tell which one builds the site; port the flags of the one that does",
-            place(&script),
-            place(other),
+            place(&first.chain),
+            place(&other.chain),
             shown(&flags),
-            shown(&significant(other_args))
+            shown(&other.sig)
         );
-        let _ = other_cmd;
         cli.todo(why, &script, &command);
         return Some(cli);
     }
     if !flags.is_empty() {
         cli.facts.push(format!("11ty {}", shown(&key)));
+        cli.sources.extend(chosen.iter().map(|r| place(&r.chain)));
     }
     let mut seen: Vec<&str> = Vec::new();
     for (name, value) in &flags {
@@ -997,10 +1141,7 @@ pub fn find(pkg: &serde_json::Value, root: &Path) -> Option<Cli> {
 
 /// [`find`] on `root/package.json`, or `None` without one that parses.
 pub fn read(root: &Path) -> Option<Cli> {
-    let v: serde_json::Value = read_text(&root.join("package.json"))
-        .and_then(|t| serde_json::from_str(t.strip_prefix('\u{feff}').unwrap_or(&t)).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    find(&v, root)
+    find(&package(root), root)
 }
 
 /// The config file 11ty reads for the site in `root`: the one the build
@@ -1636,5 +1777,111 @@ mod tests {
             [("input".to_string(), Some("src".to_string()))]
         );
         assert_eq!(without_comment("a b#c 'd #e' #f"), "a b#c 'd #e' ");
+    }
+
+    /// A synthetic copy of a real blog's setup: Brrrty builds, `build:11ty` keeps 11ty's
+    /// command, and a CI job runs a script that spawns 11ty's command line beside Brrrty's
+    /// output to compare the two.
+    fn compare_site() -> (tempfile::TempDir, serde_json::Value) {
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "build:\n  script:\n    - npm ci\n    - npm run build\ncompare:\n  script:\n    - npm ci\n    - node ci/compare.mjs\n",
+        );
+        write(
+            &t,
+            "ci/compare.mjs",
+            "import { execFileSync } from \"node:child_process\";\nimport { mkdtempSync } from \"node:fs\";\nconst dir = mkdtempSync(\"/tmp/11ty-\");\nexecFileSync(process.execPath, [\"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${dir}`, \"--quiet\"], { stdio: \"inherit\" });\nexecFileSync(\"npx\", [\"brrrty\", \"build\", \"--quiet\"]);\n",
+        );
+        let pkg = json!({
+            "scripts": { "build": "brrrty build", "build:11ty": "npx @11ty/eleventy", "start": "brrrty serve" },
+            "devDependencies": { "@11ty/eleventy": "3.1.8", "brrrty": "0.0.19" }
+        });
+        write(&t, "package.json", &pkg.to_string());
+        (t, pkg)
+    }
+
+    #[test]
+    fn a_comparison_run_in_ci_is_not_a_build() {
+        let (t, pkg) = compare_site();
+        assert_eq!(find(&pkg, t.path()), None);
+        // 0.0.19 read it as API use, with a marker; a config it recorded stays in step.
+        let old = legacy_fingerprint(t.path()).unwrap();
+        let recorded = format!("{FLAGS_LINE}{old}\n");
+        assert!(crate::markers::flags_problem(t.path(), &recorded).is_none());
+        assert!(crate::markers::flags_problem(t.path(), "x\n").is_none());
+        // As our docs suggest, in CI or a script: `--output` (and `--dryrun`) only.
+        for cmd in [
+            "npm run build:11ty -- --output=_site-11ty",
+            "npx @11ty/eleventy --output=_site-11ty --quiet",
+            "npx @11ty/eleventy --dryrun",
+        ] {
+            write(
+                &t,
+                ".github/workflows/c.yml",
+                &format!("jobs:\n  c:\n    steps:\n      - run: {cmd}\n"),
+            );
+            assert_eq!(find(&pkg, t.path()), None, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn with_brrrty_as_the_build_a_comparison_runs_flags_are_11tys() {
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "c:\n  script:\n    - npx @11ty/eleventy --input=src --output=_site-11ty\n",
+        );
+        let pkg = json!({ "scripts": { "build": "brrrty build" }, "devDependencies": { "@11ty/eleventy": "3" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.input.as_deref(), Some("src"));
+        assert_eq!(c.output, None);
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+    }
+
+    #[test]
+    fn a_spawn_that_differs_in_more_than_output_is_a_conflict_named_by_its_chain() {
+        let (t, pkg) = compare_site();
+        write(
+            &t,
+            "ci/compare.mjs",
+            "import { spawnSync } from \"node:child_process\";\nspawnSync(\"npx\", [\"@11ty/eleventy\", \"--pathprefix=/blog/\", \"--output=x\"]);\n",
+        );
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.todos.len(), 1);
+        assert!(
+            c.todos[0]
+                .why
+                .contains(".gitlab-ci.yml, line 8 → ci/compare.mjs"),
+            "{:?}",
+            c.todos
+        );
+        assert!(
+            c.sources
+                .iter()
+                .any(|s| s == ".gitlab-ci.yml, line 8 → ci/compare.mjs")
+        );
+    }
+
+    #[test]
+    fn a_spawn_whose_arguments_cant_be_read_says_so() {
+        let (t, pkg) = compare_site();
+        write(
+            &t,
+            "ci/compare.mjs",
+            "import { execFileSync } from \"node:child_process\";\nconst args = process.argv.slice(2);\nexecFileSync(\"node\", [\"node_modules/@11ty/eleventy/cmd.cjs\", ...args]);\n",
+        );
+        let c = find(&pkg, t.path()).unwrap();
+        assert_eq!(c.todos.len(), 1);
+        let why = &c.todos[0].why;
+        assert!(
+            why.starts_with(
+                ".gitlab-ci.yml, line 8 runs ci/compare.mjs, which starts 11ty's command line"
+            ),
+            "{why}"
+        );
+        assert!(!why.contains("JavaScript API"), "{why}");
     }
 }
