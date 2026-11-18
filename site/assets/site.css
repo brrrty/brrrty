@@ -439,7 +439,26 @@ main { flex: 1; }
   animation: appear 0.2s ease-out both;
   animation-delay: calc(var(--t) * 1s);
 }
-.is-brrrty .time { color: var(--fg); font-weight: 600; }
+.is-brrrty .time { color: var(--fg); font-weight: 600; margin-left: calc(0.6rem + 2.4rem); }
+/* Bertie runs at the tip of Brrrty's bar for as long as the build took, then stops at the finish.
+   A transform, like the bar's, so both run on the compositor and stay together. */
+.is-brrrty .track { container-type: inline-size; }
+.bertie {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 2.1875rem;
+  height: auto;
+  margin-left: 0.1rem;
+  image-rendering: pixelated;
+  transform: translateX(calc(100cqw * var(--t) / var(--scale)));
+  translate: 0 -55%;
+  animation:
+    ride calc(var(--t) * 1s) linear both,
+    trot 0.18s steps(2, jump-none) calc(var(--t) / 0.18);
+}
+@keyframes ride { from { transform: translateX(0); } }
+@keyframes trot { 50% { translate: 0 -65%; } }
 .run-x { margin: 0; font-size: 0.8125rem; color: var(--fg-3); }
 .x {
   font-family: var(--mono);
@@ -508,7 +527,7 @@ main { flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bar, .time { animation: none; }
+  .bar, .time, .bertie { animation: none; }
 }
 
 /* Home sections: a heading column and a content column. */
