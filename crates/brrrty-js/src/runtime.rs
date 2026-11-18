@@ -102,6 +102,9 @@ pub struct RuntimeFailure {
     pub message: String,
     /// The last lines Node wrote to stderr.
     pub stderr_tail: Vec<String>,
+    /// Brrrty stopped the runtime itself (Ctrl-C, SIGTERM): not a failure
+    /// of the data.
+    pub stopped: bool,
 }
 
 /// The outcome of one request: a value, the site's own exception, or a

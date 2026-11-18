@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use brrrty_js::Value;
-use brrrty_js::runtime::{Decoded, JsError, JsResult, JsRuntime, PathPart, path_text};
+use brrrty_js::runtime::{
+    Decoded, JsError, JsResult, JsRuntime, PathPart, RuntimeFailure, path_text,
+};
 
 use crate::options::{JsData, JsNodeMissing, JsOptions, RunMode};
 use crate::problem::{Problem, codes};
@@ -101,7 +103,7 @@ impl<'a> JsSession<'a> {
                         return None;
                     }
                     JsResult::Failed(f) => {
-                        self.failed = Some(worker_failed_with(&f.message, &f.stderr_tail));
+                        self.failed = Some(worker_failed_with(&f));
                         return None;
                     }
                 },
@@ -181,7 +183,7 @@ impl<'a> JsSession<'a> {
             JsResult::Ok(d) => JsLoad::Value(d),
             JsResult::Thrown(e) => JsLoad::Thrown(thrown_problem(&e, shown, &self.root)),
             JsResult::Failed(f) => {
-                self.failed = Some(worker_failed_with(&f.message, &f.stderr_tail).with_path(shown));
+                self.failed = Some(worker_failed_with(&f).with_path(shown));
                 self.runtime = None;
                 JsLoad::Unavailable
             }
@@ -300,14 +302,18 @@ pub(crate) fn worker_failed(why: &str) -> Problem {
         .with_help("Brrrty stopped the build. This is a bug in Brrrty when your data files did nothing unusual; please report it.")
 }
 
-fn worker_failed_with(why: &str, stderr: &[String]) -> Problem {
-    let mut p = worker_failed(why);
-    if !stderr.is_empty() {
+fn worker_failed_with(f: &RuntimeFailure) -> Problem {
+    let mut p = worker_failed(&f.message);
+    if f.stopped {
+        p.help = Some("Brrrty stopped the build on a signal (Ctrl-C or SIGTERM).".into());
+        return p;
+    }
+    if !f.stderr_tail.is_empty() {
         p.message.push_str("\nNode's last lines:\n");
-        p.message.push_str(&stderr.join("\n"));
+        p.message.push_str(&f.stderr_tail.join("\n"));
     }
     p.help = Some(
-        "A data file that calls process.exit() or writes straight to file descriptor 1 stops the build; otherwise this is a bug in Brrrty, please report it."
+        "A data file that calls process.exit(), or closes descriptors it didn't open, stops the build; otherwise this is a bug in Brrrty, please report it."
             .into(),
     );
     p
@@ -388,6 +394,24 @@ pub(crate) fn first_inexact(d: &Decoded) -> Option<(Vec<PathPart>, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_worker_brrrty_stopped_is_not_called_a_bug() {
+        let mut f = RuntimeFailure {
+            message: "Node exited with status 1".into(),
+            stderr_tail: vec!["boom".into()],
+            stopped: false,
+        };
+        let p = worker_failed_with(&f);
+        let help = p.help.unwrap_or_default();
+        assert!(help.contains("bug in Brrrty"), "{help}");
+        assert!(!help.contains("descriptor 1"), "{help}");
+        f.stopped = true;
+        let p = worker_failed_with(&f);
+        let help = p.help.unwrap_or_default();
+        assert!(!help.contains("bug"), "{help}");
+        assert!(help.contains("signal"), "{help}");
+    }
 
     #[test]
     fn differences_are_found_at_their_path() {

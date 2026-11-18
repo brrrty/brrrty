@@ -286,7 +286,14 @@ impl Worker {
             },
             None => why.to_string(),
         };
+        let stopped = STOPPING.load(std::sync::atomic::Ordering::SeqCst);
+        let message = if stopped {
+            "Brrrty was stopped, and stopped Node with it".to_string()
+        } else {
+            message
+        };
         let failure = RuntimeFailure {
+            stopped,
             message,
             stderr_tail: self
                 .stderr_tail
@@ -421,6 +428,9 @@ impl Drop for Worker {
 /// group, so a terminal's Ctrl-C doesn't reach it: [`stop_all`] does.
 static LIVE: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
+/// Set once [`stop_all`] ran: a worker failing after that was stopped.
+static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn live(pid: u32, running: bool) {
     let mut l = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     l.retain(|p| *p != pid);
@@ -432,6 +442,7 @@ fn live(pid: u32, running: bool) {
 /// Kill every running worker and what it started, at once: for Ctrl-C,
 /// SIGTERM and a panic. Safe to call from a signal handler thread.
 pub fn stop_all() {
+    STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
     let l = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     #[cfg(unix)]
     for pid in l.iter() {
