@@ -213,9 +213,9 @@ fn items_to_close(
 /// to a process call, or a `const` never changed afterwards (no `push`,
 /// `unshift`, `splice`, `concat` or index assignment), and nothing is done to
 /// the literal itself (`[...].concat(x)`).
-fn trusted_array(src: &str, lits: &[Lit], open: usize, close: usize) -> bool {
+fn trusted_array(src: &str, lits: &[Lit], open: usize, close: usize) -> Option<Trust> {
     if src[close..].trim_start().starts_with('.') {
-        return false;
+        return None;
     }
     // Up through the literals it sits in (`const tools = [{ cmd, args: [...] }]`) to
     // the call it's passed to, or the `const` that holds it; noting the property
@@ -228,22 +228,28 @@ fn trusted_array(src: &str, lits: &[Lit], open: usize, close: usize) -> bool {
         let head = src[..open].trim_end();
         if let Some(c) = binding.captures(head) {
             return match keys.as_slice() {
-                [] => plain_const_ok(src, lits, &c[1], close),
-                [key] => run_list_ok(src, lits, &c[1], key, close),
-                _ => false,
+                [] => {
+                    plain_const_ok(src, lits, &c[1], close).map(|calls| Trust { calls, list: None })
+                }
+                [key] => run_list_ok(src, lits, &c[1], key, close).map(|calls| Trust {
+                    calls,
+                    list: matching(src, lits, open).map(|end| (open, end)),
+                }),
+                _ => None,
             };
         }
         let key = property.captures(head).map(|c| c[1].to_string());
-        let Some((b, at)) = enclosing(src, lits, open) else {
-            return false;
-        };
+        let (b, at) = enclosing(src, lits, open)?;
         match b {
             b'(' if key.is_none() && (head.ends_with('(') || head.ends_with(',')) => {
-                return is_process_call(call_name(src, at));
+                return is_process_call(call_name(src, at)).then(|| Trust {
+                    calls: vec![at],
+                    list: None,
+                });
             }
             b'{' if key.is_some() => keys.extend(key),
             b'[' if key.is_none() && (head.ends_with('[') || head.ends_with(',')) => {}
-            _ => return false,
+            _ => return None,
         }
         open = at;
     }
@@ -276,9 +282,14 @@ fn whole_spawn_arg(src: &str, lits: &[Lit], start: usize, end: usize) -> bool {
 
 /// A `const` argument array: trusted only when every use is a whole argument
 /// of a process call (no spread into another array, no other use at all).
-fn plain_const_ok(src: &str, lits: &[Lit], name: &str, close: usize) -> bool {
+fn plain_const_ok(src: &str, lits: &[Lit], name: &str, close: usize) -> Option<Vec<usize>> {
     let all = uses(src, lits, name, close);
-    !all.is_empty() && all.iter().all(|&(s, e)| whole_spawn_arg(src, lits, s, e))
+    if all.is_empty() || !all.iter().all(|&(s, e)| whole_spawn_arg(src, lits, s, e)) {
+        return None;
+    }
+    all.iter()
+        .map(|&(s, _)| enclosing(src, lits, s).map(|(_, p)| p))
+        .collect()
 }
 
 /// A `const` list of runs (`const tools = [{ cmd, args: [...] }]`), whose
@@ -287,7 +298,7 @@ fn plain_const_ok(src: &str, lits: &[Lit], name: &str, close: usize) -> bool {
 /// passed whole to a process call as `spawnSync(tool.cmd, tool.args)` (or
 /// `spawnSync(cmd, args)` with names the loop header destructures). Other
 /// properties (`tool.name`, `tool.times.push(...)`) may be read and written.
-fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> bool {
+fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> Option<Vec<usize>> {
     let ident = r"[A-Za-z_$][\w$]*";
     let loop_head = regex::Regex::new(&format!(
         r"for\s*\(\s*(?:const|let|var)\s+({ident}|\{{[^}}]*\}})\s+of$"
@@ -299,7 +310,7 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
     // Where the names are bound (loop headers, destructuring patterns): uses there
     // are the bindings themselves.
     let mut patterns: Vec<(usize, usize)> = Vec::new();
-    let mut spawned = false;
+    let mut calls: Vec<usize> = Vec::new();
     for (s, e) in uses(src, lits, list, close) {
         let pre = src[..s].trim_end();
         let post = src[e..].trim_start();
@@ -313,7 +324,7 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
                     let (k, v) = part.split_once(':').unwrap_or((part, part));
                     let (k, v) = (k.trim(), v.trim());
                     if k.starts_with("...") || v.contains(['{', '[', '=']) {
-                        return false;
+                        return None;
                     }
                     if k == key {
                         aliases.push(v.to_string());
@@ -332,15 +343,13 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
                     continue;
                 }
                 if part.contains(['{', '[', ':', '=', '.']) {
-                    return false;
+                    return None;
                 }
                 elements.push(part.to_string());
             }
         } else if post.starts_with('[') {
             // `tools[0].name`: an element read in place, but never its `key`.
-            let Some(end) = post.find(']') else {
-                return false;
-            };
+            let end = post.find(']')?;
             let after = post[end + 1..].trim_start();
             let prop = after.strip_prefix('.').map(str::trim_start);
             if prop.is_none_or(|p| {
@@ -348,10 +357,10 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
                     && !p[key.len()..]
                         .starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$')
             }) {
-                return false;
+                return None;
             }
         } else {
-            return false;
+            return None;
         }
     }
     // Each element name: only property reads and writes, and its `key` only as
@@ -362,9 +371,7 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
                 continue;
             }
             // The element itself, passed somewhere or spread: anything could happen to it.
-            let Some(prop) = src[e..].strip_prefix('.') else {
-                return false;
-            };
+            let prop = src[e..].strip_prefix('.')?;
             let name_len = prop
                 .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
                 .unwrap_or(prop.len());
@@ -373,19 +380,17 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
             }
             let end = e + 1 + name_len;
             if !whole_spawn_arg(src, lits, s, end) {
-                return false;
+                return None;
             }
             // The program before it is the same element's own property.
-            let Some((_, paren)) = enclosing(src, lits, s) else {
-                return false;
-            };
+            let (_, paren) = enclosing(src, lits, s)?;
             let before_arg = src[paren + 1..s].trim().trim_end_matches(',').trim();
             let own = regex::Regex::new(&format!(r"^{}\s*\.\s*{ident}$", regex::escape(el)))
                 .expect("valid");
             if !own.is_match(before_arg) {
-                return false;
+                return None;
             }
-            spawned = true;
+            calls.push(paren);
         }
     }
     // Each destructured `args` name: only as a whole spawn argument.
@@ -395,44 +400,228 @@ fn run_list_ok(src: &str, lits: &[Lit], list: &str, key: &str, close: usize) -> 
                 continue;
             }
             if !whole_spawn_arg(src, lits, s, e) {
-                return false;
+                return None;
             }
-            spawned = true;
+            calls.push(enclosing(src, lits, s)?.1);
         }
     }
-    spawned
+    (!calls.is_empty()).then_some(calls)
+}
+
+/// How an argument array is trusted: the process calls that spawn it, and the
+/// span of the `const` list of runs it is in, if any.
+struct Trust {
+    calls: Vec<usize>,
+    list: Option<(usize, usize)>,
+}
+
+/// One spawn of 11ty's command line that could be read.
+struct Read {
+    args: Vec<String>,
+    /// Items before the program in its array (`--require ./x.cjs` for node).
+    before: Vec<String>,
+    trust: Trust,
+}
+
+/// The position of the bracket that closes the one at `open`.
+fn matching(src: &str, lits: &[Lit], open: usize) -> Option<usize> {
+    let b = src.as_bytes();
+    let mut depth = 0i32;
+    let mut i = open;
+    while i < b.len() {
+        if let Some(l) = lits.iter().find(|l| l.start == i) {
+            i = l.end;
+            continue;
+        }
+        match b[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// A call's arguments after the program and its argument array: its options
+/// (`{ env, cwd }`), as text.
+fn call_options(src: &str, lits: &[Lit], paren: usize) -> String {
+    call_args_from(src, lits, paren, 2)
+}
+
+/// A call's arguments from the `skip`th on, as text.
+fn call_args_from(src: &str, lits: &[Lit], paren: usize, skip: usize) -> String {
+    let Some(close) = matching(src, lits, paren) else {
+        return String::new();
+    };
+    // Split the arguments at top-level commas.
+    let mut parts = Vec::new();
+    let mut start = paren + 1;
+    let mut i = paren + 1;
+    while i < close {
+        if let Some(l) = lits.iter().find(|l| l.start == i) {
+            i = l.end;
+            continue;
+        }
+        match src.as_bytes()[i] {
+            b'(' | b'[' | b'{' => {
+                i = matching(src, lits, i).unwrap_or(close);
+            }
+            b',' => {
+                parts.push(&src[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    parts.push(&src[start..close]);
+    parts
+        .iter()
+        .skip(skip)
+        .map(|p| p.trim())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The arguments of the spawn whose program token spans `start..end` (a
 /// literal, or a `const` name holding one): `None` when they can't be read
 /// with confidence.
-fn spawn_args(src: &str, lits: &[Lit], start: usize, end: usize) -> Option<Vec<String>> {
+fn spawn_args(src: &str, lits: &[Lit], start: usize, end: usize) -> Option<Read> {
     match enclosing(src, lits, start)? {
         // The program in an argument array: the rest of the array.
         (b'[', open) => {
             let (args, close) = items_to_close(src, lits, end, false)?;
-            trusted_array(src, lits, open, close).then_some(args)
+            let before = lits
+                .iter()
+                .filter(|l| l.start > open && l.end <= start)
+                .map(|l| l.text.clone())
+                .collect();
+            let trust = trusted_array(src, lits, open, close)?;
+            Some(Read {
+                args,
+                before,
+                trust,
+            })
         }
         // The program as a process call's first argument: then an array, or nothing.
         (b'(', paren) => {
             if !is_process_call(call_name(src, paren)) || !src[paren + 1..start].trim().is_empty() {
                 return None;
             }
+            let direct = |args| {
+                Some(Read {
+                    args,
+                    before: Vec::new(),
+                    trust: Trust {
+                        calls: vec![paren],
+                        list: None,
+                    },
+                })
+            };
             let rest = src[end..].trim_start();
             if rest.starts_with(')') {
-                return Some(Vec::new());
+                return direct(Vec::new());
             }
             let rest = rest.strip_prefix(',')?.trim_start();
             if rest.starts_with('{') || rest.starts_with(')') {
-                return Some(Vec::new());
+                return direct(Vec::new());
             }
             let open = src.len() - rest.len();
             rest.strip_prefix('[')?;
             let (args, close) = items_to_close(src, lits, open + 1, true)?;
-            trusted_array(src, lits, open, close).then_some(args)
+            let trust = trusted_array(src, lits, open, close)?;
+            Some(Read {
+                args,
+                before: Vec::new(),
+                trust,
+            })
         }
         _ => None,
     }
+}
+
+/// Whether a word names Brrrty's command line.
+fn names_brrrty(s: &str) -> bool {
+    s == "brrrty"
+        || s.ends_with("/.bin/brrrty")
+        || s.starts_with("brrrty ")
+        || s.contains(" brrrty ")
+}
+
+/// Preloads among node's own arguments (`--require ./x.cjs`, `-r x`,
+/// `--import=x`), and in a `NODE_OPTIONS` value.
+pub(crate) fn preloads(words: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let w = words[i].as_str();
+        let flag = [
+            "-r",
+            "--require",
+            "--import",
+            "--loader",
+            "--experimental-loader",
+        ];
+        if flag.contains(&w) {
+            out.push(words.get(i + 1).cloned().unwrap_or_default());
+            i += 2;
+            continue;
+        }
+        if let Some((f, v)) = w.split_once('=')
+            && flag.contains(&f)
+        {
+            out.push(v.to_string());
+        }
+        i += 1;
+    }
+    out
+}
+
+/// What a spawn's options change for 11ty: an `env` that can set more than
+/// `ELEVENTY_*` variables (`TZ` changes dates), a `cwd` other than the site's
+/// folder, a `NODE_OPTIONS` preload. As the `\0` tokens `find` reads.
+fn option_tokens(opts: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if regex::Regex::new(r"\benv\b").expect("valid").is_match(opts) {
+        let only_eleventy = regex::Regex::new(r"\benv\s*:\s*\{([^{}]*)\}")
+            .expect("valid")
+            .captures(opts)
+            .is_some_and(|c| {
+                c[1].split(',')
+                    .map(str::trim)
+                    .filter(|k| !k.is_empty())
+                    .all(|k| {
+                        k == "...process.env"
+                            || k.split(':')
+                                .next()
+                                .is_some_and(|n| n.trim().starts_with("ELEVENTY_"))
+                    })
+            });
+        if !only_eleventy {
+            out.push("\0env set in this file".to_string());
+        }
+        if opts.contains("NODE_OPTIONS") {
+            out.push("\0preload NODE_OPTIONS set in this file".to_string());
+        }
+    }
+    if let Some(c) = regex::Regex::new(r#"\bcwd\s*:\s*(["'`])([^"'`]*)(["'`])"#)
+        .expect("valid")
+        .captures(opts)
+    {
+        let dir = c[2].trim_end_matches('/');
+        if !(dir.is_empty() || dir == ".") {
+            out.push(format!("\0cwd {}", &c[2]));
+        }
+    } else if regex::Regex::new(r"\bcwd\b").expect("valid").is_match(opts) {
+        out.push("\0cwd set at run time".to_string());
+    }
+    out
 }
 
 /// What `src` does with 11ty.
@@ -447,6 +636,50 @@ pub(crate) fn analyze(src: &str) -> JsUse {
         regex::Regex::new(r"(\bfrom|\brequire\s*\(|\bimport\s*\(|\bimport)$").expect("valid");
     let assignment =
         regex::Regex::new(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=$").expect("valid");
+    // The options of every call that spawns Brrrty: an 11ty run spawned the same way
+    // (the same call, or the same options) sees the same environment.
+    let brrrty_calls: Vec<(usize, String)> = lits
+        .iter()
+        .filter(|l| names_brrrty(l.text.trim()))
+        .filter_map(|l| {
+            let (mut b, mut at) = enclosing(src, &lits, l.start)?;
+            if b == b'[' {
+                (b, at) = enclosing(src, &lits, at)?;
+            }
+            (b == b'(' && is_process_call(call_name(src, at)))
+                .then(|| (at, call_options(src, &lits, at)))
+        })
+        .collect();
+    let same_env = |calls: &[usize], list: Option<(usize, usize)>| {
+        let in_list = list.is_some_and(|(a, b)| {
+            lits.iter()
+                .any(|l| a < l.start && l.end <= b && names_brrrty(l.text.trim()))
+        });
+        in_list
+            || calls.iter().all(|&c| {
+                let opts = call_options(src, &lits, c);
+                brrrty_calls.iter().any(|(_, o)| *o == opts)
+            })
+    };
+    let tokens = |read: Read| -> Vec<String> {
+        let mut args = read.args;
+        for p in preloads(&read.before) {
+            args.push(format!("\0preload {p}"));
+        }
+        let mut opts: Vec<String> = read
+            .trust
+            .calls
+            .iter()
+            .flat_map(|&c| option_tokens(&call_options(src, &lits, c)))
+            .collect();
+        opts.sort();
+        opts.dedup();
+        args.extend(opts);
+        if same_env(&read.trust.calls, read.trust.list) {
+            args.push("\0samecall".into());
+        }
+        args
+    };
     for l in &lits {
         let t = l.text.trim();
         let specifier = spec.is_match(before(src, l.start));
@@ -504,11 +737,33 @@ pub(crate) fn analyze(src: &str) -> JsUse {
                     && at.is_some_and(|(s, _)| src[p + 1..s].trim().is_empty()));
             let words: Vec<&str> = t.split_whitespace().collect();
             let k = words.iter().position(|w| names_cli(w)).unwrap_or(0);
-            let args: Vec<String> = words[k + 1..].iter().map(|w| w.to_string()).collect();
+            let mut args: Vec<String> = words[k + 1..].iter().map(|w| w.to_string()).collect();
             let unknown = l.interpolated
                 && args
                     .iter()
                     .any(|a| a.contains("${") && !a.starts_with("--output"));
+            // What runs before the program: `TZ=…`, `NODE_OPTIONS=…`, node's preloads.
+            let lead: Vec<String> = words[..k].iter().map(|w| w.to_string()).collect();
+            for w in &lead {
+                if let Some(v) = w.strip_prefix("TZ=") {
+                    args.push(format!("\0env TZ={v}"));
+                }
+                if let Some(v) = w.strip_prefix("NODE_OPTIONS=") {
+                    for p in preloads(&v.split_whitespace().map(str::to_string).collect::<Vec<_>>())
+                    {
+                        args.push(format!("\0preload {p}"));
+                    }
+                }
+            }
+            for p in preloads(&lead) {
+                args.push(format!("\0preload {p}"));
+            }
+            if let Some((b'(', p)) = ctx {
+                args.extend(option_tokens(&call_args_from(src, &lits, p, 1)));
+                if same_env(&[p], None) {
+                    args.push("\0samecall".into());
+                }
+            }
             out.spawns.push((direct && !unknown).then_some(args));
             continue;
         }
@@ -520,8 +775,10 @@ pub(crate) fn analyze(src: &str) -> JsUse {
         {
             continue;
         }
-        out.spawns
-            .push(at.and_then(|(s, e)| spawn_args(src, &lits, s, e)));
+        out.spawns.push(
+            at.and_then(|(s, e)| spawn_args(src, &lits, s, e))
+                .map(tokens),
+        );
     }
     out
 }
@@ -595,7 +852,12 @@ mod tests {
     fn a_const_list_of_runs_is_read() {
         assert_eq!(
             analyze(TOOLS).spawns,
-            [Some(vec!["--output=${OUT_11TY}".into(), "--quiet".into()])]
+            [Some(vec![
+                "--output=${OUT_11TY}".into(),
+                "--quiet".into(),
+                "\0preload ./ci/freeze-time.cjs".into(),
+                "\0samecall".into()
+            ])]
         );
         // Written to through the element or a destructured name: not trusted.
         for change in [
@@ -658,7 +920,12 @@ mod tests {
         ));
         assert_eq!(
             s.spawns,
-            [Some(vec!["--output=${OUT_11TY}".into(), "--quiet".into()])]
+            [Some(vec![
+                "--output=${OUT_11TY}".into(),
+                "--quiet".into(),
+                "\0preload ./ci/freeze-time.cjs".into(),
+                "\0samecall".into()
+            ])]
         );
         // A `let` list isn't trusted.
         assert_eq!(

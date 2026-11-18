@@ -167,6 +167,63 @@ fn ci_job(root: &Path, label: &str) -> String {
 }
 
 /// Whether a command runs a Brrrty build: `brrrty build`, `npx brrrty build`.
+/// The `TZ=…` settings the Brrrty build in `cmd` runs with (`TZ=Asia/Tokyo brrrty build`).
+fn brrrty_env(cmd: &str) -> Vec<String> {
+    steps(cmd)
+        .iter()
+        .map(|step| words(step))
+        .find(|w| {
+            w.windows(2)
+                .any(|p| p[0].ends_with("brrrty") && p[1] == "build")
+        })
+        .map(|w| {
+            w.iter()
+                .take_while(|x| x.contains('=') || *x == "cross-env" || *x == "env")
+                .filter(|x| x.starts_with("TZ="))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The TZ a CI job sets for the line `label` names: in the job's own
+/// `variables:`/`env:`, or the file's top-level ones.
+fn ci_tz(root: &Path, label: &str) -> Option<String> {
+    let file = ci_file(label);
+    let text = read_text(&root.join(file))?;
+    let job = ci_job(root, label);
+    let jobs_at = text.lines().position(|l| l.trim_end() == "jobs:");
+    let mut found = None;
+    for (i, l) in text.lines().enumerate() {
+        let t = l.trim();
+        let Some(v) = t.strip_prefix("TZ:") else {
+            continue;
+        };
+        let v = v.trim().trim_matches(['"', '\'']).to_string();
+        let at = ci_job(root, &format!("{file}, line {}", i + 1));
+        let global = if file == ".gitlab-ci.yml" {
+            at.ends_with("#variables") || at.ends_with("#default")
+        } else {
+            jobs_at.is_some_and(|j| i < j)
+        };
+        if at == job {
+            return Some(v);
+        }
+        if global {
+            found = Some(v);
+        }
+    }
+    found
+}
+
+/// Whether a script is a Brrrty command, after any environment settings
+/// (`brrrty build`, `TZ=Asia/Tokyo brrrty build`, `cross-env A=1 brrrty serve`).
+fn is_brrrty_command(cmd: &str) -> bool {
+    cmd.split_whitespace()
+        .find(|w| !(w.contains('=') || *w == "cross-env" || *w == "env"))
+        .is_some_and(|w| w == "brrrty")
+}
+
 fn runs_brrrty_build(cmd: &str) -> bool {
     steps(cmd).iter().any(|step| {
         let w = words(step);
@@ -470,6 +527,12 @@ fn parse(args: &[String]) -> Vec<(String, Option<String>)> {
     while i < args.len() {
         let a = &args[i];
         i += 1;
+        // What `classify` and the JavaScript reader note beside the arguments.
+        if let Some(t) = a.strip_prefix('\0') {
+            let (name, value) = t.split_once(' ').unwrap_or((t, ""));
+            out.push((format!("\0{name}"), Some(value.to_string())));
+            continue;
+        }
         let Some(flag) = a.strip_prefix("--") else {
             out.push((a.clone(), None));
             continue;
@@ -619,9 +682,24 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
                 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
     };
+    // What changes 11ty's output from before the command: `TZ` (dates), and preloads
+    // in `NODE_OPTIONS` or node's own flags, which run code inside 11ty. As `\0` tokens
+    // after the arguments, for `find`.
+    let mut extra: Vec<String> = Vec::new();
     loop {
         while w.first().is_some_and(|x| assignment(x)) {
-            w.remove(0);
+            let a = w.remove(0);
+            if let Some(v) = a.strip_prefix("TZ=") {
+                extra.push(format!("\0env TZ={v}"));
+            }
+            if let Some(v) = a.strip_prefix("NODE_OPTIONS=") {
+                let words: Vec<String> = v.split_whitespace().map(str::to_string).collect();
+                extra.extend(
+                    crate::eleventy_js::preloads(&words)
+                        .into_iter()
+                        .map(|p| format!("\0preload {p}")),
+                );
+            }
         }
         if w.first().is_some_and(|x| x == "cross-env" || x == "env") {
             w.remove(0);
@@ -676,7 +754,7 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
         "node" | "tsx" | "ts-node" => i = usize::MAX,
         // A file run directly, through its shebang.
         f if f.ends_with("@11ty/eleventy/cmd.cjs") || f.ends_with("@11ty/eleventy/cmd.js") => {
-            return Step::Eleventy(w[1..].to_vec());
+            return Step::Eleventy([&w[1..], &extra[..]].concat());
         }
         f if !is_program(f)
             && !mentions(f)
@@ -711,7 +789,12 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
         }
         let file = get(k);
         if file.ends_with("@11ty/eleventy/cmd.cjs") || file.ends_with("@11ty/eleventy/cmd.js") {
-            return Step::Eleventy(w[k + 1..].to_vec());
+            extra.extend(
+                crate::eleventy_js::preloads(&w[1..k])
+                    .into_iter()
+                    .map(|p| format!("\0preload {p}")),
+            );
+            return Step::Eleventy([&w[k + 1..], &extra[..]].concat());
         }
         if file.is_empty() {
             return unreadable(&w);
@@ -730,7 +813,7 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
         i += 1;
     }
     if is_program(get(i)) {
-        return Step::Eleventy(w[i + 1..].to_vec());
+        return Step::Eleventy([&w[i + 1..], &extra[..]].concat());
     }
     unreadable(&w)
 }
@@ -834,9 +917,12 @@ fn shown(flags: &[(String, Option<String>)]) -> String {
     }
     flags
         .iter()
-        .map(|(n, v)| match v {
-            Some(v) => format!("--{n}={v}"),
-            None => n.clone(),
+        .map(|(n, v)| match (n.as_str(), v) {
+            ("\0env", Some(v)) => v.clone(),
+            ("\0preload", Some(v)) => format!("a preload of {v}"),
+            ("\0cwd", Some(v)) => format!("cwd {v}"),
+            (_, Some(v)) => format!("--{n}={v}"),
+            (_, None) => n.clone(),
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -882,6 +968,8 @@ struct Run {
     chain: String,
     cmd: String,
     sig: Vec<(String, Option<String>)>,
+    /// A JavaScript run spawned the same way as a Brrrty build in the same file.
+    same_env: bool,
 }
 
 /// What a file a script runs does with 11ty, following the site's own modules it
@@ -946,10 +1034,19 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string(), false)));
     let deploys = deploy_commands(root);
     // CI jobs that run a Brrrty build: their 11ty runs are there to compare with it.
-    let ci_brrrty: Vec<String> = deploys
+    // With the TZ the Brrrty build there runs with.
+    let ci_brrrty: Vec<(String, Vec<String>)> = deploys
         .iter()
         .filter(|(label, cmd, _)| is_ci(label) && runs_brrrty_build(cmd))
-        .map(|(label, ..)| ci_job(root, label))
+        .map(|(label, cmd, _)| {
+            let mut env = brrrty_env(cmd);
+            if env.is_empty()
+                && let Some(tz) = ci_tz(root, label)
+            {
+                env.push(format!("TZ={tz}"));
+            }
+            (ci_job(root, label), env)
+        })
         .collect();
     for (name, cmd, unread) in package.chain(deploys.iter().cloned()) {
         if unread {
@@ -1011,6 +1108,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                                 chain: chain.clone(),
                                 cmd: cmd.to_string(),
                                 sig: significant(&args),
+                                same_env: false,
                             });
                         }
                     }
@@ -1033,7 +1131,27 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
             chain: name.clone(),
             cmd: cmd.to_string(),
             sig: significant(&args),
+            same_env: false,
         });
+    }
+    for r in tiers.iter_mut().flatten() {
+        if legacy {
+            // 0.0.19 didn't read the environment, preloads or `cwd`.
+            r.sig.retain(|(n, _)| !n.starts_with('\0'));
+            continue;
+        }
+        r.same_env = r.sig.iter().any(|(n, _)| n == "\0samecall");
+        r.sig.retain(|(n, _)| n != "\0samecall");
+        // A TZ the CI job sets (`variables:`, `env:`), unless the command sets its own.
+        if is_ci(&r.name)
+            && !r
+                .sig
+                .iter()
+                .any(|(n, v)| n == "\0env" && v.as_deref().is_some_and(|v| v.starts_with("TZ=")))
+            && let Some(tz) = ci_tz(root, &r.name)
+        {
+            r.sig.push(("\0env".into(), Some(format!("TZ={tz}"))));
+        }
     }
     let is_build = |n: &str| n == "build" || n == "build:11ty" || is_deploy(n);
     let builds = !tiers[0].is_empty();
@@ -1055,7 +1173,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
     let brrrty_build = scripts
         .get("build")
         .and_then(|c| c.as_str())
-        .is_some_and(|c| c.trim_start().starts_with("brrrty "));
+        .is_some_and(is_brrrty_command);
     let Some(mut chosen) = tiers.into_iter().find(|t| !t.is_empty()) else {
         // 11ty is a dependency and the site has a build script of its own, but no script
         // runs 11ty's command and nothing above says how 11ty runs: the build may reach
@@ -1063,7 +1181,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         // site's own, 11ty is run by hand, as `npx @11ty/eleventy` with no flags.
         let own_build = ["build", "build:11ty"].into_iter().find_map(|n| {
             let c = scripts.get(n)?.as_str()?;
-            (!c.trim_start().starts_with("brrrty ")).then_some((n, c))
+            (!is_brrrty_command(c)).then_some((n, c))
         });
         if cli.todos.is_empty()
             && depends_on_11ty(pkg)
@@ -1083,13 +1201,28 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
     // With another run as the build, one that differs from it only in those flags isn't
     // a build. With Brrrty as the build (`"build": "brrrty build"`), the comparison runs'
     // other flags are what 11ty builds with.
+    let build_env = scripts
+        .get("build")
+        .and_then(|c| c.as_str())
+        .map(brrrty_env)
+        .unwrap_or_default();
     if !legacy {
+        // A comparison run's preloads and `cwd` don't count: it's never ported. Its
+        // environment must match the Brrrty build's, or the two differ for it.
         let core = |r: &Run| {
             canonical(&r.sig)
                 .into_iter()
-                .filter(|(n, _)| !compare_only(n))
+                .filter(|(n, _)| !compare_only(n) && !n.starts_with('\0'))
                 .collect::<Vec<_>>()
         };
+        let env_of = |r: &Run| -> Vec<String> {
+            r.sig
+                .iter()
+                .filter(|(n, _)| n == "\0env")
+                .filter_map(|(_, v)| v.clone())
+                .collect()
+        };
+        let env_ok = |r: &Run, brrrty: &[String]| r.same_env || env_of(r) == brrrty;
         let shaped = |r: &Run| r.sig.iter().any(|(n, _)| compare_only(n));
         // Only a CI run or a package.json script other than `build` can be a comparison
         // run; Netlify's and Vercel's commands are the deploy build. And only when the
@@ -1100,12 +1233,15 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         let comparison = |r: &Run| {
             // A script that runs a Brrrty build itself (`brrrty build && eleventy
             // --output=_site-11ty`) runs 11ty beside it to compare.
-            let beside = runs_brrrty_build(&r.cmd);
+            let beside = runs_brrrty_build(&r.cmd) && env_ok(r, &brrrty_env(&r.cmd));
             shaped(r)
                 && (beside
                     || ((is_ci(&r.name) || (!is_deploy(&r.name) && r.name != "build"))
-                        && (brrrty_build
-                            || (is_ci(&r.name) && ci_brrrty.contains(&ci_job(root, &r.name))))))
+                        && ((brrrty_build && env_ok(r, &build_env))
+                            || (is_ci(&r.name) && {
+                                let job = ci_job(root, &r.name);
+                                ci_brrrty.iter().any(|(j, e)| *j == job && env_ok(r, e))
+                            }))))
         };
         match &reference {
             Some(reference) => chosen.retain(|r| !comparison(r) || core(r) != *reference),
@@ -1113,7 +1249,8 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 let marks: Vec<bool> = chosen.iter().map(comparison).collect();
                 for (r, m) in chosen.iter_mut().zip(marks) {
                     if m {
-                        r.sig.retain(|(n, _)| !compare_only(n));
+                        r.sig
+                            .retain(|(n, _)| !compare_only(n) && !n.starts_with('\0'));
                     }
                 }
             }
@@ -1178,8 +1315,42 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         cli.facts.push(format!("11ty {}", shown(&key)));
         cli.sources.extend(chosen.iter().map(|r| place(&r.chain)));
     }
+    // Whether the Brrrty build gets the same environment: init carries a plain 11ty
+    // `build` command's `TZ=…` into `brrrty build`, and a `build` that already runs
+    // Brrrty does when it sets the same.
+    let env_now: Vec<String> = flags
+        .iter()
+        .filter(|(n, _)| n == "\0env")
+        .filter_map(|(_, v)| v.clone())
+        .collect();
+    let carried = (script == "build"
+        && steps(&command).len() == 1
+        && matches!(classify(&command, scripts), Step::Eleventy(_)))
+        || (script == "build:11ty" && brrrty_build && build_env == env_now);
     let mut seen: Vec<&str> = Vec::new();
     for (name, value) in &flags {
+        if let (Some(t), Some(v)) = (name.strip_prefix('\0'), value) {
+            let why = match t {
+                "env" if carried => None,
+                "env" if v.starts_with("TZ=") => Some(format!(
+                    "11ty runs with {v} here, which changes the dates on the pages, and Brrrty's build doesn't get it; run `brrrty build` with the same (as in `\"build\": \"{v} brrrty build\"`), then delete this line"
+                )),
+                "env" => Some(
+                    "11ty runs with an `env` its spawn sets, which can set TZ and change the dates on the pages; run `brrrty build` with the same, then delete this line".to_string(),
+                ),
+                "preload" => Some(format!(
+                    "11ty runs with {v} preloaded (`--require`, `--import`, `NODE_OPTIONS`), which runs code inside 11ty and can change any page; port what it does, then delete this line"
+                )),
+                "cwd" => Some(format!(
+                    "11ty starts in {v}, not the site's folder, so its flags and config are read from there; port them as they apply there, then delete this line"
+                )),
+                _ => None,
+            };
+            if let Some(why) = why {
+                cli.todo(why, &script, &command);
+            }
+            continue;
+        }
         let Some(v) = value else {
             cli.todo(
                 format!("11ty doesn't know `{name}` and stops on it, so this script doesn't build with 11ty as written"),
@@ -1247,7 +1418,14 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
             cli.todo(why, &script, &command);
         }
     }
-    (cli.input.is_some() || cli.output.is_some() || cli.config.is_some() || !cli.todos.is_empty())
+    // A run's environment counts even when Brrrty gets it too: a later change to it is
+    // a change (0.0.19 didn't read it, so its hashes leave it out).
+    let noted = !legacy && flags.iter().any(|(n, _)| n.starts_with('\0'));
+    (cli.input.is_some()
+        || cli.output.is_some()
+        || cli.config.is_some()
+        || !cli.todos.is_empty()
+        || noted)
         .then_some(cli)
 }
 
@@ -2170,5 +2348,196 @@ mod tests {
             "{:?}",
             c.todos
         );
+    }
+
+    fn whys(c: &Cli) -> Vec<String> {
+        c.todos.iter().map(|t| t.why.clone()).collect()
+    }
+
+    #[test]
+    fn tz_in_the_build_script_is_carried_or_marked() {
+        let t = site();
+        // A plain 11ty `build`: init carries `TZ=` into `brrrty build`, so no TODO, but
+        // it counts in the hash.
+        for build in [
+            "TZ=Asia/Tokyo eleventy --input=src",
+            "cross-env TZ=Asia/Tokyo eleventy --input=src",
+        ] {
+            let c = find(&json!({ "scripts": { "build": build } }), t.path()).unwrap();
+            assert!(c.todos.is_empty(), "{build}: {:?}", c.todos);
+            assert_eq!(c.input.as_deref(), Some("src"));
+        }
+        let tokyo = find(
+            &json!({ "scripts": { "build": "TZ=Asia/Tokyo eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        // As init leaves it: Brrrty with the same TZ, 11ty kept as `build:11ty`.
+        let after = find(
+            &json!({ "scripts": { "build": "TZ=Asia/Tokyo brrrty build", "build:11ty": "TZ=Asia/Tokyo eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert!(after.todos.is_empty(), "{:?}", after.todos);
+        assert_eq!(after.fingerprint(), tokyo.fingerprint());
+        // Brrrty without it: marked.
+        let c = find(
+            &json!({ "scripts": { "build": "brrrty build", "build:11ty": "TZ=Asia/Tokyo eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert!(
+            whys(&c)[0].starts_with("11ty runs with TZ=Asia/Tokyo here"),
+            "{:?}",
+            c.todos
+        );
+        // In a compound script init doesn't rewrite: marked.
+        let c = find(
+            &json!({ "scripts": { "build": "npm run css && TZ=Asia/Tokyo eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert!(whys(&c)[0].contains("TZ=Asia/Tokyo"), "{:?}", c.todos);
+        // The 0.0.19 hash leaves it out.
+        let pkg = json!({ "scripts": { "build": "TZ=Asia/Tokyo eleventy" } });
+        write(&t, "package.json", &pkg.to_string());
+        assert!(legacy_fingerprint(t.path()).is_none());
+    }
+
+    #[test]
+    fn tz_outside_package_json_is_marked() {
+        // A deploy command, a CI job's variables, a JS spawn's env.
+        let cases = [
+            (
+                "netlify.toml",
+                "[build]\ncommand = \"TZ=Asia/Tokyo npx @11ty/eleventy\"\n",
+            ),
+            (
+                ".gitlab-ci.yml",
+                "variables:\n  TZ: Asia/Tokyo\npages:\n  script:\n    - npx @11ty/eleventy\n",
+            ),
+            (
+                ".github/workflows/b.yml",
+                "on: push\njobs:\n  b:\n    env:\n      TZ: Asia/Tokyo\n    steps:\n      - run: npx @11ty/eleventy\n",
+            ),
+        ];
+        for (file, body) in cases {
+            let t = site();
+            write(&t, file, body);
+            let c = find(&json!({}), t.path()).unwrap_or_else(|| panic!("{file}: silent"));
+            assert!(
+                whys(&c)
+                    .iter()
+                    .any(|w| w.starts_with("11ty runs with TZ=Asia/Tokyo")),
+                "{file}: {:?}",
+                c.todos
+            );
+        }
+        let t = site();
+        write(
+            &t,
+            "b.mjs",
+            "import { spawnSync } from \"node:child_process\";\nspawnSync(\"npx\", [\"@11ty/eleventy\"], { env: { ...process.env, TZ: \"Asia/Tokyo\" } });\n",
+        );
+        let c = find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()).unwrap();
+        assert!(
+            whys(&c)[0].starts_with("11ty runs with an `env` its spawn sets"),
+            "{:?}",
+            c.todos
+        );
+        // Only ELEVENTY_* variables: fine.
+        write(
+            &t,
+            "b.mjs",
+            "import { spawnSync } from \"node:child_process\";\nspawnSync(\"npx\", [\"@11ty/eleventy\"], { env: { ...process.env, ELEVENTY_ENV: \"prod\" } });\n",
+        );
+        assert_eq!(
+            find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_comparison_run_needs_the_same_tz_as_its_brrrty_build() {
+        let t = site();
+        let pkg = json!({ "scripts": { "build": "eleventy" } });
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "c:\n  script:\n    - npx brrrty build\n    - npx @11ty/eleventy --output=_site-11ty\n",
+        );
+        assert_eq!(find(&pkg, t.path()), None);
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "c:\n  variables:\n    TZ: Asia/Tokyo\n  script:\n    - npx brrrty build\n    - npx @11ty/eleventy --output=_site-11ty\n",
+        );
+        assert_eq!(find(&pkg, t.path()), None);
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "c:\n  script:\n    - npx brrrty build\n    - TZ=Asia/Tokyo npx @11ty/eleventy --output=_site-11ty\n",
+        );
+        let c = find(&pkg, t.path()).unwrap();
+        assert!(!c.todos.is_empty());
+    }
+
+    #[test]
+    fn preloads_are_marked_naming_the_file() {
+        let t = site();
+        for build in [
+            "node -r ./patch.cjs node_modules/@11ty/eleventy/cmd.cjs",
+            "node --require=./patch.cjs node_modules/@11ty/eleventy/cmd.cjs",
+            "node --import ./patch.cjs node_modules/@11ty/eleventy/cmd.cjs",
+            "NODE_OPTIONS='--require ./patch.cjs' eleventy",
+            "cross-env NODE_OPTIONS=\"-r ./patch.cjs\" eleventy",
+        ] {
+            let c = find(&json!({ "scripts": { "build": build } }), t.path())
+                .unwrap_or_else(|| panic!("{build}: silent"));
+            assert!(
+                whys(&c)
+                    .iter()
+                    .any(|w| w.starts_with("11ty runs with ./patch.cjs preloaded")),
+                "{build}: {:?}",
+                c.todos
+            );
+        }
+        // A JS run list that preloads for a build (not a comparison).
+        write(
+            &t,
+            "b.mjs",
+            "import { spawnSync } from \"node:child_process\";\nconst tools = [{ cmd: process.execPath, args: [\"--require\", \"./patch.cjs\", \"node_modules/@11ty/eleventy/cmd.cjs\"] }];\nfor (const tool of tools) spawnSync(tool.cmd, tool.args);\n",
+        );
+        let c = find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()).unwrap();
+        assert!(
+            whys(&c)[0].starts_with("11ty runs with ./patch.cjs preloaded"),
+            "{:?}",
+            c.todos
+        );
+    }
+
+    #[test]
+    fn a_spawn_in_another_folder_is_marked() {
+        let t = site();
+        write(
+            &t,
+            "b.mjs",
+            "import { spawnSync } from \"node:child_process\";\nspawnSync(\"npx\", [\"@11ty/eleventy\", \"--input=src\"], { cwd: \"site\" });\n",
+        );
+        let c = find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()).unwrap();
+        assert!(
+            whys(&c)
+                .iter()
+                .any(|w| w.starts_with("11ty starts in site, not the site's folder")),
+            "{:?}",
+            c.todos
+        );
+        write(
+            &t,
+            "b.mjs",
+            "import { spawnSync } from \"node:child_process\";\nspawnSync(\"npx\", [\"@11ty/eleventy\", \"--input=src\"], { cwd: \".\" });\n",
+        );
+        let c = find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()).unwrap();
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
     }
 }

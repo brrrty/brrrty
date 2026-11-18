@@ -511,6 +511,39 @@ fn is_eleventy_command(cmd: &str) -> bool {
     }
 }
 
+/// `cmd` with the environment settings an 11ty command starts with: its leading
+/// `NAME=value` words, and a `cross-env` or `env` with its own
+/// (`TZ=Asia/Tokyo eleventy` gives `TZ=Asia/Tokyo brrrty build`).
+fn with_prefix(eleventy: &str, cmd: &str) -> String {
+    let assignment = |w: &str| {
+        w.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    };
+    let mut prefix = Vec::new();
+    for w in eleventy.split_whitespace() {
+        if assignment(w)
+            || ((w == "cross-env" || w == "env") && prefix.iter().all(|p: &&str| *p != w))
+        {
+            prefix.push(w);
+        } else {
+            break;
+        }
+    }
+    // A `cross-env` or `env` with nothing after it is no prefix.
+    while prefix
+        .last()
+        .is_some_and(|w| *w == "cross-env" || *w == "env")
+    {
+        prefix.pop();
+    }
+    if prefix.is_empty() {
+        cmd.to_string()
+    } else {
+        format!("{} {cmd}", prefix.join(" "))
+    }
+}
+
 /// The step of a compound script (`a && b`, `a; b`, `a | b`) that is an
 /// 11ty command, if one is.
 fn eleventy_step(cmd: &str) -> Option<&str> {
@@ -589,7 +622,11 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                                 ));
                                 continue;
                             }
-                            // Rename it to `name:11ty`, with the new script in front.
+                            // Rename it to `name:11ty`, with the new script in front, run with
+                            // the same environment settings (`TZ=Asia/Tokyo`), which can
+                            // change the pages.
+                            let cmd = &with_prefix(&old, cmd);
+                            let quoted = serde_json::to_string(cmd).unwrap_or_default();
                             let i = scripts
                                 .members
                                 .iter()
@@ -609,7 +646,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                         }
                         Some(old) => match eleventy_step(&old) {
                             Some(step) => advice.push(format!(
-                                "scripts.{name} runs 11ty as one step of \"{}\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.{keep} (to compare with 11ty), then replace `{}` in scripts.{name} with `{cmd}`.", shown(&old), shown(step)
+                                "scripts.{name} runs 11ty as one step of \"{}\", so Brrrty left it alone. To use Brrrty there, copy it to scripts.{keep} (to compare with 11ty), then replace `{}` in scripts.{name} with `{}`.", shown(&old), shown(step), shown(&with_prefix(step, cmd))
                             )),
                             None => advice.push(format!(
                                 "scripts.{name} runs \"{}\", which isn't an 11ty command, so Brrrty left it alone. Where it runs 11ty, run `{cmd}` instead.", shown(&old)
