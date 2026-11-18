@@ -38,20 +38,12 @@ description: Brrrty is a static site generator written in Rust. It builds your e
     </div>
     <ol class="runs">
       <li class="run">
-        <h3 class="run-env">Apple M4 laptop</h3>
+        <h3 class="run-env">MacBook Pro (Apple M4, 24&nbsp;GB)</h3>
         <div class="run-bars">
           <p class="bar-row is-brrrty" style="--t: 0.85"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><span class="time">0.85 s</span></span></p>
           <p class="bar-row" style="--t: 2.32"><span class="who">11ty 3.1.8</span><span class="track"><span class="bar"></span><span class="time">2.32 s</span></span></p>
         </div>
         <p class="run-x"><span class="x">2.7&times;</span> faster</p>
-      </li>
-      <li class="run">
-        <h3 class="run-env"><code>node:24-alpine</code> CI container</h3>
-        <div class="run-bars">
-          <p class="bar-row is-brrrty" style="--t: 0.86"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><span class="time">0.86 s</span></span></p>
-          <p class="bar-row" style="--t: 3.07"><span class="who">11ty 3.1.8</span><span class="track"><span class="bar"></span><span class="time">3.07 s</span></span></p>
-        </div>
-        <p class="run-x"><span class="x">3.6&times;</span> faster</p>
       </li>
       <li class="run">
         <h3 class="run-env">GitLab shared runner</h3>
@@ -61,11 +53,18 @@ description: Brrrty is a static site generator written in Rust. It builds your e
         </div>
         <p class="run-x"><span class="x">2.6&times;</span> faster</p>
       </li>
+      <li class="run">
+        <h3 class="run-env">GitHub Actions runner</h3>
+        <div class="run-bars">
+          <p class="bar-row is-brrrty" style="--t: 1.87"><span class="who">Brrrty</span><span class="track"><span class="bar"></span><span class="time">1.87 s</span></span></p>
+          <p class="bar-row" style="--t: 4.80"><span class="who">11ty 3.1.8</span><span class="track"><span class="bar"></span><span class="time">4.80 s</span></span></p>
+        </div>
+        <p class="run-x"><span class="x">2.6&times;</span> faster</p>
+      </li>
     </ol>
-    <div class="axis" aria-hidden="true"><span style="--i: 0">0</span><span style="--i: 1">1</span><span style="--i: 2">2</span><span style="--i: 3">3</span><span style="--i: 4">4 s</span></div>
+    <div class="axis" aria-hidden="true"><span style="--i: 0">0</span><span style="--i: 1">1</span><span style="--i: 2">2</span><span style="--i: 3">3</span><span style="--i: 4">4</span><span style="--i: 5">5 s</span></div>
     <figcaption>
-      <p class="match"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg> 2,272 of 2,272 files match, compared file by file against 11ty&nbsp;3.1.8 output on the GitLab runner.</p>
-      <p class="bench-public">Public benchmark: a generated 2,069-file blog on a GitHub Actions runner builds in 1.31&nbsp;s with Brrrty and 5.89&nbsp;s with 11ty, 4.5&times; faster, every file a match. <a href="https://github.com/brrrty/brrrty/actions/workflows/bench.yml">Run it yourself</a>.</p>
+      <p class="match"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg> Every file matches, compared file by file against 11ty&nbsp;3.1.8's output on the GitLab and GitHub runners.</p>
     </figcaption>
   </figure>
 

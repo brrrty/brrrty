@@ -379,7 +379,7 @@ main { flex: 1; }
 
 /* The benchmark: bars to scale, 0 to 4 seconds. */
 .bench {
-  --scale: 4;
+  --scale: 5;
   --who: 6.5rem;
   margin: 0;
   padding: clamp(1.25rem, 3vw, 2.25rem);
@@ -463,7 +463,7 @@ main { flex: 1; }
 .axis span {
   position: absolute;
   top: 0.3rem;
-  left: calc(var(--i) / 4 * 100%);
+  left: calc(var(--i) / var(--scale) * 100%);
   transform: translateX(-50%);
   white-space: nowrap;
 }
