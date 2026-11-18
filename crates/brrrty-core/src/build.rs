@@ -340,10 +340,21 @@ fn js_template_data(d: &brrrty_js::runtime::Decoded, shown: &Path) -> Result<Dat
     })
 }
 
+/// The layout a page's data names, when it is a name.
+fn layout_name(data: &Data) -> Option<String> {
+    match data.get("layout") {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.to_string()),
+        _ => None,
+    }
+}
+
 /// Load every JavaScript template (`templates`, relative to the input
-/// folder) and JavaScript layout (`layouts`, absolute) in Node, in that
-/// order, after telling it the names on `this` (`filters`). `None` when
-/// JavaScript doesn't run.
+/// folder) in Node, after telling it the names on `this` (`filters`); then
+/// the JavaScript layouts some page uses: those `names` (the layouts the
+/// other pages and the data name) and the templates' own data name, and
+/// the layouts those name in turn, as 11ty imports a layout only when a
+/// page asks for it. `None` when JavaScript doesn't run.
+#[allow(clippy::too_many_arguments)]
 fn load_js_templates(
     js: &mut JsSession<'_>,
     filters: &[String],
@@ -351,15 +362,18 @@ fn load_js_templates(
     input_rel: &Path,
     root: &Path,
     templates: &[PathBuf],
-    layouts: &[PathBuf],
+    layouts: &Layouts<'_>,
+    names: Vec<String>,
 ) -> Option<(JsTemplates, crate::layout::JsLayouts)> {
-    if !js.on() || (templates.is_empty() && layouts.is_empty()) {
+    let any_js_layout = !layouts.js_files().is_empty();
+    if !js.on() || (templates.is_empty() && !any_js_layout) {
         return None;
     }
     if !js.template_setup(filters) {
         return None;
     }
     let mut pages = HashMap::new();
+    let mut names = names;
     for rel in templates {
         let shown = input_rel.join(rel);
         let r = match js.load_template(&input.join(rel), &shown, false) {
@@ -369,18 +383,49 @@ fn load_js_templates(
             JsTemplateLoad::Failed(p) => Err(p),
             JsTemplateLoad::Unavailable => return None,
         };
+        if let Ok(t) = &r {
+            names.extend(layout_name(&t.data));
+        }
         pages.insert(rel.clone(), r);
     }
     let mut found = HashMap::new();
-    for full in layouts {
-        let shown = crate::options::root_relative(root, full);
-        let r = match js.load_template(full, &shown, true) {
-            JsTemplateLoad::Loaded(t) => js_template_data(&t.data, &shown).map(|d| (t.id, d)),
-            JsTemplateLoad::Failed(p) => Err(p),
-            JsTemplateLoad::Unavailable => return None,
-        };
-        let real = full.canonicalize().unwrap_or_else(|_| full.clone());
-        found.insert(real, r);
+    if !any_js_layout {
+        return Some((pages, found));
+    }
+    // Follow the names, a wave at a time, each wave's files in path order.
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    while !names.is_empty() {
+        let mut files: Vec<PathBuf> = names
+            .drain(..)
+            .filter_map(|n| layouts.find_file(&n))
+            .filter(|f| seen.insert(f.clone()))
+            .collect();
+        files.sort();
+        for full in files {
+            let is_js = full
+                .file_name()
+                .is_some_and(|n| crate::page::without_js_extension(&n.to_string_lossy()).is_some());
+            if !is_js {
+                // Another language's layout names the next by its front matter.
+                if let Ok(text) = fs::read_to_string(&full)
+                    && let Ok((front, _)) = split_front_matter(&text)
+                {
+                    names.extend(layout_name(&front));
+                }
+                continue;
+            }
+            let shown = crate::options::root_relative(root, &full);
+            let r = match js.load_template(&full, &shown, true) {
+                JsTemplateLoad::Loaded(t) => js_template_data(&t.data, &shown).map(|d| (t.id, d)),
+                JsTemplateLoad::Failed(p) => Err(p),
+                JsTemplateLoad::Unavailable => return None,
+            };
+            if let Ok((_, d)) = &r {
+                names.extend(layout_name(d));
+            }
+            let real = full.canonicalize().unwrap_or_else(|_| full.clone());
+            found.insert(real, r);
+        }
     }
     Some((pages, found))
 }
@@ -2571,6 +2616,25 @@ fn build_once(
         names
     };
     let js_loaded = if js_wanted {
+        // The layouts the other pages and the data name: only a JavaScript
+        // layout some page uses is imported, as in 11ty.
+        let mut names: Vec<String> = Vec::new();
+        if !layouts.js_files().is_empty() {
+            names.extend(layout_name(&global));
+            for rel in &loadable {
+                if let Ok(local) = dir_data.local(rel) {
+                    names.extend(layout_name(&local.data));
+                }
+                if is_js_template(rel) || virtuals.contains_key(rel) {
+                    continue;
+                }
+                if let Ok(text) = fs::read_to_string(input.join(rel))
+                    && let Ok((front, _)) = split_front_matter(&text)
+                {
+                    names.extend(layout_name(&front));
+                }
+            }
+        }
         load_js_templates(
             &mut js,
             &js_names,
@@ -2578,7 +2642,8 @@ fn build_once(
             &input_rel,
             &root,
             &discovery.unsupported,
-            &layouts.js_files(),
+            &layouts,
+            names,
         )
     } else {
         None

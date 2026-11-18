@@ -712,3 +712,42 @@ fn a_paginated_pages_data_keys_are_in_11tys_order() {
         "content,pagination,list,eleventy,pkg,a,layout,permalink,page,collections\nx\n"
     );
 }
+
+/// 11ty imports a JavaScript layout only when a page uses it: one in the
+/// layouts folder that nothing names never runs, whatever it does.
+#[test]
+fn an_unused_javascript_layout_never_runs() {
+    if !has_node() {
+        return;
+    }
+    for body in [
+        "globalThis.__unusedRan = true;\nmodule.exports = (d) => d.content;\n",
+        "process.exit(0);\n",
+        "while (true) {}\n",
+        "await new Promise(() => {});\nexport default (d) => d.content;\n",
+    ] {
+        let name = if body.contains("await") {
+            "src/_includes/unused.11ty.mjs"
+        } else {
+            "src/_includes/unused.11ty.js"
+        };
+        let t = site(&[
+            ("brrrty.config.rhai", ON),
+            (name, body),
+            (
+                "src/_includes/used.11ty.js",
+                "module.exports = { data: { layout: 'outer.njk' }, render: (d) => `[${d.content}]` };\n",
+            ),
+            ("src/_includes/outer.njk", "<{{ content | safe }}>"),
+            ("src/a.njk", "---\nlayout: used.11ty.js\n---\na"),
+            (
+                "src/probe.11ty.js",
+                "module.exports = () => `unused=${globalThis.__unusedRan ? 'ran' : 'no'}`;\n",
+            ),
+        ]);
+        let o = build(t.path(), &[]);
+        assert!(o.status.success(), "{body}: {}", text(&o));
+        assert_eq!(read(t.path(), "a/index.html"), "<[a]>", "{body}");
+        assert_eq!(read(t.path(), "probe/index.html"), "unused=no", "{body}");
+    }
+}

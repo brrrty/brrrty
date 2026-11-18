@@ -171,6 +171,24 @@ impl<'a> Layouts<'a> {
         out
     }
 
+    /// The file `name` resolves to, as [`Layouts::chain`] would find it,
+    /// without parsing or caching it: `None` when there is none.
+    pub fn find_file(&self, name: &str) -> Option<PathBuf> {
+        let name = self.aliases.get(name).map_or(name, String::as_str);
+        let rel = lexical(&format!("{}/{name}", self.dir.display()))?;
+        let mut candidates = vec![rel.clone()];
+        for ext in EXTENSIONS {
+            let mut with = rel.as_os_str().to_os_string();
+            with.push(format!(".{ext}"));
+            candidates.push(PathBuf::from(with));
+        }
+        candidates
+            .into_iter()
+            .map(|c| self.input.join(c))
+            .find(|c| c.exists())
+            .filter(|c| c.is_file())
+    }
+
     /// The JavaScript layouts as loaded, by canonical path.
     pub fn set_js(&mut self, js: JsLayouts) {
         self.js = Some(js);
@@ -342,6 +360,11 @@ impl<'a> Layouts<'a> {
                     layout_line: None,
                 })),
                 Some(Err(p)) => Err(Failure::File(p.clone())),
+                None if self.js.is_some() => Err(file(
+                    codes::LAYOUT_UNSUPPORTED,
+                    "this JavaScript layout is named in a way Brrrty didn't follow before the pages loaded, so it wasn't loaded".to_string(),
+                    "Name it with `layout` in front matter, a data file or a layout's data. This is a gap in Brrrty; please report it.",
+                )),
                 None => Err(file(
                     codes::LAYOUT_UNSUPPORTED,
                     "this JavaScript layout doesn't run while JavaScript is off".to_string(),
