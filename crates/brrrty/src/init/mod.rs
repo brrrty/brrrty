@@ -5,6 +5,7 @@
 //! reading that without running it. Those two files, in the site's folder,
 //! are all it ever writes, and it never overwrites a `brrrty.config.rhai`.
 
+pub mod data;
 mod js;
 mod json;
 mod port;
@@ -53,7 +54,7 @@ pub enum Refusal {
 #[derive(Debug)]
 pub struct Change {
     /// The name shown, relative to the site's folder.
-    pub name: &'static str,
+    pub name: String,
     /// The file as it is, or `None` when it is new.
     pub old: Option<String>,
     pub new: String,
@@ -72,6 +73,12 @@ pub struct Plan {
     pub todos: usize,
     /// JavaScript data files without a `.rhai` port, relative to the root.
     pub js_data: Vec<String>,
+    /// Of those: translated to a `.rhai` beside it (the file and its port's name).
+    pub js_translated: Vec<(String, String)>,
+    /// Ones that only use what Brrrty has helpers for, with the helpers.
+    pub js_hand: Vec<(String, Vec<&'static str>)>,
+    /// Ones that need Node.
+    pub js_node: Vec<String>,
     /// Things left for a person to change in `package.json`.
     pub advice: Vec<String>,
     /// `build:11ty` is in the scripts after the change.
@@ -408,23 +415,6 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         record_flags(&mut rhai, h);
     }
 
-    let mut changes = Vec::new();
-    // The new file first: it is the one that can't already exist.
-    changes.push(Change {
-        name: CONFIG_FILE,
-        old: None,
-        new: rhai,
-        path: config_path,
-    });
-    if old_package.as_deref() != Some(edited.text.as_str()) {
-        changes.push(Change {
-            name: PACKAGE_JSON,
-            old: old_package,
-            new: edited.text,
-            path: package_path,
-        });
-    }
-
     let js_data = match input {
         Some(i) => match fs::canonicalize(root.join(i)) {
             Ok(input) if input.starts_with(&root) => js_data_files(&root, &input),
@@ -432,12 +422,81 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         },
         None => js_data_files(&root, &root),
     };
+    let mut js_translated = Vec::new();
+    let mut js_hand = Vec::new();
+    let mut js_node = Vec::new();
+    let mut ports = Vec::new();
+    for f in &js_data {
+        let class = match read_inside(&root, f) {
+            Ok(Some(Read::Text(src))) => data::classify(src.strip_prefix(BOM).unwrap_or(&src)),
+            _ => data::DataClass::NeedsNode,
+        };
+        match class {
+            data::DataClass::Translatable(r) => {
+                let (stem, _) = f.rsplit_once('.').unwrap_or((f, ""));
+                let port = format!("{stem}.rhai");
+                let js_name = f.rsplit('/').next().unwrap_or(f);
+                let port_name = port.rsplit('/').next().unwrap_or(&port).to_string();
+                ports.push(Change {
+                    name: port.clone(),
+                    old: None,
+                    new: format!(
+                        "// Translated by `brrrty init` from {js_name}, whose value is this literal.\n// Brrrty reads this file instead of {js_name}. Once `brrrty doctor` says the\n// port is identical, you can delete {js_name}.\n{r}\n"
+                    ),
+                    path: root.join(&port),
+                });
+                js_translated.push((f.clone(), port_name));
+            }
+            data::DataClass::HandPort(helpers) => js_hand.push((f.clone(), helpers)),
+            data::DataClass::NeedsNode => js_node.push(f.clone()),
+        }
+    }
+    // Files left in JavaScript keep running, in the site's own Node.
+    if !js_hand.is_empty() || !js_node.is_empty() {
+        let mut line = String::from(
+            "// JavaScript data files Brrrty runs in your own Node, as 11ty does\n// (`brrrty init` couldn't translate them to Rhai):\n",
+        );
+        for f in js_hand.iter().map(|(f, _)| f).chain(&js_node) {
+            line.push_str(&format!("//   {f}\n"));
+        }
+        line.push_str("config.set_js_data(\"node\");\n\n");
+        match rhai.find("\n\n") {
+            Some(i) => rhai.insert_str(i + 2, &line),
+            None => {
+                rhai.push('\n');
+                rhai.push_str(line.trim_end());
+                rhai.push('\n');
+            }
+        }
+    }
+
+    let mut changes = Vec::new();
+    // The new file first: it is the one that can't already exist.
+    changes.push(Change {
+        name: CONFIG_FILE.to_string(),
+        old: None,
+        new: rhai,
+        path: config_path,
+    });
+    if old_package.as_deref() != Some(edited.text.as_str()) {
+        changes.push(Change {
+            name: PACKAGE_JSON.to_string(),
+            old: old_package,
+            new: edited.text,
+            path: package_path,
+        });
+    }
+
+    changes.extend(ports);
     Ok(Plan {
         root,
         config,
         changes,
         todos,
         js_data,
+        js_translated,
+        js_hand,
+        js_node,
         advice: edited.advice,
         has_build_11ty: edited.has_build_11ty,
         output: output.unwrap_or_else(|| "_site".into()),
@@ -967,11 +1026,38 @@ pub fn summary(plan: &Plan) -> String {
         ));
     }
     if !plan.js_data.is_empty() {
-        let mut s = format!(
-            "Port these JavaScript data files to .rhai files next to them ({GETTING_STARTED}#2-port-javascript-data-files):"
-        );
-        for f in &plan.js_data {
-            s.push_str(&format!("\n      {f}"));
+        let mut s =
+            format!("JavaScript data files ({GETTING_STARTED}#2-port-javascript-data-files):");
+        if !plan.js_translated.is_empty() {
+            s.push_str(&format!(
+                "\n    Translated to Rhai ({}): delete each .js once `brrrty doctor` says its port is identical.",
+                plan.js_translated.len()
+            ));
+            for (f, port) in &plan.js_translated {
+                s.push_str(&format!("\n      {f} -> {port}"));
+            }
+        }
+        if !plan.js_hand.is_empty() {
+            s.push_str(&format!(
+                "\n    Brrrty helpers could do it ({}): they run in Node for now; port them by hand with these helpers (see PORTING.md) if you like.",
+                plan.js_hand.len()
+            ));
+            for (f, helpers) in &plan.js_hand {
+                if helpers.is_empty() {
+                    s.push_str(&format!("\n      {f} (plain code)"));
+                } else {
+                    s.push_str(&format!("\n      {f} ({})", helpers.join("; ")));
+                }
+            }
+        }
+        if !plan.js_node.is_empty() {
+            s.push_str(&format!(
+                "\n    Need Node ({}): `config.set_js_data(\"node\")` runs them in your own Node, as 11ty does.",
+                plan.js_node.len()
+            ));
+            for f in &plan.js_node {
+                s.push_str(&format!("\n      {f}"));
+            }
         }
         todo.push(s);
     }
@@ -1046,8 +1132,12 @@ pub fn run(opts: &Options) -> u8 {
             crate::say_err!("Brrrty couldn't write the changes: {e}");
             return 1;
         }
-        let names: Vec<&str> = plan.changes.iter().map(|c| c.name).collect();
-        crate::say!("\nWrote {}.", names.join(" and "));
+        let names: Vec<&str> = plan.changes.iter().map(|c| c.name.as_str()).collect();
+        let list = match names.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => names.join(""),
+        };
+        crate::say!("\nWrote {list}.");
     }
     crate::say!("{}", shown_lines(summary(&plan).trim_end()));
     0

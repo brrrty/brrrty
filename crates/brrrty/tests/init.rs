@@ -126,15 +126,31 @@ fn sets_up_a_cjs_site() {
     }
     let text = stdout(&out);
     assert!(
-        text.contains("Wrote brrrty.config.rhai and package.json."),
+        text.contains("Wrote brrrty.config.rhai, package.json and src/_data/site.rhai."),
         "{text}"
     );
     assert!(
         text.contains("brrrty.config.rhai has 2 TODO(brrrty) markers"),
         "{text}"
     );
-    assert!(text.contains("      src/_data/site.js\n"), "{text}");
+    // A literal data file is translated beside itself.
+    assert!(
+        text.contains("      src/_data/site.js -> site.rhai\n"),
+        "{text}"
+    );
     assert!(!text.contains("ported.js"), "{text}");
+    assert_eq!(
+        read(dir.path(), "src/_data/ported.rhai"),
+        "1\n",
+        "an existing port is left alone"
+    );
+    assert!(
+        read(dir.path(), "src/_data/site.rhai").ends_with("#{ title: \"x\" }\n"),
+        "{}",
+        read(dir.path(), "src/_data/site.rhai")
+    );
+    // Every data file translated: JavaScript data stays off.
+    assert!(!rhai.contains("set_js_data"), "{rhai}");
     assert!(
         text.contains("npm install\n  npm run build\n  npm run build:11ty -- --output=_site-11ty\n  diff -r _site-11ty dist\n"),
         "{text}"
@@ -728,5 +744,51 @@ fn the_rss_plugin_version_is_recorded() {
     assert!(
         rhai.contains("config.add_plugin(\"rss\", #{ feed: false });"),
         "{rhai}"
+    );
+}
+
+#[test]
+fn data_files_that_need_node_turn_javascript_data_on() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        ("index.md", "# Hi\n"),
+        ("_data/site.js", "module.exports = { title: 'x' };\n"),
+        (
+            "_data/posts.js",
+            "const { DateTime } = require(\"luxon\");\nmodule.exports = [DateTime.now().year];\n",
+        ),
+        (
+            "_data/rows.js",
+            "const fs = require(\"fs\");\nmodule.exports = JSON.parse(fs.readFileSync(\"rows.json\", \"utf8\"));\n",
+        ),
+        (
+            "posts/posts.11tydata.js",
+            "module.exports = { b: 1, a: 2 };\n",
+        ),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(rhai.contains("config.set_js_data(\"node\");\n"), "{rhai}");
+    for f in ["_data/posts.js", "_data/rows.js", "posts/posts.11tydata.js"] {
+        assert!(rhai.contains(&format!("//   {f}\n")), "{f} in:\n{rhai}");
+    }
+    let text = stdout(&out);
+    assert!(text.contains("Translated to Rhai (1):"), "{text}");
+    assert!(text.contains("Brrrty helpers could do it (2):"), "{text}");
+    assert!(text.contains("posts/posts.11tydata.js (object)"), "{text}");
+    assert!(
+        text.contains("_data/rows.js (read_text, read_json, read_dir; parse_json)"),
+        "{text}"
+    );
+    assert!(text.contains("Need Node (1):"), "{text}");
+    assert!(dir.path().join("_data/site.rhai").is_file());
+    assert!(!dir.path().join("_data/posts.rhai").exists());
+    // The pages build with the data running in Node.
+    let built = run_in(dir.path(), &["build"]);
+    assert!(
+        stderr(&built).contains("site.rhai supplies this key"),
+        "{}",
+        stderr(&built)
     );
 }
