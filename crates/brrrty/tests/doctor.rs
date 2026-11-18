@@ -1028,3 +1028,25 @@ fn deploy_configs_carry_the_command_too() {
         assert!(err.contains("config-stale"), "{file}: {err}");
     }
 }
+
+/// Re-review 4: a GitLab anchor hides the command from the line scan; the line that
+/// mentions 11ty is a marker, so the site never reads as building.
+#[test]
+fn a_ci_line_the_scan_cant_read_is_marked() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+        ),
+        (
+            ".gitlab-ci.yml",
+            ".build: &build\n  - npx @11ty/eleventy --input=src --pathprefix=/blog/\npages:\n  script: *build\n",
+        ),
+        ("src/index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(rhai.contains("// .gitlab-ci.yml, line 2:"), "{rhai}");
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(text.contains("0 of 1 page will build"), "{text}");
+}
