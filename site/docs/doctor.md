@@ -56,6 +56,24 @@ The last line is the verdict. "At least" means a template paginates data that a 
 
 Warnings and notes are listed after the groups, each with its help. They stop nothing. Two of them are about the config: `config-stale` says your 11ty config changed, or 11ty now reads another file, since `brrrty.config.rhai` recorded it as ported, and `config-unverified` says nothing records your 11ty config as ported. Each gives the `// Ported from:` line to put in `brrrty.config.rhai` once your port covers it.
 
+## JavaScript data
+
+When the site has JavaScript data files (`_data/*.js`, `*.11tydata.js`), the report starts with a section about them:
+
+```
+JavaScript data: on (brrrty.config.rhai line 4), Node v24.22.3 at /usr/local/bin/node, tz 2026e
+  src/_data/links.js           ported: links.rhai is identical, delete links.js
+  src/_data/nav.js             ported: nav.rhai differs at data.items[2]
+  src/_data/site.js            runs in Node
+  src/posts/posts.11tydata.js  runs in Node
+```
+
+The first line says whether JavaScript data is on, what turned it on (`brrrty.config.rhai` and its line, `--js-data`, or nothing), and the Node that runs it with its time zone data. When that differs from Brrrty's own (2026b), a note says so: dates the data computes in your zone differ only if its rules changed between the two. With JavaScript data on, doctor runs the files, as a build would, and says so on stderr first.
+
+Each file then has its state: it runs in Node, it throws (the error is grouped below), a `.rhai` port stands in for it and gives the same value (delete the `.js`) or differs at a path, or it waits on JavaScript data. A port is compared only when Node can run the `.js` too.
+
+With JavaScript data off, the section says how many files there are, how many templates wait on them, and both fixes: `config.set_js_data("node")`, with the Node that was found, or a port to Rhai. A file `brrrty init` can translate says so.
+
 ## `--verify`
 
 ```sh
@@ -97,4 +115,5 @@ The last line is meant for pasting into an issue or a post. When files differ, t
 - `pages`: `total`, `building`, and `exact`, false when the total is a lower bound;
 - `groups`, each with its `cause` (`kind`: `filter`, `js-data`, `template-language`, `problem` or `follows`; an unported config is a `problem` with `code` `config-todo`), `blocker`, `title`, `help`, `pages`, `pages_exact`, `hides_pages`, `templates`, `also_blocks` (`pages`, `pages_exact`, `templates`) and every `location` (`path`, `line`, `column`, `message`);
 - `notes`: warnings and notes;
+- `jsData`: `mode` (`node` or `off`), `source` (`config`, `flag` or `default`), `node` (`path`, `version`, `tz`, or `null`), and `files`, each with its `path` and `state` (`node`, `error`, `ported`, `ported-identical`, `ported-differs` with `differsAt`, `translatable` or `blocked`);
 - `verify`: `null` without `--verify`; `{ "error": ... }` when 11ty's build failed; otherwise the counts, `eleventy_seconds` and `brrrty_seconds`, `byte_compatible`, `verdict`, and every file that differs, with its diff.

@@ -63,6 +63,8 @@ pub struct BuildReport {
     /// The files and folders the config and data scripts read, listed or checked, relative
     /// to the project folder and sorted: what the output depends on besides the sources.
     pub reads: Vec<PathBuf>,
+    /// Each JavaScript data file the build saw, and what happened to it.
+    pub js_files: Vec<(PathBuf, crate::data::JsFileState)>,
 }
 
 /// A page a build wrote.
@@ -1787,6 +1789,7 @@ fn build_with(opts: &BuildOptions, markdown: &dyn MarkdownRenderer, mode: Mode) 
                 refused: Vec::new(),
                 survey: None,
                 reads: Vec::new(),
+                js_files: Vec::new(),
             };
             finish(report, opts.strict, start)
         }
@@ -1837,6 +1840,7 @@ fn build_once(
         refused: Vec::new(),
         survey: None,
         reads: Vec::new(),
+        js_files: Vec::new(),
     };
     let strict = opts.strict;
     let log_owned = mode.survey.then(Log::default);
@@ -2090,6 +2094,7 @@ fn build_once(
     }
     let initial = js_object(&initial);
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
+    js.check_ports = log.is_some();
     let GlobalData {
         value: user_value,
         js_keys,
@@ -2825,6 +2830,7 @@ fn build_once(
     report.unchanged = pt.unchanged;
     report.problems.extend(pt.problems);
     report.complete = true;
+    report.js_files = std::mem::take(&mut js.files);
     let js_keys: BTreeMap<String, PathBuf> = shared
         .withheld
         .iter()

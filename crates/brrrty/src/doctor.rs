@@ -141,7 +141,7 @@ fn problem_json(p: &Problem) -> Value {
 }
 
 /// The JSON report. `verify` is the `--verify` part, when it ran.
-pub fn json(d: &Diagnosis, verify: Option<Value>) -> Value {
+pub fn json(d: &Diagnosis, verify: Option<Value>, js: Value) -> Value {
     let groups: Vec<Value> = d
         .groups
         .iter()
@@ -178,6 +178,205 @@ pub fn json(d: &Diagnosis, verify: Option<Value>) -> Value {
         "blockers": d.blockers(),
         "groups": groups,
         "notes": d.notes.iter().map(problem_json).collect::<Vec<_>>(),
+        "jsData": js,
         "verify": verify,
     })
+}
+
+/// The "JavaScript data" part of the report: the mode and where it came from, the Node,
+/// and each file's state.
+pub struct JsReport {
+    pub mode: brrrty_core::JsData,
+    pub source: brrrty_core::JsDataSource,
+    /// The Node found: the one that runs the data when on; when off, the one that would.
+    pub node: Option<Result<brrrty_core::JsNode, String>>,
+    pub files: Vec<JsFileLine>,
+    /// Templates refused because a JavaScript data file didn't run.
+    pub waiting_pages: usize,
+}
+
+/// One JavaScript data file and what happened to it.
+pub struct JsFileLine {
+    pub path: std::path::PathBuf,
+    pub state: brrrty_core::JsFileState,
+    /// For a file that didn't run: `init` can translate it.
+    pub translatable: bool,
+}
+
+impl JsReport {
+    /// Gather it from the build's options and report. `root` is where the files are.
+    pub fn new(
+        js: &brrrty_core::JsOptions,
+        d: &Diagnosis,
+        root: &Path,
+        node_when_off: Option<Result<brrrty_core::JsNode, String>>,
+    ) -> JsReport {
+        let files = d
+            .report
+            .js_files
+            .iter()
+            .map(|(path, state)| {
+                let translatable = *state == brrrty_core::JsFileState::NotRun
+                    && std::fs::read_to_string(root.join(path)).is_ok_and(|src| {
+                        matches!(
+                            crate::init::data::classify(&src),
+                            crate::init::data::DataClass::Translatable(_)
+                        )
+                    });
+                JsFileLine {
+                    path: path.clone(),
+                    state: state.clone(),
+                    translatable,
+                }
+            })
+            .collect();
+        // A template can wait on several files: count it once.
+        let mut waiting: Vec<&std::path::PathBuf> = d
+            .groups
+            .iter()
+            .filter(|g| matches!(g.cause, Cause::JsData(_)))
+            .flat_map(|g| &g.templates)
+            .collect();
+        waiting.sort();
+        waiting.dedup();
+        let waiting_pages = waiting.len();
+        let node = match &js.node {
+            Some(Ok(n)) => Some(Ok(n.clone())),
+            Some(Err(m)) => Some(Err(m.message.clone())),
+            None => node_when_off,
+        };
+        JsReport {
+            mode: js.mode,
+            source: js.source.clone(),
+            node,
+            files,
+            waiting_pages,
+        }
+    }
+
+    fn source_text(&self) -> String {
+        match &self.source {
+            brrrty_core::JsDataSource::Default => String::new(),
+            brrrty_core::JsDataSource::Flag => " (--js-data)".to_string(),
+            brrrty_core::JsDataSource::Config { file, line } => match line {
+                Some(l) => format!(" ({} line {l})", file.display()),
+                None => format!(" ({})", file.display()),
+            },
+        }
+    }
+
+    fn state_text(f: &JsFileLine) -> String {
+        use brrrty_core::JsFileState as S;
+        let name = |p: &Path| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let port = name(&f.path.with_extension("rhai"));
+        let js = name(&f.path);
+        match &f.state {
+            S::Ran => "runs in Node".to_string(),
+            S::Threw => "throws (see js-data-error below)".to_string(),
+            S::NotRun if f.translatable => "init can translate it (literal data)".to_string(),
+            S::NotRun => "waits on JavaScript data".to_string(),
+            S::Ported => format!("ported: {port} stands in for it"),
+            S::PortedIdentical => format!("ported: {port} is identical, delete {js}"),
+            S::PortedDiffers(at) => format!("ported: {port} differs at {at}"),
+        }
+    }
+
+    fn state_key(f: &JsFileLine) -> &'static str {
+        use brrrty_core::JsFileState as S;
+        match &f.state {
+            S::Ran => "node",
+            S::Threw => "error",
+            S::NotRun if f.translatable => "translatable",
+            S::NotRun => "blocked",
+            S::Ported => "ported",
+            S::PortedIdentical => "ported-identical",
+            S::PortedDiffers(_) => "ported-differs",
+        }
+    }
+
+    /// The text section, or nothing when the site has no JavaScript data files.
+    pub fn text(&self) -> String {
+        if self.files.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        let node = match &self.node {
+            Some(Ok(n)) => format!("Node {} at {}, tz {}", n.version, n.path.display(), n.tz),
+            Some(Err(why)) => why.clone(),
+            None => "Node not looked for".to_string(),
+        };
+        match self.mode {
+            brrrty_core::JsData::Node => {
+                let _ = writeln!(out, "JavaScript data: on{}, {node}", self.source_text());
+                if let Some(Ok(n)) = &self.node
+                    && n.tz != brrrty_js::tz::TZDATA_VERSION
+                {
+                    let zone = std::env::var("TZ").unwrap_or_else(|_| "the system zone".into());
+                    let _ = writeln!(
+                        out,
+                        "  note: Node's time zone data is {}, Brrrty's is {}: dates the data computes in {zone} differ only if its rules changed between them",
+                        n.tz,
+                        brrrty_js::tz::TZDATA_VERSION
+                    );
+                }
+            }
+            brrrty_core::JsData::Off => {
+                let found = match &self.node {
+                    Some(Ok(n)) => format!(" (Node {} found)", n.version),
+                    Some(Err(why)) => format!(" ({why})"),
+                    None => String::new(),
+                };
+                let _ = writeln!(
+                    out,
+                    "JavaScript data: off{}. {}, {} wait on them. Turn it on with config.set_js_data(\"node\"){found}, or port them: brrrty init lists which it can translate.",
+                    self.source_text(),
+                    count(self.files.len(), "file", "files"),
+                    count(self.waiting_pages, "template", "templates"),
+                );
+            }
+        }
+        let width = self
+            .files
+            .iter()
+            .map(|f| f.path.display().to_string().len())
+            .max()
+            .unwrap_or(0);
+        for f in &self.files {
+            let _ = writeln!(
+                out,
+                "  {:width$}  {}",
+                f.path.display().to_string(),
+                Self::state_text(f)
+            );
+        }
+        out.push('\n');
+        out
+    }
+
+    /// The `jsData` object of `--json`.
+    pub fn json(&self) -> Value {
+        json!({
+            "mode": self.mode.as_str(),
+            "source": match self.source {
+                brrrty_core::JsDataSource::Default => "default",
+                brrrty_core::JsDataSource::Flag => "flag",
+                brrrty_core::JsDataSource::Config { .. } => "config",
+            },
+            "node": match &self.node {
+                Some(Ok(n)) => json!({ "path": n.path, "version": n.version, "tz": n.tz }),
+                _ => Value::Null,
+            },
+            "files": self.files.iter().map(|f| {
+                let mut o = json!({ "path": f.path, "state": Self::state_key(f) });
+                if let brrrty_core::JsFileState::PortedDiffers(at) = &f.state {
+                    o["differsAt"] = json!(at);
+                }
+                o
+            }).collect::<Vec<_>>(),
+        })
+    }
 }

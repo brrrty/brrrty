@@ -10,6 +10,23 @@ use brrrty_js::runtime::{Decoded, JsError, JsResult, JsRuntime, PathPart, path_t
 use crate::options::{JsData, JsNodeMissing, JsOptions, RunMode};
 use crate::problem::{Problem, codes};
 
+/// What happened to one JavaScript data file in a build, for doctor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JsFileState {
+    /// It ran in Node.
+    Ran,
+    /// It ran and threw.
+    Threw,
+    /// It didn't run: JavaScript data is off, or there is no Node.
+    NotRun,
+    /// A `.rhai` port stands in for it; not compared.
+    Ported,
+    /// A `.rhai` port stands in for it, and gives the same value.
+    PortedIdentical,
+    /// A `.rhai` port stands in for it, and differs first at this path.
+    PortedDiffers(String),
+}
+
 /// One build's JavaScript runtime.
 pub(crate) struct JsSession<'a> {
     options: &'a JsOptions,
@@ -22,6 +39,10 @@ pub(crate) struct JsSession<'a> {
     pub failed: Option<Problem>,
     /// How many files were loaded, for the report.
     pub loads: usize,
+    /// Each JavaScript data file seen, and what happened to it.
+    pub files: Vec<(PathBuf, JsFileState)>,
+    /// Run a ported file too and compare it with its port (doctor).
+    pub check_ports: bool,
 }
 
 /// What loading one file gave.
@@ -45,6 +66,8 @@ impl<'a> JsSession<'a> {
             runtime: None,
             failed: None,
             loads: 0,
+            files: Vec::new(),
+            check_ports: false,
         }
     }
 
@@ -91,9 +114,61 @@ impl<'a> JsSession<'a> {
         self.runtime.as_mut()
     }
 
+    /// Record what happened to `shown`: a later state replaces an earlier
+    /// one only when it says more (a throw over a run, a comparison over a
+    /// bare port).
+    pub fn record(&mut self, shown: &Path, state: JsFileState) {
+        match self.files.iter_mut().find(|(f, _)| f == shown) {
+            Some((_, s)) => {
+                let better = matches!(
+                    (&*s, &state),
+                    (JsFileState::Ran, JsFileState::Threw)
+                        | (
+                            JsFileState::Ported,
+                            JsFileState::PortedIdentical | JsFileState::PortedDiffers(_),
+                        )
+                );
+                if better {
+                    *s = state;
+                }
+            }
+            None => self.files.push((shown.to_path_buf(), state)),
+        }
+    }
+
     /// Import `full` (shown as `shown`); call its export when it is a
     /// function and `call` is set.
     pub fn load(&mut self, full: &Path, shown: &Path, call: bool) -> JsLoad {
+        let r = self.load_inner(full, shown, call);
+        let state = match &r {
+            JsLoad::Value(_) => JsFileState::Ran,
+            JsLoad::Thrown(_) => JsFileState::Threw,
+            JsLoad::Unavailable => JsFileState::NotRun,
+        };
+        self.record(shown, state);
+        r
+    }
+
+    /// Compare a ported file with the value of its port (doctor only).
+    pub fn check_port(&mut self, full: &Path, shown: &Path, port: Option<&Value>) {
+        if !self.check_ports || !self.on() {
+            self.record(shown, JsFileState::Ported);
+            return;
+        }
+        let state = match (self.load_inner(full, shown, true), port) {
+            (JsLoad::Value(d), Some(port)) => match first_inexact(&d) {
+                Some((at, _)) => JsFileState::PortedDiffers(path_text(&at)),
+                None => match first_difference(&d.value, port, &mut Vec::new()) {
+                    None => JsFileState::PortedIdentical,
+                    Some(at) => JsFileState::PortedDiffers(path_text(&at)),
+                },
+            },
+            _ => JsFileState::Ported,
+        };
+        self.record(shown, state);
+    }
+
+    fn load_inner(&mut self, full: &Path, shown: &Path, call: bool) -> JsLoad {
         let Some(rt) = self.runtime() else {
             return JsLoad::Unavailable;
         };
@@ -135,6 +210,64 @@ impl<'a> JsSession<'a> {
             out.extend(coarse_reads(&self.root));
         }
         out
+    }
+}
+
+/// The first path where two values differ: type, key order, keys, numbers
+/// (`-0` and `NaN` included), strings, and dates to the millisecond.
+pub(crate) fn first_difference(
+    a: &Value,
+    b: &Value,
+    at: &mut Vec<PathPart>,
+) -> Option<Vec<PathPart>> {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let kx: Vec<&String> = x.keys().collect();
+            let ky: Vec<&String> = y.keys().collect();
+            for (k, v) in x.iter() {
+                at.push(PathPart::Key(k.clone()));
+                let found = match y.get(k) {
+                    None => Some(at.clone()),
+                    Some(w) => first_difference(v, w, at),
+                };
+                at.pop();
+                if found.is_some() {
+                    return found;
+                }
+            }
+            if kx != ky {
+                // Same keys in another order, or extra keys in `b`.
+                let extra = ky.iter().find(|k| !x.contains_key(k.as_str()));
+                if let Some(k) = extra {
+                    at.push(PathPart::Key((*k).clone()));
+                    let r = at.clone();
+                    at.pop();
+                    return Some(r);
+                }
+                return Some(at.clone());
+            }
+            None
+        }
+        (Value::Array(x), Value::Array(y)) => {
+            for (i, (v, w)) in x.iter().zip(y.iter()).enumerate() {
+                at.push(PathPart::Index(i));
+                let found = first_difference(v, w, at);
+                at.pop();
+                if found.is_some() {
+                    return found;
+                }
+            }
+            (x.len() != y.len()).then(|| at.clone())
+        }
+        (Value::Number(x), Value::Number(y)) => {
+            let same = (x.is_nan() && y.is_nan())
+                || (x == y && x.is_sign_negative() == y.is_sign_negative());
+            (!same).then(|| at.clone())
+        }
+        (Value::Date(x), Value::Date(y)) => {
+            (x.timestamp_millis() != y.timestamp_millis()).then(|| at.clone())
+        }
+        (x, y) => (x != y).then(|| at.clone()),
     }
 }
 
@@ -262,6 +395,32 @@ pub(crate) fn first_inexact(d: &Decoded) -> Option<(Vec<PathPart>, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn differences_are_found_at_their_path() {
+        let v = |j: serde_json::Value| Value::from_json(&j);
+        let at =
+            |a: &Value, b: &Value| first_difference(a, b, &mut Vec::new()).map(|p| path_text(&p));
+        let a = v(serde_json::json!({"a": [1, {"b": 2}], "c": "x"}));
+        assert_eq!(at(&a, &a.clone()), None);
+        assert_eq!(
+            at(&a, &v(serde_json::json!({"a": [1, {"b": 3}], "c": "x"}))),
+            Some("data.a[1].b".into())
+        );
+        assert_eq!(
+            at(&a, &v(serde_json::json!({"c": "x", "a": [1, {"b": 2}]}))),
+            Some("data".into())
+        );
+        assert_eq!(
+            at(&a, &v(serde_json::json!({"a": [1], "c": "x"}))),
+            Some("data.a".into())
+        );
+        assert_eq!(
+            at(&Value::Number(-0.0), &Value::Number(0.0)),
+            Some("data".into())
+        );
+        assert_eq!(at(&Value::Number(f64::NAN), &Value::Number(f64::NAN)), None);
+    }
 
     #[test]
     fn without_load_hooks_node_modules_and_every_project_script_count() {

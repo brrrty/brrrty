@@ -1374,3 +1374,133 @@ fn init_marks_an_inline_locale() {
         "{rhai}"
     );
 }
+
+fn node_here() -> bool {
+    let ok = Command::new("node").arg("--version").output().is_ok();
+    if !ok {
+        assert!(std::env::var_os("CI").is_none(), "CI needs Node");
+        eprintln!("skipped: no node on PATH");
+    }
+    ok
+}
+
+/// JavaScript data on: one line before it runs, then a section naming the
+/// mode, where it came from, the Node and each file's state.
+#[test]
+fn javascript_data_on_lists_each_file_and_its_state() {
+    if !node_here() {
+        return;
+    }
+    let dir = site(&[
+        ("brrrty.config.rhai", "\nconfig.set_js_data(\"node\");\n"),
+        ("_data/site.js", "module.exports = { title: \"x\" };\n"),
+        ("_data/nav.js", "module.exports = [\"a\", \"b\"];\n"),
+        ("_data/nav.rhai", "[\"a\", \"b\"]\n"),
+        ("_data/menu.js", "module.exports = { items: 2 };\n"),
+        ("_data/menu.rhai", "#{ items: 3 }\n"),
+        (
+            "_data/bad.js",
+            "module.exports = () => { throw new Error(\"no\"); };\n",
+        ),
+        (
+            "posts/posts.11tydata.js",
+            "module.exports = { tags: \"post\" };\n",
+        ),
+        ("posts/a.md", "a\n"),
+        ("index.njk", "{{ site.title }} {{ nav }} {{ menu.items }}\n"),
+    ]);
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert!(
+        stderr(&out).contains("Running JavaScript data in Node"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        text.contains("JavaScript data: on (brrrty.config.rhai line 2), Node v"),
+        "{text}"
+    );
+    for want in [
+        "_data/site.js",
+        "runs in Node",
+        "_data/nav.js",
+        "ported: nav.rhai is identical, delete nav.js",
+        "_data/menu.js",
+        "ported: menu.rhai differs at data.items",
+        "_data/bad.js",
+        "throws",
+        "posts/posts.11tydata.js",
+    ] {
+        assert!(text.contains(want), "missing {want:?} in:\n{text}");
+    }
+    let json: Value =
+        serde_json::from_slice(&run(dir.path(), &["doctor", "--json"]).stdout).unwrap();
+    let js = &json["jsData"];
+    assert_eq!(js["mode"], "node");
+    assert_eq!(js["source"], "config");
+    assert!(js["node"]["version"].as_str().unwrap().starts_with('v'));
+    let state = |f: &str| {
+        js["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["path"] == f)
+            .unwrap_or_else(|| panic!("{f} in {js}"))
+            .clone()
+    };
+    assert_eq!(state("_data/site.js")["state"], "node");
+    assert_eq!(state("_data/nav.js")["state"], "ported-identical");
+    assert_eq!(state("_data/menu.js")["state"], "ported-differs");
+    assert_eq!(state("_data/menu.js")["differsAt"], "data.items");
+    assert_eq!(state("_data/bad.js")["state"], "error");
+}
+
+/// Off: one sentence with the files, the pages waiting and both fixes, and
+/// each file's state, translatable or not.
+#[test]
+fn javascript_data_off_says_how_many_pages_wait_and_both_fixes() {
+    let dir = site(&[
+        ("_data/site.js", "module.exports = { title: \"x\" };\n"),
+        (
+            "_data/posts.js",
+            "const { DateTime } = require(\"luxon\");\nmodule.exports = [DateTime.now().year];\n",
+        ),
+        ("index.njk", "{{ site.title }} {{ posts }}\n"),
+        ("other.njk", "{{ site.title }}\n"),
+    ]);
+    let out = run(dir.path(), &["doctor", "--js-data=off"]);
+    let text = stdout(&out);
+    assert!(text.contains("JavaScript data: off (--js-data). 2 files, 2 templates wait on them. Turn it on with config.set_js_data(\"node\")"), "{text}");
+    assert!(
+        text.contains("brrrty init lists which it can translate"),
+        "{text}"
+    );
+    assert!(
+        text.contains("init can translate it (literal data)"),
+        "{text}"
+    );
+    let json: Value =
+        serde_json::from_slice(&run(dir.path(), &["doctor", "--json"]).stdout).unwrap();
+    let js = &json["jsData"];
+    assert_eq!(js["mode"], "off");
+    assert_eq!(js["source"], "default");
+    let files = js["files"].as_array().unwrap();
+    let site_js = files.iter().find(|f| f["path"] == "_data/site.js").unwrap();
+    assert_eq!(site_js["state"], "translatable");
+    let posts = files
+        .iter()
+        .find(|f| f["path"] == "_data/posts.js")
+        .unwrap();
+    assert_eq!(posts["state"], "blocked");
+}
+
+/// No JavaScript data files: no section.
+#[test]
+fn a_site_without_javascript_data_has_no_section() {
+    let dir = site(&[("index.md", "hi\n")]);
+    let text = stdout(&run(dir.path(), &["doctor"]));
+    assert!(!text.contains("JavaScript data"), "{text}");
+    let json: Value =
+        serde_json::from_slice(&run(dir.path(), &["doctor", "--json"]).stdout).unwrap();
+    assert_eq!(json["jsData"]["files"], serde_json::json!([]));
+}

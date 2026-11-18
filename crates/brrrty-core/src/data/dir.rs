@@ -93,6 +93,7 @@ impl DirDataIndex {
         let mut index = DirDataIndex::default();
         // Each JavaScript file's result for each template, in template order.
         let mut runs: Vec<(PathBuf, Vec<(PathBuf, JsLoad)>)> = Vec::new();
+        let mut ported_local: Vec<PathBuf> = Vec::new();
         for rel in templates {
             // 11ty lists the paths highest priority first, drops repeats
             // (`posts/posts.md` names `posts/posts.json` twice), then
@@ -109,10 +110,11 @@ impl DirDataIndex {
                 .filter(|p| rhai::is_js(&p.to_string_lossy()) && paths.contains(&port_of(p)))
                 .cloned()
                 .collect();
-            for js in &ported {
-                if !index.noted.contains(js) {
-                    index.noted.push(js.clone());
-                    index.notes.push(rhai::shadowed(js));
+            for p in &ported {
+                if !index.noted.contains(p) {
+                    index.noted.push(p.clone());
+                    index.notes.push(rhai::shadowed(p));
+                    ported_local.push(p.clone());
                 }
             }
             paths.retain(|p| !ported.contains(p));
@@ -127,6 +129,9 @@ impl DirDataIndex {
                     }
                     continue;
                 }
+                if rhai::is_js(&shown.to_string_lossy()) {
+                    js.record(shown, super::js::JsFileState::NotRun);
+                }
                 if !index.files.contains_key(shown) {
                     index
                         .files
@@ -134,6 +139,16 @@ impl DirDataIndex {
                 }
             }
             index.pages.insert(rel.clone(), paths);
+        }
+        for shown in ported_local {
+            let full = input.join(shown.strip_prefix(input_rel).unwrap_or(&shown));
+            let port = match index.files.get(&port_of(&shown)) {
+                Some(LocalFile::Json(Some(d))) => {
+                    Some(Value::Object(std::sync::Arc::new(d.clone())))
+                }
+                _ => None,
+            };
+            js.check_port(&full, &shown, port.as_ref());
         }
         for (shown, results) in runs {
             let full = input.join(shown.strip_prefix(input_rel).unwrap_or(&shown));

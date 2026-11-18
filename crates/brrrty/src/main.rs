@@ -373,9 +373,33 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         }
     };
     stop_point!();
+    // Doctor runs the site's JavaScript data when it is on: say so first.
+    if opts.js.mode == brrrty_core::JsData::Node
+        && let Some(Ok(n)) = &opts.js.node
+    {
+        brrrty::say_err!(
+            "Running JavaScript data in Node {} ({}), as `brrrty build` would.",
+            n.version,
+            n.path.display()
+        );
+    }
     let report = brrrty_core::survey(&opts, &MarkdownIt::new(), temp.is_none());
     stop_point!();
     let diagnosis = brrrty_core::doctor::diagnose(report);
+    // With JavaScript data off, the Node that would run it.
+    let node_when_off = (opts.js.mode == brrrty_core::JsData::Off
+        && !diagnosis.report.js_files.is_empty())
+    .then(|| {
+        brrrty_node::find_node(std::env::var_os("BRRRTY_NODE").as_deref())
+            .map(|n| brrrty_core::JsNode {
+                path: n.path.clone(),
+                version: n.version_text(),
+                tz: n.tz.clone(),
+                load_hooks: n.load_hooks,
+            })
+            .map_err(|m| m.to_string())
+    });
+    let js_report = doctor::JsReport::new(&opts.js, &diagnosis, &root, node_when_off);
     let mut verified = None;
     if let (Some(e), Some(t)) = (&eleventy, &temp) {
         let shim = t.path().join("freeze-time.cjs");
@@ -409,9 +433,10 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
             Ok(v) => verify::json(v),
             Err(why) => serde_json::json!({ "error": why }),
         });
-        brrrty::say!("{:#}", doctor::json(&diagnosis, v));
+        brrrty::say!("{:#}", doctor::json(&diagnosis, v, js_report.json()));
     } else {
-        let mut out = doctor::text(&diagnosis);
+        let mut out = js_report.text();
+        out.push_str(&doctor::text(&diagnosis));
         if let Some(Ok(v)) = &verified {
             out.push('\n');
             out.push_str(&verify::text(v));

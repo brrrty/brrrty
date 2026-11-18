@@ -39,6 +39,7 @@ pub use build::{
     BuildReport, WrittenPage, build, content_hash, locale_message, locale_mismatch, survey,
     tz_problem,
 };
+pub use data::JsFileState;
 pub use discover::{Discovery, discover};
 pub use filters::register_nunjucks_filters;
 pub use frontmatter::split_front_matter;

@@ -116,6 +116,8 @@ pub(crate) fn load_global(
 
     let mut data = Data::new();
     let mut seen: Vec<Vec<String>> = Vec::new();
+    // JavaScript files a `.rhai` port stands in for: compared after the loop.
+    let mut ported_files: Vec<(PathBuf, PathBuf, Vec<String>)> = Vec::new();
     for file in files {
         let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
         let path = key_path(&file);
@@ -137,6 +139,7 @@ pub(crate) fn load_global(
             Some("js" | "cjs" | "mjs") => {
                 if ported.contains(&path) {
                     out.notes.push(rhai::shadowed(&shown));
+                    ported_files.push((file.clone(), shown.clone(), path.clone()));
                     continue;
                 }
                 match js.load(&file, &shown, true) {
@@ -211,6 +214,11 @@ pub(crate) fn load_global(
                 out.unavailable.insert(root_key);
             }
         }
+    }
+
+    for (file, shown, path) in ported_files {
+        let port = get_path(&data, &path).cloned();
+        js.check_port(&file, &shown, port.as_ref());
     }
 
     // 11ty refuses its reserved names in any data.
