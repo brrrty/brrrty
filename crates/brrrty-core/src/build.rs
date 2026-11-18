@@ -1589,7 +1589,7 @@ pub fn locale_message(name: &str, value: &str) -> String {
         .unwrap_or_default()
         .replace('_', "-");
     let shown = if value.is_empty() {
-        format!("{name} is empty, so")
+        format!("{name} is set but empty, so")
     } else {
         format!("{name}={value}, so")
     };
@@ -1613,7 +1613,7 @@ fn locale_problem() -> Option<Problem> {
     Some(
         Problem::warning(
             codes::LOCALE_DIFFERS,
-            format!("11ty run here: {}", locale_message(&name, &value)),
+            format!("In this environment, {}", locale_message(&name, &value)),
         )
         .with_help(
             "Liquid's %c, %x and %X, and toLocaleString(), format with Node's default locale, so a page that uses them differs from 11ty's run in this environment. Build with LANG=en_US.UTF-8 (and LC_ALL, LC_MESSAGES unset or the same) to compare with 11ty.",

@@ -1329,8 +1329,9 @@ fn a_non_english_locale_warns() {
     let out = build(&[("LANG", "de_DE.UTF-8")]);
     assert_eq!(out.status.code(), Some(0));
     assert!(
-        stderr(&out)
-            .contains("11ty run here: LANG=de_DE.UTF-8, so 11ty formats dates like %x in de-DE"),
+        stderr(&out).contains(
+            "In this environment, LANG=de_DE.UTF-8, so 11ty formats dates like %x in de-DE"
+        ),
         "{}",
         stderr(&out)
     );
