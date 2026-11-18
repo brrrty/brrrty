@@ -118,17 +118,54 @@ impl<'a> JsSession<'a> {
             .root
             .canonicalize()
             .unwrap_or_else(|_| self.root.clone());
+        let hooks = matches!(&self.options.node, Some(Ok(n)) if n.load_hooks);
         let Some(rt) = self.runtime.as_mut() else {
             return Vec::new();
         };
-        match rt.reads() {
+        let mut out: Vec<PathBuf> = match rt.reads() {
             JsResult::Ok(paths) => paths
                 .into_iter()
                 .map(|p| p.strip_prefix(&root).map(Path::to_path_buf).unwrap_or(p))
                 .collect(),
             _ => Vec::new(),
+        };
+        // A Node without module load hooks (before 22.15) can't say which ES
+        // modules loaded: then `node_modules` and every project script count.
+        if !hooks {
+            out.extend(coarse_reads(&self.root));
+        }
+        out
+    }
+}
+
+/// `node_modules` and every `.js`, `.cjs` and `.mjs` file in the project
+/// outside it and outside dot folders, relative to `root`.
+fn coarse_reads(root: &Path) -> Vec<PathBuf> {
+    let mut out = vec![PathBuf::from("node_modules")];
+    let mut stack = vec![PathBuf::new()];
+    while let Some(rel) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(root.join(&rel)) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            let path = rel.join(&*name);
+            match e.file_type() {
+                Ok(t) if t.is_dir() => {
+                    if name != "node_modules" && !name.starts_with('.') {
+                        stack.push(path);
+                    }
+                }
+                Ok(t) if t.is_file() && super::rhai::is_js(&name) => out.push(path),
+                _ => {}
+            }
         }
     }
+    if !root.join("node_modules").exists() {
+        out.remove(0);
+    }
+    out
 }
 
 /// The problem for a runtime that stopped: the build can't go on.
@@ -219,5 +256,36 @@ pub(crate) fn first_inexact(d: &Decoded) -> Option<(Vec<PathPart>, String)> {
     match (refused, function) {
         (Some(r), Some(f)) => Some(if r.0.len() <= f.0.len() { r } else { f }),
         (r, f) => r.or(f),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn without_load_hooks_node_modules_and_every_project_script_count() {
+        let t = tempfile::tempdir().unwrap();
+        for f in [
+            "a.js",
+            "lib/b.mjs",
+            "lib/c.cjs",
+            "lib/d.json",
+            "node_modules/x/index.js",
+            ".git/hooks/e.js",
+        ] {
+            let p = t.path().join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        let mut got = coarse_reads(t.path());
+        got.sort();
+        assert_eq!(
+            got,
+            ["a.js", "lib/b.mjs", "lib/c.cjs", "node_modules"]
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
+        );
     }
 }

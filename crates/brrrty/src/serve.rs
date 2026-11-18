@@ -67,12 +67,13 @@ const REAP_EVERY: Duration = Duration::from_millis(250);
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Files in the project folder whose change means a rebuild: the configs and the ignore
-/// files, as 11ty watches them.
+/// files, as 11ty watches them, and the lock file, since JavaScript data loads packages.
 const ROOT_FILES: &[&str] = &[
     brrrty_config::CONFIG_FILE,
     ".gitignore",
     ".eleventyignore",
     "package.json",
+    "package-lock.json",
     "eleventy.config.js",
     "eleventy.config.cjs",
     "eleventy.config.mjs",

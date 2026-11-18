@@ -1138,3 +1138,110 @@ fn a_todo_marker_shows_why_until_it_is_deleted() {
         assert_eq!(live.page(), "<main><p>v0</p>\n</main>");
     });
 }
+
+fn has_node() -> bool {
+    let ok = Command::new("node").arg("--version").output().is_ok();
+    if !ok {
+        assert!(std::env::var_os("CI").is_none(), "CI needs Node");
+        eprintln!("skipped: no node on PATH");
+    }
+    ok
+}
+
+/// JavaScript data runs again in a fresh Node on every rebuild, and what it read or
+/// loaded is watched: a file it read outside the input folder, a helper it required, a
+/// new data file, and the lock file.
+#[test]
+fn javascript_data_reruns_when_what_it_read_changes() {
+    if !has_node() {
+        return;
+    }
+    let t = site();
+    let root = t.path();
+    write(
+        root,
+        "brrrty.config.rhai",
+        "config.set_js_data(\"node\");\n",
+    );
+    write(root, "data/names.csv", "Ada\n");
+    write(
+        root,
+        "lib/helper.js",
+        "module.exports = { suffix: \"!\" };\n",
+    );
+    write(
+        root,
+        "src/_data/names.js",
+        "const fs = require(\"fs\");\nconst path = require(\"path\");\nconst h = require(\"../../lib/helper.js\");\nmodule.exports = () => fs.readFileSync(path.join(__dirname, \"../../data/names.csv\"), \"utf8\").trim() + h.suffix;\n",
+    );
+    write(root, "package-lock.json", "{}\n");
+    write(
+        root,
+        "src/index.md",
+        "---\nlayout: base.liquid\n---\n{{ names }} {{ extra.n }}\n",
+    );
+    with_session(root, |live| {
+        assert_eq!(live.page(), "<main><p>Ada!</p>\n</main>");
+        live.settle();
+        // Outside the input folder: only the data file's read says it matters.
+        write(live.root, "data/names.csv", "Grace\n");
+        let r = live.next_rebuild();
+        assert!(r.ok, "{:?}", r.problems);
+        assert_eq!(live.page(), "<main><p>Grace!</p>\n</main>");
+        // A module it required, also outside the input folder.
+        write(
+            live.root,
+            "lib/helper.js",
+            "module.exports = { suffix: \"?\" };\n",
+        );
+        assert!(live.next_rebuild().ok);
+        assert_eq!(live.page(), "<main><p>Grace?</p>\n</main>");
+        // A new data file.
+        write(
+            live.root,
+            "src/_data/extra.js",
+            "module.exports = { n: 2 };\n",
+        );
+        assert!(live.next_rebuild().ok);
+        assert_eq!(live.page(), "<main><p>Grace? 2</p>\n</main>");
+        // The lock file: packages may have changed.
+        write(live.root, "package-lock.json", "{ }\n");
+        assert!(live.next_rebuild().ok);
+    });
+}
+
+/// No Node outlives a serve session: each build's worker stops with the build.
+#[test]
+fn a_stopped_session_leaves_no_node_behind() {
+    if !has_node() {
+        return;
+    }
+    let t = site();
+    let root = t.path();
+    write(
+        root,
+        "brrrty.config.rhai",
+        "config.set_js_data(\"node\");\n",
+    );
+    write(
+        root,
+        "src/_data/pid.js",
+        "require(\"fs\").writeFileSync(require(\"path\").join(__dirname, \"../../pid\"), String(process.pid));\nmodule.exports = 1;\n",
+    );
+    write(
+        root,
+        "src/index.md",
+        "---\nlayout: base.liquid\n---\n{{ pid }}\n",
+    );
+    with_session(root, |live| {
+        assert_eq!(live.page(), "<main><p>1</p>\n</main>");
+    });
+    let pid = fs::read_to_string(root.join("pid")).unwrap();
+    let alive = Command::new("kill")
+        .args(["-0", &pid])
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success();
+    assert!(!alive, "Node {pid} outlived the session");
+}
