@@ -713,6 +713,34 @@ fn a_paginated_pages_data_keys_are_in_11tys_order() {
     );
 }
 
+/// 11ty imports the layout a template's data names first (front matter,
+/// then template and directory data, then global data): a JavaScript
+/// layout lower in that order, overridden on every page, never runs.
+#[test]
+fn an_overridden_javascript_layout_never_runs() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/posts/posts.11tydata.json", "{\"layout\": \"post.11ty.js\"}"),
+        ("src/posts/a.md", "---\nlayout: plain.njk\n---\na"),
+        (
+            "src/_includes/post.11ty.js",
+            "globalThis.__ran = true;\nmodule.exports = (d) => d.content;\n",
+        ),
+        ("src/_includes/plain.njk", "[{{ content | safe }}]"),
+        (
+            "src/probe.11ty.js",
+            "module.exports = () => `unused=${globalThis.__ran ? 'ran' : 'no'}`;\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "probe/index.html"), "unused=no");
+    assert_eq!(read(t.path(), "posts/a/index.html"), "[<p>a</p>\n]");
+}
+
 /// 11ty imports a JavaScript layout only when a page uses it: one in the
 /// layouts folder that nothing names never runs, whatever it does.
 #[test]

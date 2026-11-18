@@ -363,6 +363,7 @@ fn load_js_templates(
     templates: &[PathBuf],
     layouts: &Layouts<'_>,
     names: Vec<String>,
+    js_fallback: &HashMap<PathBuf, String>,
 ) -> Option<(JsTemplates, crate::layout::JsLayouts)> {
     let any_js_layout = !layouts.js_files().is_empty();
     if !js.on() || (templates.is_empty() && !any_js_layout) {
@@ -380,7 +381,7 @@ fn load_js_templates(
             JsTemplateLoad::Unavailable => return None,
         };
         if let Ok(t) = &r {
-            names.extend(layout_name(&t.data));
+            names.extend(layout_name(&t.data).or_else(|| js_fallback.get(rel).cloned()));
         }
         pages.insert(rel.clone(), r);
     }
@@ -2616,21 +2617,32 @@ fn build_once(
     let js_loaded = if js_wanted {
         // The layouts the other pages and the data name: only a JavaScript
         // layout some page uses is imported, as in 11ty.
+        // 11ty imports only the layout each template's data names first
+        // (`frontMatter.layout || local.layout || global.layout`), and the
+        // chain from there.
         let mut names: Vec<String> = Vec::new();
+        let mut js_fallback: HashMap<PathBuf, String> = HashMap::new();
         if !layouts.js_files().is_empty() {
-            names.extend(layout_name(&global));
             for rel in &loadable {
-                if let Ok(local) = dir_data.local(rel) {
-                    names.extend(layout_name(&local.data));
-                }
-                if is_js_template(rel) || virtuals.contains_key(rel) {
+                let fallback = dir_data
+                    .local(rel)
+                    .ok()
+                    .and_then(|local| layout_name(&local.data))
+                    .or_else(|| layout_name(&global));
+                if is_js_template(rel) {
+                    // Its own data, when it names one, comes first.
+                    if let Some(f) = fallback {
+                        js_fallback.insert(rel.clone(), f);
+                    }
                     continue;
                 }
-                if let Ok(text) = fs::read_to_string(input.join(rel))
-                    && let Ok((front, _)) = split_front_matter(&text)
-                {
-                    names.extend(layout_name(&front));
-                }
+                let front = match virtuals.get(rel) {
+                    Some(f) => layout_name(&f.data),
+                    None => fs::read_to_string(input.join(rel))
+                        .ok()
+                        .and_then(|text| split_front_matter(&text).ok().and_then(|(front, _)| layout_name(&front))),
+                };
+                names.extend(front.or(fallback));
             }
         }
         load_js_templates(
@@ -2641,6 +2653,7 @@ fn build_once(
             &discovery.unsupported,
             &layouts,
             names,
+            &js_fallback,
         )
     } else {
         None
