@@ -297,8 +297,13 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
                     }
                 };
                 rename(&mut c.script);
+                let (from, to) = (
+                    format!("package.json, scripts.{name} "),
+                    format!("package.json, scripts.{kept} "),
+                );
                 for t in &mut c.todos {
                     rename(&mut t.script);
+                    t.why = t.why.replace(&from, &to);
                 }
             }
         }

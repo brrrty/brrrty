@@ -106,6 +106,26 @@ const PROCESS_CALLS: [&str; 13] = [
     "$",
 ];
 
+/// Calls that only look at a path or print it.
+const LOOKS_ONLY: [&str; 16] = [
+    "existsSync",
+    "exists",
+    "statSync",
+    "stat",
+    "lstatSync",
+    "lstat",
+    "accessSync",
+    "access",
+    "readFileSync",
+    "realpathSync",
+    "log",
+    "info",
+    "warn",
+    "error",
+    "debug",
+    "assert",
+];
+
 /// Where a token sits: inside an array literal or a call's parentheses, with the
 /// bracket's position. Brackets inside string literals don't count.
 fn enclosing(src: &str, lits: &[Lit], at: usize) -> Option<(u8, usize)> {
@@ -197,23 +217,41 @@ fn trusted_array(src: &str, lits: &[Lit], open: usize, close: usize) -> bool {
     if src[close..].trim_start().starts_with('.') {
         return false;
     }
-    let head = src[..open].trim_end();
-    if head.ends_with('(') || head.ends_with(',') {
-        return enclosing(src, lits, open)
-            .is_some_and(|(b, at)| b == b'(' && is_process_call(call_name(src, at)));
+    // Up through the literals it sits in (`const tools = [{ cmd, args: [...] }]`) to
+    // the call it's passed to, or the `const` that holds it; noting the property
+    // names on the way, which mustn't be written to either (`tool.args.push(...)`).
+    let mut keys: Vec<String> = Vec::new();
+    let mut open = open;
+    let binding = regex::Regex::new(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=$").expect("valid");
+    let property = regex::Regex::new(r"([A-Za-z_$][\w$]*)\s*:$").expect("valid");
+    loop {
+        let head = src[..open].trim_end();
+        if let Some(c) = binding.captures(head) {
+            let mut names = vec![regex::escape(&c[1])];
+            // Through the element (`tool.args`), or a destructured name (`{ args }`).
+            names.extend(keys.iter().map(|k| format!(r"\b{}", regex::escape(k))));
+            return names.iter().all(|name| {
+                let changed = regex::Regex::new(&format!(
+                    r"{name}\b\s*(\.\s*(push|unshift|splice|concat|pop|shift|length)\b|\[[^\]]*\]\s*=[^=]|=[^=>])"
+                ))
+                .expect("valid");
+                !changed.is_match(&src[close..])
+            });
+        }
+        let key = property.captures(head).map(|c| c[1].to_string());
+        let Some((b, at)) = enclosing(src, lits, open) else {
+            return false;
+        };
+        match b {
+            b'(' if key.is_none() && (head.ends_with('(') || head.ends_with(',')) => {
+                return is_process_call(call_name(src, at));
+            }
+            b'{' if key.is_some() => keys.extend(key),
+            b'[' if key.is_none() && (head.ends_with('[') || head.ends_with(',')) => {}
+            _ => return false,
+        }
+        open = at;
     }
-    let Some(c) = regex::Regex::new(r"\bconst\s+([A-Za-z_$][\w$]*)\s*=$")
-        .expect("valid")
-        .captures(head)
-    else {
-        return false;
-    };
-    let name = regex::escape(&c[1]);
-    let changed = regex::Regex::new(&format!(
-        r"\b{name}\s*(\.\s*(push|unshift|splice|concat|pop|shift|length)\b|\[[^\]]*\]\s*=[^=])"
-    ))
-    .expect("valid");
-    !changed.is_match(&src[close..])
 }
 
 /// The arguments of the spawn whose program token spans `start..end` (a
@@ -325,6 +363,14 @@ pub(crate) fn analyze(src: &str) -> JsUse {
             out.spawns.push((direct && !unknown).then_some(args));
             continue;
         }
+        // An argument of a call that only looks at the file (`fs.existsSync(...)`) or
+        // prints it isn't a spawn. `path.join(...)` still is unreadable: its result may
+        // be what's spawned.
+        if let Some((b'(', p)) = enclosing(src, &lits, l.start)
+            && LOOKS_ONLY.contains(&call_name(src, p))
+        {
+            continue;
+        }
         out.spawns
             .push(at.and_then(|(s, e)| spawn_args(src, &lits, s, e)));
     }
@@ -390,6 +436,41 @@ mod tests {
         ] {
             assert_eq!(analyze(src).spawns, [None], "{src}");
         }
+    }
+
+    /// The real blog's `ci/compare.mjs` keeps its runs in a `const` list of objects and
+    /// loops over them.
+    const TOOLS: &str = "import { spawnSync } from \"node:child_process\";\nconst OUT_11TY = \"_site-11ty\";\nconst tools = [\n  {\n    name: \"11ty\",\n    out: OUT_11TY,\n    cmd: process.execPath,\n    args: [\n      \"--require\", \"./ci/freeze-time.cjs\",\n      \"node_modules/@11ty/eleventy/cmd.cjs\", `--output=${OUT_11TY}`, \"--quiet\",\n    ],\n    times: [],\n  },\n  {\n    name: \"Brrrty\",\n    cmd: \"node_modules/.bin/brrrty\",\n    args: [\"build\", \"--quiet\"],\n  },\n];\nfor (const tool of tools) {\n  const result = spawnSync(tool.cmd, tool.args, { stdio: \"inherit\" });\n  tool.times.push(1);\n}\n";
+
+    #[test]
+    fn a_const_list_of_runs_is_read() {
+        assert_eq!(
+            analyze(TOOLS).spawns,
+            [Some(vec!["--output=${OUT_11TY}".into(), "--quiet".into()])]
+        );
+        // Written to through the element or a destructured name: not trusted.
+        for change in [
+            "tool.args.push(\"--pathprefix=/b/\");",
+            "tools[0].args = [];",
+            "const { args } = tools[0]; args.unshift(\"x\");",
+            "tools.push({ cmd: \"x\", args: [] });",
+        ] {
+            let src = TOOLS.replace("tool.times.push(1);", change);
+            assert_eq!(analyze(&src).spawns, [None], "{change}");
+        }
+        // A check that the bin is there doesn't taint the file.
+        let s = analyze(&format!(
+            "import fs from \"node:fs\";\nif (!fs.existsSync(\"node_modules/.bin/eleventy\")) process.exit(1);\n{TOOLS}"
+        ));
+        assert_eq!(
+            s.spawns,
+            [Some(vec!["--output=${OUT_11TY}".into(), "--quiet".into()])]
+        );
+        // A `let` list isn't trusted.
+        assert_eq!(
+            analyze(&TOOLS.replace("const tools", "let tools")).spawns,
+            [None]
+        );
     }
 
     #[test]

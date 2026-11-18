@@ -132,6 +132,40 @@ fn ci_file(label: &str) -> &str {
     label.split_once(", line ").map_or(label, |(f, _)| f)
 }
 
+/// The job a CI label's line is in, as `file#job`: a GitLab job is a top-level
+/// key, a GitHub one a key under `jobs:`.
+fn ci_job(root: &Path, label: &str) -> String {
+    let file = ci_file(label);
+    let line: usize = label
+        .split_once(", line ")
+        .and_then(|(_, n)| n.parse().ok())
+        .unwrap_or(0);
+    let text = read_text(&root.join(file)).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let is_key = |l: &str| {
+        let t = l.trim();
+        !t.is_empty() && !t.starts_with('#') && !t.starts_with("- ") && t.contains(':')
+    };
+    let job_indent = if file == ".gitlab-ci.yml" {
+        Some(0)
+    } else {
+        lines
+            .iter()
+            .position(|l| l.trim_end() == "jobs:" && indent(l) == 0)
+            .and_then(|j| lines[j + 1..].iter().find(|l| is_key(l)))
+            .map(|l| indent(l))
+    };
+    let job = job_indent.and_then(|ji| {
+        lines[..line.saturating_sub(1).min(lines.len())]
+            .iter()
+            .rev()
+            .find(|l| is_key(l) && indent(l) == ji)
+            .and_then(|l| l.trim().split(':').next())
+    });
+    format!("{file}#{}", job.unwrap_or(""))
+}
+
 /// Whether a command runs a Brrrty build: `brrrty build`, `npx brrrty build`.
 fn runs_brrrty_build(cmd: &str) -> bool {
     steps(cmd).iter().any(|step| {
@@ -911,11 +945,11 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         .iter()
         .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string(), false)));
     let deploys = deploy_commands(root);
-    // CI files that run a Brrrty build: their 11ty runs are there to compare with it.
-    let ci_brrrty: Vec<&str> = deploys
+    // CI jobs that run a Brrrty build: their 11ty runs are there to compare with it.
+    let ci_brrrty: Vec<String> = deploys
         .iter()
         .filter(|(label, cmd, _)| is_ci(label) && runs_brrrty_build(cmd))
-        .map(|(label, ..)| ci_file(label))
+        .map(|(label, ..)| ci_job(root, label))
         .collect();
     for (name, cmd, unread) in package.chain(deploys.iter().cloned()) {
         if unread {
@@ -1059,10 +1093,9 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         let shaped = |r: &Run| r.sig.iter().any(|(n, _)| compare_only(n));
         // Only a CI run or a package.json script other than `build` can be a comparison
         // run; Netlify's and Vercel's commands are the deploy build. And only when the
-        // real build is Brrrty's: `build` is a Brrrty command, or the same CI file (the
-        // file, not the job) runs a Brrrty build.
-        // Only Brrrty's build makes a run a comparison: a GitLab Pages job's
-        // `--output=public` beside an 11ty `build` may well be what's deployed.
+        // real build is Brrrty's: `build` is a Brrrty command, or the same CI job runs a
+        // Brrrty build. A GitLab Pages job's `--output=public` beside an 11ty `build` may
+        // well be what's deployed.
         let reference = chosen.iter().find(|r| !shaped(r)).map(core);
         let comparison = |r: &Run| {
             // A script that runs a Brrrty build itself (`brrrty build && eleventy
@@ -1072,7 +1105,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 && (beside
                     || ((is_ci(&r.name) || (!is_deploy(&r.name) && r.name != "build"))
                         && (brrrty_build
-                            || (is_ci(&r.name) && ci_brrrty.contains(&ci_file(&r.name))))))
+                            || (is_ci(&r.name) && ci_brrrty.contains(&ci_job(root, &r.name))))))
         };
         match &reference {
             Some(reference) => chosen.retain(|r| !comparison(r) || core(r) != *reference),
@@ -1113,6 +1146,9 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 "nothing (`--dryrun`)".to_string()
             } else {
                 match sig.iter().find(|(n, _)| n == "output") {
+                    Some((_, Some(o))) if o.contains("${") => {
+                        "an output folder set at run time".to_string()
+                    }
                     Some((_, Some(o))) => format!("`{o}`"),
                     _ => "`_site` (its default, unless the config sets `dir.output`)".to_string(),
                 }
@@ -2073,6 +2109,66 @@ mod tests {
         assert_eq!(
             (c.input.as_deref(), c.output.as_deref()),
             (Some("src"), None)
+        );
+    }
+
+    #[test]
+    fn a_brrrty_build_counts_only_in_its_own_job() {
+        let t = site();
+        // The review's repro: a `test` job runs Brrrty, `pages` deploys 11ty's `public`.
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "test:\n  script:\n    - npx brrrty build\npages:\n  script:\n    - npx @11ty/eleventy --output=public\n  artifacts:\n    paths:\n      - public\n",
+        );
+        let pkg = json!({ "scripts": { "build": "eleventy" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert!(
+            c.todos[0]
+                .why
+                .contains("but to `public` in .gitlab-ci.yml, line 6"),
+            "{:?}",
+            c.todos
+        );
+        // In the same job, it's a comparison.
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "compare:\n  script:\n    - npx brrrty build\n    - npx @11ty/eleventy --output=_site-11ty\n",
+        );
+        assert_eq!(find(&pkg, t.path()), None);
+        // The same for GitHub workflows' jobs.
+        write(
+            &t,
+            ".github/workflows/w.yml",
+            "on: push\njobs:\n  test:\n    steps:\n      - run: npx brrrty build\n  pages:\n    steps:\n      - run: npx @11ty/eleventy --output=public\n",
+        );
+        let c = find(&pkg, t.path()).unwrap();
+        assert!(
+            c.todos[0]
+                .why
+                .contains("`public` in .github/workflows/w.yml, line 8"),
+            "{:?}",
+            c.todos
+        );
+    }
+
+    #[test]
+    fn an_interpolated_output_is_named_as_such() {
+        let t = site();
+        write(
+            &t,
+            "ci/c.mjs",
+            "import { spawnSync } from \"node:child_process\";\nspawnSync(\"npx\", [\"@11ty/eleventy\", `--output=${OUT}`]);\n",
+        );
+        write(&t, ".gitlab-ci.yml", "c:\n  script:\n    - node ci/c.mjs\n");
+        let c = find(&json!({ "scripts": { "build": "eleventy" } }), t.path()).unwrap();
+        assert!(
+            c.todos[0].why.contains(
+                "but to an output folder set at run time in .gitlab-ci.yml, line 3 → ci/c.mjs"
+            ),
+            "{:?}",
+            c.todos
         );
     }
 }
