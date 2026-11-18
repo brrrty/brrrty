@@ -1426,7 +1426,7 @@ fn javascript_data_on_lists_each_file_and_its_state() {
         "_data/nav.js",
         "ported: nav.rhai is identical, delete nav.js",
         "_data/menu.js",
-        "ported: menu.rhai differs at data.items",
+        "ported: menu.rhai differs at data.items (value)",
         "_data/bad.js",
         "throws",
         "posts/posts.11tydata.js",
@@ -1451,7 +1451,7 @@ fn javascript_data_on_lists_each_file_and_its_state() {
     assert_eq!(state("_data/site.js")["state"], "node");
     assert_eq!(state("_data/nav.js")["state"], "ported-identical");
     assert_eq!(state("_data/menu.js")["state"], "ported-differs");
-    assert_eq!(state("_data/menu.js")["differsAt"], "data.items");
+    assert_eq!(state("_data/menu.js")["differsAt"], "data.items (value)");
     assert_eq!(state("_data/bad.js")["state"], "error");
 }
 

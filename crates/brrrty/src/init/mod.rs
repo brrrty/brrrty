@@ -426,8 +426,13 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     let mut js_hand = Vec::new();
     let mut js_node = Vec::new();
     let mut ports = Vec::new();
+    // One `.rhai` stands in for every JavaScript file of its name (`site.js` and
+    // `site.mjs`, which 11ty merges): such files are never translated.
+    let stem = |f: &str| f.rsplit_once('.').map_or(f, |(s, _)| s).to_string();
     for f in &js_data {
+        let shared = js_data.iter().any(|g| g != f && stem(g) == stem(f));
         let class = match read_inside(&root, f) {
+            _ if shared => data::DataClass::NeedsNode,
             Ok(Some(Read::Text(src))) => data::classify(src.strip_prefix(BOM).unwrap_or(&src)),
             _ => data::DataClass::NeedsNode,
         };

@@ -433,7 +433,7 @@ With JavaScript data on and Node there, `brrrty doctor` runs both the `.js`
 file and its `.rhai` port and compares the two values: types, key order,
 `-0`, and dates to the millisecond. It says `ported: site.rhai is identical,
 delete site.js`, or names the first path where they differ
-(`ported: nav.rhai differs at data.items[2]`). `brrrty init` translates a
+(`ported: nav.rhai differs at data.items[2] (value)`). `brrrty init` translates a
 file whose value is a literal by itself, and lists the others with the
 helpers that would port them.
 

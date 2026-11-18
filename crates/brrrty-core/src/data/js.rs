@@ -160,7 +160,9 @@ impl<'a> JsSession<'a> {
                 Some((at, _)) => JsFileState::PortedDiffers(path_text(&at)),
                 None => match first_difference(&d.value, port, &mut Vec::new()) {
                     None => JsFileState::PortedIdentical,
-                    Some(at) => JsFileState::PortedDiffers(path_text(&at)),
+                    Some((at, how)) => {
+                        JsFileState::PortedDiffers(format!("{} ({how})", path_text(&at)))
+                    }
                 },
             },
             _ => JsFileState::Ported,
@@ -213,21 +215,20 @@ impl<'a> JsSession<'a> {
     }
 }
 
-/// The first path where two values differ: type, key order, keys, numbers
-/// (`-0` and `NaN` included), strings, and dates to the millisecond.
+/// The first path where two values differ, and how: `key order`, `keys`,
+/// `length` or `value` (type, number with `-0` and `NaN`, string, date to the
+/// millisecond).
 pub(crate) fn first_difference(
     a: &Value,
     b: &Value,
     at: &mut Vec<PathPart>,
-) -> Option<Vec<PathPart>> {
+) -> Option<(Vec<PathPart>, &'static str)> {
     match (a, b) {
         (Value::Object(x), Value::Object(y)) => {
-            let kx: Vec<&String> = x.keys().collect();
-            let ky: Vec<&String> = y.keys().collect();
             for (k, v) in x.iter() {
                 at.push(PathPart::Key(k.clone()));
                 let found = match y.get(k) {
-                    None => Some(at.clone()),
+                    None => Some((at.clone(), "keys")),
                     Some(w) => first_difference(v, w, at),
                 };
                 at.pop();
@@ -235,18 +236,10 @@ pub(crate) fn first_difference(
                     return found;
                 }
             }
-            if kx != ky {
-                // Same keys in another order, or extra keys in `b`.
-                let extra = ky.iter().find(|k| !x.contains_key(k.as_str()));
-                if let Some(k) = extra {
-                    at.push(PathPart::Key((*k).clone()));
-                    let r = at.clone();
-                    at.pop();
-                    return Some(r);
-                }
-                return Some(at.clone());
+            if x.len() != y.len() {
+                return Some((at.clone(), "keys"));
             }
-            None
+            (!x.keys().eq(y.keys())).then(|| (at.clone(), "key order"))
         }
         (Value::Array(x), Value::Array(y)) => {
             for (i, (v, w)) in x.iter().zip(y.iter()).enumerate() {
@@ -257,17 +250,17 @@ pub(crate) fn first_difference(
                     return found;
                 }
             }
-            (x.len() != y.len()).then(|| at.clone())
+            (x.len() != y.len()).then(|| (at.clone(), "length"))
         }
         (Value::Number(x), Value::Number(y)) => {
             let same = (x.is_nan() && y.is_nan())
                 || (x == y && x.is_sign_negative() == y.is_sign_negative());
-            (!same).then(|| at.clone())
+            (!same).then(|| (at.clone(), "value"))
         }
         (Value::Date(x), Value::Date(y)) => {
-            (x.timestamp_millis() != y.timestamp_millis()).then(|| at.clone())
+            (x.timestamp_millis() != y.timestamp_millis()).then(|| (at.clone(), "value"))
         }
-        (x, y) => (x != y).then(|| at.clone()),
+        (x, y) => (x != y).then(|| (at.clone(), "value")),
     }
 }
 
@@ -399,26 +392,22 @@ mod tests {
     #[test]
     fn differences_are_found_at_their_path() {
         let v = |j: serde_json::Value| Value::from_json(&j);
-        let at =
-            |a: &Value, b: &Value| first_difference(a, b, &mut Vec::new()).map(|p| path_text(&p));
+        let at = |a: &Value, b: &Value| {
+            first_difference(a, b, &mut Vec::new())
+                .map(|(p, how)| format!("{} {how}", path_text(&p)))
+        };
         let a = v(serde_json::json!({"a": [1, {"b": 2}], "c": "x"}));
         assert_eq!(at(&a, &a.clone()), None);
-        assert_eq!(
-            at(&a, &v(serde_json::json!({"a": [1, {"b": 3}], "c": "x"}))),
-            Some("data.a[1].b".into())
-        );
-        assert_eq!(
-            at(&a, &v(serde_json::json!({"c": "x", "a": [1, {"b": 2}]}))),
-            Some("data".into())
-        );
-        assert_eq!(
-            at(&a, &v(serde_json::json!({"a": [1], "c": "x"}))),
-            Some("data.a".into())
-        );
-        assert_eq!(
-            at(&Value::Number(-0.0), &Value::Number(0.0)),
-            Some("data".into())
-        );
+        let b = v(serde_json::json!({"a": [1, {"b": 3}], "c": "x"}));
+        assert_eq!(at(&a, &b), Some("data.a[1].b value".into()));
+        let b = v(serde_json::json!({"c": "x", "a": [1, {"b": 2}]}));
+        assert_eq!(at(&a, &b), Some("data key order".into()));
+        let b = v(serde_json::json!({"a": [1], "c": "x"}));
+        assert_eq!(at(&a, &b), Some("data.a length".into()));
+        let b = v(serde_json::json!({"a": [1, {"b": 2}], "c": "x", "d": 1}));
+        assert_eq!(at(&a, &b), Some("data keys".into()));
+        let z = at(&Value::Number(-0.0), &Value::Number(0.0));
+        assert_eq!(z, Some("data value".into()));
         assert_eq!(at(&Value::Number(f64::NAN), &Value::Number(f64::NAN)), None);
     }
 

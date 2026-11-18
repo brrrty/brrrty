@@ -281,3 +281,34 @@ fn malformed_wire_forms_are_errors() {
         assert!(decode(&json).is_err(), "{bad} should not decode");
     }
 }
+
+#[test]
+fn proxies_and_extra_properties_are_refused() {
+    let Some(d) = through_node(
+        r#"(() => {
+            const list = [1, 2]; list.total = 5;
+            const when = new Date(0); when.label = "x";
+            return {
+                p: new Proxy({ hello: "Hi" }, { get: (o, k) => o[k] ?? "MISSING" }),
+                list,
+                when,
+                plain: [1, 2],
+            };
+        })()"#,
+    ) else {
+        return;
+    };
+    let what: Vec<(Vec<PathPart>, &str)> = d
+        .refused
+        .iter()
+        .map(|(p, w)| (p.clone(), w.as_str()))
+        .collect();
+    assert_eq!(
+        what,
+        vec![
+            (vec![key("p")], "a Proxy"),
+            (vec![key("list")], "an array with other properties (total)"),
+            (vec![key("when")], "a Date with other properties (label)"),
+        ]
+    );
+}

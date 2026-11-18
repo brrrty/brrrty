@@ -792,3 +792,25 @@ fn data_files_that_need_node_turn_javascript_data_on() {
         stderr(&built)
     );
 }
+
+#[test]
+fn two_files_for_one_key_are_never_translated() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        ("index.md", "# Hi\n"),
+        ("_data/site.js", "module.exports = { a: 1 };\n"),
+        ("_data/site.mjs", "export default { b: 2 };\n"),
+        (
+            "_data/proto.js",
+            "module.exports = { __proto__: { x: 1 } };\n",
+        ),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!dir.path().join("_data/site.rhai").exists());
+    assert!(!dir.path().join("_data/proto.rhai").exists());
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    for f in ["_data/site.js", "_data/site.mjs", "_data/proto.js"] {
+        assert!(rhai.contains(&format!("//   {f}\n")), "{f} in:\n{rhai}");
+    }
+}

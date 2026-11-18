@@ -63,7 +63,7 @@ When the site has JavaScript data files (`_data/*.js`, `*.11tydata.js`), the rep
 ```
 JavaScript data: on (brrrty.config.rhai line 4), Node v24.22.3 at /usr/local/bin/node, tz 2026e
   src/_data/links.js           ported: links.rhai is identical, delete links.js
-  src/_data/nav.js             ported: nav.rhai differs at data.items[2]
+  src/_data/nav.js             ported: nav.rhai differs at data.items[2] (value)
   src/_data/site.js            runs in Node
   src/posts/posts.11tydata.js  runs in Node
 ```

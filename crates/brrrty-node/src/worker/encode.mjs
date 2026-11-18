@@ -11,7 +11,9 @@
 // Strings, booleans, null, finite numbers and arrays are themselves.
 //
 // This file is concatenated ahead of the worker's main module, so it has no
-// imports or exports of its own.
+// exports of its own.
+
+import { types as utilTypes } from "node:util";
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
@@ -77,16 +79,23 @@ function encodeValue(value, register) {
         return { $f: register(v) };
     }
     if (v === null) return null;
+    // A proxy can answer reads its own properties don't hold.
+    if (utilTypes.isProxy(v)) return { $x: "a Proxy" };
     const at = stack.indexOf(v);
     if (at !== -1) {
       return { $x: `a circular reference to ${pathText(stackPaths[at])}` };
     }
     const proto = Object.getPrototypeOf(v);
     if (proto === Date.prototype) {
+      const extra = Object.keys(v);
+      if (extra.length) return { $x: `a Date with other properties (${extra.join(", ")})` };
       const ms = Date.prototype.getTime.call(v);
       return Number.isNaN(ms) ? { $x: "an invalid Date" } : { $d: ms };
     }
     if (Array.isArray(v) && proto === Array.prototype) {
+      // Templates can read a property set on an array (`list.total`).
+      const extra = Object.keys(v).filter((k) => !(String(k >>> 0) === k && (k >>> 0) !== 4294967295));
+      if (extra.length) return { $x: `an array with other properties (${extra.join(", ")})` };
       stack.push(v);
       stackPaths.push(path.slice());
       const out = [];

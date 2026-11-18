@@ -184,6 +184,11 @@ impl Worker {
         if reply.get("id") != Some(&json!(id)) {
             return JsResult::Failed(self.fail(&format!("a reply out of order: {reply}")));
         }
+        if reply.get("changedArgument").is_some() {
+            return JsResult::Failed(self.fail(&format!(
+                "{what} changes the data 11ty hands it (the config's global data and `eleventy`), which 11ty then merges into every page's data; Brrrty can't follow that, so return the data instead"
+            )));
+        }
         if let Some(p) = reply.get("protocol") {
             return JsResult::Failed(self.fail(&format!("the worker refused a request: {p}")));
         }

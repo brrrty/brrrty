@@ -85,7 +85,10 @@ function wrap(obj, name) {
 for (const name of ["readFileSync", "readFile", "readdirSync", "readdir", "existsSync", "statSync", "stat", "lstatSync", "lstat", "opendir", "opendirSync", "createReadStream", "accessSync", "access"]) {
   wrap(fs, name);
 }
-for (const name of ["readFile", "readdir", "stat", "lstat", "opendir", "access"]) {
+for (const name of ["open", "openSync", "glob", "globSync"]) {
+  wrap(fs, name);
+}
+for (const name of ["readFile", "readdir", "stat", "lstat", "opendir", "access", "open", "glob"]) {
   wrap(fs.promises, name);
 }
 nodeModule.syncBuiltinESMExports();
@@ -137,6 +140,12 @@ function fromWire(w) {
   if ("$d" in w) return new Date(w.$d);
   if ("$f" in w) return handles[w.$f];
   throw new Error(`not a wire form: ${JSON.stringify(w)}`);
+}
+
+// The argument as text: 11ty merges the global data files over this same
+// object, so a data function that changes it changes every page's data.
+function argumentPrint() {
+  return argument === undefined ? "" : JSON.stringify(encodeValue(argument, () => -1));
 }
 
 function deepFreeze(o) {
@@ -251,11 +260,15 @@ async function handle(req) {
       return { ok: null };
     }
     case "load": {
+      const before = argumentPrint();
       let value;
       try {
         value = await getDataValue(req.path, req.call);
       } catch (e) {
         throw placeSyntaxError(e, req.path);
+      }
+      if (argumentPrint() !== before) {
+        return { changedArgument: true };
       }
       return { ok: encodeValue(value, register) };
     }

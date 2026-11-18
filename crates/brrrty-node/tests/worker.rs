@@ -267,3 +267,42 @@ fn a_raw_write_to_the_output_stops_the_worker_loudly() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn a_data_function_that_changes_its_argument_stops_the_build() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "m.js",
+        "module.exports = (d) => { d.site = { title: \"x\" }; return {}; };",
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    ok(w.set_argument(&Value::from_json(&serde_json::json!({"a": 1}))));
+    match w.load(&t.path().join("m.js"), true) {
+        JsResult::Failed(f) => assert!(
+            f.message.contains("changes the data 11ty hands it"),
+            "{}",
+            f.message
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn opened_files_are_reads_too() {
+    let Some(node) = node() else { return };
+    let t = site(&[
+        ("rows.csv", "a\n"),
+        (
+            "o.js",
+            "module.exports = async () => { const h = await require(\"fs\").promises.open(require(\"path\").join(__dirname, \"rows.csv\")); const s = await h.readFile(\"utf8\"); await h.close(); return { s }; };",
+        ),
+    ]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    ok(w.load(&t.path().join("o.js"), true));
+    let root = t.path().canonicalize().unwrap();
+    let reads: Vec<_> = ok(w.reads())
+        .into_iter()
+        .map(|p| p.canonicalize().unwrap_or(p))
+        .collect();
+    assert!(reads.contains(&root.join("rows.csv")), "{reads:?}");
+}

@@ -48,6 +48,13 @@ pub fn classify(src: &str) -> DataClass {
     let Ok(toks) = tokenize(src) else {
         return DataClass::NeedsNode;
     };
+    // `__proto__` in a literal sets the prototype, not a key.
+    let proto = toks.iter().any(|t| {
+        t.is_ident("__proto__") || matches!(&t.tok, Tok::Str(Some(s)) if s == "__proto__")
+    });
+    if proto {
+        return DataClass::NeedsNode;
+    }
     if let Some(lit) = exported_literal(&toks) {
         if order_safe(&lit) {
             return DataClass::Translatable(rhai(&lit, 0));
