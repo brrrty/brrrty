@@ -1170,3 +1170,32 @@ fn the_time_a_data_file_read_as_it_loaded_is_fine() {
     );
     assert!(o.status.success(), "{}", text(&o));
 }
+
+#[test]
+fn a_computed_key_inside_shared_global_data_stays_the_pages_own() {
+    if !has_node() {
+        return;
+    }
+    // `site` has enough keys to be kept in the worker and shared by pages;
+    // setting `site.title` must still change only each page's copy, as
+    // 11ty's merge gives every page its own copy of a plain object.
+    let (o, t) = same_every_run(
+        &[
+            ("brrrty.config.rhai", ON),
+            (
+                "src/_data/site.js",
+                "module.exports = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, name: \"S\" };",
+            ),
+            (
+                "src/_data/eleventyComputed.js",
+                "module.exports = { site: { title: (d) => d.site.name + \"/\" + d.page.fileSlug } };",
+            ),
+            ("src/a.njk", "{{ site.title }}"),
+            ("src/b.njk", "{{ site.title }}"),
+        ],
+        3,
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(written(&t, "a/index.html").as_deref(), Some("S/a"));
+    assert_eq!(written(&t, "b/index.html").as_deref(), Some("S/b"));
+}

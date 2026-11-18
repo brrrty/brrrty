@@ -495,8 +495,8 @@ impl JsRuntime for Worker {
         traps: &[(String, String)],
         defaults: &[String],
     ) -> JsResult<PageId> {
-        let data = match encode_all(std::iter::once(data), Some(&mut self.kept)) {
-            Ok(mut e) => e.remove(0),
+        let data = match encode_page(data, &mut self.kept) {
+            Ok(e) => e,
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
         let r = self.request(
@@ -873,11 +873,27 @@ pub fn encode_all<'v>(
         counts,
         ids: HashMap::new(),
         kept,
+        no_keep: None,
     };
     values.map(|v| e.encode(v)).collect()
 }
 
-/// How long a list must be for the worker to keep it between requests.
+/// [`encode_all`] of a page's data, whose top object is the page's own:
+/// what is inside it may be kept, the object itself isn't.
+fn encode_page(data: &Value, kept: &mut Kept) -> Result<Json, String> {
+    let mut counts: HashMap<usize, u32> = HashMap::new();
+    count(data, &mut counts, Some(kept));
+    let mut e = Encoder {
+        counts,
+        ids: HashMap::new(),
+        kept: Some(kept),
+        no_keep: ptr_of(data),
+    };
+    e.encode(data)
+}
+
+/// How many items or keys a list or object must have for the worker to
+/// keep it between requests.
 pub const KEPT_LEN: usize = 8;
 
 /// The lists the worker keeps, by address, each held so the address stays
@@ -920,6 +936,8 @@ struct Encoder<'k> {
     /// The id of each shared object or array sent so far.
     ids: HashMap<usize, usize>,
     kept: Option<&'k mut Kept>,
+    /// The one object or list not to keep.
+    no_keep: Option<usize>,
 }
 
 /// Why a property Brrrty marks as unknown can't be handed to a function.
@@ -940,8 +958,14 @@ impl Encoder<'_> {
         let Some(p) = ptr_of(v) else {
             return Ok(encode(v));
         };
-        if let (Value::Array(a), Some(kept)) = (v, self.kept.as_deref_mut())
-            && a.len() >= KEPT_LEN
+        let big = match v {
+            Value::Array(a) => a.len() >= KEPT_LEN,
+            Value::Object(o) => o.len() >= KEPT_LEN && !brrrty_js::traps::is_open_object(o),
+            _ => false,
+        };
+        if big
+            && self.no_keep != Some(p)
+            && let Some(kept) = self.kept.as_deref_mut()
         {
             if let Some((_, id)) = kept.lists.get(&p) {
                 return Ok(json!({"$R": id}));
@@ -949,11 +973,7 @@ impl Encoder<'_> {
             let id = kept.next;
             kept.next += 1;
             kept.lists.insert(p, (v.clone(), id));
-            let inner = Json::Array(
-                a.iter()
-                    .map(|x| self.encode(x))
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            let inner = self.inner(v)?;
             return Ok(json!({"$S": [id, inner]}));
         }
         if let Some(id) = self.ids.get(&p) {
@@ -964,7 +984,17 @@ impl Encoder<'_> {
         if shared {
             self.ids.insert(p, id);
         }
-        let inner = match v {
+        let inner = self.inner(v)?;
+        Ok(if shared {
+            json!({"$s": [id, inner]})
+        } else {
+            inner
+        })
+    }
+
+    /// A list or object's own wire form.
+    fn inner(&mut self, v: &Value) -> Result<Json, String> {
+        Ok(match v {
             Value::Array(a) => Json::Array(
                 a.iter()
                     .map(|x| self.encode(x))
@@ -995,11 +1025,6 @@ impl Encoder<'_> {
                 json!({"$o": entries})
             }
             _ => encode(v),
-        };
-        Ok(if shared {
-            json!({"$s": [id, inner]})
-        } else {
-            inner
         })
     }
 }
@@ -1030,5 +1055,39 @@ pub fn encode(v: &Value) -> Json {
         }
         Value::Date(d) => json!({"$d": d.timestamp_millis()}),
         Value::Function(h) => json!({"$f": h.0}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn object(n: usize) -> Value {
+        Value::Object(Arc::new(
+            (0..n)
+                .map(|i| (format!("k{i}"), Value::Number(i as f64)))
+                .collect(),
+        ))
+    }
+
+    #[test]
+    fn big_objects_and_lists_cross_once_and_the_page_itself_never_is_kept() {
+        let mut kept = Kept::default();
+        let big = object(KEPT_LEN);
+        let small = object(2);
+        let first = encode_all([&big, &small].into_iter(), Some(&mut kept)).unwrap();
+        assert!(first[0].get("$S").is_some(), "{}", first[0]);
+        assert!(first[1].get("$o").is_some(), "{}", first[1]);
+        let again = encode_all([&big].into_iter(), Some(&mut kept)).unwrap();
+        assert_eq!(again[0], json!({"$R": 0}));
+        // A page's own data object holds kept values but isn't one.
+        let page = Value::Object(Arc::new(
+            (0..KEPT_LEN)
+                .map(|i| (format!("p{i}"), big.clone()))
+                .collect(),
+        ));
+        let p = encode_page(&page, &mut kept).unwrap();
+        assert!(p.get("$o").is_some(), "{p}");
+        assert!(p.to_string().contains("\"$R\":0"), "{p}");
     }
 }

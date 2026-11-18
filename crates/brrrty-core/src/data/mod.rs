@@ -80,12 +80,26 @@ pub(crate) fn merged_item(target: Option<Value>, source: &Value) -> Value {
         // A missing or falsy target takes a copy of a source object, with
         // its `override:` keys cleaned.
         (t, Value::Object(s)) if t.as_ref().is_none_or(|t| !t.js_truthy()) => {
+            // Values never change in place, so a source with nothing to
+            // clean is shared rather than copied: pages keep one object.
+            if !has_override_keys(s) {
+                return source.clone();
+            }
             let mut copy = Data::new();
             merge(&mut copy, s);
             Value::Object(Arc::new(copy))
         }
         (_, s) => s.clone(),
     }
+}
+
+/// Whether an object, or one inside it (not through a list), has an
+/// `override:` key that a merge would clean.
+fn has_override_keys(o: &Data) -> bool {
+    o.iter().any(|(k, v)| {
+        k.starts_with(OVERRIDE_PREFIX)
+            || matches!(v, Value::Object(inner) if has_override_keys(inner))
+    })
 }
 
 /// The config's `addGlobalData` values as 11ty sets them: each name in

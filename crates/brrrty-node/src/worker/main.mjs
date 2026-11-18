@@ -158,8 +158,43 @@ const handleOf = new Map();
 
 // Lists kept between requests, by Brrrty's id, and every object and list
 // inside them.
-// Values (lists and objects) kept between requests, by Brrrty's id.
+// Values (lists and objects) kept between requests, by Brrrty's id, and
+// every list and object inside them: pages share them.
 let persistent = new Map();
+let keptObjects = new WeakSet();
+
+function markKept(v) {
+  const stack = [v];
+  while (stack.length) {
+    const x = stack.pop();
+    if (x === null || typeof x !== "object" || keptObjects.has(x)) continue;
+    keptObjects.add(x);
+    for (const k of Object.keys(x)) {
+      const d = Object.getOwnPropertyDescriptor(x, k);
+      if (d && "value" in d) stack.push(d.value);
+    }
+  }
+}
+
+// Before setting the dotted `key` of a page's data: an object on the way
+// that pages share is replaced, in this page's data, by a copy of it, as
+// 11ty's merge gives every page its own copy of a plain object.
+function ownPath(data, key) {
+  const path = key.split(".");
+  let o = data;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (o === null || typeof o !== "object") return;
+    const next = o[path[i]];
+    if (next !== null && typeof next === "object" && !Array.isArray(next) && keptObjects.has(next)) {
+      const copy = Object.create(Object.getPrototypeOf(next));
+      Object.defineProperties(copy, Object.getOwnPropertyDescriptors(next));
+      o[path[i]] = copy;
+      o = copy;
+    } else {
+      o = next;
+    }
+  }
+}
 
 // --- What a call writes. ---
 //
@@ -247,6 +282,7 @@ function takeWrote() {
 // Forget the kept values: one was changed. Brrrty sends them again.
 function dropPersistent() {
   persistent = new Map();
+  keptObjects = new WeakSet();
 }
 
 // --- The clock and random numbers. ---
@@ -333,6 +369,7 @@ function fromWire(w, shared = new Map()) {
     const [id, inner] = w.$S;
     if (persistent.has(id)) return persistent.get(id);
     const v = fromWire(inner, shared);
+    markKept(v);
     persistent.set(id, v);
     return v;
   }
@@ -740,6 +777,7 @@ async function handle(req) {
       for (const key of req.defaults || []) {
         if (lodashGet(data, key, UNDEFINED_VALUE) === UNDEFINED_VALUE) {
           if (throughList(data, key)) return { refused: `computed key \`${key}\` would be set inside a list, which Brrrty doesn't do` };
+          ownPath(data, key);
           lodashSet(data, key, "");
         }
       }
@@ -773,6 +811,7 @@ async function handle(req) {
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       if (typeof req.set === "string") {
         if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };
+        ownPath(p.data, req.set);
         lodashSet(p.data, req.set, r.value);
       }
       return { okText: r.okText };
@@ -780,6 +819,7 @@ async function handle(req) {
     case "pageSet": {
       const p = getPage(req.page);
       if (throughList(p.data, req.key)) return { refused: `computed key \`${req.key}\` would be set inside a list, which Brrrty doesn't do` };
+      ownPath(p.data, req.key);
       lodashSet(p.data, req.key, fromWire(req.value));
       return { ok: null };
     }
