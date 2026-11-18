@@ -474,41 +474,9 @@ fn shown_lines(text: &str) -> String {
         .join("\n")
 }
 
-/// Whether a script is exactly one 11ty command: `eleventy`,
-/// `npx @11ty/eleventy` or `node_modules/.bin/eleventy`, after any
-/// `NAME=value` settings (or `cross-env` ones), with its own flags.
+/// Whether a script is exactly one plain 11ty command, which init can rewrite.
 fn is_eleventy_command(cmd: &str) -> bool {
-    if cmd.contains(['&', '|', ';', '`', '>', '<', '(', ')', '\n', '\r']) || cmd.contains("$(") {
-        return false;
-    }
-    let mut words = cmd.split_whitespace().peekable();
-    let assignment = |w: &str| {
-        w.split_once('=').is_some_and(|(k, _)| {
-            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
-    };
-    while words.peek().is_some_and(|w| assignment(w)) {
-        words.next();
-    }
-    if words.peek() == Some(&"cross-env") || words.peek() == Some(&"env") {
-        words.next();
-        while words.peek().is_some_and(|w| assignment(w)) {
-            words.next();
-        }
-    }
-    match words.next() {
-        Some("eleventy" | "node_modules/.bin/eleventy" | "./node_modules/.bin/eleventy") => true,
-        Some("npx") => {
-            let mut w = words.next();
-            if matches!(w, Some("-y" | "--yes")) {
-                w = words.next();
-            }
-            w.is_some_and(|w| {
-                w == "eleventy" || w == "@11ty/eleventy" || w.starts_with("@11ty/eleventy@")
-            })
-        }
-        _ => false,
-    }
+    brrrty_config::eleventy_cli::is_plain_eleventy_command(cmd)
 }
 
 /// `cmd` with the `TZ` an 11ty command sets before it, through `cross-env` when it
@@ -601,7 +569,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                 // The 11ty `build` command's TZ goes to `brrrty serve` too, unless `start`
                 // sets its own: serve writes the output folder as build does.
                 let build_tz = string("build")
-                    .filter(|b| is_eleventy_command(b))
+                    .and_then(|b| brrrty_config::eleventy_cli::rewritable_step(&b))
                     .unwrap_or_default();
                 let tz_from = |name: &str, own: &str| -> String {
                     if name == "start" && !own.contains("TZ=") {
@@ -624,7 +592,11 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                     }
                     let keep = format!("{name}:11ty");
                     match current {
-                        Some(old) if is_eleventy_command(&old) => {
+                        // One plain 11ty command, alone or among other commands
+                        // (`sass a b && eleventy`), with nothing that changes the shell's state.
+                        Some(old)
+                            if brrrty_config::eleventy_cli::rewritable_step(&old).is_some() =>
+                        {
                             if scripts.get(&keep).is_some() {
                                 advice.push(format!(
                                     "scripts.{name} runs 11ty, and scripts.{keep} is taken, so Brrrty left both alone. Change scripts.{name} to \"{cmd}\" when you're ready."
@@ -634,7 +606,16 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                             // Rename it to `name:11ty`, with the new script in front, run with
                             // the same environment settings (`TZ=Asia/Tokyo`), which can
                             // change the pages.
-                            let cmd = &with_prefix(&tz_from(name, &old), cmd);
+                            let step = brrrty_config::eleventy_cli::rewritable_step(&old)
+                                .unwrap_or_default();
+                            let brrrty = with_prefix(&tz_from(name, &step), cmd);
+                            // The other steps stay, in their order: only the 11ty one
+                            // becomes Brrrty's.
+                            let cmd = &if is_eleventy_command(&old) {
+                                brrrty
+                            } else {
+                                old.replacen(&step, &brrrty, 1)
+                            };
                             let quoted = serde_json::to_string(cmd).unwrap_or_default();
                             let i = scripts
                                 .members

@@ -219,45 +219,185 @@ fn ci_tz(root: &Path, label: &str) -> Option<String> {
     found
 }
 
-/// Whether a step is on the short list of commands that can't change what a later
-/// 11ty step in the same script runs with (environment, folder, node options): Brrrty,
-/// a package script (read on its own), a package install, and plain file commands.
-fn harmless(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) -> bool {
+/// Environment variables whose value can change what 11ty writes: the time zone,
+/// the locale (`Intl`), what `node` and `npx` run, and node's own options; plus those
+/// the site's 11ty config reads (`process.env.NAME`).
+pub(crate) struct Sensitive {
+    names: Vec<String>,
+    /// The config reads a name it computes (`process.env[key]`): any name counts.
+    any: bool,
+}
+
+impl Sensitive {
+    /// The fixed set alone.
+    pub(crate) fn fixed() -> Sensitive {
+        Sensitive {
+            names: Vec::new(),
+            any: false,
+        }
+    }
+
+    /// The fixed set, and the names the site's 11ty config file uses.
+    pub(crate) fn of(root: &Path) -> Sensitive {
+        // 11ty's config by its default names (reading the scripts for a `--config` here
+        // would read them twice over).
+        let text = crate::markers::default_config(root)
+            .and_then(|c| read_text(&root.join(c)))
+            .unwrap_or_default();
+        let re = regex::Regex::new(
+            r#"process\.env(?:\s*\.\s*([A-Za-z_][\w]*)|\s*\[\s*["'`]([A-Za-z_][\w]*)["'`]\s*\]|\s*\[)"#,
+        )
+        .expect("valid");
+        let mut out = Sensitive::fixed();
+        for c in re.captures_iter(&text) {
+            match c.get(1).or_else(|| c.get(2)) {
+                Some(m) => out.names.push(m.as_str().to_string()),
+                None => out.any = true,
+            }
+        }
+        out
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.any
+            || matches!(
+                name,
+                "TZ" | "NODE_OPTIONS" | "NODE_PATH" | "PATH" | "LANG" | "LANGUAGE" | "LC_ALL"
+            )
+            || name.starts_with("LC_")
+            || self.names.iter().any(|n| n == name)
+    }
+}
+
+/// Whether a step changes the shell's state in a way a later step (and the 11ty it
+/// runs) inherits: its folder (`cd` other than to `.`, `pushd`, `popd`), or an
+/// environment variable that can change what 11ty writes (`export`, `unset`, a bare
+/// `NAME=value`, `declare -x` and kin, `set -a`); or something past reading (`source`,
+/// `.`, `exec`, `alias`, `hash -p`, `eval` of anything of these). An external
+/// command runs in its own process and can't change its parent shell, so any other
+/// command is fine, as are builtins that change nothing a child sees (`set -e`,
+/// `umask`, `ulimit`, `trap`).
+fn stateful(step: &str, sens: &Sensitive) -> bool {
     let w = without_redirections(words(without_comment(step)));
-    let get = |i: usize| w.get(i).map(String::as_str).unwrap_or_default();
+    let name_of = |x: &str| x.split('=').next().unwrap_or(x).to_string();
+    let assignment = |x: &str| {
+        x.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    };
     let mut i = 0;
-    while get(i).contains('=') && !get(i).starts_with('-') {
+    while w.get(i).is_some_and(|x| assignment(x)) {
         i += 1;
     }
-    let assigned = i > 0;
-    match get(i) {
-        "" => !assigned,
-        "brrrty" => true,
-        "npx" | "bunx" if get(i + 1) == "brrrty" => true,
-        "rm" | "mkdir" | "cp" | "mv" | "echo" | "printf" | "test" | "true" | "false" | "touch"
-        | "tee" | "exit" | "cat" | "ls" => !assigned,
-        "cd" => !assigned && matches!(get(i + 1), "." | "./") && w.len() == i + 2,
-        "npm" => {
-            !assigned
-                && matches!(
-                    get(i + 1),
-                    "run" | "run-script" | "ci" | "install" | "i" | "test" | "t" | "start"
-                )
+    let dynamic = |x: &str| x.contains('$') || x.contains('`');
+    // Names a builtin sets or unsets: sensitive ones, or ones built at run time.
+    let names_matter = |args: &[String]| {
+        args.iter()
+            .filter(|a| !a.starts_with('-'))
+            .any(|a| dynamic(&name_of(a)) || sens.contains(&name_of(a)))
+    };
+    match w.get(i).map(String::as_str) {
+        // A command named at run time (`$CMD site`) may be any builtin.
+        Some(c) if dynamic(c) => true,
+        // `NAME=value` alone sets a shell variable, which children see when it's
+        // already exported.
+        None => names_matter(&w[..i]),
+        Some("cd") => !(w.len() == i + 2 && matches!(w[i + 1].as_str(), "." | "./")),
+        Some("pushd" | "popd" | "source" | "." | "exec" | "alias" | "function" | "shopt") => true,
+        Some("export" | "unset" | "declare" | "typeset" | "readonly" | "local") => {
+            names_matter(&w[i + 1..])
         }
-        "pnpm" | "yarn" | "bun" => {
-            !assigned
-                && (matches!(get(i + 1), "run" | "install" | "i" | "" | "test")
-                    || scripts.contains_key(get(i + 1)))
+        Some("set") => w[i + 1..].iter().enumerate().any(|(k, a)| {
+            (a.starts_with('-') && !a.starts_with("--") && a.contains('a'))
+                || (a.starts_with('+') && a.contains('a'))
+                || a == "allexport"
+                || (a == "-o" && w.get(i + 2 + k).is_some_and(|n| n == "allexport"))
+        }),
+        Some("hash") => w[i + 1..].iter().any(|a| a.starts_with("-p")),
+        Some("builtin" | "command") => stateful(&w[i + 1..].join(" "), sens),
+        Some("eval") => {
+            let body = w[i + 1..].join(" ");
+            body.contains("$(")
+                || body.contains('`')
+                || steps(&body).iter().any(|s| stateful(s, sens))
         }
-        "npm-run-all" | "run-s" | "run-p" => !assigned,
+        Some(_) => false,
+    }
+}
+
+/// Whether a script defines a shell function (`f() { … }`, `function f`).
+fn defines_function(cmd: &str) -> bool {
+    regex::Regex::new(r"(^|[;&|\n(])\s*(function\s+[\w-]+|[\w-]+\s*\(\s*\))\s*\{")
+        .expect("valid")
+        .is_match(cmd)
+}
+
+/// Whether a command is exactly one plain 11ty command `brrrty init` can rewrite:
+/// `eleventy`, `npx @11ty/eleventy` or its bin, after `NAME=value` settings (or a
+/// `cross-env`/`env` with its own), with its own flags.
+pub fn is_plain_eleventy_command(cmd: &str) -> bool {
+    if cmd.contains(['&', '|', ';', '`', '>', '<', '(', ')', '\n', '\r', '$']) {
+        return false;
+    }
+    let mut words = cmd.split_whitespace().peekable();
+    let assignment = |w: &str| {
+        w.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+    };
+    while words.peek().is_some_and(|w| assignment(w)) {
+        words.next();
+    }
+    if words.peek() == Some(&"cross-env") || words.peek() == Some(&"env") {
+        words.next();
+        while words.peek().is_some_and(|w| assignment(w)) {
+            words.next();
+        }
+    }
+    match words.next() {
+        Some("eleventy" | "node_modules/.bin/eleventy" | "./node_modules/.bin/eleventy") => true,
+        Some("npx") => {
+            let mut w = words.next();
+            if matches!(w, Some("-y" | "--yes")) {
+                w = words.next();
+            }
+            w.is_some_and(|w| {
+                w == "eleventy" || w == "@11ty/eleventy" || w.starts_with("@11ty/eleventy@")
+            })
+        }
         _ => false,
+    }
+}
+
+/// The one step of a script that is a plain 11ty command init can rewrite, when the
+/// script has exactly one and nothing in it changes the shell's state.
+pub fn rewritable_step(cmd: &str) -> Option<String> {
+    if defines_function(cmd) {
+        return None;
+    }
+    let all = steps(cmd);
+    if all.iter().any(|s| stateful(s, &Sensitive::fixed())) {
+        return None;
+    }
+    let plain: Vec<&String> = all
+        .iter()
+        .filter(|s| is_plain_eleventy_command(s))
+        .collect();
+    match plain.as_slice() {
+        [one] if all.iter().filter(|s| mentions(s)).count() == 1 => Some((*one).clone()),
+        _ => None,
     }
 }
 
 /// Whether, in the CI job of `label`, an earlier line moves to another folder
 /// (`cd site`, `pushd`), exports a variable, or the job or a step sets
 /// `working-directory:`.
-fn ci_job_moves(root: &Path, label: &str, deploys: &[(String, String, bool)]) -> bool {
+fn ci_job_moves(
+    root: &Path,
+    label: &str,
+    deploys: &[(String, String, bool)],
+    sens: &Sensitive,
+) -> bool {
     let job = ci_job(root, label);
     let line = |l: &str| -> usize {
         l.split_once(", line ")
@@ -270,14 +410,7 @@ fn ci_job_moves(root: &Path, label: &str, deploys: &[(String, String, bool)]) ->
             && ci_file(l) == ci_file(label)
             && line(l) < here
             && ci_job(root, l) == job
-            && steps(cmd).iter().any(|step| {
-                let w = words(step);
-                match w.first().map(String::as_str) {
-                    Some("cd") => !(w.len() == 2 && matches!(w[1].as_str(), "." | "./")),
-                    Some("pushd" | "export" | "source" | ".") => true,
-                    _ => false,
-                }
-            })
+            && (defines_function(cmd) || steps(cmd).iter().any(|step| stateful(step, sens)))
     });
     if moved {
         return true;
@@ -845,10 +978,19 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
     if i == usize::MAX {
         // A JavaScript runtime: skip its own flags to the file it runs.
         let mut k = 1;
+        // A node option other than a preload (which `find` notes) changes how 11ty runs
+        // in ways this doesn't read (`--env-file`, `--conditions`, `-C`).
+        let mut other_option = false;
         while get(k).starts_with('-') {
-            // An environment file can set TZ or NODE_OPTIONS for 11ty.
             if get(k).starts_with("--env-file") {
                 return unreadable(&w);
+            }
+            let flag = get(k).split('=').next().unwrap_or_default();
+            if !matches!(
+                flag,
+                "-r" | "--require" | "--import" | "--loader" | "--experimental-loader"
+            ) {
+                other_option = true;
             }
             let takes = matches!(
                 get(k),
@@ -868,6 +1010,9 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
         }
         let file = get(k);
         if file.ends_with("@11ty/eleventy/cmd.cjs") || file.ends_with("@11ty/eleventy/cmd.js") {
+            if other_option {
+                return Step::Unreadable;
+            }
             extra.extend(
                 crate::eleventy_js::preloads(&w[1..k])
                     .into_iter()
@@ -875,7 +1020,9 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
             );
             return Step::Eleventy([&w[k + 1..], &extra[..]].concat());
         }
-        if file.is_empty() {
+        // 11ty further along (`node -C dev …/cmd.cjs`, where `-C` takes a value): what runs
+        // is past reading.
+        if file.is_empty() || w[k + 1..].iter().any(|x| mentions(x)) {
             return unreadable(&w);
         }
         return Step::Runs(file.to_string());
@@ -1113,6 +1260,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         .iter()
         .filter_map(|(n, c)| Some((n.clone(), c.as_str()?.to_string(), false)));
     let deploys = deploy_commands(root);
+    let sens = Sensitive::of(root);
     // CI jobs that run a Brrrty build: their 11ty runs are there to compare with it.
     // With the TZ the Brrrty build there runs with.
     let ci_brrrty: Vec<(String, Vec<String>)> = deploys
@@ -1153,6 +1301,11 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         let mut local_js: Vec<(String, String, String, String, String)> = Vec::new();
         for step in steps(cmd) {
             match classify(&step, scripts) {
+                // Command substitution or a variable in 11ty's own step: its flags can't
+                // be read.
+                Step::Eleventy(_) if !legacy && (step.contains('$') || step.contains('`')) => {
+                    bad = true
+                }
                 Step::Eleventy(args) => found.push(args),
                 Step::Runs(file) if legacy => {
                     if let Some(hash) = uses_api(root, &file) {
@@ -1203,13 +1356,15 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 }
                 Step::Cd => cd = true,
                 Step::Unreadable => bad = true,
-                Step::Other => unknown |= !harmless(&step, scripts),
+                Step::Other => unknown |= stateful(&step, &sens),
             }
         }
         let runs_11ty = !found.is_empty() || !local_runs.is_empty() || !local_js.is_empty();
+        unknown |= defines_function(cmd);
         // In CI, a `cd`, `pushd` or `export` on an earlier line of the job, or a
         // `working-directory:`, carries over to the 11ty line.
-        let ci_moved = !legacy && runs_11ty && is_ci(name) && ci_job_moves(root, name, &deploys);
+        let ci_moved =
+            !legacy && runs_11ty && is_ci(name) && ci_job_moves(root, name, &deploys, &sens);
         // Two 11ty runs, one after a `cd`, or one beside a step that isn't known to be
         // harmless: which flags count is past reading.
         if bad
@@ -1450,9 +1605,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         .filter(|(n, _)| n == "\0env")
         .filter_map(|(_, v)| v.clone())
         .collect();
-    let carried = (script == "build"
-        && steps(&command).len() == 1
-        && matches!(classify(&command, scripts), Step::Eleventy(_)))
+    let carried = (script == "build" && rewritable_step(&command).is_some())
         || (script == "build:11ty" && brrrty_build && build_env == env_now);
     let mut seen: Vec<&str> = Vec::new();
     for (name, value) in &flags {
@@ -1672,7 +1825,6 @@ mod tests {
             "bunx @11ty/eleventy --input=src --pathprefix=/blog/",
             "npm exec -- eleventy --input=src --pathprefix=/blog/",
             "node node_modules/@11ty/eleventy/cmd.cjs --input=src --pathprefix=/blog/",
-            "node --max-old-space-size=4096 ./node_modules/@11ty/eleventy/cmd.cjs --input=src --pathprefix=/blog/",
             "./node_modules/.bin/eleventy --input=src --pathprefix=/blog/",
             "NODE_ENV=production cross-env A=1 eleventy --input=src --pathprefix=/blog/",
             "eleventy --input=src --pathprefix=/blog/ > log.txt",
@@ -2521,9 +2673,16 @@ mod tests {
             "{:?}",
             c.todos
         );
-        // In a compound script init doesn't rewrite: marked.
+        // A compound script init rewrites carries it too (`npm run css && TZ=… brrrty
+        // build`); one whose 11ty step init can't rewrite is marked.
         let c = find(
             &json!({ "scripts": { "build": "npm run css && TZ=Asia/Tokyo eleventy" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        let c = find(
+            &json!({ "scripts": { "build": "npm run css && TZ=Asia/Tokyo pnpm exec eleventy" } }),
             t.path(),
         )
         .unwrap();
@@ -2672,21 +2831,58 @@ mod tests {
     }
 
     #[test]
-    fn only_known_harmless_steps_may_sit_beside_11ty() {
+    fn shell_builtins_that_change_state_are_marked_and_other_commands_arent() {
         let t = site();
-        for build in [
-            "export TZ=Asia/Tokyo; eleventy",
-            "export TZ=Asia/Tokyo && eleventy --input=src",
-            "export NODE_OPTIONS='--require ./p.cjs'; eleventy",
-            "source .env && eleventy",
-            ". ./env.sh && eleventy",
-            "pushd site && eleventy",
-            "set -a && eleventy",
-            "prepare && eleventy",
-            "node --env-file=.env node_modules/@11ty/eleventy/cmd.cjs",
-            "node --env-file-if-exists=.env node_modules/@11ty/eleventy/cmd.cjs",
-            "env -S 'TZ=Asia/Tokyo eleventy'",
-        ] {
+        let mut marked: Vec<String> = [
+            "cd site",
+            "pushd site",
+            "popd",
+            "export TZ=Asia/Tokyo",
+            "unset TZ",
+            "set -a",
+            "set -o allexport",
+            "source .env",
+            ". ./env.sh",
+            "eval \"$X\"",
+            "eval \"export TZ=x\"",
+            "exec true",
+            "alias x=y",
+            "declare -x TZ=Asia/Tokyo",
+            "typeset -x TZ=x",
+            "readonly TZ=x",
+            "local TZ=x",
+            "export LANG=de_DE.UTF-8",
+            "export PATH=./bin:$PATH",
+            "export NODE_OPTIONS=--require=./p.cjs",
+            "export \"$NAME\"=1",
+            "shopt -s expand_aliases",
+            "hash -p ./x node",
+            "builtin cd site",
+            "command cd site",
+            "TZ=Asia/Tokyo",
+            "$CD site",
+        ]
+        .iter()
+        .map(|b| format!("{b} && eleventy --input=src"))
+        .collect();
+        marked.extend(
+            [
+                "f() { true; }; eleventy --input=src",
+                "function f { true; }; eleventy --input=src",
+                "eleventy --input=$SRC",
+                "eleventy --input=${SRC}",
+                "eleventy --input=$(cat dir)",
+                "eleventy --input=`cat dir`",
+                "TZ=$(cat tz) eleventy --input=src",
+                "node --env-file=.env node_modules/@11ty/eleventy/cmd.cjs --input=src",
+                "node --max-old-space-size=4096 node_modules/@11ty/eleventy/cmd.cjs --input=src",
+                "node -C dev node_modules/@11ty/eleventy/cmd.cjs --input=src",
+                "env -S 'TZ=Asia/Tokyo eleventy'",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        );
+        for build in &marked {
             let c = find(&json!({ "scripts": { "build": build } }), t.path())
                 .unwrap_or_else(|| panic!("{build}: silent"));
             assert_eq!(c.input, None, "{build}");
@@ -2698,12 +2894,28 @@ mod tests {
                 c.todos
             );
         }
+        // An external command in its own step can't change 11ty's environment or folder.
         for build in [
+            "sass src/a.scss _site/a.css && eleventy --input=src",
+            "tailwindcss -i a.css -o _site/a.css; eleventy --input=src",
+            "postcss a.css -o _site/a.css && eleventy --input=src",
+            "node scripts/prep.js && eleventy --input=src",
+            "npx some-tool && eleventy --input=src",
+            "prepare && eleventy --input=src",
             "rm -rf _site && eleventy --input=src",
             "npm run css && eleventy --input=src",
             "mkdir -p _site; eleventy --input=src | tee build.log",
             "eleventy --input=src || exit 1",
+            "cd . && eleventy --input=src",
             "env TZ=Asia/Tokyo eleventy --input=src",
+            // Builtins that change nothing 11ty sees: shell options, variables nothing
+            // reads, file modes and limits.
+            "set -euo pipefail && eleventy --input=src",
+            "export DEPLOY_ID=1 && eleventy --input=src",
+            "unset DEPLOY_KEY DEPLOY_HOST && eleventy --input=src",
+            "eval \"val=\\${$v:-}\" && eleventy --input=src",
+            "umask 022 && eleventy --input=src",
+            "ulimit -n 4096; trap 'rm -f x' EXIT; hash -r; eleventy --input=src",
         ] {
             let c = find(
                 &json!({ "scripts": { "build": build, "css": "sass a b" } }),
@@ -2774,5 +2986,70 @@ mod tests {
             find(&json!({ "scripts": { "build": "vite build" } }), t.path()),
             None
         );
+    }
+
+    #[test]
+    fn a_ci_job_is_checked_for_the_same_builtins() {
+        for pre in [
+            "source .env",
+            ". ./env.sh",
+            "TZ=Asia/Tokyo",
+            "set -a",
+            "pushd site",
+            "unset TZ",
+        ] {
+            let t = site();
+            write(
+                &t,
+                ".gitlab-ci.yml",
+                &format!("pages:\n  script:\n    - {pre}\n    - npx @11ty/eleventy --input=src\n"),
+            );
+            let c = find(&json!({}), t.path()).unwrap_or_else(|| panic!("{pre}: silent"));
+            assert_eq!(c.input, None, "{pre}");
+        }
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - apk add git\n    - sass a b\n    - npx @11ty/eleventy --input=src\n",
+        );
+        let c = find(&json!({}), t.path()).unwrap();
+        assert_eq!(c.input.as_deref(), Some("src"));
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+    }
+
+    #[test]
+    fn a_variable_the_config_reads_is_sensitive() {
+        let t = site();
+        write(
+            &t,
+            "eleventy.config.js",
+            "module.exports = () => ({ dir: { output: process.env.SITE_OUT } });\n",
+        );
+        let c = find(
+            &json!({ "scripts": { "build": "export SITE_OUT=dist && eleventy --input=src" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert_eq!(c.input, None);
+        // One it doesn't read is fine.
+        let c = find(
+            &json!({ "scripts": { "build": "export OTHER=1 && eleventy --input=src" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert_eq!(c.input.as_deref(), Some("src"));
+        // A computed name makes any name count.
+        write(
+            &t,
+            "eleventy.config.js",
+            "module.exports = () => ({ x: process.env[key] });\n",
+        );
+        let c = find(
+            &json!({ "scripts": { "build": "export OTHER=1 && eleventy --input=src" } }),
+            t.path(),
+        )
+        .unwrap();
+        assert_eq!(c.input, None);
     }
 }
