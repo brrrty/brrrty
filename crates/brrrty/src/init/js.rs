@@ -36,6 +36,8 @@ pub(crate) struct Token {
     pub pair: Option<usize>,
     /// A template literal (which on a new line continues the statement as a tag).
     pub tick: bool,
+    /// For a template literal: the names its `${}` code uses, other than as a property.
+    pub inner: Vec<String>,
 }
 
 /// How deep brackets and template literals may nest before Brrrty stops reading.
@@ -130,17 +132,28 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
     }
     let b = src.as_bytes();
     let mut i = 0;
+    if src.starts_with("#!") {
+        while i < b.len() && !is_line_break(b[i]) {
+            i += 1;
+        }
+    }
+    let (mut out, _) = lex(src, i, false, 0)?;
+    pair_up(&mut out)?;
+    Ok(out)
+}
+
+/// Tokens from `i` to the end, or, in a template literal's `${}` (`subst`), to
+/// the `}` that closes it: then also the offset after that `}`.
+fn lex(src: &str, mut i: usize, subst: bool, depth: usize) -> Result<(Vec<Token>, usize), String> {
+    let b = src.as_bytes();
     let mut out: Vec<Token> = Vec::new();
     let mut nl = false;
     // For each open `(`: whether it holds the condition of `if`, `while`,
     // `for` or `with`, after which a `/` could start a regular expression.
     let mut parens: Vec<bool> = Vec::new();
     let mut closed_condition = false;
-    if src.starts_with("#!") {
-        while i < b.len() && !is_line_break(b[i]) {
-            i += 1;
-        }
-    }
+    // Braces open in this `${}`.
+    let mut braces = 0usize;
     while i < b.len() {
         let c = b[i];
         if is_line_break(c) {
@@ -177,13 +190,17 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             i += end + 4;
             continue;
         }
+        if subst && c == b'}' && braces == 0 {
+            return Ok((out, i + 1));
+        }
         let start = i;
+        let mut inner = Vec::new();
         let tok = if c == b'"' || c == b'\'' {
             let (end, value) = string(src, i)?;
             i = end;
             Tok::Str(value)
         } else if c == b'`' {
-            let (end, value) = template(src, i, 0)?;
+            let (end, value) = template(src, i, depth, &mut inner)?;
             i = end;
             match value {
                 Some(v) => Tok::Str(v),
@@ -233,6 +250,8 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
         };
         closed_condition = false;
         match tok {
+            Tok::Punct("{") => braces += 1,
+            Tok::Punct("}") => braces = braces.saturating_sub(1),
             Tok::Punct("(") => parens.push(
                 out.last()
                     .and_then(Token::ident)
@@ -248,11 +267,14 @@ pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, String> {
             nl_before: nl,
             pair: None,
             tick: c == b'`',
+            inner,
         });
         nl = false;
     }
-    pair_up(&mut out)?;
-    Ok(out)
+    if subst {
+        return Err("a template literal is never closed".into());
+    }
+    Ok((out, i))
 }
 
 /// Fill in `pair` for every bracket, in one pass.
@@ -335,9 +357,8 @@ fn regex(b: &[u8], mut i: usize) -> Result<usize, String> {
             Some(&c) if is_line_break(c) => {
                 return Err("a regular expression is never closed".into());
             }
-            Some(&c) if c >= 0x80 => {
-                return Err("there is a non-ASCII character in a regular expression".into());
-            }
+            // Any other character is part of the pattern: the line
+            // terminators that could end one early were refused up front.
             Some(b'\\') => i += 2,
             Some(b'[') => {
                 class = true;
@@ -463,7 +484,12 @@ fn escape(src: &str, j: usize, units: &mut Vec<u16>) -> (usize, bool) {
 
 /// A template literal from `i`: where it ends, and its value when it has no
 /// substitutions.
-fn template(src: &str, i: usize, depth: usize) -> Result<(usize, Option<Option<String>>), String> {
+fn template(
+    src: &str,
+    i: usize,
+    depth: usize,
+    inner: &mut Vec<String>,
+) -> Result<(usize, Option<Option<String>>), String> {
     if depth > MAX_DEPTH {
         return Err(format!("template literals nest more than {MAX_DEPTH} deep"));
     }
@@ -483,7 +509,17 @@ fn template(src: &str, i: usize, depth: usize) -> Result<(usize, Option<Option<S
             }
             Some(b'$') if b.get(j + 1) == Some(&b'{') => {
                 plain = false;
-                j = substitution(src, j + 2, depth + 1)?;
+                let (mut toks, end) = lex(src, j + 2, true, depth + 1)?;
+                pair_up(&mut toks)?;
+                for (k, t) in toks.iter().enumerate() {
+                    if let Some(name) = t.ident()
+                        && !(k > 0 && (toks[k - 1].is(".") || toks[k - 1].is("?.")))
+                    {
+                        inner.push(name.to_string());
+                    }
+                    inner.extend(t.inner.iter().cloned());
+                }
+                j = end;
             }
             Some(b'\r') => {
                 // A template's CR LF and CR read as LF.
@@ -506,41 +542,6 @@ fn template(src: &str, i: usize, depth: usize) -> Result<(usize, Option<Option<S
         Some(None)
     };
     Ok((j + 1, value))
-}
-
-/// Skip a `${ ... }` body starting at `j`; returns the offset after its `}`.
-fn substitution(src: &str, mut j: usize, nest: usize) -> Result<usize, String> {
-    let b = src.as_bytes();
-    let mut depth = 0usize;
-    loop {
-        match b.get(j) {
-            None => return Err("a template literal is never closed".into()),
-            Some(b'{') => {
-                depth += 1;
-                j += 1;
-            }
-            Some(b'}') if depth == 0 => return Ok(j + 1),
-            Some(b'}') => {
-                depth -= 1;
-                j += 1;
-            }
-            Some(b'"' | b'\'') => j = string(src, j)?.0,
-            Some(b'`') => j = template(src, j, nest)?.0,
-            Some(b'/') if b.get(j + 1) == Some(&b'/') => j = line_comment(src, j)?,
-            Some(&c) if c >= 0x80 => {
-                return Err("there is a non-ASCII character outside a string or comment".into());
-            }
-            Some(b'/') if b.get(j + 1) == Some(&b'*') => match src[j + 2..].find("*/") {
-                Some(e) => j += e + 4,
-                None => return Err("a /* comment is never closed".into()),
-            },
-            // A regular expression could hold a `}` or a quote.
-            Some(b'/') => {
-                return Err("Brrrty can't read a `/` inside a template literal's `${}`".into());
-            }
-            Some(_) => j += 1,
-        }
-    }
 }
 
 /// The index of the token that closes the bracket at `open`.
@@ -971,6 +972,22 @@ mod tests {
         assert!(t.iter().any(|t| t.tok == Tok::Regex));
         assert_eq!(t.iter().filter(|t| t.is("/")).count(), 1);
         assert!(tokenize("'open").is_err());
+    }
+
+    #[test]
+    fn template_substitutions_are_read_as_code() {
+        // A regex holding `}` or a quote, division, and nested templates.
+        let t = tokenize("x = `a${s.replace(/[}'`]/g, '')}b${n / 2}c${`${cfg.d}`}`; y").unwrap();
+        assert_eq!(t.iter().filter(|t| t.tok == Tok::Template).count(), 1);
+        let tpl = t.iter().find(|t| t.tok == Tok::Template).unwrap();
+        assert_eq!(tpl.inner, ["s", "n", "cfg"]);
+        assert!(t.last().unwrap().is_ident("y"));
+        // A `/` that could be either is refused there too.
+        assert!(tokenize("`${(x) /'/.test(s)}`").is_err());
+        assert!(tokenize("`${a").is_err());
+        // Non-ASCII is part of a regular expression's pattern, not code.
+        assert!(tokenize("x = /é\\u{a0}/u").is_ok());
+        assert!(tokenize("`${é}`").is_err());
     }
 
     #[test]

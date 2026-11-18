@@ -272,8 +272,17 @@ impl<'a> Reader<'a> {
             });
         }
         let (export_at, rest, export_end) = exports[0];
-        if !config_exports.is_empty() && !self.toks[export_at].is_ident("export") {
-            return self.give_up("it mixes `module.exports` with `export`");
+        if let Some(&(at, _, _)) = config_exports.first() {
+            let esm = self.toks[export_at].is_ident("export");
+            if self.toks[at].is_ident("export") != esm {
+                return self.give_up("it mixes `module.exports` with `export`");
+            }
+            // `module.exports = ...` replaces the object `config` was set on.
+            if !esm && at < export_at {
+                return self.give_up(
+                    "it sets `module.exports.config` before `module.exports`, which replaces it",
+                );
+            }
         }
         // `module.exports = config` with `function config(...) {...}`.
         let mut config_name: Option<String> = None;
@@ -1520,6 +1529,7 @@ module.exports = function (eleventyConfig) {
         for src in [
             "module.exports = function (c) { c.addPassthroughCopy(\"old\") };\nmodule.exports = function (c) { c.addPassthroughCopy(\"new\") };\n",
             "module.exports.config = { dir: { output: \"x\" } };\nmodule.exports = function (c) { c.addPassthroughCopy(\"a\") };\n",
+            "module.exports = function (c) { c.addPassthroughCopy(\"a\") };\nexport const config = { dir: { output: \"x\" } };\n",
             "function config(c) { c.addPassthroughCopy(\"a\") }\nfunction config(c) { c.addPassthroughCopy(\"b\") }\nmodule.exports = config;\n",
             "module.exports = config;\nfunction config(c) {}\nasync",
             "export default function (c) { c.addPassthroughCopy(\"a\") }\nexport const config = { dir: { output: \"x\" } };\nexport const config2 = {};\n",
@@ -1529,6 +1539,20 @@ module.exports = function (eleventyConfig) {
             assert!(live(&p).is_empty(), "{src}\n{}", p.text);
             assert_eq!(p.todos, 1, "{src}\n{}", p.text);
         }
+    }
+
+    #[test]
+    fn commonjs_config_export_ports() {
+        let src = "module.exports = async function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"a\");\n};\nmodule.exports.config = {\n  dir: { input: \"src\", output: \"dist\" },\n  markdownTemplateEngine: \"njk\",\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert_eq!(p.todos, 0, "{}", p.text);
+        assert!(!p.text.contains("mixes"), "{}", p.text);
+        assert!(
+            p.text.contains("        input: \"src\",\n        output: \"dist\",\n    },\n    markdownTemplateEngine: \"njk\",\n"),
+            "{}",
+            p.text
+        );
+        assert_eq!(p.input.as_deref(), Some("src"));
     }
 
     #[test]
@@ -1737,8 +1761,6 @@ module.exports = function (eleventyConfig) {
             "module.exports = function (c) {\n  while (x) /\"/.test(s);\n  c.addPassthroughCopy(\"a\");\n};\n",
             "module.exports = function (c) {\n  if (x) {}\n  /'/.test(\"\"); c.addPassthroughCopy(\"b\"); // '\n};\n",
             "module.exports = function (c) {\n  i++ /'/; c.addPassthroughCopy(\"b\"); // '\n};\n",
-            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s.replace(/}/g, \"\")}`);\n  c.addPassthroughCopy(\"a\");\n};\n",
-            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${a / b}`);\n};\n",
         ] {
             let p = port(src, "eleventy.config.js");
             assert!(live(&p).is_empty(), "{src}\n{}", p.text);
@@ -1748,14 +1770,25 @@ module.exports = function (eleventyConfig) {
                 p.text
             );
         }
-        // Clear cases still read: division after a call, a regex after `(` or `,`.
-        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.split(/,/).length / 2);\n  c.addFilter(\"g\", (s) => `${s}/x`);\n  c.addPassthroughCopy(\"a\");\n};\n";
+        // Clear cases still read: division after a call, a regex after `(` or `,`,
+        // and the same inside a template literal's `${}`.
+        for src in [
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.split(/,/).length / 2);\n  c.addFilter(\"g\", (s) => `${s}/x`);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s.replace(/}/g, \"\")}`);\n  c.addPassthroughCopy(\"a\");\n};\n",
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${a / b}/${`${s.replace(/'/g, \"\")}`}`);\n  c.addPassthroughCopy(\"a\");\n};\n",
+        ] {
+            let p = port(src, "eleventy.config.js");
+            assert_eq!(
+                live(&p),
+                ["config.add_passthrough_copy(\"a\");"],
+                "{src}\n{}",
+                p.text
+            );
+        }
+        // A `/` inside `${}` that could be either is still never guessed.
+        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${(x) /'/.test(s)}`);\n  c.addPassthroughCopy(\"a\");\n};\n";
         let p = port(src, "eleventy.config.js");
-        assert!(
-            p.text.contains("config.add_passthrough_copy(\"a\");"),
-            "{}",
-            p.text
-        );
+        assert!(live(&p).is_empty(), "{}", p.text);
     }
 
     #[test]
@@ -1817,12 +1850,20 @@ module.exports = function (eleventyConfig) {
             "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\"); // note\u{2028}c.setOutputDirectory(x);\n};\n",
             "module.exports = function (c) {\n  c.addPassthroughCopy(\"a\"); // note\rc.setOutputDirectory(x);\n};\n",
             "module.exports = function (c) {\u{feff}\n  c.addPassthroughCopy(\"a\");\n};\n",
-            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.replace(/é/, \"\"));\n};\n",
         ] {
             let p = port(src, "eleventy.config.js");
             assert!(live(&p).is_empty(), "{src:?}\n{}", p.text);
             assert_eq!(p.todos, 1, "{src:?}\n{}", p.text);
         }
+        // Non-ASCII inside a regular expression is part of its pattern.
+        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s.replace(/[éà\u{a0}]/g, \"\"));\n  c.addPassthroughCopy(\"a\");\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert_eq!(
+            live(&p),
+            ["config.add_passthrough_copy(\"a\");"],
+            "{}",
+            p.text
+        );
         // A leading BOM, and non-ASCII in strings, templates and comments, still port.
         let src = "\u{feff}// Café config, ünïcode\u{a0}ok\n/* \u{3000} */\nmodule.exports = function (c) {\n  c.addFilter(\"f\", (s) => `${s}—é`);\n  c.addPassthroughCopy(\"bilder/größe\u{a0}x\");\n};\n";
         let p = port(src, "eleventy.config.js");
