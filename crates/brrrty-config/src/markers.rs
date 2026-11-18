@@ -53,6 +53,19 @@ pub struct Todo {
     pub text: String,
 }
 
+/// A marker anywhere in a line, leniently: any case, spaces inside the parentheses, after
+/// `//`, `///`, `//!`, `/*` or a block comment's leading `*`. A false match only refuses
+/// pages with a message naming the line, so this errs towards matching.
+fn marker() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)(?:(?://[/!]?|/\*+)|^\s*\*)\s*todo\s*\(\s*brrrty\s*(-\s*file\s*)?\)\s*:?\s*(.*)$",
+        )
+        .expect("valid")
+    })
+}
+
 /// The text of a `//` comment line, if `line` is one.
 fn comment(line: &str) -> Option<&str> {
     let rest = line.trim_start().strip_prefix("//")?;
@@ -65,6 +78,9 @@ fn comment(line: &str) -> Option<&str> {
 /// a config written by `brrrty init` 0.0.18 or earlier: a `// TODO: ...` line
 /// followed by the `// See https://...` line init put under it, in a file
 /// that starts with init's header.
+///
+/// Lines are split as `str::lines` splits them (LF and CRLF), as Rhai counts them; a lone CR
+/// (classic Mac line endings) doesn't end a line here.
 pub fn todos(src: &str) -> Vec<Todo> {
     let lines: Vec<&str> = src.lines().collect();
     let by_init = lines
@@ -73,18 +89,23 @@ pub fn todos(src: &str) -> Vec<Todo> {
         .any(|l| l.starts_with("// Written by `brrrty init`"));
     let mut out = Vec::new();
     for (i, line) in lines.iter().enumerate() {
+        if let Some(c) = marker().captures(line) {
+            let text = c.get(2).map_or("", |m| m.as_str());
+            let text = text.trim_end().trim_end_matches("*/").trim_end();
+            out.push(Todo {
+                line: i + 1,
+                whole: c.get(1).is_some(),
+                text: text.trim_end_matches('.').to_string(),
+            });
+            continue;
+        }
         let Some(text) = comment(line) else { continue };
-        let (whole, rest) = if let Some(r) = text.strip_prefix(TODO_FILE) {
-            (true, r)
-        } else if let Some(r) = text.strip_prefix(TODO) {
-            (false, r)
-        } else if by_init
+        let (whole, rest) = if by_init
             && let Some(r) = text.strip_prefix("TODO: ")
             && lines.get(i + 1).is_some_and(|n| {
                 n.starts_with("// See https://brrrty.com/")
                     || n.starts_with("// See https://github.com/brrrty/")
-            })
-        {
+            }) {
             (r.starts_with("port all of this file by hand"), r)
         } else {
             continue;
@@ -100,27 +121,78 @@ pub fn todos(src: &str) -> Vec<Todo> {
 }
 
 /// The `Ported from` line: its 1-based line number, the 11ty config it
-/// names and the hash recorded.
+/// names and the hash recorded. The name is one of 11ty's config names, or a
+/// path inside the project (from a build script's `--config`).
 pub fn ported_from(src: &str) -> Option<(usize, &str, &str)> {
     src.lines().enumerate().find_map(|(i, l)| {
-        let rest = l.strip_prefix(PORTED_FROM)?;
-        let (name, hash) = rest.trim().split_once(' ')?;
-        let hash = hash.trim();
-        (ELEVENTY_CONFIGS.contains(&name) && hash.starts_with("sha256:")).then_some((
-            i + 1,
-            name,
-            hash,
-        ))
+        let rest = l.trim_end().strip_prefix(PORTED_FROM)?;
+        let (name, hash) = rest.trim().rsplit_once(' ')?;
+        let name = name.trim();
+        (inside(name) && hash.starts_with("sha256:")).then_some((i + 1, name, hash))
     })
 }
 
-/// The hash a `Ported from` line records: `sha256:` and the hex digest.
+/// A relative path that stays inside the project folder.
+pub fn is_inside(name: &str) -> bool {
+    inside(name)
+}
+
+fn inside(name: &str) -> bool {
+    let p = Path::new(name);
+    !name.is_empty()
+        && p.is_relative()
+        && !name.starts_with(['/', '\\'])
+        && p.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+}
+
+/// The hash a `Ported from` line records: `sha256:` and the hex digest of the
+/// text with a leading BOM dropped and CRLF line endings made LF, so a
+/// checkout with other line endings has the same hash.
 pub fn source_hash(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let mut h = Sha256::new();
+    let mut start = 0;
+    for i in 0..bytes.len() {
+        if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+            h.update(&bytes[start..i]);
+            start = i + 1;
+        }
+    }
+    h.update(&bytes[start..]);
     let mut out = String::from("sha256:");
-    for b in Sha256::digest(bytes) {
+    for b in h.finalize() {
         out.push_str(&format!("{b:02x}"));
     }
     out
+}
+
+/// The 11ty config 11ty reads by default: the first of its names that exists in `root`.
+pub fn default_config(root: &Path) -> Option<&'static str> {
+    ELEVENTY_CONFIGS
+        .iter()
+        .copied()
+        .find(|n| std::fs::metadata(root.join(n)).is_ok_and(|m| m.is_file()))
+}
+
+/// The hash of `root/name`, read up to [`MAX_READ`] bytes; `None` if it isn't a file.
+fn hash_of(root: &Path, name: &str) -> Option<String> {
+    use std::io::Read as _;
+    let path = root.join(name);
+    if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path)
+        .ok()?
+        .take(MAX_READ)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(source_hash(&bytes))
 }
 
 /// The 11ty config the file was ported from, as its header names it.
@@ -130,8 +202,8 @@ fn source_name(src: &str) -> Option<&str> {
     }
     let first = src.lines().next()?;
     let rest = first.strip_prefix("// Written by `brrrty init` from ")?;
-    let name = rest.split([',', ' ']).next()?;
-    ELEVENTY_CONFIGS.contains(&name).then_some(name)
+    let name = rest.split([',', ' ']).next()?.trim_end_matches('.');
+    inside(name).then_some(name)
 }
 
 /// `5`, `5 and 9`, `5, 9 and 12`.
@@ -192,34 +264,73 @@ pub fn unported_problem(src: &str) -> Option<Problem> {
 }
 
 /// The warning when the 11ty config named on the `Ported from` line changed
-/// since. `root` is the project folder. A missing 11ty config is no warning:
-/// 11ty can't build the site then, so there is nothing to differ from.
+/// since, or isn't the one 11ty reads any more. `root` is the project folder.
+///
+/// For one of 11ty's own names, the config 11ty reads now is the first of
+/// them that exists: a rename (`.js` to `.mjs`), or a new `.eleventy.js`
+/// beside the old file, makes it another file. With none there, 11ty builds
+/// without a config file and the port's settings are what is in question, so
+/// it says nothing. For a path from a build script's `--config`, only that
+/// file's hash is checked; a missing one stops 11ty's build.
 pub fn stale_problem(root: &Path, src: &str) -> Option<Problem> {
-    use std::io::Read as _;
     let (line, name, recorded) = ported_from(src)?;
-    let path = root.join(name);
-    if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+    let warn = |message: String, now_name: &str, now: &str| {
+        Problem::warning(codes::CONFIG_STALE, message)
+            .with_path(CONFIG_FILE)
+            .at(line, 1)
+            .with_help(format!(
+                "Port what changed to {CONFIG_FILE}, if it changes what 11ty writes, then set this line to `{PORTED_FROM}{now_name} {now}`."
+            ))
+    };
+    if ELEVENTY_CONFIGS.contains(&name) {
+        let current = default_config(root)?;
+        let now = hash_of(root, current)?;
+        if current != name {
+            return Some(warn(
+                format!(
+                    "11ty now reads {current}, not the {name} that {CONFIG_FILE} was ported from"
+                ),
+                current,
+                &now,
+            ));
+        }
+        return (now != recorded).then(|| {
+            warn(
+                format!("{name} changed since {CONFIG_FILE} recorded it as ported"),
+                name,
+                &now,
+            )
+        });
+    }
+    let now = hash_of(root, name)?;
+    (now != recorded).then(|| {
+        warn(
+            format!("{name} changed since {CONFIG_FILE} recorded it as ported"),
+            name,
+            &now,
+        )
+    })
+}
+
+/// The warning when an 11ty config exists and nothing records it as ported:
+/// a hand-written `brrrty.config.rhai`, or one written before the 11ty config
+/// was added. Brrrty can't check that it covers the 11ty config.
+pub fn unverified_problem(root: &Path, src: &str) -> Option<Problem> {
+    if ported_from(src).is_some() {
         return None;
     }
-    let mut bytes = Vec::new();
-    std::fs::File::open(&path)
-        .ok()?
-        .take(MAX_READ)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let now = source_hash(&bytes);
-    if now == recorded {
-        return None;
-    }
+    let current = default_config(root)?;
+    let now = hash_of(root, current)?;
     Some(
         Problem::warning(
-            codes::CONFIG_STALE,
-            format!("{name} changed after `brrrty init` ported it to {CONFIG_FILE}"),
+            codes::CONFIG_UNVERIFIED,
+            format!(
+                "Brrrty can't check that {CONFIG_FILE} covers {current}: nothing records it as ported"
+            ),
         )
         .with_path(CONFIG_FILE)
-        .at(line, 1)
         .with_help(format!(
-            "Port what changed to {CONFIG_FILE}, if it changes what 11ty writes, then set this line to `{PORTED_FROM}{name} {now}`."
+            "Brrrty doesn't run {current}, and any of it that {CONFIG_FILE} misses could change any page. Once you've checked that {CONFIG_FILE} does everything in it that changes what 11ty writes, add this line to {CONFIG_FILE}: `{PORTED_FROM}{current} {now}`. Brrrty then warns when {current} changes. {HELP_LINK}"
         )),
     )
 }
@@ -250,8 +361,28 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_must_start_its_comment() {
-        assert!(todos("let s = \"// TODO(brrrty): x\";\n// see TODO(brrrty): y\n").is_empty());
+    fn markers_match_leniently() {
+        for line in [
+            "// todo(brrrty): x",
+            "// TODO (brrrty): x",
+            "//! TODO( brrrty ): x",
+            "/* TODO(brrrty): x */",
+            " * TODO(brrrty): x",
+            "config.x(); // TODO(brrrty): x",
+            "\t/// Todo(Brrrty) x",
+        ] {
+            let t = todos(line);
+            assert_eq!(t.len(), 1, "{line}");
+            assert!(!t[0].whole, "{line}");
+            assert_eq!(t[0].text, "x", "{line}");
+        }
+        // A false match is safe: it refuses pages, naming the line.
+        assert_eq!(todos("let s = \"// TODO(brrrty): x\";").len(), 1);
+        let t = todos("// TODO (brrrty - file): y.\r\n");
+        assert!(t[0].whole);
+        assert_eq!(t[0].text, "y");
+        // A mention mid-comment isn't a marker.
+        assert!(todos("// see TODO(brrrty): y\n// TODO(other): z\n").is_empty());
     }
 
     #[test]
@@ -311,8 +442,69 @@ mod tests {
         assert!(p.help.unwrap().contains(&source_hash(b"b")));
         std::fs::remove_file(t.path().join("eleventy.config.js")).unwrap();
         assert!(stale_problem(t.path(), &ok).is_none());
-        // Only 11ty's config names.
-        let odd = format!("{PORTED_FROM}../x.js {}\n", source_hash(b"a"));
-        assert!(ported_from(&odd).is_none());
+        // Only paths inside the project.
+        for odd in ["../x.js", "/etc/x.js", "a/../../x.js"] {
+            let odd = format!("{PORTED_FROM}{odd} {}\n", source_hash(b"a"));
+            assert!(ported_from(&odd).is_none(), "{odd}");
+        }
+    }
+
+    #[test]
+    fn line_endings_and_a_bom_dont_change_the_hash() {
+        assert_eq!(source_hash(b"a\r\nb\r\n"), source_hash(b"a\nb\n"));
+        assert_eq!(source_hash(b"\xef\xbb\xbfa\n"), source_hash(b"a\n"));
+        assert_ne!(source_hash(b"a\rb"), source_hash(b"a\nb"));
+        assert_ne!(source_hash(b"a\n"), source_hash(b"b\n"));
+    }
+
+    #[test]
+    fn a_renamed_or_shadowed_config_warns() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, s: &str| std::fs::write(t.path().join(n), s).unwrap();
+        let rhai = format!("{PORTED_FROM}eleventy.config.js {}\n", source_hash(b"a"));
+        // Renamed to .mjs: 11ty reads that one now.
+        w("eleventy.config.mjs", "a");
+        let p = stale_problem(t.path(), &rhai).unwrap();
+        assert!(
+            p.message
+                .starts_with("11ty now reads eleventy.config.mjs, not the eleventy.config.js"),
+            "{}",
+            p.message
+        );
+        assert!(p.help.unwrap().contains(&format!(
+            "`{PORTED_FROM}eleventy.config.mjs {}`",
+            source_hash(b"a")
+        )));
+        // The old one back, and a new .eleventy.js beside it, which 11ty reads first.
+        w("eleventy.config.js", "a");
+        assert!(stale_problem(t.path(), &rhai).is_none());
+        w(".eleventy.js", "b");
+        let p = stale_problem(t.path(), &rhai).unwrap();
+        assert!(
+            p.message.starts_with("11ty now reads .eleventy.js"),
+            "{}",
+            p.message
+        );
+        // A `--config` file: only its own hash counts.
+        w("site.config.js", "c");
+        let custom = format!("{PORTED_FROM}site.config.js {}\n", source_hash(b"c"));
+        assert!(stale_problem(t.path(), &custom).is_none());
+        w("site.config.js", "d");
+        assert!(stale_problem(t.path(), &custom).is_some());
+    }
+
+    #[test]
+    fn an_unrecorded_config_is_unverified() {
+        let t = tempfile::tempdir().unwrap();
+        assert!(unverified_problem(t.path(), "config.x();\n").is_none());
+        std::fs::write(t.path().join("eleventy.config.cjs"), "a\r\n").unwrap();
+        let p = unverified_problem(t.path(), "config.x();\n").unwrap();
+        assert_eq!(p.code, codes::CONFIG_UNVERIFIED);
+        let line = format!("{PORTED_FROM}eleventy.config.cjs {}", source_hash(b"a\n"));
+        assert!(p.help.unwrap().contains(&format!("`{line}`")));
+        // Adding that line is the acknowledgement.
+        let acked = format!("{line}\nconfig.x();\n");
+        assert!(unverified_problem(t.path(), &acked).is_none());
+        assert!(stale_problem(t.path(), &acked).is_none());
     }
 }

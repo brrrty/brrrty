@@ -14,6 +14,7 @@ pub mod codes {
     pub const CONFIG_TODO: &str = "config-todo";
     pub const CONFIG_UNREADABLE: &str = "config-unreadable";
     pub const CONFIG_UNSUPPORTED: &str = "config-unsupported";
+    pub const CONFIG_UNVERIFIED: &str = "config-unverified";
     pub const CONTENT_CYCLE: &str = "content-cycle";
     pub const CONTENT_UNAVAILABLE: &str = "content-unavailable";
     pub const CWD_UNAVAILABLE: &str = "cwd-unavailable";

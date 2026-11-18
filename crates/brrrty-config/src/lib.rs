@@ -294,7 +294,8 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         Err(e) => return Err(unreadable(e.to_string())),
     };
     let unported = markers::unported_problem(&src);
-    let stale = markers::stale_problem(root, &src);
+    let stale =
+        markers::stale_problem(root, &src).or_else(|| markers::unverified_problem(root, &src));
     let root = root.to_path_buf();
     let run = std::thread::Builder::new()
         .name("brrrty-config".into())
