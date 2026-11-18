@@ -254,7 +254,7 @@ fn what_brrrty_cannot_follow_is_refused_by_page() {
         ("brrrty.config.rhai", ON),
         (
             "src/slug.11ty.js",
-            "module.exports = function () { return this.slugify('A B'); };\n",
+            "module.exports = function () { return this.getCollectionItem([]); };\n",
         ),
         ("src/raw.njk", "{{ collections.all | length }}"),
         (
@@ -271,7 +271,7 @@ fn what_brrrty_cannot_follow_is_refused_by_page() {
     let o = build(t.path(), &[]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(1), "{out}");
-    assert!(out.contains("calls `this.slugify`"), "{out}");
+    assert!(out.contains("calls `this.getCollectionItem`"), "{out}");
     assert!(out.contains("`rawInput`"), "{out}");
     assert!(
         out.contains("reads `this.page` in a JavaScript layout"),
@@ -523,4 +523,24 @@ fn local_javascript_data_that_ran_keeps_collections_readable() {
     assert_eq!(read(t.path(), "list/index.html"), "/posts/a/;/posts/b/;");
     assert!(out.contains("JavaScript data file (.11tydata.js)"), "{out}");
     assert!(!t.path().join("_site/keys/index.html").exists(), "{out}");
+}
+
+#[test]
+fn filters_on_this_are_brrrtys_own() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_data(\"node\");\nconfig.add_filter(\"shout\", |s| s.to_upper() + \"!\");\n",
+        ),
+        (
+            "src/f.11ty.js",
+            "module.exports = function () { return [this.slugify('A B'), this.url('/x/'), this.shout('hi')].join(' '); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "f/index.html"), "a-b /x/ HI!");
 }

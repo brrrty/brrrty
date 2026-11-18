@@ -314,6 +314,7 @@ impl<'a> JsSession<'a> {
             root: self.root.clone(),
             failed: Mutex::new(None),
             impure: Mutex::new(Vec::new()),
+            filters: Mutex::new(None),
         }))
     }
 
@@ -360,7 +361,14 @@ pub(crate) struct JsCalls {
     /// page's result from them may differ from 11ty's, so nothing is
     /// written.
     impure: Mutex<Vec<Problem>>,
+    /// The filters a JavaScript template calls on `this`, by name.
+    filters: Mutex<Option<JsFilters>>,
 }
+
+/// Runs one of Brrrty's filters for a JavaScript template: `(name,
+/// arguments)`, the first argument the filter's input. `Err` is why the
+/// render is refused.
+pub(crate) type JsFilters = Arc<dyn Fn(&str, &[Value]) -> Result<Value, String> + Send + Sync>;
 
 thread_local! {
     static CALLS: RefCell<Option<Arc<JsCalls>>> = const { RefCell::new(None) };
@@ -482,6 +490,11 @@ impl JsCalls {
 }
 
 impl JsCalls {
+    /// The filters JavaScript templates call on `this`.
+    pub fn set_filters(&self, filters: JsFilters) {
+        *lock(&self.filters) = Some(filters);
+    }
+
     /// Render the JavaScript template `t` with `data` (see
     /// [`JsRuntime::render`]) for the page `shown`: what its `render` gave,
     /// or why the page is refused.
@@ -493,7 +506,12 @@ impl JsCalls {
         traps: &[(String, String)],
         shown: &Path,
     ) -> Result<Value, Problem> {
-        let r = self.with(|rt| rt.render(t, data, first, traps));
+        let filters = lock(&self.filters).clone();
+        let mut run = |name: &str, args: &[Value]| match &filters {
+            Some(f) => f(name, args),
+            None => Err(format!("calls `this.{name}`, which Brrrty can't run here")),
+        };
+        let r = self.with(|rt| rt.render(t, data, first, traps, &mut run));
         let d = match r {
             JsResult::Ok(d) => d,
             JsResult::Thrown(e) => {

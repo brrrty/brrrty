@@ -273,6 +273,51 @@ const ELEVENTY_JS_FUNCTIONS: &[&str] = &[
     "renderTransforms",
 ];
 
+/// Brrrty's filters by name, as a JavaScript template calls them on `this`:
+/// 11ty's own, the config's, then the RSS plugin's, a later one replacing
+/// an earlier one of the same name, as in the template engines. 11ty's
+/// others (`getCollectionItem`, `getBundle`, ...) refuse the render.
+fn js_filters(config: &[crate::options::ConfigFilter], rss: bool) -> crate::data::JsFilters {
+    type Run = Arc<dyn Fn(&Value, &[Value]) -> Result<Value, String> + Send + Sync>;
+    let mut table: HashMap<String, Run> = HashMap::new();
+    for (name, f) in brrrty_js::eleventy_filters() {
+        let run: Run =
+            Arc::new(move |input, args| f(input, args, &brrrty_js::FilterEnv::new(Tz::Local)));
+        table.insert(name.to_string(), run);
+    }
+    let args_filters = config
+        .iter()
+        .map(|f| (f.name.clone(), f.run.clone()))
+        .chain(
+            rss.then(crate::plugins::rss::universal_filters)
+                .into_iter()
+                .flatten()
+                .map(|(n, f)| (n.to_string(), f)),
+        );
+    for (name, f) in args_filters {
+        let run: Run =
+            Arc::new(move |input, args| f(input, args, &brrrty_liquid::FilterCtx::new(Tz::Local)));
+        table.insert(name, run);
+    }
+    Arc::new(move |name: &str, args: &[Value]| {
+        let Some(f) = table.get(name) else {
+            return Err(format!(
+                "calls `this.{name}`, one of the filters 11ty gives a JavaScript template, which Brrrty doesn't have yet"
+            ));
+        };
+        let (input, rest) = match args.split_first() {
+            Some((first, rest)) => (first.clone(), rest),
+            None => (Value::Undefined, &[][..]),
+        };
+        f(&input, rest).map_err(|why| match why.strip_prefix(brrrty_js::REFUSAL_PREFIX) {
+            Some(rest) => format!("calls `this.{name}`, and Brrrty {rest}"),
+            None => format!(
+                "calls `this.{name}`, which fails here ({why}); in 11ty the error is thrown inside the template"
+            ),
+        })
+    })
+}
+
 /// A JavaScript template's or layout's data as front matter, or why it
 /// can't be: a part of it that can't cross exactly.
 fn js_template_data(d: &brrrty_js::runtime::Decoded, shown: &Path) -> Result<Data, Problem> {
@@ -2517,6 +2562,11 @@ fn build_once(
     if let Some(p) = js.failed.take() {
         report.problems.push(p);
         return finish(report, strict, start);
+    }
+    // The filters a JavaScript template calls on `this` are Brrrty's own,
+    // the ones its Liquid and Nunjucks get.
+    if let Some(c) = &js_calls {
+        c.set_filters(js_filters(&opts.config.filters, rss));
     }
     let js_hooks = matches!(&opts.js.node, Some(Ok(n)) if n.load_hooks);
     {

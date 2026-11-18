@@ -267,7 +267,12 @@ impl Log<'_> {
         if let Some(clock) = r.head.get("clock") {
             req["feed"] = clock.clone();
         }
-        let got = send(w, req)?;
+        // The filters a JavaScript template asked for, answered as the
+        // first time.
+        w.answers_feed = Some(r.answers.iter().cloned().collect());
+        let got = send(w, req);
+        w.answers_feed = None;
+        let got = got?;
         // The clock values a call read only feed the replay: a call
         // may read the clock more or less often in another order
         // (a cache warmed or not), which matters only when its

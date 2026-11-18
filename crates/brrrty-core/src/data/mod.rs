@@ -22,7 +22,8 @@ pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
 pub use js::JsFileState;
 pub(crate) use js::{
-    JsCalls, JsPage, JsSession, JsTemplateLoad, calls as js_calls, first_unusable, value_problem,
+    JsCalls, JsFilters, JsPage, JsSession, JsTemplateLoad, calls as js_calls, first_unusable,
+    value_problem,
 };
 pub(crate) use rhai::{is_js, port_of};
 

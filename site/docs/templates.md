@@ -58,7 +58,7 @@ With `config.set_js_data("node");` in `brrrty.config.rhai` (or `--js-data=node`)
 
 - **Exports:** a string, a `Buffer`, a promise, a function, a class with `render` (and `data`), or an object with `render` and `data`, in CommonJS or ESM, with 11ty's rules for which wins (`"type": "module"` decides how a `default` export is read, for every extension).
 - **`data`** is an object, a getter or a function (`async` too), called with the instance as `this`. It is the page's front matter: `layout`, `tags`, `pagination`, `permalink` and the rest work as in front matter, and so do functions in `permalink` and `eleventyComputed`. A permalink or computed string is used as written, not rendered, as in 11ty.
-- **`render(data)`** gets the page's data, `collections` included, with the instance as `this`. `this.page` is the first page's `page`, as 11ty keeps it on a paginated template; `this.eleventy` is there too, and so are the names of 11ty's filters and your config's.
+- **`render(data)`** gets the page's data, `collections` included, with the instance as `this`. `this.page` is the first page's `page`, as 11ty keeps it on a paginated template; `this.eleventy` is there too, and so are 11ty's filters and your config's: `this.slugify(title)`, `this.url("/about/")` and a filter from `brrrty.config.rhai` run Brrrty's own, the ones Liquid and Nunjucks use.
 - **Layouts:** a JavaScript template can use a layout in any language, and a JavaScript file in the layouts folder can be the layout of any page. Each module loads once per build.
 - **Collections:** a JavaScript template's pages are in `collections` like any other, `templateContent` included.
 
@@ -66,7 +66,7 @@ Refused, each naming the file (and the line, for an error your code throws):
 
 - an export 11ty can't make a template of, or `data` that isn't an object (`js-template-invalid`); an error your code throws (`js-data-error`): 11ty stops the whole build on both;
 - `render` giving a number, `null`, a boolean, an array or an object with no layout (`js-template-value`: 11ty stops the build there too). With a layout, the layout prints it as 11ty's does. `undefined` with no layout writes no file, with a warning (`js-template-empty`), where 11ty writes none and says nothing;
-- calling one of the filters on `this` (`this.slugify(...)`), `this.page` in a JavaScript layout (11ty keeps whichever page renders it first, and renders layouts at the same time), a collection item's `templateContent` inside `render`, `page.rawInput` (in 11ty, the template's instance), and `templateEngineOverride` on a JavaScript template;
+- calling one of 11ty's filters Brrrty doesn't have on `this` (`this.getCollectionItem(...)`, `this.getBundle(...)`), or one that fails; `this.page` in a JavaScript layout (11ty keeps whichever page renders it first, and renders layouts at the same time), a collection item's `templateContent` inside `render`, `page.rawInput` (in 11ty, the template's instance), and `templateEngineOverride` on a JavaScript template;
 - a `render` that changes the data it is given (`collections.post.sort()`): 11ty's later pages would see it changed. Sort a copy (`[...collections.post].sort()`);
 - a `render` whose result depends on the renders before it (a counter kept in the module): the same replay check as for data functions finds it, and nothing is written (`js-data-impure`).
 

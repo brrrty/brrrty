@@ -38,6 +38,10 @@ fn ok<T: std::fmt::Debug>(r: JsResult<T>) -> T {
     }
 }
 
+fn refuse_all(name: &str, _: &[Value]) -> Result<Value, String> {
+    Err(format!("calls `this.{name}` with no filters here"))
+}
+
 fn json(v: serde_json::Value) -> Value {
     Value::from_json(&v)
 }
@@ -106,7 +110,7 @@ fn every_export_shape_gives_11tys_data_and_render() {
     for (file, want_data, want) in cases {
         let l = load(&mut w, &t, file);
         assert_eq!(l.data.value, json(want_data), "{file}");
-        let r = ok(w.render(l.id, &data, None, &[]));
+        let r = ok(w.render(l.id, &data, None, &[], &mut refuse_all));
         assert_eq!(text(&r.value), want, "{file}");
     }
 }
@@ -163,7 +167,7 @@ fn this_holds_the_first_page_eleventy_and_the_filters() {
     let page0 = json(serde_json::json!({"url": "/p/0/"}));
     for (n, url) in [(1, "/p/1/"), (0, "/p/0/")] {
         let data = json(serde_json::json!({"page": {"url": url}, "eleventy": {"v": 3}}));
-        let r = ok(w.render(l.id, &data, Some(&page0), &[]));
+        let r = ok(w.render(l.id, &data, Some(&page0), &[], &mut refuse_all));
         assert_eq!(
             text(&r.value),
             format!("render,page,eleventy,slugify,url|/p/0/|{url}|3|function"),
@@ -195,13 +199,20 @@ fn a_filter_call_a_trap_and_a_write_are_refused() {
         JsResult::Refused(r) => r.why,
         other => panic!("{other:?}"),
     };
-    assert!(refused(w.render(f.id, &data, None, &[])).contains("calls `this.slugify`"));
+    assert!(
+        refused(w.render(f.id, &data, None, &[], &mut refuse_all)).contains("calls `this.slugify`")
+    );
     let traps = [(
         "secret".to_string(),
         "reads `secret`, held back".to_string(),
     )];
-    assert!(refused(w.render(tr.id, &data, None, &traps)).contains("reads `secret`"));
-    assert!(refused(w.render(wr.id, &data, None, &[])).contains("changes the data it is given"));
+    assert!(
+        refused(w.render(tr.id, &data, None, &traps, &mut refuse_all)).contains("reads `secret`")
+    );
+    assert!(
+        refused(w.render(wr.id, &data, None, &[], &mut refuse_all))
+            .contains("changes the data it is given")
+    );
 }
 
 #[test]
@@ -227,7 +238,11 @@ fn values_that_are_not_text_cross_as_values() {
         ("p.11ty.js", Value::String("later".into())),
     ] {
         let l = load(&mut w, &t, file);
-        assert_eq!(ok(w.render(l.id, &data, None, &[])).value, want, "{file}");
+        assert_eq!(
+            ok(w.render(l.id, &data, None, &[], &mut refuse_all)).value,
+            want,
+            "{file}"
+        );
     }
 }
 
@@ -243,9 +258,12 @@ fn a_layout_traps_this_page() {
     let mut w = start(&t, &[]);
     let l = ok(w.load_template(&t.path().join("l.11ty.js"), true));
     let plain = json(serde_json::json!({"content": "c", "page": {"url": "/a/"}}));
-    assert_eq!(text(&ok(w.render(l.id, &plain, None, &[])).value), "c");
+    assert_eq!(
+        text(&ok(w.render(l.id, &plain, None, &[], &mut refuse_all)).value),
+        "c"
+    );
     let peek = json(serde_json::json!({"content": "c", "peek": true, "page": {"url": "/a/"}}));
-    match w.render(l.id, &peek, None, &[]) {
+    match w.render(l.id, &peek, None, &[], &mut refuse_all) {
         JsResult::Refused(r) => assert!(
             r.why.contains("`this.page` in a JavaScript layout"),
             "{}",
@@ -276,7 +294,13 @@ fn the_replay_catches_state_between_renders_and_passes_a_cache() {
     ok(w.begin_calls());
     for k in ["a", "b", "a"] {
         let _unit = brrrty_js::functions::UnitGuard::enter(format!("content {k}"));
-        ok(w.render(cache.id, &json(serde_json::json!({"k": k})), None, &[]));
+        ok(w.render(
+            cache.id,
+            &json(serde_json::json!({"k": k})),
+            None,
+            &[],
+            &mut refuse_all,
+        ));
     }
     ok(w.verify());
     // A counter: its replies follow the order.
@@ -285,10 +309,67 @@ fn the_replay_catches_state_between_renders_and_passes_a_cache() {
     ok(w.begin_calls());
     for k in ["a", "b", "c"] {
         let _unit = brrrty_js::functions::UnitGuard::enter(format!("content {k}"));
-        ok(w.render(count.id, &json(serde_json::json!({})), None, &[]));
+        ok(w.render(
+            count.id,
+            &json(serde_json::json!({})),
+            None,
+            &[],
+            &mut refuse_all,
+        ));
     }
     match w.verify() {
         JsResult::Refused(r) => assert!(r.impure, "{r:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_filter_on_this_runs_in_brrrty_and_the_replay_gets_its_answers() {
+    if node().is_none() {
+        return;
+    }
+    let t = site(&[(
+        "f.11ty.js",
+        "module.exports = function (d) { return this.shout(d.x, '!') + this.shout('b', '?'); };",
+    )]);
+    let mut w = start(&t, &["shout"]);
+    let l = load(&mut w, &t, "f.11ty.js");
+    ok(w.begin_calls());
+    let mut calls = 0;
+    let mut shout = |name: &str, args: &[Value]| {
+        calls += 1;
+        assert_eq!(name, "shout");
+        Ok(Value::String(
+            format!("{}{}", text(&args[0]).to_uppercase(), text(&args[1])).into(),
+        ))
+    };
+    for x in ["a", "c"] {
+        let _unit = brrrty_js::functions::UnitGuard::enter(format!("content {x}"));
+        let r = ok(w.render(
+            l.id,
+            &json(serde_json::json!({"x": x})),
+            None,
+            &[],
+            &mut shout,
+        ));
+        assert_eq!(text(&r.value), format!("{}!B?", x.to_uppercase()));
+    }
+    assert_eq!(calls, 4);
+    ok(w.verify());
+    // A filter that fails refuses the render.
+    let r = w.render(
+        l.id,
+        &json(serde_json::json!({"x": "a"})),
+        None,
+        &[],
+        &mut refuse_all,
+    );
+    match r {
+        JsResult::Refused(r) => assert!(
+            r.why.contains("calls `this.shout` with no filters here"),
+            "{}",
+            r.why
+        ),
         other => panic!("{other:?}"),
     }
 }

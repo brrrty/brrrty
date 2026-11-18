@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use brrrty_js::Value;
 use brrrty_js::runtime::{
-    Decoded, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PathPart, Refusal,
-    RuntimeFailure, Settle, TemplateId, This,
+    Decoded, FilterCall, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PathPart,
+    Refusal, RuntimeFailure, Settle, TemplateId, This,
 };
 use serde_json::{Value as Json, json};
 
@@ -100,6 +100,8 @@ pub(crate) struct Record {
     pub req: Json,
     pub head: Json,
     pub raw: Option<Json>,
+    /// The questions the request asked Brrrty, with the answers it got.
+    pub answers: Vec<(Json, Json)>,
 }
 
 /// A running worker. Dropping it closes Node's stdin, waits up to 2 s for
@@ -107,6 +109,13 @@ pub(crate) struct Record {
 pub struct Worker {
     child: Child,
     stdin: Option<ChildStdin>,
+    /// Where Brrrty answers the worker's questions (a filter a JavaScript
+    /// template calls on `this`).
+    answers: Option<Box<dyn Write + Send>>,
+    /// The replay check's answers, as the first run gave them, in order.
+    pub(crate) answers_feed: Option<VecDeque<(Json, Json)>>,
+    /// The questions the request in flight asked, with their answers.
+    asked: Vec<(Json, Json)>,
     replies: Receiver<Reply>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     stderr_thread: Option<JoinHandle<()>>,
@@ -164,7 +173,7 @@ impl Worker {
             .stdin(Stdio::piped());
         let cannot =
             |e: std::io::Error| WorkerError(format!("cannot start {}: {e}", node.path.display()));
-        let (mut child, frames, stderr) = spawn(cmd).map_err(cannot)?;
+        let (mut child, frames, stderr, answers) = spawn(cmd).map_err(cannot)?;
         live(child.id(), true);
         let (tx, replies) = mpsc::channel();
         let keep_raw = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -186,6 +195,9 @@ impl Worker {
         let stderr_thread = std::thread::spawn(move || drain_stderr(stderr, tail));
         Ok(Worker {
             stdin: child.stdin.take(),
+            answers,
+            answers_feed: None,
+            asked: Vec::new(),
             child,
             replies,
             stderr_tail,
@@ -237,6 +249,21 @@ impl Worker {
     /// Send one request and wait for its reply. `what` names it in the
     /// notes about a slow reply.
     fn request(&mut self, req: Json, what: &str) -> JsResult<Decoded> {
+        self.request_with(req, what, &mut |name: &str, _: &[Value]| {
+            Err(format!(
+                "calls `this.{name}` where Brrrty has no filters to run it"
+            ))
+        })
+    }
+
+    /// [`Worker::request`], answering the worker's filter questions with
+    /// `filters`.
+    fn request_with(
+        &mut self,
+        req: Json,
+        what: &str,
+        filters: &mut FilterCall<'_>,
+    ) -> JsResult<Decoded> {
         let op = req
             .get("op")
             .and_then(Json::as_str)
@@ -256,7 +283,8 @@ impl Worker {
         if logged && !self.calls_begun {
             self.load_log.push(req.clone());
         }
-        let frame = match self.exchange(req.clone(), what) {
+        self.asked.clear();
+        let frame = match self.exchange_with(req.clone(), what, filters) {
             Ok(f) => f,
             Err(f) => return JsResult::Failed(f),
         };
@@ -271,6 +299,7 @@ impl Worker {
                 req,
                 head: frame.head.clone(),
                 raw: frame.raw.clone(),
+                answers: std::mem::take(&mut self.asked),
             });
         }
         self.last_head = frame.head.clone();
@@ -278,7 +307,68 @@ impl Worker {
     }
 
     /// Send one request and wait for its reply frame.
-    pub(crate) fn exchange(&mut self, mut req: Json, what: &str) -> Result<Frame, RuntimeFailure> {
+    pub(crate) fn exchange(&mut self, req: Json, what: &str) -> Result<Frame, RuntimeFailure> {
+        self.exchange_with(req, what, &mut |name: &str, _: &[Value]| {
+            Err(format!(
+                "calls `this.{name}` where Brrrty has no filters to run it"
+            ))
+        })
+    }
+
+    /// Answer one of the worker's questions: run the filter it names, or,
+    /// in the replay check, give the first run's answer.
+    fn answer(&mut self, frame: &Frame, filters: &mut FilterCall<'_>) -> Result<(), String> {
+        let name = frame
+            .head
+            .get("filter")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string();
+        let question = json!({"filter": name, "args": frame.raw.clone().unwrap_or(Json::Null)});
+        let reply = match self.answers_feed.as_mut() {
+            Some(feed) => match feed.pop_front() {
+                Some((q, a)) if q == question => a,
+                _ => {
+                    json!({"refused": "asks for a filter the first run didn't ask for at this point"})
+                }
+            },
+            None => {
+                let args = match &frame.ok {
+                    Some(Ok(d)) if d.is_exact() => match &d.value {
+                        Value::Array(a) => Ok(a.to_vec()),
+                        _ => Err("passes its filter something Brrrty can't read".to_string()),
+                    },
+                    Some(Ok(_)) => Err(format!(
+                        "passes `this.{name}` a function or a value that can't cross from JavaScript to Brrrty exactly"
+                    )),
+                    _ => Err("passes its filter something Brrrty can't read".to_string()),
+                };
+                match args.and_then(|a| filters(&name, &a)) {
+                    Ok(v) => json!({"ok": encode(&v)}),
+                    Err(why) => json!({"refused": why}),
+                }
+            }
+        };
+        self.asked.push((question, reply.clone()));
+        let mut line = reply.to_string();
+        line.push('\n');
+        match self.answers.as_mut() {
+            Some(w) => w
+                .write_all(line.as_bytes())
+                .and_then(|_| w.flush())
+                .map_err(|e| format!("cannot answer Node: {e}")),
+            None => Err("Node asked a question it can't be answered on".to_string()),
+        }
+    }
+
+    /// [`Worker::exchange`], answering the worker's filter questions with
+    /// `filters` while it waits.
+    pub(crate) fn exchange_with(
+        &mut self,
+        mut req: Json,
+        what: &str,
+        filters: &mut FilterCall<'_>,
+    ) -> Result<Frame, RuntimeFailure> {
         if let Some(f) = &self.failed {
             return Err(f.clone());
         }
@@ -301,6 +391,11 @@ impl Worker {
         let mut exited_at: Option<Instant> = None;
         let reply = loop {
             match self.replies.recv_timeout(POLL) {
+                Ok(Ok(f)) if f.head.get("filter").is_some() => {
+                    if let Err(why) = self.answer(&f, filters) {
+                        break Err(why);
+                    }
+                }
                 Ok(r) => break r,
                 Err(RecvTimeoutError::Timeout) => {
                     let now = Instant::now();
@@ -714,6 +809,7 @@ impl JsRuntime for Worker {
         data: &Value,
         first: Option<&Value>,
         traps: &[(String, String)],
+        filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded> {
         let (data, first) = match encode_render(data, first, &mut self.kept) {
             Ok(e) => e,
@@ -723,7 +819,7 @@ impl JsRuntime for Worker {
         if let Some(first) = first {
             req["first"] = first;
         }
-        self.request(req, "a JavaScript template")
+        self.request_with(req, "a JavaScript template", filters)
     }
 
     fn verify(&mut self) -> JsResult<()> {
@@ -848,17 +944,21 @@ fn kill_group(pid: u32) {
 /// its stderr: a child process or logger writing to fd 1 is only noise, as
 /// it is under 11ty.
 #[cfg(unix)]
-fn spawn(mut cmd: Command) -> std::io::Result<(Child, std::io::PipeReader, std::io::PipeReader)> {
+fn spawn(mut cmd: Command) -> std::io::Result<Spawned> {
     use std::os::fd::AsRawFd;
     use std::os::unix::process::CommandExt;
     let (frames_r, frames_w) = std::io::pipe()?;
     // A copy is numbered 3 or above, clear of the standard three.
     let frames_w = frames_w.try_clone()?;
+    let (answers_r, answers_w) = std::io::pipe()?;
+    let answers_r = answers_r.try_clone()?;
     let (err_r, err_w) = std::io::pipe()?;
     let fd = frames_w.as_raw_fd();
+    let answers_fd = answers_r.as_raw_fd();
     cmd.stdout(err_w.try_clone()?)
         .stderr(err_w)
         .env("BRRRTY_FRAMES_FD", fd.to_string())
+        .env("BRRRTY_ANSWERS_FD", answers_fd.to_string())
         // A group of its own, so what Node starts can be stopped with it.
         .process_group(0);
     // SAFETY: fcntl is async-signal-safe, and the descriptor is this
@@ -866,7 +966,9 @@ fn spawn(mut cmd: Command) -> std::io::Result<(Child, std::io::PipeReader, std::
     unsafe {
         cmd.pre_exec(move || {
             // Keep it open across exec in Node only.
-            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1
+                || libc::fcntl(answers_fd, libc::F_SETFD, 0) == -1
+            {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -876,14 +978,27 @@ fn spawn(mut cmd: Command) -> std::io::Result<(Child, std::io::PipeReader, std::
     // The parent's write ends close here, so the reads end when Node's do.
     drop(cmd);
     drop(frames_w);
-    Ok((child?, frames_r, err_r))
+    drop(answers_r);
+    Ok((
+        child?,
+        Box::new(frames_r),
+        Box::new(err_r),
+        Some(Box::new(answers_w)),
+    ))
 }
+
+/// A started Node: the process, its replies, its stderr, and where
+/// Brrrty answers its questions (none where that pipe can't be passed).
+type Spawned = (
+    Child,
+    Box<dyn Read + Send>,
+    Box<dyn Read + Send>,
+    Option<Box<dyn Write + Send>>,
+);
 
 /// Start the worker, its replies on stdout.
 #[cfg(not(unix))]
-fn spawn(
-    mut cmd: Command,
-) -> std::io::Result<(Child, std::process::ChildStdout, std::process::ChildStderr)> {
+fn spawn(mut cmd: Command) -> std::io::Result<Spawned> {
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -891,7 +1006,7 @@ fn spawn(
         .spawn()?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    Ok((child, stdout, stderr))
+    Ok((child, Box::new(stdout), Box::new(stderr), None))
 }
 
 #[cfg(unix)]

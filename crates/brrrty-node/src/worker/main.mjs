@@ -29,18 +29,22 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const writeFd = fs.writeSync;
 const framesFd = closeOnExec(Number(process.env.BRRRTY_FRAMES_FD) || 1);
 delete process.env.BRRRTY_FRAMES_FD;
+// Brrrty's answers to the worker's own questions (a filter a JavaScript
+// template calls on `this`) come on a pipe of their own, read blocking.
+const answersFd = process.env.BRRRTY_ANSWERS_FD ? closeOnExec(Number(process.env.BRRRTY_ANSWERS_FD), fs.constants.O_RDONLY) : null;
+delete process.env.BRRRTY_ANSWERS_FD;
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
 
 // The replies' pipe comes in without close-on-exec (it had to survive
 // Node's own exec), so every process Node starts would inherit it, and one
 // left running would hold it open. Open it again, as Node opens every file,
 // with close-on-exec, and close the inherited descriptor.
-function closeOnExec(fd) {
+function closeOnExec(fd, flags = fs.constants.O_WRONLY) {
   if (fd <= 2) return fd;
   for (const dir of ["/proc/self/fd", "/dev/fd"]) {
     let again;
     try {
-      again = fs.openSync(`${dir}/${fd}`, fs.constants.O_WRONLY);
+      again = fs.openSync(`${dir}/${fd}`, flags);
     } catch {
       continue;
     }
@@ -1082,13 +1086,59 @@ async function loadTemplate(req) {
   return { template: templates.length - 1, okText: JSON.stringify(encodeValue(root, register)) };
 }
 
+// One line from Brrrty's answers pipe, waiting for it.
+const answerBuf = Buffer.alloc(65536);
+let answerPending = Buffer.alloc(0);
+
+function readAnswer() {
+  for (;;) {
+    const nl = answerPending.indexOf(10);
+    if (nl !== -1) {
+      const line = answerPending.subarray(0, nl).toString("utf8");
+      answerPending = answerPending.subarray(nl + 1);
+      return line;
+    }
+    let n;
+    try {
+      n = fs.readSync(answersFd, answerBuf, 0, answerBuf.length, null);
+    } catch (e) {
+      if (e && e.code === "EAGAIN") {
+        Atomics.wait(sleepCell, 0, 0, 1);
+        continue;
+      }
+      throw e;
+    }
+    if (n === 0) throw new Error("Brrrty closed its answers");
+    answerPending = Buffer.concat([answerPending, answerBuf.subarray(0, n)]);
+  }
+}
+
+// Ask Brrrty to run one of its filters, as 11ty's own would run in
+// JavaScript, and wait for the result.
+function askFilter(name, args) {
+  if (answersFd === null) {
+    throw refuse(`calls \`this.${name}\`, one of the filters 11ty gives a JavaScript template, which Brrrty can't run here`);
+  }
+  let text;
+  try {
+    text = JSON.stringify(encodeValue(args.map(unwrapProxy), register));
+  } catch (e) {
+    if (e && e.brrrtyRefusal) throw refuse(`passes \`this.${name}\` something that ${e.brrrtyRefusal}`);
+    throw e;
+  }
+  frame({ filter: name, okText: text });
+  const answer = JSON.parse(readAnswer());
+  if (answer.refused !== undefined) throw refuse(String(answer.refused));
+  return fromWire(answer.ok);
+}
+
 // The functions 11ty puts on `this` for a render (`getJavaScriptFunctions`):
-// one new wrapper per name, each render.
+// one new wrapper per name, each render; each runs Brrrty's own filter.
 function filterFunctions() {
   const out = {};
   for (const name of filterNames) {
-    out[name] = function () {
-      throw refuse(`calls \`this.${name}\`, one of the filters 11ty gives a JavaScript template, which Brrrty doesn't run from JavaScript yet`);
+    out[name] = function (...args) {
+      return askFilter(name, args);
     };
   }
   return out;

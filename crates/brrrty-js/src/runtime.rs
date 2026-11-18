@@ -142,6 +142,10 @@ impl Refusal {
     }
 }
 
+/// Runs one of Brrrty's filters for a JavaScript template's `this`:
+/// `(name, arguments)`. `Err` refuses the render, with why.
+pub type FilterCall<'a> = dyn FnMut(&str, &[Value]) -> Result<Value, String> + 'a;
+
 /// A JavaScript template or layout (`.11ty.js`) loaded in the runtime: its
 /// instance stays there, by this id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -219,13 +223,16 @@ pub trait JsRuntime: Send {
     /// Render a loaded template with the page's `data` (for a layout, with
     /// `content`), as 11ty's JavaScript engine does: `first` is the `page`
     /// 11ty's first render of it set as `this.page`. Each of `traps` (a
-    /// top-level key and why) is a key Brrrty can't supply.
+    /// top-level key and why) is a key Brrrty can't supply. A filter the
+    /// template calls on `this` runs as `filters(name, arguments)`; `Err`
+    /// refuses the render with why.
     fn render(
         &mut self,
         template: TemplateId,
         data: &Value,
         first: Option<&Value>,
         traps: &[(String, String)],
+        filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded>;
     /// Check that no call's result depended on the calls made before it:
     /// run the same calls again, in fresh runtimes, in other orders, and
