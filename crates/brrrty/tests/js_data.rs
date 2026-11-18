@@ -329,6 +329,61 @@ fn a_process_a_data_file_leaves_running_does_not_keep_the_build_open() {
 }
 
 #[test]
+fn a_proxy_of_a_plain_object_is_merged_as_11ty_merges_it() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "module.exports = new Proxy({ title: \"T\" }, {});",
+        ),
+        (
+            "src/_data/p.js",
+            "module.exports = new Proxy({ t: \"x\" }, {});",
+        ),
+        ("src/posts/a.njk", "[{{ title }}] [{{ p.t }}]"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(!text(&o).contains("js-data-not-object"), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/posts/a/index.html")).unwrap(),
+        "[T] [x]"
+    );
+}
+
+#[test]
+fn a_local_data_object_that_cannot_cross_is_refused_not_ignored() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "const o = { title: \"T\" }; Object.defineProperty(o, \"hid\", { value: 1 }); module.exports = { inner: Object.freeze(o) };",
+        ),
+        (
+            "src/posts/root.11tydata.js",
+            "const o = { title: \"T\" }; Object.defineProperty(o, \"hid\", { value: 1 }); module.exports = Object.freeze(o);",
+        ),
+        ("src/posts/a.njk", "[{{ inner.hid }}]"),
+        ("src/posts/root.njk", "[{{ title }}]"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(!out.contains("js-data-not-object"), "{out}");
+    assert!(!t.path().join("_site/posts/a/index.html").exists(), "{out}");
+    assert!(
+        !t.path().join("_site/posts/root/index.html").exists(),
+        "{out}"
+    );
+}
+
+#[test]
 fn a_local_data_function_runs_once_for_each_template_it_applies_to() {
     if !has_node() {
         return;

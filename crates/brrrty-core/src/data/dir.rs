@@ -357,6 +357,25 @@ fn settle_js(
     let Some((_, d, _)) = first else {
         return (LocalFile::JsRan(None, Vec::new()), None);
     };
+    if let (Value::Undefined, Some((path, what))) = (&d.value, d.refused.first())
+        && path.is_empty()
+        && brrrty_js::runtime::refused_plain_object(what)
+    {
+        // 11ty merges it; Brrrty can't read all of it.
+        return (
+            LocalFile::Failed(
+                Problem::error(
+                    codes::JS_DATA_VALUE,
+                    format!(
+                        "this template or directory data file gives {what}, which can't cross from JavaScript to Brrrty exactly"
+                    ),
+                )
+                .with_path(shown)
+                .with_help("Return a plain object that isn't frozen, or one without hidden keys and well-known symbols."),
+            ),
+            None,
+        );
+    }
     let Value::Object(o) = &d.value else {
         let what = match &d.value {
             Value::Undefined if !d.refused.is_empty() || !d.functions.is_empty() => {

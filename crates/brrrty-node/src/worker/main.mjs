@@ -223,6 +223,22 @@ async function getDataValue(absolutePath, call) {
   return value;
 }
 
+// `isPlainObject` from @11ty/eleventy-utils, which sees through a Proxy.
+function isPlainObject(value) {
+  if (value === null || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return !proto || proto === Object.prototype;
+}
+
+// A Proxy of a plain object, as 11ty's merge copies it (`for...in`, each
+// key read once). Anything else stays as it is.
+function rootValue(value) {
+  if (!utilTypes.isProxy(value) || !isPlainObject(value)) return value;
+  const copy = {};
+  for (const key in value) copy[key] = value[key];
+  return copy;
+}
+
 // --- Errors. ---
 
 function thrown(e) {
@@ -275,7 +291,7 @@ async function handle(req) {
       if (argumentPrint() !== before) {
         return { changedArgument: true };
       }
-      return { ok: encodeValue(value, register) };
+      return { ok: encodeValue(rootValue(value), register) };
     }
     case "call": {
       const fn = handles[req.handle];
