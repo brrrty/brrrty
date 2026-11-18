@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.23 - 2026-11-18
 
 - Fixed: a global JavaScript data file that changes another file's value while it loads (`require("./a").list.push(2)`) now changes what pages see, as in 11ty; before, pages showed the value as first loaded, with no warning (in 0.0.22 too). A template or directory data file that does it stops the build (`js-data-impure`), since what 11ty's pages see then depends on its load order.
 - With JavaScript data on, functions in the data run. A function under `eleventyComputed` (nested and `async` too) runs on the page's data in 11ty's dependency order, found the way 11ty finds it: by running each function once on 11ty's proxy data, which also sets computed keys not set yet to `""`. A `permalink` function, plain or computed, places the page as 11ty does. A Nunjucks template calls a function with arguments (`{{ fmt.money(1234.5) }}`, `{{ i18n.en.label(name) }}`), and Liquid calls one it reads (`{{ site.year }}`) and awaits it, as LiquidJS does. Before, every page that used such a function was refused. The js-data-computed fixture, built by 11ty 3.1.8 on node:22 and node:24, matches byte for byte, and Brrrty's port of 11ty's computed data proxy gives 11ty's own results on 200 generated functions.
