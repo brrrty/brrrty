@@ -12,7 +12,7 @@ lead: Brrrty renders the template languages 11ty has built in, configured the wa
 | `.njk` | Nunjucks 3.2.4, as 11ty sets it up |
 | `.md` | Liquid, then Markdown. `markdownTemplateEngine` can make it Nunjucks or nothing. |
 | `.html` | Liquid. `htmlTemplateEngine` can make it Nunjucks or nothing. |
-| `.11ty.js`, `.11ty.cjs`, `.11ty.mjs` | Not yet: refused with `template-unsupported` |
+| `.11ty.js`, `.11ty.cjs`, `.11ty.mjs` | JavaScript, in your own Node, with `config.set_js_data("node")` (see [JavaScript templates](#javascript-templates)); refused with `template-unsupported` without it |
 | `.webc`, `.pug`, `.hbs`, `.mustache`, `.ejs`, `.haml`, `.jsx`, `.tsx`, `.mdx` | Skipped with a warning: in 11ty these are templates only when a plugin adds them |
 
 Pages, layouts and includes can be in any mix: a Markdown page in a Nunjucks layout, a Liquid layout around a Nunjucks page. `templateEngineOverride` works as in 11ty. Markdown is a port of markdown-it, set up like 11ty's, with HTML allowed.
@@ -52,11 +52,31 @@ Filters you add in `brrrty.config.rhai` work in both languages.
 
 Not yet. `brrrty.config.rhai` has no `add_shortcode` or `add_paired_shortcode`, so a page that uses a shortcode from your 11ty config is refused with a syntax error for the unknown tag, at its line. The one shortcode Brrrty has is the syntax highlighting plugin's `{% highlight %}`, in Liquid.
 
+## JavaScript templates
+
+With `config.set_js_data("node");` in `brrrty.config.rhai` (or `--js-data=node`), `.11ty.js`, `.11ty.cjs` and `.11ty.mjs` templates run in your site's own Node, as 11ty runs them, in the same Node and with the same checks as [JavaScript data](/docs/configuration/#javascript-data). The one switch turns on both.
+
+- **Exports:** a string, a `Buffer`, a promise, a function, a class with `render` (and `data`), or an object with `render` and `data`, in CommonJS or ESM, with 11ty's rules for which wins (`"type": "module"` decides how a `default` export is read, for every extension).
+- **`data`** is an object, a getter or a function (`async` too), called with the instance as `this`. It is the page's front matter: `layout`, `tags`, `pagination`, `permalink` and the rest work as in front matter, and so do functions in `permalink` and `eleventyComputed`. A permalink or computed string is used as written, not rendered, as in 11ty.
+- **`render(data)`** gets the page's data, `collections` included, with the instance as `this`. `this.page` is the first page's `page`, as 11ty keeps it on a paginated template; `this.eleventy` is there too, and so are the names of 11ty's filters and your config's.
+- **Layouts:** a JavaScript template can use a layout in any language, and a JavaScript file in the layouts folder can be the layout of any page. Each module loads once per build.
+- **Collections:** a JavaScript template's pages are in `collections` like any other, `templateContent` included.
+
+Refused, each naming the file (and the line, for an error your code throws):
+
+- an export 11ty can't make a template of, or `data` that isn't an object (`js-template-invalid`); an error your code throws (`js-data-error`): 11ty stops the whole build on both;
+- `render` giving a number, `null`, a boolean, an array or an object with no layout (`js-template-value`: 11ty stops the build there too). With a layout, the layout prints it as 11ty's does. `undefined` with no layout writes no file, with a warning (`js-template-empty`), where 11ty writes none and says nothing;
+- calling one of the filters on `this` (`this.slugify(...)`), `this.page` in a JavaScript layout (11ty keeps whichever page renders it first, and renders layouts at the same time), a collection item's `templateContent` inside `render`, `page.rawInput` (in 11ty, the template's instance), and `templateEngineOverride` on a JavaScript template;
+- a `render` that changes the data it is given (`collections.post.sort()`): 11ty's later pages would see it changed. Sort a copy (`[...collections.post].sort()`);
+- a `render` whose result depends on the renders before it (a counter kept in the module): the same replay check as for data functions finds it, and nothing is written (`js-data-impure`).
+
+11ty adds a JavaScript template to its template map once its file has loaded, so its place there, and whatever follows from that place, depends on file-read timing. The collections themselves don't: each is sorted by date, then input path, and complete when pages render, so a sitemap or a listing page builds. What does depend on it is refused: listing the names in `collections` (`{% for name, items in collections %}`, `Object.keys(collections)`), and a collection from the config built with `get_all()`. The same goes for sites with template and directory JavaScript data.
+
 ## What is refused
 
 Brrrty writes a page only when it can write exactly what 11ty would. Otherwise it refuses that page with a code and the reason, and builds the rest. The refusals you are most likely to meet in templates:
 
-- **JavaScript templates and data.** `.11ty.js` templates, and data from a `.js` data file with no `.rhai` port.
+- **JavaScript templates and data, without `config.set_js_data("node")`.** `.11ty.js` templates, and data from a `.js` data file with no `.rhai` port. With it on, see [JavaScript templates](#javascript-templates).
 - **Shortcodes and missing filters**, as above.
 - **Randomness.** Nunjucks' `random` filter, and a filter your config marks with `add_nondeterministic_filter`.
 - **Sorting that depends on V8.** A Nunjucks `sort` or `dictsort` whose order would depend on how V8 sorts ties.
