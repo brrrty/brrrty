@@ -33,7 +33,7 @@ const WORKER_SOURCE: &str = concat!(
 const ELEVENTY_VERSION: &str = "3.1.8";
 
 /// The stack of the thread that parses replies.
-const REPLY_STACK: usize = 32 * 1024 * 1024;
+pub(crate) const REPLY_STACK: usize = 32 * 1024 * 1024;
 
 /// How many of Node's last stderr lines a failure shows.
 const STDERR_TAIL: usize = 20;
@@ -89,6 +89,13 @@ pub(crate) struct Frame {
     pub raw: Option<Json>,
 }
 
+impl Record {
+    /// The request, parsed.
+    pub fn req(&self) -> Json {
+        parse_reply(self.req_text.as_bytes()).unwrap_or(Json::Null)
+    }
+}
+
 /// One request that loaded data or a template, with its reply, for the
 /// replay check.
 #[derive(Clone)]
@@ -106,7 +113,9 @@ pub(crate) struct Record {
     /// made outside one is a unit of its own.
     pub unit: u64,
     pub label: Arc<str>,
-    pub req: Json,
+    /// The request as sent, as text: a parsed request takes ten times the
+    /// memory, and a build keeps one per call (see [`Record::req`]).
+    pub req_text: Box<str>,
     pub head: Json,
     pub raw: Option<Json>,
     /// The questions the request asked Brrrty, with the answers it got.
@@ -315,7 +324,7 @@ impl Worker {
             self.call_log.push(Record {
                 unit,
                 label,
-                req,
+                req_text: req.to_string().into_boxed_str(),
                 head: frame.head.clone(),
                 raw: frame.raw.clone(),
                 answers: std::mem::take(&mut self.asked),
@@ -1338,6 +1347,12 @@ impl Encoder<'_> {
         if self.in_kept > 0 {
             return self.inner(v);
         }
+        self.encode_inline(v, p)
+    }
+
+    /// `v` (at address `p`) in full, as a value shared within the request
+    /// when it appears more than once in it.
+    fn encode_inline(&mut self, v: &Value, p: usize) -> Result<Json, String> {
         if let Some(id) = self.ids.get(&p) {
             return Ok(json!({"$r": id}));
         }

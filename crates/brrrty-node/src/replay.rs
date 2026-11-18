@@ -71,21 +71,39 @@ impl Log<'_> {
             return Ok(());
         }
         let units = self.units();
+        // Every value Brrrty kept in the worker, as it was first sent, each
+        // once (a kept value inside another stands as a reference), shared
+        // by both replays.
+        let mut kept: HashMap<u64, Json> = HashMap::new();
+        for r in self.calls {
+            kept_values(&r.req(), &mut kept);
+        }
         let reverse: Vec<usize> = (0..units.len()).rev().collect();
         let mut named: Vec<usize> = (0..units.len()).collect();
         named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
         // With no calls, only the load order is checked: one worker.
         let both = !self.calls.is_empty();
+        // Requests are parsed again here, and data may nest deep: a roomy
+        // stack, as for replies.
+        let thread = || std::thread::Builder::new().stack_size(crate::client::REPLY_STACK);
         let (a, b) = std::thread::scope(|s| {
-            let a = s.spawn(|| self.replay(&units, &reverse, true));
-            let b = s.spawn(|| {
+            let a = thread().spawn_scoped(s, || self.replay(&units, &reverse, true, &kept));
+            let b = thread().spawn_scoped(s, || {
                 if both {
-                    self.replay(&units, &named, false)
+                    self.replay(&units, &named, false, &kept)
                 } else {
                     Ok(())
                 }
             });
-            (a.join(), b.join())
+            let join = |h: std::io::Result<
+                std::thread::ScopedJoinHandle<'_, Result<(), Failure>>,
+            >| match h {
+                Ok(h) => h.join(),
+                Err(e) => Ok(Err(Self::runtime(format!(
+                    "the replay check couldn't start: {e}"
+                )))),
+            };
+            (join(a), join(b))
         });
         let joined = |r: std::thread::Result<Result<(), Failure>>| {
             r.unwrap_or_else(|_| {
@@ -119,7 +137,7 @@ impl Log<'_> {
             for &i in &unit.records {
                 let r = &self.calls[i];
                 let mut used = Vec::new();
-                handles_in(&r.req, &mut used, true);
+                handles_in(&r.req(), &mut used, true);
                 for h in used {
                     if h >= self.load_handles && !made.contains(&h) {
                         unit.needs.insert(h);
@@ -144,7 +162,13 @@ impl Log<'_> {
         })
     }
 
-    fn replay(&self, units: &[Unit], order: &[usize], interleave: bool) -> Result<(), Failure> {
+    fn replay(
+        &self,
+        units: &[Unit],
+        order: &[usize],
+        interleave: bool,
+        kept: &HashMap<u64, Json>,
+    ) -> Result<(), Failure> {
         let mut w = Worker::start(self.node, self.root, self.run_mode)
             .map_err(|e| Self::runtime(format!("the replay check couldn't start Node: {e}")))?;
         w.keep_raw.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -206,11 +230,6 @@ impl Log<'_> {
             &mut w,
             json!({"op": "feedCalls", "values": Json::Object(by_kind)}),
         )?;
-        // Every value Brrrty kept in the worker, as it was first sent.
-        let mut kept: HashMap<u64, Json> = HashMap::new();
-        for r in self.calls {
-            kept_values(&r.req, &mut kept);
-        }
         let mut st = State {
             load_handles: self.load_handles,
             functions: HashMap::new(),
@@ -236,7 +255,7 @@ impl Log<'_> {
                     let (u, at) = *slot;
                     let i = units[u].records[at];
                     let mut used = Vec::new();
-                    handles_in(&self.calls[i].req, &mut used, true);
+                    handles_in(&self.calls[i].req(), &mut used, true);
                     if !used
                         .iter()
                         .all(|h| *h < self.load_handles || st.functions.contains_key(h))
@@ -378,7 +397,8 @@ impl Log<'_> {
         send: &dyn Fn(&mut Worker, Json) -> Result<crate::client::Frame, Failure>,
     ) -> Result<(), Failure> {
         let r = &self.calls[i];
-        let mut req = st.rewrite(&r.req, true);
+        let parsed = r.req();
+        let mut req = st.rewrite(&parsed, true);
         // The clock and random values the call read the first time.
         if let Some(clock) = r.head.get("clock") {
             req["feed"] = clock.clone();
@@ -405,7 +425,7 @@ impl Log<'_> {
         }
         // A page's number is the worker's own count: it is matched
         // up, not compared.
-        let opens = r.req.get("op").and_then(Json::as_str) == Some("pageOpen");
+        let opens = parsed.get("op").and_then(Json::as_str) == Some("pageOpen");
         let same = st.same(&want, &head)
             && match (&r.raw, &got.raw) {
                 _ if opens => true,
@@ -414,13 +434,13 @@ impl Log<'_> {
                 _ => false,
             };
         if !same {
-            let handle = r.req.get("handle").and_then(Json::as_u64);
+            let handle = parsed.get("handle").and_then(Json::as_u64);
             return Err(Failure::Differs(
                 difference(r, &head, got.raw.as_ref()),
                 handle,
             ));
         }
-        if r.req.get("op").and_then(Json::as_str) == Some("pageOpen")
+        if opens
             && let (Some(a), Some(b)) = (
                 r.raw.as_ref().and_then(Json::as_u64),
                 got.raw.as_ref().and_then(Json::as_u64),
@@ -453,7 +473,7 @@ fn difference(r: &Record, head: &Json, raw: Option<&Json>) -> String {
         }
         t
     };
-    let what = match r.req.get("op").and_then(Json::as_str) {
+    let what = match r.req().get("op").and_then(Json::as_str) {
         Some("call") => "{fn}, which a template calls,",
         Some("pageCall" | "pageVars") => "{fn}, a computed or permalink function,",
         _ => "a function from JavaScript data",
@@ -489,14 +509,14 @@ fn where_(label: &str) -> Option<String> {
     })
 }
 
-struct State {
+struct State<'k> {
     load_handles: u64,
     /// First run's handles of functions calls made, to the replay's.
     functions: HashMap<u64, u64>,
     pages: HashMap<u64, u64>,
     /// Kept values the replay's worker has.
     defined: HashSet<u64>,
-    kept: HashMap<u64, Json>,
+    kept: &'k HashMap<u64, Json>,
 }
 
 /// A wire form with one key: `{"$f": 3}` gives `("$f", 3)`.
@@ -538,8 +558,10 @@ fn kept_values(j: &Json, out: &mut HashMap<u64, Json>) {
                 && let [Json::Number(id), inner] = pair.as_slice()
                 && let Some(id) = id.as_u64()
             {
-                out.entry(id).or_insert_with(|| inner.clone());
-                kept_values(inner, out);
+                if let std::collections::hash_map::Entry::Vacant(e) = out.entry(id) {
+                    e.insert(as_references(inner));
+                    kept_values(inner, out);
+                }
                 return;
             }
             o.values().for_each(|v| kept_values(v, out));
@@ -548,7 +570,29 @@ fn kept_values(j: &Json, out: &mut HashMap<u64, Json>) {
     }
 }
 
-impl State {
+/// `j` with each kept value inside it (`{"$S": [id, v]}`) as a reference
+/// (`{"$R": id}`): it is kept on its own, and [`State::rewrite`] sends it in
+/// full where the replay's worker doesn't have it yet.
+fn as_references(j: &Json) -> Json {
+    match j {
+        Json::Array(a) => Json::Array(a.iter().map(as_references).collect()),
+        Json::Object(o) => {
+            if let Some(("$S", Json::Array(pair))) = tagged(j)
+                && let [id @ Json::Number(_), _] = pair.as_slice()
+            {
+                return json!({"$R": id});
+            }
+            Json::Object(
+                o.iter()
+                    .map(|(k, v)| (k.clone(), as_references(v)))
+                    .collect(),
+            )
+        }
+        other => other.clone(),
+    }
+}
+
+impl State<'_> {
     fn function(&self, h: u64) -> u64 {
         if h < self.load_handles {
             h

@@ -70,6 +70,8 @@ Refused, each naming the file (and the line, for an error your code throws):
 - a `render` that changes the data it is given (`collections.post.sort()`): 11ty's later pages would see it changed. Sort a copy (`[...collections.post].sort()`);
 - a `render` whose result depends on the renders before it (a counter kept in the module): the same replay check as for data functions finds it, and nothing is written (`js-data-impure`).
 
+Each JavaScript render is a call into Node, recorded for the check that replays the calls, so a site with thousands of JavaScript-rendered pages builds slower and takes more memory than the same pages in Nunjucks: 4,000 pages from one paginated JavaScript template take about 6 s and 600 MB (release build), against about 1 s and 100 MB in Nunjucks.
+
 11ty adds a JavaScript template to its template map once its file has loaded, so its place there, and whatever follows from that place, depends on file-read timing. The collections themselves don't: each is sorted by date, then input path, and complete when pages render, so a sitemap or a listing page builds. What does depend on it is refused: listing the names in `collections` (`{% for name, items in collections %}`, `Object.keys(collections)`), and a collection from the config built with `get_all()`. The same goes for sites with template and directory JavaScript data.
 
 ## What is refused
