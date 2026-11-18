@@ -722,6 +722,17 @@ fn load_page_inner(
         withheld.retain(|(k, _)| k != key);
         withheld.push((key.clone(), Withheld::Js(file.clone())));
     }
+    for j in &local.js_values {
+        withheld.retain(|(k, _)| k != &j.key);
+        withheld.push((
+            j.key.clone(),
+            Withheld::JsValue {
+                file: j.file.clone(),
+                at: j.at.clone(),
+                what: j.what.clone(),
+            },
+        ));
+    }
     for (key, _) in &withheld {
         data.shift_remove(key);
     }
@@ -2156,8 +2167,14 @@ fn build_once(
         &loadable,
         opts.config.data.as_ref(),
         &initial,
+        &mut js,
     );
     report.problems.extend(dir_data.notes.iter().cloned());
+    report.problems.extend(dir_data.warnings.iter().cloned());
+    if let Some(p) = js.failed.take() {
+        report.problems.push(p);
+        return finish(report, strict, start);
+    }
     // What the JavaScript data read inside the project: `serve` rebuilds when one changes.
     for p in js.reads() {
         if p.is_relative() {

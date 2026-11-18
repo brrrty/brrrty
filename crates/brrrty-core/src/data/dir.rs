@@ -8,6 +8,7 @@ use brrrty_js::Value;
 
 use super::cascade::{clean_tags, frozen_keys};
 use super::global::read_json;
+use super::js::{JsLoad, JsSession, first_inexact};
 use super::jskeys::{export_keys, module_kind};
 use super::rhai;
 use super::{
@@ -26,8 +27,23 @@ pub(crate) enum LocalFile {
     Json(Option<Data>),
     /// A JavaScript file Brrrty can't run, and the top-level keys it sets.
     Js(Vec<String>),
+    /// A JavaScript file that ran: its object, `tags` cleaned, and the
+    /// top-level keys whose value has a part that can't cross (where, and
+    /// what it is). `None` when it gave something other than an object,
+    /// which 11ty skips.
+    JsRan(Option<Data>, Vec<JsInexact>),
     /// A file no page under it can be built with, and why.
     Failed(Problem),
+}
+
+/// A top-level key of a JavaScript data file whose value has a part that
+/// can't cross exactly.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct JsInexact {
+    pub key: String,
+    pub file: PathBuf,
+    pub at: Vec<brrrty_js::runtime::PathPart>,
+    pub what: String,
 }
 
 /// The data files that apply to a template, merged.
@@ -37,6 +53,8 @@ pub(crate) struct Local {
     /// Keys set by JavaScript files, each with the file that sets it (the
     /// highest-priority one when several do).
     pub js: Vec<(String, PathBuf)>,
+    /// Keys set by JavaScript files that ran, whose value can't cross.
+    pub js_values: Vec<JsInexact>,
     /// For each top-level key, the highest-priority file that sets it.
     pub source: HashMap<String, PathBuf>,
 }
@@ -50,6 +68,9 @@ pub(crate) struct DirDataIndex {
     /// Notes, such as a JavaScript file a `.rhai` port stands in for.
     pub notes: Vec<Problem>,
     noted: Vec<PathBuf>,
+    /// Warnings, such as a JavaScript file that gave something other than
+    /// an object.
+    pub warnings: Vec<Problem>,
 }
 
 impl DirDataIndex {
@@ -58,15 +79,20 @@ impl DirDataIndex {
     ///
     /// `.rhai` files run once each, on `runner`, with `global` as the data
     /// 11ty hands an exported function. A JavaScript file with a `.rhai`
-    /// port beside it is dropped, with a note.
+    /// port beside it is dropped, with a note. Otherwise, with JavaScript
+    /// data on, it runs in `js` once for every template it applies to, as
+    /// 11ty runs it; every result must be the same.
     pub fn load(
         input: &Path,
         input_rel: &Path,
         templates: &[PathBuf],
         runner: Option<&DataRunner>,
         global: &Data,
+        js: &mut JsSession<'_>,
     ) -> DirDataIndex {
         let mut index = DirDataIndex::default();
+        // Each JavaScript file's result for each template, in template order.
+        let mut runs: Vec<(PathBuf, Vec<(PathBuf, JsLoad)>)> = Vec::new();
         for rel in templates {
             // 11ty lists the paths highest priority first, drops repeats
             // (`posts/posts.md` names `posts/posts.json` twice), then
@@ -91,14 +117,29 @@ impl DirDataIndex {
             }
             paths.retain(|p| !ported.contains(p));
             for shown in &paths {
+                let full = input.join(shown.strip_prefix(input_rel).unwrap_or(shown));
+                if rhai::is_js(&shown.to_string_lossy()) && js.on() {
+                    let r = js.load(&full, shown, true);
+                    let template = input_rel.join(rel);
+                    match runs.iter_mut().find(|(f, _)| f == shown) {
+                        Some((_, list)) => list.push((template, r)),
+                        None => runs.push((shown.clone(), vec![(template, r)])),
+                    }
+                    continue;
+                }
                 if !index.files.contains_key(shown) {
-                    let full = input.join(shown.strip_prefix(input_rel).unwrap_or(shown));
                     index
                         .files
                         .insert(shown.clone(), read_local(&full, shown, runner, global));
                 }
             }
             index.pages.insert(rel.clone(), paths);
+        }
+        for (shown, results) in runs {
+            let full = input.join(shown.strip_prefix(input_rel).unwrap_or(&shown));
+            let (file, warning) = settle_js(&full, &shown, results);
+            index.warnings.extend(warning);
+            index.files.insert(shown, file);
         }
         index
     }
@@ -138,8 +179,26 @@ impl DirDataIndex {
                 LocalFile::Js(keys) => {
                     for k in keys {
                         local.js.retain(|(j, _)| j != k);
+                        local.js_values.retain(|j| &j.key != k);
                         local.js.push((k.clone(), shown.clone()));
                         local.source.insert(k.clone(), shown.clone());
+                    }
+                }
+                LocalFile::JsRan(None, _) => {}
+                LocalFile::JsRan(Some(data), inexact) => {
+                    merge(&mut local.data, data);
+                    for k in data.keys() {
+                        let k = k.strip_prefix(OVERRIDE_PREFIX).unwrap_or(k);
+                        local.source.insert(k.to_string(), shown.clone());
+                        // A later file's value replaces or merges with an earlier
+                        // one: a key it sets exactly is exact again only when it
+                        // replaces the whole value, which Brrrty doesn't track, so
+                        // an inexact key stays withheld.
+                    }
+                    for j in inexact {
+                        local.js.retain(|(k, _)| k != &j.key);
+                        local.js_values.retain(|v| v.key != j.key);
+                        local.js_values.push(j.clone());
                     }
                 }
             }
@@ -238,6 +297,160 @@ pub(crate) fn frozen_problem(keys: &[String]) -> Problem {
     .with_help("rename or remove it; 11ty stops the whole build here")
 }
 
+/// One JavaScript file's results, one per template it applies to, settled
+/// into the file's data: refused when it threw or when two results differ
+/// (11ty's would depend on the order it loads templates), skipped with a
+/// warning when it isn't an object.
+fn settle_js(
+    full: &Path,
+    shown: &Path,
+    results: Vec<(PathBuf, JsLoad)>,
+) -> (LocalFile, Option<Problem>) {
+    let mut first: Option<(PathBuf, brrrty_js::runtime::Decoded, String)> = None;
+    for (template, r) in results {
+        let d = match r {
+            JsLoad::Value(d) => d,
+            JsLoad::Thrown(p) => return (LocalFile::Failed(p), None),
+            // The runtime stopped: the build stops too, so this is only for
+            // the record.
+            JsLoad::Unavailable => return (read_js(full, shown), None),
+        };
+        let print = fingerprint(&d);
+        match &first {
+            None => first = Some((template, d, print)),
+            Some((t0, _, p0)) if *p0 != print => {
+                return (
+                    LocalFile::Failed(
+                        Problem::error(
+                            codes::JS_DATA_IMPURE,
+                            format!(
+                                "{} returned different data for {} and {}; 11ty's result depends on the order it loads templates",
+                                shown.display(),
+                                t0.display(),
+                                template.display()
+                            ),
+                        )
+                        .with_path(shown)
+                        .with_help("Make the data file return the same data every time it is called: move counters, random values and the current time out of it, or into each page's own data."),
+                    ),
+                    None,
+                );
+            }
+            Some(_) => {}
+        }
+    }
+    let Some((_, d, _)) = first else {
+        return (LocalFile::JsRan(None, Vec::new()), None);
+    };
+    let Value::Object(o) = &d.value else {
+        let what = match &d.value {
+            Value::Undefined if !d.refused.is_empty() || !d.functions.is_empty() => {
+                first_inexact(&d).map_or("something else".to_string(), |(_, w)| w)
+            }
+            other => crate::data::json_text(other),
+        };
+        return (
+            LocalFile::JsRan(None, Vec::new()),
+            Some(
+                Problem::warning(
+                    codes::JS_DATA_NOT_OBJECT,
+                    format!("this template or directory data file gives {what}, not an object, so 11ty ignores it"),
+                )
+                .with_path(shown)
+                .with_help("Return an object, as `module.exports = { ... }` or `export default { ... }`, or remove the file."),
+            ),
+        );
+    };
+    let mut data = o.as_ref().clone();
+    // Keys whose value has a function or a refused part inside.
+    let mut inexact: Vec<JsInexact> = Vec::new();
+    for (path, what) in d.refused.iter().map(|(p, w)| (p, w.clone())).chain(
+        d.functions
+            .iter()
+            .map(|(p, _)| (p, "a function".to_string())),
+    ) {
+        let Some(brrrty_js::runtime::PathPart::Key(key)) = path.first() else {
+            continue;
+        };
+        let key = key.strip_prefix(OVERRIDE_PREFIX).unwrap_or(key).to_string();
+        if !inexact.iter().any(|j| j.key == key) {
+            inexact.push(JsInexact {
+                key,
+                file: shown.to_path_buf(),
+                at: path.clone(),
+                what,
+            });
+        }
+    }
+    let shaping: Vec<String> = inexact
+        .iter()
+        .filter(|j| BUILD_KEYS.contains(&j.key.as_str()))
+        .map(|j| format!("`{}`", j.key))
+        .collect();
+    if !shaping.is_empty() {
+        let j = inexact
+            .iter()
+            .find(|j| BUILD_KEYS.contains(&j.key.as_str()))
+            .expect("one is");
+        return (
+            LocalFile::Failed(
+                Problem::error(
+                    codes::JS_DATA_VALUE,
+                    format!(
+                        "this JavaScript data file sets {}, which changes how every page it applies to is built, and its {} is {}, which can't cross from JavaScript to Brrrty exactly",
+                        shaping.join(", "),
+                        brrrty_js::runtime::path_text(&j.at),
+                        j.what
+                    ),
+                )
+                .with_path(shown),
+            ),
+            None,
+        );
+    }
+    if let Err(bad) = clean_tags(&mut data) {
+        return (
+            LocalFile::Failed(
+                Problem::error(
+                    codes::TAGS_INVALID,
+                    format!(
+                        "`tags` must be a string or a list, found {}",
+                        json_text(&bad)
+                    ),
+                )
+                .with_path(shown)
+                .with_help("11ty stops the whole build on this file."),
+            ),
+            None,
+        );
+    }
+    let reserved = reserved_keys(&data);
+    if !reserved.is_empty() {
+        return (
+            LocalFile::Failed(reserved_problem(&reserved).with_path(shown)),
+            None,
+        );
+    }
+    let frozen = frozen_keys(&data);
+    if !frozen.is_empty() {
+        return (
+            LocalFile::Failed(frozen_problem(&frozen).with_path(shown)),
+            None,
+        );
+    }
+    for j in &inexact {
+        data.shift_remove(&j.key);
+    }
+    (LocalFile::JsRan(Some(data), inexact), None)
+}
+
+/// A result as text that tells any two different results apart: `-0`
+/// from `0`, `NaN`, key order, `undefined`, and where the functions are.
+fn fingerprint(d: &brrrty_js::runtime::Decoded) -> String {
+    let functions: Vec<_> = d.functions.iter().map(|(p, _)| p).collect();
+    format!("{:?}|{:?}|{:?}", d.value, functions, d.refused)
+}
+
 fn read_js(full: &Path, shown: &Path) -> LocalFile {
     let text = std::fs::read(full)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -297,14 +510,29 @@ mod tests {
         t
     }
 
+    fn off() -> crate::options::JsOptions {
+        crate::options::JsOptions::default()
+    }
+
+    fn session<'a>(o: &'a crate::options::JsOptions, t: &tempfile::TempDir) -> JsSession<'a> {
+        JsSession::new(
+            o,
+            crate::options::RunMode::Build,
+            t.path(),
+            Value::Undefined,
+        )
+    }
+
     fn local(t: &tempfile::TempDir, rel: &str) -> Local {
         let input = t.path().join("src");
+        let o = off();
         let index = DirDataIndex::load(
             &input,
             Path::new("src"),
             &[PathBuf::from(rel)],
             None,
             &Data::new(),
+            &mut session(&o, t),
         );
         index.local(Path::new(rel)).unwrap()
     }
@@ -368,7 +596,15 @@ mod tests {
         ]);
         let input = t.path().join("src");
         let rels = [PathBuf::from("a/p.md"), PathBuf::from("b/p.md")];
-        let index = DirDataIndex::load(&input, Path::new("src"), &rels, None, &Data::new());
+        let o = off();
+        let index = DirDataIndex::load(
+            &input,
+            Path::new("src"),
+            &rels,
+            None,
+            &Data::new(),
+            &mut session(&o, &t),
+        );
         let a = index.local(&rels[0]).unwrap_err();
         assert_eq!(a.code, codes::DATA_JS_UNSUPPORTED);
         assert!(a.message.contains("`layout`"), "{}", a.message);

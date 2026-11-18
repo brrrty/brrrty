@@ -10,3 +10,11 @@ lang = "en_US.UTF-8"
 "src/posts/two.md" = "posts/two/index.html"
 "src/posts/three.md" = "posts/three/index.html"
 "src/index.njk" = "index.html"
+
+# The counter file returns different data for each post (11ty: one 1,
+# three 2, two 3, by its load order), so its pages are refused by its one
+# js-data-impure problem.
+[refused_by]
+"src/posts/one.md" = "src/posts/posts.11tydata.js"
+"src/posts/two.md" = "src/posts/posts.11tydata.js"
+"src/posts/three.md" = "src/posts/posts.11tydata.js"

@@ -125,9 +125,19 @@ fn every_fixture_matches_reference_output() {
                 "brrrty should refuse pages of {}:\n{stderr}",
                 fixture.display()
             );
+            // A page refused through a data file it uses is named by that
+            // file's one problem, under `[refused_by]`.
+            let by = cfg.get("refused_by").and_then(|v| v.as_table());
             for (page, _) in &refused {
+                let named = match by.and_then(|t| t.get(page)).and_then(|v| v.as_str()) {
+                    Some(file) => stderr.contains(&format!("× {file}:")),
+                    None => {
+                        stderr.contains(&format!("[{page}:"))
+                            || stderr.contains(&format!("× {page}:"))
+                    }
+                };
                 assert!(
-                    stderr.contains(&format!("[{page}:")) || stderr.contains(&format!("× {page}:")),
+                    named,
                     "{}: no problem for {page}:\n{stderr}",
                     fixture.display()
                 );

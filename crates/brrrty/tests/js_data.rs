@@ -257,3 +257,87 @@ fn ctrl_c_mid_load_leaves_no_node_behind() {
     }
     assert!(!alive(&node_pid), "Node {node_pid} outlived brrrty");
 }
+
+#[test]
+fn a_local_data_function_runs_once_for_each_template_it_applies_to() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "const fs = require(\"fs\");\nmodule.exports = () => { fs.appendFileSync(require(\"path\").join(__dirname, \"..\", \"..\", \"calls\"), \"x\\n\"); return { tags: \"post\", section: \"posts\" }; };",
+        ),
+        (
+            "src/posts/a.njk",
+            "a {{ section }} {{ tags | dump | safe }}",
+        ),
+        ("src/posts/b.njk", "b {{ section }}"),
+        ("src/posts/c.njk", "c {{ section }}"),
+        ("src/top.njk", "[{{ section }}]"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        3
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/posts/a/index.html")).unwrap(),
+        "a posts [\"post\"]"
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/top/index.html")).unwrap(),
+        "[]"
+    );
+}
+
+#[test]
+fn a_local_data_function_that_changes_between_templates_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "let n = 0;\nmodule.exports = () => ({ n: ++n });",
+        ),
+        ("src/posts/a.njk", "{{ n }}"),
+        ("src/posts/b.njk", "{{ n }}"),
+        ("src/other.njk", "plain"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1));
+    let out = text(&o);
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert!(
+        out.contains("returned different data for src/posts/a.njk and src/posts/b.njk"),
+        "{out}"
+    );
+    assert!(!t.path().join("_site/posts/a/index.html").exists());
+    assert!(t.path().join("_site/other/index.html").exists());
+}
+
+#[test]
+fn a_local_data_file_that_is_not_an_object_is_skipped_with_a_warning() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/x.11tydata.js", "module.exports = [1, 2];"),
+        ("src/x.njk", "[{{ title }}]"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(text(&o).contains("js-data-not-object"), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/x/index.html")).unwrap(),
+        "[]"
+    );
+}
