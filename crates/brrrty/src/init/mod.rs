@@ -5,7 +5,6 @@
 //! reading that without running it. Those two files, in the site's folder,
 //! are all it ever writes, and it never overwrites a `brrrty.config.rhai`.
 
-mod flags;
 mod js;
 mod json;
 mod port;
@@ -251,14 +250,30 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
         }
         Err(why) => return Err(Refusal::Refused(format!("{why}, so nothing was written."))),
     };
+    let edited = match &old_package {
+        Some(src) => match src.strip_prefix(BOM) {
+            Some(rest) => {
+                let mut e = edit_package(rest)?;
+                e.text.insert_str(0, BOM);
+                e
+            }
+            None => edit_package(src)?,
+        },
+        None => Edited {
+            text: new_package(),
+            advice: Vec::new(),
+            has_build_11ty: false,
+        },
+    };
+
     // brrrty.config.rhai: from the config 11ty reads, which the build script's `--config`
-    // may name instead of the default.
-    let cli = old_package
-        .as_deref()
-        .and_then(|t| {
-            serde_json::from_str::<serde_json::Value>(t.strip_prefix(BOM).unwrap_or(t)).ok()
-        })
-        .and_then(|v| flags::find(&v, &root));
+    // may name instead of the default. The scripts are read as a build will read them,
+    // after the edit above.
+    let cli = serde_json::from_str::<serde_json::Value>(
+        edited.text.strip_prefix(BOM).unwrap_or(&edited.text),
+    )
+    .ok()
+    .and_then(|v| brrrty_config::eleventy_cli::find(&v, &root));
     let cli = cli.as_ref();
     let named = cli.and_then(|c| c.config.clone());
     let config: Option<String> = match &named {
@@ -269,7 +284,7 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             .find(|n| present(&root, n))
             .map(|n| (*n).to_string()),
     };
-    let (rhai, todos, input, output) = match &config {
+    let (mut rhai, todos, input, output) = match &config {
         Some(name) => {
             let outside = !brrrty_config::markers::is_inside(name);
             let read = if outside {
@@ -325,22 +340,9 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             None,
         ),
     };
-
-    let edited = match &old_package {
-        Some(src) => match src.strip_prefix(BOM) {
-            Some(rest) => {
-                let mut e = edit_package(rest)?;
-                e.text.insert_str(0, BOM);
-                e
-            }
-            None => edit_package(src)?,
-        },
-        None => Edited {
-            text: new_package(),
-            advice: Vec::new(),
-            has_build_11ty: false,
-        },
-    };
+    if let Some(c) = cli {
+        record_flags(&mut rhai, c);
+    }
 
     let mut changes = Vec::new();
     // The new file first: it is the one that can't already exist.
@@ -383,6 +385,14 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
 fn record_source(text: &mut String, name: &str, bytes: &[u8]) {
     use brrrty_config::markers::{PORTED_FROM, source_hash};
     let line = format!("{PORTED_FROM}{name} {}\n", source_hash(bytes));
+    let at = text.find("\n\n").map_or(text.len(), |i| i + 1);
+    text.insert_str(at, &line);
+}
+
+/// Add the line recording what the scripts pass to 11ty: a build warns when they change.
+fn record_flags(text: &mut String, cli: &brrrty_config::eleventy_cli::Cli) {
+    use brrrty_config::eleventy_cli::FLAGS_LINE;
+    let line = format!("{FLAGS_LINE}{}\n", cli.fingerprint());
     let at = text.find("\n\n").map_or(text.len(), |i| i + 1);
     text.insert_str(at, &line);
 }
@@ -456,7 +466,9 @@ fn is_eleventy_command(cmd: &str) -> bool {
             if matches!(w, Some("-y" | "--yes")) {
                 w = words.next();
             }
-            w.is_some_and(|w| w == "@11ty/eleventy" || w.starts_with("@11ty/eleventy@"))
+            w.is_some_and(|w| {
+                w == "eleventy" || w == "@11ty/eleventy" || w.starts_with("@11ty/eleventy@")
+            })
         }
         _ => false,
     }
@@ -927,6 +939,7 @@ mod tests {
             "eleventy",
             "npx @11ty/eleventy --serve --port 8080",
             "npx -y @11ty/eleventy@3.1.2",
+            "npx eleventy --input=src",
             "NODE_ENV=production eleventy",
             "cross-env ELEVENTY_ENV=prod eleventy --quiet",
             "./node_modules/.bin/eleventy",

@@ -266,61 +266,55 @@ pub fn unported_problem(src: &str) -> Option<Problem> {
 /// The warning when the 11ty config named on the `Ported from` line changed
 /// since, or isn't the one 11ty reads any more. `root` is the project folder.
 ///
-/// For one of 11ty's own names, the config 11ty reads now is the first of
-/// them that exists: a rename (`.js` to `.mjs`), or a new `.eleventy.js`
-/// beside the old file, makes it another file. With none there, 11ty builds
-/// without a config file and the port's settings are what is in question, so
-/// it says nothing. For a path from a build script's `--config`, only that
-/// file's hash is checked; a missing one stops 11ty's build.
+/// The config 11ty reads now is the one the build script's `--config` names,
+/// else the first of 11ty's own names that exists
+/// ([`crate::eleventy_cli::current_config`]): a rename (`.js` to `.mjs`), a
+/// new `.eleventy.js` beside the old file, or a change to `--config` makes it
+/// another file. When 11ty reads none, the port's settings are what is in
+/// question, and that warns too.
 pub fn stale_problem(root: &Path, src: &str) -> Option<Problem> {
     let (line, name, recorded) = ported_from(src)?;
-    let warn = |message: String, now_name: &str, now: &str| {
+    let warn = |message: String, help: String| {
         Problem::warning(codes::CONFIG_STALE, message)
             .with_path(CONFIG_FILE)
             .at(line, 1)
-            .with_help(format!(
-                "Port what changed to {CONFIG_FILE}, if it changes what 11ty writes, then set this line to `{PORTED_FROM}{now_name} {now}`."
-            ))
+            .with_help(help)
     };
-    if ELEVENTY_CONFIGS.contains(&name) {
-        let current = default_config(root)?;
-        let now = hash_of(root, current)?;
-        if current != name {
-            return Some(warn(
-                format!(
-                    "11ty now reads {current}, not the {name} that {CONFIG_FILE} was ported from"
-                ),
-                current,
-                &now,
-            ));
-        }
-        return (now != recorded).then(|| {
-            warn(
-                format!("{name} changed since {CONFIG_FILE} recorded it as ported"),
-                name,
-                &now,
-            )
-        });
+    let set_line = |now_name: &str, now: &str| {
+        format!(
+            "Port what changed to {CONFIG_FILE}, if it changes what 11ty writes, then set this line to `{PORTED_FROM}{now_name} {now}`."
+        )
+    };
+    let Some(current) = crate::eleventy_cli::current_config(root) else {
+        return Some(warn(
+            format!("11ty reads no config file now, but {CONFIG_FILE} was ported from {name}"),
+            format!("Take out of {CONFIG_FILE} what 11ty no longer does, then delete this line."),
+        ));
+    };
+    let now = hash_of(root, &current)?;
+    if current != name {
+        return Some(warn(
+            format!("11ty now reads {current}, not the {name} that {CONFIG_FILE} was ported from"),
+            set_line(&current, &now),
+        ));
     }
-    let now = hash_of(root, name)?;
     (now != recorded).then(|| {
         warn(
             format!("{name} changed since {CONFIG_FILE} recorded it as ported"),
-            name,
-            &now,
+            set_line(name, &now),
         )
     })
 }
 
-/// The warning when an 11ty config exists and nothing records it as ported:
-/// a hand-written `brrrty.config.rhai`, or one written before the 11ty config
-/// was added. Brrrty can't check that it covers the 11ty config.
+/// The warning when the config 11ty reads exists and nothing records it as
+/// ported: a hand-written `brrrty.config.rhai`, or one written before the
+/// 11ty config was added. Brrrty can't check that it covers the 11ty config.
 pub fn unverified_problem(root: &Path, src: &str) -> Option<Problem> {
     if ported_from(src).is_some() {
         return None;
     }
-    let current = default_config(root)?;
-    let now = hash_of(root, current)?;
+    let current = crate::eleventy_cli::current_config(root)?;
+    let now = hash_of(root, &current)?;
     Some(
         Problem::warning(
             codes::CONFIG_UNVERIFIED,
@@ -332,6 +326,54 @@ pub fn unverified_problem(root: &Path, src: &str) -> Option<Problem> {
         .with_help(format!(
             "Brrrty doesn't run {current}, and any of it that {CONFIG_FILE} misses could change any page. Once you've checked that {CONFIG_FILE} does everything in it that changes what 11ty writes, add this line to {CONFIG_FILE}: `{PORTED_FROM}{current} {now}`. Brrrty then warns when {current} changes. {HELP_LINK}"
         )),
+    )
+}
+
+/// The `11ty flags` line: its 1-based line number and the hash recorded.
+fn flags_line(src: &str) -> Option<(usize, &str)> {
+    use crate::eleventy_cli::FLAGS_LINE;
+    src.lines().enumerate().find_map(|(i, l)| {
+        let hash = l.trim_end().strip_prefix(FLAGS_LINE)?.trim();
+        hash.starts_with("sha256:").then_some((i + 1, hash))
+    })
+}
+
+/// The warning when what package.json's scripts pass to 11ty (the flags that
+/// change its output, scripts Brrrty can't read, files using 11ty's
+/// JavaScript API) isn't what the `11ty flags` line records. No line records
+/// scripts that pass nothing, as for a config written before the line existed.
+pub fn flags_problem(root: &Path, src: &str) -> Option<Problem> {
+    use crate::eleventy_cli::{FLAGS_LINE, read};
+    let recorded = flags_line(src);
+    let now = read(root).map(|c| c.fingerprint());
+    let line = recorded.map_or(1, |(l, _)| l);
+    let (message, help) = match (recorded.map(|(_, h)| h), now.as_deref()) {
+        (None, None) => return None,
+        (Some(r), Some(n)) if r == n => return None,
+        (None, Some(n)) => (
+            format!(
+                "package.json's scripts pass flags to 11ty that {CONFIG_FILE} doesn't record as ported"
+            ),
+            format!(
+                "11ty's flags win over its config, and Brrrty doesn't read them when it builds. `brrrty init --dry-run` in a copy of the site shows what they come to. Port them to {CONFIG_FILE}, then add this line to it: `{FLAGS_LINE}{n}`. {HELP_LINK}"
+            ),
+        ),
+        (Some(_), None) => (
+            format!("package.json's scripts no longer pass the 11ty flags {CONFIG_FILE} records"),
+            format!("Take out of {CONFIG_FILE} what those flags set, then delete this line."),
+        ),
+        (Some(_), Some(n)) => (
+            format!(
+                "the flags package.json's scripts pass to 11ty changed since {CONFIG_FILE} recorded them"
+            ),
+            format!("Port what changed to {CONFIG_FILE}, then set this line to `{FLAGS_LINE}{n}`."),
+        ),
+    };
+    Some(
+        Problem::warning(codes::CONFIG_STALE, message)
+            .with_path(CONFIG_FILE)
+            .at(line, 1)
+            .with_help(help),
     )
 }
 
@@ -440,8 +482,14 @@ mod tests {
         assert_eq!(p.code, codes::CONFIG_STALE);
         assert_eq!(p.line, Some(2));
         assert!(p.help.unwrap().contains(&source_hash(b"b")));
+        // Gone: 11ty reads no config, so what the port sets is in question.
         std::fs::remove_file(t.path().join("eleventy.config.js")).unwrap();
-        assert!(stale_problem(t.path(), &ok).is_none());
+        let p = stale_problem(t.path(), &ok).unwrap();
+        assert!(
+            p.message.starts_with("11ty reads no config file now"),
+            "{}",
+            p.message
+        );
         // Only paths inside the project.
         for odd in ["../x.js", "/etc/x.js", "a/../../x.js"] {
             let odd = format!("{PORTED_FROM}{odd} {}\n", source_hash(b"a"));
@@ -485,12 +533,76 @@ mod tests {
             "{}",
             p.message
         );
-        // A `--config` file: only its own hash counts.
+        // A `--config` file the build script names: only its own hash counts.
+        w(
+            "package.json",
+            r#"{"scripts":{"build":"eleventy --config=site.config.js"}}"#,
+        );
         w("site.config.js", "c");
         let custom = format!("{PORTED_FROM}site.config.js {}\n", source_hash(b"c"));
         assert!(stale_problem(t.path(), &custom).is_none());
         w("site.config.js", "d");
         assert!(stale_problem(t.path(), &custom).is_some());
+        // `--config` dropped from the script: 11ty reads .eleventy.js again.
+        w("package.json", r#"{"scripts":{"build":"eleventy"}}"#);
+        let p = stale_problem(t.path(), &custom).unwrap();
+        assert!(
+            p.message
+                .starts_with("11ty now reads .eleventy.js, not the site.config.js"),
+            "{}",
+            p.message
+        );
+    }
+
+    #[test]
+    fn an_empty_config_flag_or_a_config_flag_alone() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, s: &str| std::fs::write(t.path().join(n), s).unwrap();
+        // `--config=`: 11ty reads no config, so eleventy.config.js isn't unverified.
+        w("eleventy.config.js", "a");
+        w(
+            "package.json",
+            r#"{"scripts":{"build":"eleventy --config="}}"#,
+        );
+        assert!(unverified_problem(t.path(), "config.x();\n").is_none());
+        // A hand port of a site whose config only `--config` names.
+        w(
+            "package.json",
+            r#"{"scripts":{"build":"eleventy --config=cfg.js"}}"#,
+        );
+        w("cfg.js", "b");
+        let p = unverified_problem(t.path(), "config.x();\n").unwrap();
+        assert!(p.message.contains("covers cfg.js"), "{}", p.message);
+    }
+
+    #[test]
+    fn changed_flags_in_package_json_warn() {
+        use crate::eleventy_cli::{FLAGS_LINE, read};
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("src")).unwrap();
+        let w = |s: &str| std::fs::write(t.path().join("package.json"), s).unwrap();
+        // No flags and no line: nothing to say, as for a config from before the line.
+        w(r#"{"scripts":{"build":"npx @11ty/eleventy --quiet"}}"#);
+        assert!(flags_problem(t.path(), "x\n").is_none());
+        // Flags with no line: a hand port, or an old init, that doesn't port them.
+        w(r#"{"scripts":{"build":"eleventy --pathprefix=/blog/ --input=src"}}"#);
+        let p = flags_problem(t.path(), "x\n").unwrap();
+        assert_eq!(p.code, codes::CONFIG_STALE);
+        let now = read(t.path()).unwrap().fingerprint();
+        assert!(p.help.unwrap().contains(&format!("`{FLAGS_LINE}{now}`")));
+        let recorded = format!("// a\n{FLAGS_LINE}{now}\n");
+        assert!(flags_problem(t.path(), &recorded).is_none());
+        // Changed, then gone.
+        w(r#"{"scripts":{"build":"eleventy --input=src"}}"#);
+        let p = flags_problem(t.path(), &recorded).unwrap();
+        assert_eq!(p.line, Some(2));
+        assert!(
+            p.message
+                .starts_with("the flags package.json's scripts pass to 11ty changed")
+        );
+        w(r#"{"scripts":{"build":"eleventy"}}"#);
+        let p = flags_problem(t.path(), &recorded).unwrap();
+        assert!(p.message.contains("no longer pass"), "{}", p.message);
     }
 
     #[test]

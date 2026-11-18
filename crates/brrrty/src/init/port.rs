@@ -14,8 +14,8 @@ use std::collections::HashMap;
 
 use brrrty_config::markers::{TODO, TODO_FILE};
 
-use super::flags::Cli;
 use super::js::{self, Lit, Tok, Token};
+use brrrty_config::eleventy_cli::{Cli, CliTodo};
 
 const DOCS: &str = "https://brrrty.com/docs/configuration/";
 const RUNS_ON_LOAD: &str = "this loads a module whose own code runs when 11ty loads the config; port what it does if it changes files 11ty reads or any setting, or delete this line";
@@ -1160,24 +1160,29 @@ impl<'a> Reader<'a> {
     /// folders it sets too, since nothing else is ported.
     fn cli_todos(&self, out: &mut String, all: bool) -> usize {
         let Some(cli) = &self.cli else { return 0 };
-        let mut whys = cli.todos.clone();
+        let mut todos = cli.todos.clone();
         if all {
+            let todo = |why: String| CliTodo {
+                why,
+                script: cli.script.clone(),
+                command: cli.command.clone(),
+            };
             if let Some(i) = &cli.input {
-                whys.push(format!("port `--input={i}` to `dir.input`"));
+                todos.push(todo(format!("port `--input={i}` to `dir.input`")));
             }
             if let Some(o) = &cli.output {
-                whys.push(format!("port `--output={o}` to `dir.output`"));
+                todos.push(todo(format!("port `--output={o}` to `dir.output`")));
             }
         }
-        for why in &whys {
+        for t in &todos {
             out.push_str(&format!(
                 "\n// {TODO}: {}.\n// See {GETTING_STARTED}\n// package.json, scripts.{}:\n//     {}\n",
-                one_line(why),
-                one_line(&cli.script),
-                one_line(&cli.command)
+                one_line(&t.why),
+                one_line(&t.script),
+                one_line(&t.command)
             ));
         }
-        whys.len()
+        todos.len()
     }
 
     fn finish(mut self) -> Port {

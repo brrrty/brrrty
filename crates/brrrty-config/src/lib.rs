@@ -120,6 +120,7 @@ mod convert;
 #[doc(hidden)]
 pub mod csv;
 mod data;
+pub mod eleventy_cli;
 mod files;
 mod filters;
 mod git;
@@ -294,8 +295,11 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         Err(e) => return Err(unreadable(e.to_string())),
     };
     let unported = markers::unported_problem(&src);
-    let stale =
-        markers::stale_problem(root, &src).or_else(|| markers::unverified_problem(root, &src));
+    let stale: Vec<Problem> = markers::stale_problem(root, &src)
+        .or_else(|| markers::unverified_problem(root, &src))
+        .into_iter()
+        .chain(markers::flags_problem(root, &src))
+        .collect();
     let root = root.to_path_buf();
     let run = std::thread::Builder::new()
         .name("brrrty-config".into())
