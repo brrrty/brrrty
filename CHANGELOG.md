@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.19 - 2026-11-17
 
 - `brrrty build` and `brrrty doctor` no longer treat a config `brrrty init` couldn't fully port as if it were ported. `init` now marks each statement it couldn't port with `// TODO(brrrty):`, and a config it couldn't port at all with `// TODO(brrrty-file):`. While one is left, every page is refused with `config-todo`, which names the lines, and nothing is written or copied; `doctor` lists it first, as a blocker of every page, and its verdict can't say the pages build. Before, Brrrty built with what was ported (11ty's default folders, when nothing was) and doctor said the pages would build, though an unported transform, Markdown library, template format or folder made them differ from 11ty's. Delete a marker once you've ported it, or decided it changes nothing Brrrty writes. A config written by an older `init` counts its `// TODO:` lines (with the `// See https://...` line under them) the same way.
 - `brrrty init` records the 11ty config it read on a `// Ported from: eleventy.config.js sha256:...` line, and `build` and `doctor` warn (`config-stale`) when that file changes afterwards, giving the new hash to put there once the change is ported.
