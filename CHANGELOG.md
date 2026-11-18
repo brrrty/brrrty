@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.20 - 2026-11-18
 
 - Brrrty formats locale dates (Liquid's `%c`, `%x` and `%X`, which use `toLocaleString()`) for en-US. Two things now get a TODO in front of the 11ty command, since init didn't carry them and carrying the locale wouldn't help:
   - an `LC_ALL`, `LC_MESSAGES` or `LANG` that doesn't make Node's default locale exactly en-US. That includes en_GB (`15/03/2024`), en_CA, en_AU and an empty value, which Node reads as `und` (`%B` gives `M03`);
