@@ -77,8 +77,8 @@ fn spread(xs: &[f64]) -> String {
 pub fn render(results: &[SiteResult]) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "## Per site\n");
-    out.push_str("| # | site | license | 11ty | install | 11ty build | ref files | doctor | init TODOs | brrrty build | identical | equiv | different | missing | extra | 11ty ms (docker) | brrrty ms (docker) | brrrty ms (host) |\n");
-    out.push_str("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+    out.push_str("| # | site | license | 11ty | install | 11ty build | ref files | doctor | init TODOs | brrrty build | identical | equiv | different | missing | extra | 11ty ms (docker) | brrrty ms (docker) | 11ty ms (host) | brrrty ms (host) |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
     for (i, r) in results.iter().enumerate() {
         let doctor = r.doctor.as_ref().map_or_else(
             || {
@@ -111,7 +111,7 @@ pub fn render(results: &[SiteResult]) -> String {
         let t = r.timing.clone().unwrap_or_default();
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {}{} | {} | {} | {} | {} | {ident} | {eq} | {diff} | {miss} | {extra} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {}{} | {} | {} | {} | {} | {ident} | {eq} | {diff} | {miss} | {extra} | {} | {} | {} | {} |",
             i + 1,
             r.slug,
             r.license.as_deref().unwrap_or("-"),
@@ -127,6 +127,7 @@ pub fn render(results: &[SiteResult]) -> String {
             step(&r.build),
             ms(median(&t.eleventy_docker_ms)),
             ms(median(&t.brrrty_docker_ms)),
+            ms(median(&t.eleventy_native_ms)),
             ms(median(&t.brrrty_host_ms)),
         );
     }
@@ -301,6 +302,7 @@ pub fn render(results: &[SiteResult]) -> String {
     // Speed.
     let mut docker = Vec::new();
     let mut host = Vec::new();
+    let mut native = Vec::new();
     for r in results {
         let Some(t) = &r.timing else { continue };
         if let Some(s) = speedup(&t.eleventy_docker_ms, &t.brrrty_docker_ms) {
@@ -308,6 +310,9 @@ pub fn render(results: &[SiteResult]) -> String {
         }
         if let Some(s) = speedup(&t.eleventy_docker_ms, &t.brrrty_host_ms) {
             host.push(s);
+        }
+        if let Some(s) = speedup(&t.eleventy_native_ms, &t.brrrty_host_ms) {
+            native.push(s);
         }
     }
     let _ = writeln!(out, "\n## Speed (medians of each site's runs)\n");
@@ -320,6 +325,11 @@ pub fn render(results: &[SiteResult]) -> String {
         out,
         "- 11ty in Docker vs Brrrty on the host (not like for like): {}",
         spread(&host)
+    );
+    let _ = writeln!(
+        out,
+        "- 11ty vs Brrrty, both on the same host: {}",
+        spread(&native)
     );
     out
 }

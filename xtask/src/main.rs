@@ -50,7 +50,7 @@ enum Cmd {
         #[command(flatten)]
         dirs: Dirs,
     },
-    /// Build a list of public 11ty sites with 11ty (in Docker) and Brrrty, and record the results.
+    /// Build a list of public 11ty sites with 11ty and Brrrty, and record the results.
     Corpus {
         /// TOML file with `[[site]] repo = "owner/name"` entries.
         #[arg(long)]
@@ -88,6 +88,22 @@ enum Cmd {
         /// Keep every site's outputs and host copy, not just those with a different file.
         #[arg(long)]
         keep_outputs: bool,
+        /// Where the sites' JavaScript runs: `native` uses the host's Node and is
+        /// for disposable CI runners only; `auto` is native on Linux with `CI` set.
+        #[arg(long, value_enum, default_value = "auto")]
+        runner: corpus::Runner,
+    },
+    /// Merge `corpus` results files into one, such as one per CI job.
+    CorpusMerge {
+        /// Results files; a later file's entry for a site wins.
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        /// Order the sites as this site list does.
+        #[arg(long)]
+        list: Option<PathBuf>,
+        /// The merged results file.
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Print Markdown tables from a `corpus` results file.
     CorpusReport { results: PathBuf },
@@ -141,6 +157,7 @@ fn main() -> ExitCode {
             runs,
             remove_images,
             keep_outputs,
+            runner,
         } => corpus::run_corpus(
             &root,
             corpus::Options {
@@ -158,8 +175,10 @@ fn main() -> ExitCode {
                 runs,
                 remove_images,
                 keep_outputs,
+                runner,
             },
         ),
+        Cmd::CorpusMerge { inputs, list, out } => corpus::merge(&inputs, list.as_deref(), &out),
         Cmd::CorpusReport { results } => corpus_report::run_report(&results),
     };
     match result {

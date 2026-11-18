@@ -8,15 +8,27 @@
 //! repo = "owner/name"   # cloned from https://github.com/owner/name
 //! license = "MIT"       # optional, copied into the results
 //! url = "https://..."   # optional, overrides the clone URL
+//! commit = "0123abc..."  # optional, the commit to build (default: the default branch's tip)
+//! node = "22"            # optional, the Node major the site needs (default: from .nvmrc)
 //! ```
 //!
 //! Sites are strangers' code, so their JavaScript (npm install scripts, the
-//! 11ty config, data files, plugins) only ever runs inside Docker: `npm ci`
-//! with the network on, then every 11ty build with `--network none`. The
-//! clone is mounted read-only and copied into a volume. No host environment,
-//! SSH agent or npm credentials reach the container. Brrrty never runs
-//! JavaScript, so `brrrty init`, `brrrty doctor` and `brrrty build` run on the
-//! host against a copy of the clone.
+//! 11ty config, data files, plugins) runs in one of two places:
+//!
+//! - `--runner docker`: inside Docker. `npm ci` with the network on, then
+//!   every 11ty build with `--network none`. The clone is mounted read-only
+//!   and copied into a volume. No host environment, SSH agent or npm
+//!   credentials reach the container.
+//! - `--runner native`: on the host with its own Node, for a disposable
+//!   Linux CI runner. Every command gets a bare environment (`PATH`, `HOME`
+//!   and the pinned clock, zone and locale), and 11ty builds run in a new
+//!   network namespace (`unshare -rn`) when the host allows one. Never use
+//!   it on a machine you keep.
+//!
+//! `--runner auto` (the default) is native on Linux when `CI` is set, and
+//! Docker everywhere else. Brrrty never runs JavaScript, so `brrrty init`,
+//! `brrrty doctor` and `brrrty build` run on the host against a copy of the
+//! clone either way.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -50,6 +62,36 @@ struct SiteEntry {
     license: Option<String>,
     #[serde(default)]
     url: Option<String>,
+    /// The commit to build; the default branch's tip when unset.
+    #[serde(default)]
+    commit: Option<String>,
+    /// The Node major the site needs, for CI to set up; the harness only
+    /// records it and warns when the host's Node differs.
+    #[serde(default)]
+    node: Option<String>,
+}
+
+/// Where the sites' JavaScript runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Runner {
+    /// Native on Linux when `CI` is set, Docker otherwise.
+    Auto,
+    /// In Docker, with no network for 11ty builds.
+    Docker,
+    /// On the host with its own Node: for disposable CI runners only.
+    Native,
+}
+
+impl Runner {
+    fn resolve(self) -> Runner {
+        match self {
+            Runner::Auto if cfg!(target_os = "linux") && std::env::var_os("CI").is_some() => {
+                Runner::Native
+            }
+            Runner::Auto => Runner::Docker,
+            r => r,
+        }
+    }
 }
 
 /// Options for one corpus run.
@@ -70,6 +112,7 @@ pub struct Options {
     pub remove_images: bool,
     /// Keep every site's outputs and host copy, not just those with a different file.
     pub keep_outputs: bool,
+    pub runner: Runner,
 }
 
 /// How one command ended.
@@ -131,10 +174,13 @@ pub struct Compare {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Timing {
     pub eleventy_docker_ms: Vec<u64>,
     pub brrrty_docker_ms: Vec<u64>,
     pub brrrty_host_ms: Vec<u64>,
+    /// 11ty on the host, with `--runner native`: like for like with `brrrty_host_ms`.
+    pub eleventy_native_ms: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -162,6 +208,9 @@ pub struct SiteResult {
     pub timed_out: Option<String>,
     pub secs: f64,
     pub brrrty: String,
+    /// `docker`, or `native` with the network state of 11ty's builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
 }
 
 /// `owner/name` as a folder name: `owner__name`.
@@ -332,8 +381,9 @@ fn volume(vol: &str, dst: &str, ro: bool) -> String {
 
 const NPM_FLAGS: &str = "--no-audit --no-fund --loglevel=error";
 
-/// Shell for timed builds: runs `$@` and prints `BUILD_MS <n>`.
-const TIMED: &str = r#"timed() { s=$(date +%s%N); "$@"; rc=$?; e=$(date +%s%N); echo "BUILD_MS $(( (e - s) / 1000000 )) rc=$rc"; return $rc; }"#;
+/// Shell for timed builds: runs `$@` and prints `BUILD_MS <n>` to stderr,
+/// so a build whose stdout is thrown away still reports its time.
+const TIMED: &str = r#"timed() { s=$(date +%s%N); "$@"; rc=$?; e=$(date +%s%N); echo "BUILD_MS $(( (e - s) / 1000000 )) rc=$rc" >&2; return $rc; }"#;
 
 /// The 11ty command inside the container.
 const ELEVENTY: &str =
@@ -535,6 +585,13 @@ struct Ctx<'a> {
     brrrty: PathBuf,
     version: String,
     pulled: Vec<String>,
+    /// Docker or native, never `Auto`.
+    runner: Runner,
+    /// With `--runner native`: whether `unshare -rn` works, so 11ty builds
+    /// run with no network.
+    offline: bool,
+    /// With `--runner native`: the host's `node --version`.
+    node: String,
 }
 
 impl Ctx<'_> {
@@ -560,6 +617,43 @@ impl Ctx<'_> {
         self.pulled.push(image.to_string());
         Ok(())
     }
+
+    /// A command for the site's own JavaScript on the host, with a bare
+    /// environment: no tokens or credentials from the runner reach it.
+    fn native(&self, script: &str, dir: &Path, offline: bool) -> Command {
+        let mut c = if offline && self.offline {
+            let mut c = Command::new("unshare");
+            c.args(["-rn", "sh", "-c", script]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", script]);
+            c
+        };
+        c.env_clear()
+            .current_dir(dir)
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", std::env::var_os("HOME").unwrap_or_default())
+            .env("SOURCE_DATE_EPOCH", COMPAT_EPOCH.to_string())
+            .env("TZ", COMPAT_TZ)
+            .env("LC_ALL", COMPAT_LOCALE)
+            // `unshare -r` maps the user to root, so the clone has another owner.
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "safe.directory")
+            .env("GIT_CONFIG_VALUE_0", "*")
+            .env("npm_config_update_notifier", "false");
+        c
+    }
+}
+
+/// Whether `unshare -rn` can make a network namespace here.
+fn unshare_works() -> bool {
+    Command::new("unshare")
+        .args(["-rn", "true"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 fn remove_volume(vol: &str) {
@@ -580,20 +674,26 @@ fn df_free_gib(out: &[u8]) -> Option<f64> {
 
 /// Host disk below this many GiB stops a site before it installs.
 const HOST_MIN_GIB: f64 = 40.0;
+/// The same for a disposable CI runner, which builds one site.
+const NATIVE_MIN_GIB: f64 = 3.0;
 /// Docker's disk below this many GiB does too.
 const DOCKER_MIN_GIB: f64 = 5.0;
 
 /// Refuse to install when the host or Docker's disk is nearly full, so a
 /// full disk is a recorded failure and not a broken install.
-fn room(host_path: &Path, image: &str) -> Result<(), String> {
+fn room(host_path: &Path, image: Option<&str>) -> Result<(), String> {
+    let min = if image.is_some() {
+        HOST_MIN_GIB
+    } else {
+        NATIVE_MIN_GIB
+    };
     let host = Command::new("df").arg("-k").arg(host_path).output().ok();
     if let Some(free) = host.and_then(|o| df_free_gib(&o.stdout))
-        && free < HOST_MIN_GIB
+        && free < min
     {
-        return Err(format!(
-            "host disk has {free:.1} GiB free, under {HOST_MIN_GIB} GiB"
-        ));
+        return Err(format!("host disk has {free:.1} GiB free, under {min} GiB"));
     }
+    let Some(image) = image else { return Ok(()) };
     let docker = Command::new("docker")
         .args(["run", "--rm", "--network", "none", image, "df", "-k", "/"])
         .output()
@@ -612,6 +712,25 @@ fn left(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
 }
 
+/// Folders one site's run works in.
+struct Dirs {
+    clone: PathBuf,
+    /// Logs, the host copy, and (native) the build copy.
+    work: PathBuf,
+    /// The two builds' outputs.
+    outs: PathBuf,
+    logs: PathBuf,
+    /// The Docker volume holding the install.
+    vol: String,
+}
+
+impl Dirs {
+    /// The native runner's copy of the clone, where npm installs and 11ty builds.
+    fn build(&self) -> PathBuf {
+        self.work.join("build")
+    }
+}
+
 fn run_site(ctx: &mut Ctx, entry: &SiteEntry) -> SiteResult {
     let start = Instant::now();
     let deadline = start + ctx.opts.time_limit;
@@ -623,30 +742,32 @@ fn run_site(ctx: &mut Ctx, entry: &SiteEntry) -> SiteResult {
         brrrty: ctx.version.clone(),
         ..SiteResult::default()
     };
-    let clone = ctx.opts.sites_dir.join(&slug);
     let work = ctx.opts.work_dir.join(&slug);
-    let logs = work.join("logs");
-    if let Err(e) = fs::create_dir_all(&logs) {
-        r.clone = Some(failed(format!("cannot create {}: {e}", logs.display())));
-        return r;
+    let d = Dirs {
+        clone: ctx.opts.sites_dir.join(&slug),
+        logs: work.join("logs"),
+        work,
+        outs: ctx.opts.output_dir.join(&slug),
+        vol: docker_name("work", &slug),
+    };
+    for dir in [&d.logs, &d.outs] {
+        if let Err(e) = fs::create_dir_all(dir) {
+            r.clone = Some(failed(format!("cannot create {}: {e}", dir.display())));
+            return r;
+        }
     }
-    let outs = ctx.opts.output_dir.join(&slug);
-    if let Err(e) = fs::create_dir_all(&outs) {
-        r.clone = Some(failed(format!("cannot create {}: {e}", outs.display())));
-        return r;
+    site_steps(ctx, entry, &mut r, &d, deadline);
+    if ctx.runner == Runner::Docker {
+        remove_volume(&d.vol);
     }
-    let vol = docker_name("work", &slug);
-    site_steps(
-        ctx, entry, &mut r, &clone, &work, &outs, &logs, &vol, deadline,
-    );
-    remove_volume(&vol);
-    let _ = fs::remove_file(work.join("node_modules.tar"));
+    let _ = fs::remove_file(d.work.join("node_modules.tar"));
+    let _ = fs::remove_dir_all(d.build());
     // Outputs are big; keep them only where a file differs, to look into.
     let differs = r.compare.as_ref().is_some_and(|c| c.different > 0);
     if !ctx.opts.keep_outputs && !differs {
-        let _ = fs::remove_dir_all(work.join("host"));
-        for d in ["_ref", "_brrrty"] {
-            let _ = fs::remove_dir_all(outs.join(d));
+        let _ = fs::remove_dir_all(d.work.join("host"));
+        for dir in ["_ref", "_brrrty"] {
+            let _ = fs::remove_dir_all(d.outs.join(dir));
         }
     }
     r.secs = start.elapsed().as_secs_f64();
@@ -661,89 +782,87 @@ fn keep_going(r: &mut SiteResult, name: &str, step: &Step) -> bool {
     step.ok
 }
 
-#[allow(clippy::too_many_arguments)]
-fn site_steps(
-    ctx: &mut Ctx,
-    entry: &SiteEntry,
-    r: &mut SiteResult,
-    clone: &Path,
-    work: &Path,
-    outs: &Path,
-    logs: &Path,
-    vol: &str,
-    deadline: Instant,
-) {
-    // 1. Clone the default branch, one commit deep.
-    if !clone.join(".git").is_dir() {
-        let url = entry
-            .url
-            .clone()
-            .unwrap_or_else(|| format!("https://github.com/{}.git", entry.repo));
-        let mut c = Command::new("git");
-        c.args(["clone", "--depth", "1", "--single-branch", "--no-tags"])
-            .arg(&url)
-            .arg(clone)
-            .env("GIT_TERMINAL_PROMPT", "0");
-        let step = run(&mut c, left(deadline), None, &logs.join("clone.log"));
-        let ok = keep_going(r, "clone", &step);
-        r.clone = Some(step);
-        if !ok {
-            return;
-        }
-    } else {
+/// Whether `s` is a full hex commit id.
+fn is_commit(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Clone the site one commit deep: the pinned commit, or the default
+/// branch's tip.
+fn clone_site(entry: &SiteEntry, r: &mut SiteResult, d: &Dirs, deadline: Instant) -> bool {
+    let clone = &d.clone;
+    if clone.join(".git").is_dir() {
         r.clone = Some(Step {
             ok: true,
             exit: Some(0),
             ..Step::default()
         });
+    } else {
+        let url = entry
+            .url
+            .clone()
+            .unwrap_or_else(|| format!("https://github.com/{}.git", entry.repo));
+        let mut c = match &entry.commit {
+            Some(sha) => {
+                let mut c = Command::new("sh");
+                c.args([
+                    "-c",
+                    "set -e; git init -q \"$DIR\"; cd \"$DIR\"; git remote add origin \"$URL\"; \
+                     git fetch -q --depth 1 --no-tags origin \"$SHA\"; git checkout -q FETCH_HEAD",
+                ])
+                .env("DIR", clone)
+                .env("URL", &url)
+                .env("SHA", sha);
+                c
+            }
+            None => {
+                let mut c = Command::new("git");
+                c.args(["clone", "--depth", "1", "--single-branch", "--no-tags"])
+                    .arg(&url)
+                    .arg(clone);
+                c
+            }
+        };
+        c.env("GIT_TERMINAL_PROMPT", "0");
+        let step = run(&mut c, left(deadline), None, &d.logs.join("clone.log"));
+        let ok = keep_going(r, "clone", &step);
+        r.clone = Some(step);
+        if !ok {
+            return false;
+        }
     }
     r.commit = git(clone, &["rev-parse", "HEAD"]);
     r.branch = git(clone, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    if let Some(want) = &entry.commit
+        && r.commit.as_ref() != Some(want)
+    {
+        r.clone = Some(failed(format!(
+            "{} is at {}, not the pinned {want}",
+            clone.display(),
+            r.commit.as_deref().unwrap_or("no commit")
+        )));
+        return false;
+    }
+    true
+}
 
-    // 2. Install in Docker, with the network on.
-    let image = node_image(clone);
-    r.node_image = Some(image.clone());
-    if let Err(e) = ctx.ensure_image(&image) {
-        r.install = Some(failed(e));
-        return;
-    }
-    let lock = ["package-lock.json", "npm-shrinkwrap.json"]
-        .iter()
-        .any(|f| clone.join(f).is_file());
-    r.installer = Some(if lock { "npm ci" } else { "npm install" }.to_string());
-    remove_volume(vol);
-    let _ = Command::new("docker")
-        .args(["volume", "create", "--label", LABEL, vol])
-        .stdout(Stdio::null())
-        .status();
-    if let Err(e) = room(clone, &image) {
-        r.install = Some(failed(e));
-        return;
-    }
-    let name = docker_name("install", &r.slug);
-    // A lockfile out of step with package.json fails `npm ci`; then
-    // `npm install` resolves it. An install script that fails (one that
-    // needs Python's pip, say) gets a second try without scripts. The
-    // results say which happened.
-    let install = format!(
-        "set -e; cp -a /src/. /work/; cd /work; \
-         inst() {{ if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then \
+/// The shell function that installs a site's packages. A lockfile out of
+/// step with package.json fails `npm ci`; then `npm install` resolves it. An
+/// install script that fails (one that needs Python's pip, say) gets a
+/// second try without scripts. The log says which happened.
+fn install_script() -> String {
+    format!(
+        "inst() {{ if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then \
            npm ci {NPM_FLAGS} \"$@\" || {{ echo 'CI_FAILED'; rm -rf node_modules; npm install {NPM_FLAGS} \"$@\"; }}; \
          else npm install {NPM_FLAGS} \"$@\"; fi; }}; \
          inst || {{ echo 'SCRIPTS_FAILED'; rm -rf node_modules; inst --ignore-scripts; }}"
-    );
-    let mut c = docker_run(&name, true);
-    c.args(["--mount", &mount(clone, "/src", true)])
-        .args(["--mount", &volume(vol, "/work", false)])
-        .args(["-w", "/work", &image, "sh", "-c", &install]);
-    let step = run(
-        &mut c,
-        left(deadline),
-        Some(&name),
-        &logs.join("install.log"),
-    );
+    )
+}
+
+/// Records how the install went, from its log.
+fn record_install(r: &mut SiteResult, lock: bool, log: &Path, step: Step) -> bool {
     let ok = keep_going(r, "install", &step);
-    let log = fs::read_to_string(logs.join("install.log")).unwrap_or_default();
+    let log = fs::read_to_string(log).unwrap_or_default();
     // Only the last attempt counts: the one after any retry without scripts.
     let (retried, last) = match log.rsplit_once("SCRIPTS_FAILED") {
         Some((_, last)) => (true, last),
@@ -759,16 +878,54 @@ fn site_steps(
         ));
     }
     r.install = Some(step);
-    if !ok {
-        return;
+    ok
+}
+
+/// Install and build the reference in Docker. `None` stops the site;
+/// otherwise whether the reference built.
+fn docker_reference(
+    ctx: &mut Ctx,
+    r: &mut SiteResult,
+    d: &Dirs,
+    lock: bool,
+    deadline: Instant,
+) -> Option<bool> {
+    let image = node_image(&d.clone);
+    r.node_image = Some(image.clone());
+    if let Err(e) = ctx.ensure_image(&image) {
+        r.install = Some(failed(e));
+        return None;
+    }
+    remove_volume(&d.vol);
+    let _ = Command::new("docker")
+        .args(["volume", "create", "--label", LABEL, &d.vol])
+        .stdout(Stdio::null())
+        .status();
+    if let Err(e) = room(&d.clone, Some(&image)) {
+        r.install = Some(failed(e));
+        return None;
+    }
+    let name = docker_name("install", &r.slug);
+    let install = format!(
+        "set -e; cp -a /src/. /work/; cd /work; {}",
+        install_script()
+    );
+    let mut c = docker_run(&name, true);
+    c.args(["--mount", &mount(&d.clone, "/src", true)])
+        .args(["--mount", &volume(&d.vol, "/work", false)])
+        .args(["-w", "/work", &image, "sh", "-c", &install]);
+    let log = d.logs.join("install.log");
+    let step = run(&mut c, left(deadline), Some(&name), &log);
+    if !record_install(r, lock, &log, step) {
+        return None;
     }
 
-    // 3. The reference: 11ty at the frozen time, with no network. It comes
-    // out as one tar file, so the host side never sees colliding names.
+    // The reference: 11ty at the frozen time, with no network. It comes out
+    // as one tar file, so the host side never sees colliding names.
     let shim_dir = shim_path(ctx.root).parent().unwrap().to_path_buf();
-    let reference = outs.join("_ref");
+    let reference = d.outs.join("_ref");
     let _ = fs::remove_dir_all(&reference);
-    let tarball = work.join("ref.tar");
+    let tarball = d.work.join("ref.tar");
     let _ = fs::remove_file(&tarball);
     let script = format!(
         "{TIMED}; {ELEVENTY}; cd /work; node -p \"require('./node_modules/@11ty/eleventy/package.json').version\" > /out/eleventy-version.txt; \
@@ -777,19 +934,15 @@ fn site_steps(
     );
     let name = docker_name("ref", &r.slug);
     let mut c = docker_run(&name, false);
-    c.args(["--mount", &volume(vol, "/work", false)])
+    c.args(["--mount", &volume(&d.vol, "/work", false)])
         .args(["--mount", &mount(&shim_dir, "/shim", true)])
-        .args(["--mount", &mount(work, "/out", false)])
+        .args(["--mount", &mount(&d.work, "/out", false)])
         .args(["-w", "/work", &image, "sh", "-c", &script]);
-    let log = logs.join("reference.log");
+    let log = d.logs.join("reference.log");
     let mut step = run(&mut c, left(deadline), Some(&name), &log);
     if let Some(ms) = build_ms(&log).first() {
         step.secs = *ms as f64 / 1000.0;
     }
-    r.eleventy_version = fs::read_to_string(work.join("eleventy-version.txt"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
     let collisions = fs::read_to_string(&log)
         .map(|l| {
             l.lines()
@@ -800,18 +953,18 @@ fn site_steps(
     if step.ok {
         // Paths that differ only in case would overwrite each other on a
         // case-insensitive disk; say so rather than compare half an output.
-        if collisions > 0 && !case_sensitive(outs) {
+        if collisions > 0 && !case_sensitive(&d.outs) {
             step.ok = false;
             step.error = Some(format!(
                 "11ty built, but {collisions} of its output paths differ from others only in case, which {} can't hold; use --output-dir on a case-sensitive volume",
-                outs.display()
+                d.outs.display()
             ));
         } else {
             let extracted = Command::new("tar")
                 .arg("-xf")
                 .arg(&tarball)
                 .arg("-C")
-                .arg(outs)
+                .arg(&d.outs)
                 .status()
                 .is_ok_and(|s| s.success());
             if !extracted {
@@ -821,8 +974,102 @@ fn site_steps(
         }
     }
     let _ = fs::remove_file(&tarball);
-    let ref_ok = keep_going(r, "reference", &step);
+    let ok = keep_going(r, "reference", &step);
     r.reference = Some(step);
+    Some(ok)
+}
+
+/// Install and build the reference on the host, with its own Node. `None`
+/// stops the site; otherwise whether the reference built.
+fn native_reference(
+    ctx: &mut Ctx,
+    r: &mut SiteResult,
+    d: &Dirs,
+    lock: bool,
+    deadline: Instant,
+) -> Option<bool> {
+    r.node_image = Some(format!("host node {}", ctx.node));
+    let build = d.build();
+    let _ = fs::remove_dir_all(&build);
+    let copied = fs::create_dir_all(&build).is_ok()
+        && Command::new("cp")
+            .arg("-a")
+            .arg(d.clone.join("."))
+            .arg(&build)
+            .status()
+            .is_ok_and(|s| s.success());
+    if !copied {
+        r.install = Some(failed(format!(
+            "cannot copy the clone to {}",
+            build.display()
+        )));
+        return None;
+    }
+    if let Err(e) = room(&build, None) {
+        r.install = Some(failed(e));
+        return None;
+    }
+    let mut c = ctx.native(&install_script(), &build, false);
+    let log = d.logs.join("install.log");
+    let step = run(&mut c, left(deadline), None, &log);
+    if !record_install(r, lock, &log, step) {
+        return None;
+    }
+
+    // The reference: 11ty at the frozen time, with no network when the host
+    // allows it.
+    let reference = d.outs.join("_ref");
+    let _ = fs::remove_dir_all(&reference);
+    let script = format!(
+        "{TIMED}; {ELEVENTY}; node -p \"require('./node_modules/@11ty/eleventy/package.json').version\" > \"$VERSION_OUT\"; \
+         timed node --require \"$SHIM\" \"$B\" --quiet --output=\"$REF_OUT\""
+    );
+    let mut c = ctx.native(&script, &build, true);
+    c.env("VERSION_OUT", d.work.join("eleventy-version.txt"))
+        .env("SHIM", shim_path(ctx.root))
+        .env("REF_OUT", &reference);
+    let log = d.logs.join("reference.log");
+    let mut step = run(&mut c, left(deadline), None, &log);
+    if let Some(ms) = build_ms(&log).first() {
+        step.secs = *ms as f64 / 1000.0;
+    }
+    let ok = keep_going(r, "reference", &step);
+    r.reference = Some(step);
+    Some(ok)
+}
+
+fn site_steps(ctx: &mut Ctx, entry: &SiteEntry, r: &mut SiteResult, d: &Dirs, deadline: Instant) {
+    // 1. Clone.
+    if !clone_site(entry, r, d, deadline) {
+        return;
+    }
+    let lock = ["package-lock.json", "npm-shrinkwrap.json"]
+        .iter()
+        .any(|f| d.clone.join(f).is_file());
+    r.installer = Some(if lock { "npm ci" } else { "npm install" }.to_string());
+
+    // 2 and 3. Install, then build the reference with 11ty.
+    let native = ctx.runner == Runner::Native;
+    let ref_ok = if native {
+        r.runner = Some(
+            if ctx.offline {
+                "native, 11ty offline"
+            } else {
+                "native, 11ty online"
+            }
+            .into(),
+        );
+        native_reference(ctx, r, d, lock, deadline)
+    } else {
+        r.runner = Some("docker".into());
+        docker_reference(ctx, r, d, lock, deadline)
+    };
+    let Some(ref_ok) = ref_ok else { return };
+    let reference = d.outs.join("_ref");
+    r.eleventy_version = fs::read_to_string(d.work.join("eleventy-version.txt"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     if ref_ok {
         r.reference_files = Some(count_files(&reference));
     }
@@ -831,11 +1078,11 @@ fn site_steps(
     }
 
     // 4. A host copy for Brrrty, which never runs JavaScript.
-    let host = work.join("host");
+    let host = d.work.join("host");
     let _ = fs::remove_dir_all(&host);
     let copied = Command::new("cp")
         .arg("-R")
-        .arg(clone)
+        .arg(&d.clone)
         .arg(&host)
         .status()
         .is_ok_and(|s| s.success());
@@ -847,12 +1094,20 @@ fn site_steps(
         return;
     }
     if config_mentions_node_modules(&host) {
-        copy_node_modules(&image, vol, work, &host, &r.slug, left(deadline), logs);
+        if native {
+            let _ = Command::new("cp")
+                .arg("-R")
+                .arg(d.build().join("node_modules"))
+                .arg(&host)
+                .status();
+        } else if let Some(image) = r.node_image.clone() {
+            copy_node_modules(&image, d, &host, &r.slug, left(deadline));
+        }
     }
 
     let mut c = Command::new(&ctx.brrrty);
     c.args(["init", "--yes", "--dir"]).arg(&host);
-    let step = run(&mut c, left(deadline), None, &logs.join("init.log"));
+    let step = run(&mut c, left(deadline), None, &d.logs.join("init.log"));
     keep_going(r, "init", &step);
     r.init = Some(step);
     if let Ok(cfg) = fs::read_to_string(host.join("brrrty.config.rhai")) {
@@ -863,10 +1118,10 @@ fn site_steps(
     pin_env(&mut c)
         .args(["doctor", "--json"])
         .current_dir(&host);
-    let log = logs.join("doctor.json");
+    let log = d.logs.join("doctor.json");
     let step = run(&mut c, left(deadline), None, &log);
     match parse_doctor(&fs::read_to_string(&log).unwrap_or_default()) {
-        Ok(d) => r.doctor = Some(d),
+        Ok(doc) => r.doctor = Some(doc),
         Err(e) => r.doctor_error = Some(format!("{e}; {}", step.error.unwrap_or_default())),
     }
     if step.timed_out {
@@ -878,7 +1133,7 @@ fn site_steps(
 
     // 5. Brrrty's build, compared with the reference. When doctor says some
     // pages can't build, the pages it does build are still compared.
-    let actual = outs.join("_brrrty");
+    let actual = d.outs.join("_brrrty");
     let _ = fs::remove_dir_all(&actual);
     let _ = fs::create_dir_all(&actual);
     let mut c = Command::new(&ctx.brrrty);
@@ -887,7 +1142,7 @@ fn site_steps(
         .arg(&actual)
         .env("SOURCE_DATE_EPOCH", COMPAT_EPOCH.to_string())
         .current_dir(&host);
-    let step = run(&mut c, left(deadline), None, &logs.join("build.log"));
+    let step = run(&mut c, left(deadline), None, &d.logs.join("build.log"));
     let built = step.ok;
     keep_going(r, "build", &step);
     r.build = Some(step);
@@ -895,7 +1150,7 @@ fn site_steps(
         return;
     }
     if ref_ok {
-        r.compare = compare(&reference, &actual, full, outs);
+        r.compare = compare(&reference, &actual, full, &d.outs);
     }
 
     // 6. Timings, for sites that build in full.
@@ -904,37 +1159,61 @@ fn site_steps(
     }
     let mut t = Timing::default();
     let runs = ctx.opts.runs;
-    let name = docker_name("time11ty", &r.slug);
-    let script = format!(
-        "{TIMED}; {ELEVENTY}; cd /work; for i in $(seq {runs}); do rm -rf /tmp/t; timed node --require /shim/freeze-time.cjs \"$B\" --quiet --output=/tmp/t >/dev/null; done"
-    );
-    let mut c = docker_run(&name, false);
-    c.args(["--mount", &volume(vol, "/work", false)])
-        .args(["--mount", &mount(&shim_dir, "/shim", true)])
-        .args(["-w", "/work", &image, "sh", "-c", &script]);
-    let log = logs.join("time-eleventy.log");
-    let step = run(&mut c, left(deadline), Some(&name), &log);
-    t.eleventy_docker_ms = build_ms(&log);
-    if step.timed_out {
-        r.timed_out = Some("timing 11ty".into());
-    }
-    if let Some(linux) = ctx.opts.linux_brrrty.clone() {
-        let name = docker_name("timebrrrty", &r.slug);
-        let script = format!(
-            "{TIMED}; mkdir /w; cp -a /src/. /w/; cd /w; for i in $(seq {runs}); do rm -rf /tmp/t; timed /opt/brrrty build --quiet --output /tmp/t >/dev/null; done"
-        );
-        let mut c = docker_run(&name, false);
-        c.args(["--mount", &mount(&host, "/src", true)])
-            .args(["--mount", &mount(&linux, "/opt/brrrty", true)])
-            .args([&image, "sh", "-c", &script]);
-        let log = logs.join("time-brrrty-docker.log");
-        let step = run(&mut c, left(deadline), Some(&name), &log);
-        t.brrrty_docker_ms = build_ms(&log);
+    let loop_11ty = |input: &str, shim: &str| {
+        format!(
+            "{TIMED}; {ELEVENTY}; {input}for i in $(seq {runs}); do rm -rf \"$T\"; timed node --require {shim} \"$B\" --quiet --output=\"$T\" >/dev/null; done; rm -rf \"$T\""
+        )
+    };
+    if native {
+        let mut c = ctx.native(&loop_11ty("", "\"$SHIM\""), &d.build(), true);
+        c.env("SHIM", shim_path(ctx.root))
+            .env("T", d.outs.join("_time11ty"));
+        let log = d.logs.join("time-eleventy.log");
+        let step = run(&mut c, left(deadline), None, &log);
+        t.eleventy_native_ms = build_ms(&log);
         if step.timed_out {
-            r.timed_out = Some("timing brrrty (docker)".into());
+            r.timed_out = Some("timing 11ty".into());
+        }
+    } else {
+        let image = r.node_image.clone().unwrap_or_default();
+        let shim_dir = shim_path(ctx.root).parent().unwrap().to_path_buf();
+        let name = docker_name("time11ty", &r.slug);
+        let mut c = docker_run(&name, false);
+        c.args(["--mount", &volume(&d.vol, "/work", false)])
+            .args(["--mount", &mount(&shim_dir, "/shim", true)])
+            .args(["-e", "T=/tmp/t"])
+            .args([
+                "-w",
+                "/work",
+                &image,
+                "sh",
+                "-c",
+                &loop_11ty("cd /work; ", "/shim/freeze-time.cjs"),
+            ]);
+        let log = d.logs.join("time-eleventy.log");
+        let step = run(&mut c, left(deadline), Some(&name), &log);
+        t.eleventy_docker_ms = build_ms(&log);
+        if step.timed_out {
+            r.timed_out = Some("timing 11ty".into());
+        }
+        if let Some(linux) = ctx.opts.linux_brrrty.clone() {
+            let name = docker_name("timebrrrty", &r.slug);
+            let script = format!(
+                "{TIMED}; mkdir /w; cp -a /src/. /w/; cd /w; for i in $(seq {runs}); do rm -rf /tmp/t; timed /opt/brrrty build --quiet --output /tmp/t >/dev/null; done"
+            );
+            let mut c = docker_run(&name, false);
+            c.args(["--mount", &mount(&host, "/src", true)])
+                .args(["--mount", &mount(&linux, "/opt/brrrty", true)])
+                .args([&image, "sh", "-c", &script]);
+            let log = d.logs.join("time-brrrty-docker.log");
+            let step = run(&mut c, left(deadline), Some(&name), &log);
+            t.brrrty_docker_ms = build_ms(&log);
+            if step.timed_out {
+                r.timed_out = Some("timing brrrty (docker)".into());
+            }
         }
     }
-    let tmp = outs.join("_time");
+    let tmp = d.outs.join("_time");
     for _ in 0..runs {
         let _ = fs::remove_dir_all(&tmp);
         let mut c = Command::new(&ctx.brrrty);
@@ -947,7 +1226,7 @@ fn site_steps(
             &mut c,
             left(deadline),
             None,
-            &logs.join("time-brrrty-host.log"),
+            &d.logs.join("time-brrrty-host.log"),
         );
         if !step.ok {
             if step.timed_out {
@@ -1015,19 +1294,11 @@ fn config_mentions_node_modules(dir: &Path) -> bool {
 
 /// Copy the installed `node_modules` from the volume to the host copy, as
 /// plain files: Brrrty reads them for passthrough copies and runs nothing.
-fn copy_node_modules(
-    image: &str,
-    vol: &str,
-    work: &Path,
-    host: &Path,
-    slug: &str,
-    limit: Duration,
-    logs: &Path,
-) {
+fn copy_node_modules(image: &str, d: &Dirs, host: &Path, slug: &str, limit: Duration) {
     let name = docker_name("nm", slug);
     let mut c = docker_run(&name, false);
-    c.args(["--mount", &volume(vol, "/work", true)])
-        .args(["--mount", &mount(work, "/out", false)])
+    c.args(["--mount", &volume(&d.vol, "/work", true)])
+        .args(["--mount", &mount(&d.work, "/out", false)])
         .args([
             image,
             "tar",
@@ -1037,10 +1308,10 @@ fn copy_node_modules(
             "/out/node_modules.tar",
             "node_modules",
         ]);
-    if run(&mut c, limit, Some(&name), &logs.join("node-modules.log")).ok {
+    if run(&mut c, limit, Some(&name), &d.logs.join("node-modules.log")).ok {
         let _ = Command::new("tar")
             .arg("-xf")
-            .arg(work.join("node_modules.tar"))
+            .arg(d.work.join("node_modules.tar"))
             .arg("-C")
             .arg(host)
             .status();
@@ -1067,6 +1338,38 @@ fn save_results(path: &Path, order: &[String], results: &BTreeMap<String, SiteRe
     if let Ok(json) = serde_json::to_string_pretty(&list) {
         let _ = fs::write(path, json + "\n");
     }
+}
+
+/// `cargo xtask corpus-merge`: one results file from several, such as one
+/// per CI job. A later file's entry for a site replaces an earlier one's.
+/// With a site list, sites come in its order.
+pub fn merge(inputs: &[PathBuf], list: Option<&Path>, out: &Path) -> Result<bool, String> {
+    let mut results = BTreeMap::new();
+    let mut seen = Vec::new();
+    for input in inputs {
+        let src = fs::read_to_string(input)
+            .map_err(|e| format!("cannot read {}: {e}", input.display()))?;
+        let list: Vec<SiteResult> = serde_json::from_str(&src)
+            .map_err(|e| format!("bad results file {}: {e}", input.display()))?;
+        for r in list {
+            if !seen.contains(&r.slug) {
+                seen.push(r.slug.clone());
+            }
+            results.insert(r.slug.clone(), r);
+        }
+    }
+    let order = match list {
+        Some(path) => {
+            let src = fs::read_to_string(path)
+                .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            let list: SiteList = toml::from_str(&src).map_err(|e| format!("bad site list: {e}"))?;
+            list.site.iter().map(|s| slug(&s.repo)).collect()
+        }
+        None => seen,
+    };
+    save_results(out, &order, &results);
+    println!("{} sites in {}", results.len(), out.display());
+    Ok(true)
 }
 
 fn build_release(root: &Path) -> Result<PathBuf, String> {
@@ -1100,11 +1403,24 @@ pub fn run_corpus(root: &Path, opts: Options) -> Result<bool, String> {
     if let Some(n) = opts.limit {
         sites.truncate(n);
     }
+    if sites.is_empty() {
+        return Err(format!(
+            "no site in {} matches {:?}",
+            opts.list.display(),
+            opts.only
+        ));
+    }
     for s in &sites {
         if s.repo.split('/').count() != 2 || s.repo.contains("..") {
             return Err(format!("repo must be owner/name: {:?}", s.repo));
         }
+        if let Some(c) = &s.commit
+            && !is_commit(c)
+        {
+            return Err(format!("{}: commit must be 40 hex digits: {c:?}", s.repo));
+        }
     }
+    let runner = opts.runner.resolve();
     fs::create_dir_all(&opts.sites_dir)
         .map_err(|e| format!("cannot create {}: {e}", opts.sites_dir.display()))?;
     let sites_dir = opts
@@ -1140,17 +1456,59 @@ pub fn run_corpus(root: &Path, opts: Options) -> Result<bool, String> {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
+    let (offline, node) = if runner == Runner::Native {
+        let node = Command::new("node")
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .ok_or("--runner native needs `node` on PATH")?;
+        let offline = unshare_works();
+        println!(
+            "runner: native, node {node}, 11ty builds {}",
+            if offline {
+                "offline"
+            } else {
+                "online (`unshare -rn` failed)"
+            }
+        );
+        if !case_sensitive(&opts.output_dir) {
+            println!(
+                "warning: {} is case-insensitive, so output paths that differ only in case will merge",
+                opts.output_dir.display()
+            );
+        }
+        (offline, node)
+    } else {
+        (false, String::new())
+    };
     let mut ctx = Ctx {
         root,
         opts: &opts,
         brrrty,
         version,
         pulled: Vec::new(),
+        runner,
+        offline,
+        node,
     };
     let order: Vec<String> = list.site.iter().map(|s| slug(&s.repo)).collect();
     let mut results = load_results(&opts.results);
     for (i, s) in sites.iter().enumerate() {
         println!("[{}/{}] {}", i + 1, sites.len(), s.repo);
+        if let Some(want) = &s.node
+            && runner == Runner::Native
+            && !ctx
+                .node
+                .trim_start_matches('v')
+                .starts_with(&format!("{want}."))
+        {
+            println!(
+                "  warning: the list says node {want}, the host has {}",
+                ctx.node
+            );
+        }
         let r = run_site(&mut ctx, s);
         println!("  {}", summary(&r));
         results.insert(r.slug.clone(), r);
@@ -1209,6 +1567,61 @@ mod tests {
             docker_name("ref", "Owner__Repo.site"),
             "brrrty-corpus-ref-owner__repo.site"
         );
+    }
+
+    #[test]
+    fn commits_are_full_hex_ids() {
+        assert!(is_commit("39ce2706c2a48b99868dda2c41f881077f683b70"));
+        assert!(!is_commit("39ce270"));
+        assert!(!is_commit("--upload-pack=x-----------------------------"));
+    }
+
+    #[test]
+    fn merge_keeps_the_list_order() {
+        let d = std::env::temp_dir().join(format!("xtask-corpus-merge-{}", std::process::id()));
+        fs::create_dir_all(&d).unwrap();
+        let one = |repo: &str| SiteResult {
+            slug: slug(repo),
+            repo: repo.into(),
+            ..SiteResult::default()
+        };
+        fs::write(
+            d.join("b.json"),
+            serde_json::to_string(&[one("o/b")]).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            d.join("a.json"),
+            serde_json::to_string(&[one("o/a")]).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            d.join("sites.toml"),
+            "[[site]]\nrepo = \"o/a\"\n[[site]]\nrepo = \"o/b\"\n",
+        )
+        .unwrap();
+        let out = d.join("all.json");
+        merge(
+            &[d.join("b.json"), d.join("a.json")],
+            Some(&d.join("sites.toml")),
+            &out,
+        )
+        .unwrap();
+        let all: Vec<SiteResult> =
+            serde_json::from_str(&fs::read_to_string(&out).unwrap()).unwrap();
+        let slugs: Vec<&str> = all.iter().map(|r| r.slug.as_str()).collect();
+        assert_eq!(slugs, ["o__a", "o__b"]);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn old_results_still_load() {
+        let r: SiteResult = serde_json::from_str(
+            r#"{"slug":"o__a","repo":"o/a","license":null,"commit":null,"branch":null,"node_image":null,"installer":null,"eleventy_version":null,"clone":null,"install":null,"reference":null,"reference_files":null,"init":null,"init_todos":[],"doctor":null,"doctor_error":null,"build":null,"compare":null,"timing":{"eleventy_docker_ms":[1],"brrrty_docker_ms":[],"brrrty_host_ms":[2]},"timed_out":null,"secs":0.0,"brrrty":"x"}"#,
+        )
+        .unwrap();
+        assert!(r.timing.unwrap().eleventy_native_ms.is_empty());
+        assert!(r.runner.is_none());
     }
 
     #[test]
