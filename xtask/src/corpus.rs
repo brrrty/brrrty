@@ -378,14 +378,19 @@ pub fn parse_todos(config: &str) -> Vec<Todo> {
     let lines: Vec<&str> = config.lines().collect();
     let mut todos = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let Some(why) = line.trim_start().strip_prefix("// TODO: ") else {
+        let t = line.trim_start();
+        let Some(why) = t
+            .strip_prefix("// TODO: ")
+            .or_else(|| t.strip_prefix("// TODO(brrrty): "))
+            .or_else(|| t.strip_prefix("// TODO(brrrty-file): "))
+        else {
             continue;
         };
         let why = why.trim_end_matches('.').to_string();
         // The quoted code follows: `// See ...`, `// <file>, line N:`, then `//   code`.
         let quoted: String = lines[i + 1..]
             .iter()
-            .take_while(|l| l.trim_start().starts_with("//") && !l.contains("// TODO: "))
+            .take_while(|l| l.trim_start().starts_with("//") && !l.contains("// TODO"))
             .skip_while(|l| !l.contains(", line ") && !l.contains(", lines "))
             .skip(1)
             .take(3)
