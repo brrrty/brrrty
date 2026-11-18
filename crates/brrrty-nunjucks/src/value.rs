@@ -294,6 +294,8 @@ impl Val {
             (Val::Re(a), Val::Re(b)) => Rc::ptr_eq(a, b),
             (Val::V(Value::Array(a)), Val::V(Value::Array(b))) => Arc::ptr_eq(a, b),
             (Val::V(Value::Object(a)), Val::V(Value::Object(b))) => Arc::ptr_eq(a, b),
+            // One function from the data is one handle.
+            (Val::V(Value::Function(a)), Val::V(Value::Function(b))) => a == b,
             _ => false,
         }
     }

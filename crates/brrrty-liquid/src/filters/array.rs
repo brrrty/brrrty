@@ -179,6 +179,11 @@ pub(super) fn size(_: &mut Renderer<'_>, v: &Val, _: &[Val]) -> Out {
         Value::String(s) => Value::Number(utf16_len(&s) as f64),
         Value::Array(a) => Value::Number(a.len() as f64),
         Value::Object(o) => o.get("length").cloned().unwrap_or(Value::Undefined),
+        // A function's `length` is its parameter count: JavaScript's to say.
+        Value::Function(_) => {
+            brrrty_js::functions::used_as_value("reads the size of");
+            Value::Undefined
+        }
         _ => Value::Undefined,
     };
     Ok(if len.js_truthy() {

@@ -11,6 +11,24 @@ lang = "en_US.UTF-8"
 [refused]
 "src/print-fn.njk" = "print-fn/index.html"
 "src/promise.njk" = "promise/index.html"
+# fx/: a function read as a value where 11ty reads its `name` or `length`,
+# prints its source or hands it to a filter.
+"src/fx/l10.liquid" = "l10/index.html"
+"src/fx/l11.liquid" = "l11/index.html"
+"src/fx/l13.liquid" = "l13/index.html"
+"src/fx/l3.liquid" = "l3/index.html"
+"src/fx/l4.liquid" = "l4/index.html"
+"src/fx/l5.liquid" = "l5/index.html"
+"src/fx/l6.liquid" = "l6/index.html"
+"src/fx/m8.njk" = "m8/index.html"
+"src/fx/n1.njk" = "n1/index.html"
+"src/fx/n11.njk" = "n11/index.html"
+"src/fx/n2.njk" = "n2/index.html"
+"src/fx/n3.njk" = "n3/index.html"
+"src/fx/n4.njk" = "n4/index.html"
+"src/fx/n5.njk" = "n5/index.html"
+"src/fx/n6.njk" = "n6/index.html"
+"src/fx/n7.njk" = "n7/index.html"
 
 # Probed with 11ty 3.1.8:
 # - computed functions run in dependency order whatever order they are
@@ -25,4 +43,8 @@ lang = "en_US.UTF-8"
 #   (unseen, so not waited for) sees "" (order/page prints "empty");
 # - a computed permalink function giving undefined falls back to
 #   `eleventyComputed.permalink` (`??`), and so to the default permalink;
-# - a computed function may return functions, called later (order/calls).
+# - a computed function may return functions, called later (order/calls);
+# - fx/: a function from the data keeps its identity through `first`, `set`,
+#   a loop or an index (`==`, `===`, `in`, Liquid `contains`), but each
+#   Nunjucks member lookup is a new wrapper; `dump`/`json` leave it out;
+#   an object of functions counts as empty.

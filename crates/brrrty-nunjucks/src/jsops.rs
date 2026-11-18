@@ -691,6 +691,11 @@ pub(crate) fn get_property(obj: &Val, key: &str) -> R<Prop> {
             }
         }
         Val::V(Value::Object(o)) => brrrty_js::traps::read(o, key, o.get(key).cloned()).map(Val::V),
+        // A function's own `name` and `length`: JavaScript's to say.
+        Val::V(Value::Function(_)) => {
+            brrrty_js::functions::used_as_value("reads a property of");
+            return Ok(Prop::Value(Val::undef()));
+        }
         Val::V(_) => None,
         Val::Safe(s) => match key {
             "val" => Some(Val::str(s.0.clone())),
@@ -782,7 +787,37 @@ pub(crate) fn raw_index(obj: &Val, key: &Val, ops: Ops) -> R<Val> {
             "Cannot read properties of {what}{reading}"
         )));
     }
+    // A function from the data comes back as itself, not wrapped as
+    // `memberLookup` wraps it, so it keeps its identity.
+    if let Some(f) = raw_function(obj, &property_key(key, ops)?) {
+        return Ok(f);
+    }
     member(obj, key, ops)
+}
+
+/// An own property that is a function from the data, as it is.
+fn raw_function(obj: &Val, key: &str) -> Option<Val> {
+    let own = match obj {
+        Val::V(Value::Object(o)) => o.get(key).cloned(),
+        Val::V(Value::Array(a)) => {
+            brrrty_js::array_index(key).and_then(|i| a.get(i as usize).cloned())
+        }
+        Val::Obj(o) => match o.get(key) {
+            Some(Val::V(v)) => Some(v),
+            _ => None,
+        },
+        Val::Arr(a) => {
+            match brrrty_js::array_index(key).and_then(|i| a.borrow().get(i as usize).cloned()) {
+                Some(Val::V(v)) => Some(v),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    match own {
+        Some(f @ Value::Function(_)) => Some(Val::V(f)),
+        _ => None,
+    }
 }
 
 /// Whether `obj` has `key` as an own property (`hasOwnProperty`).
@@ -800,6 +835,11 @@ pub(crate) fn has_own(obj: &Val, key: &str) -> R<bool> {
         }
         Val::Obj(o) => o.has(key),
         Val::Re(_) => key == "lastIndex",
+        // A function's own properties (`name`, `length`, `prototype`).
+        Val::V(Value::Function(_)) => {
+            brrrty_js::functions::used_as_value("reads the properties of");
+            false
+        }
         _ => false,
     })
 }

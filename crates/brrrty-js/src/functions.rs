@@ -114,6 +114,24 @@ pub fn call(f: FnHandle, this: This<'_>, args: &[Value], settle: Settle) -> Valu
     }
 }
 
+/// Filters known to treat a function as 11ty's do: JSON leaves it out,
+/// `default` keeps it.
+const FILTERS_FOR_FUNCTIONS: &[&str] = &["dump", "json", "default", "d"];
+
+/// Record a trap when the filter `name` would get a function from
+/// JavaScript data as its input or an argument: each filter would need its
+/// own probe against 11ty to say what it does with one.
+pub fn check_filter_args<'a>(name: &str, values: impl IntoIterator<Item = &'a Value>) {
+    if FILTERS_FOR_FUNCTIONS.contains(&name) {
+        return;
+    }
+    if values.into_iter().any(|v| matches!(v, Value::Function(_))) {
+        crate::traps::record(format!(
+            "{FUNCTION_PREFIX}this page passes a function from JavaScript data to the `{name}` filter, which Brrrty can't follow"
+        ));
+    }
+}
+
 /// Record that a page used a function from JavaScript data as a value:
 /// `how` says how ("prints").
 pub fn used_as_value(how: &str) {

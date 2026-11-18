@@ -132,6 +132,13 @@ pub(crate) fn run(
     args: &[Val],
     scope: &Rc<Scope>,
 ) -> R<Val> {
+    brrrty_js::functions::check_filter_args(
+        name,
+        args.iter().filter_map(|a| match a {
+            Val::V(v) => Some(v),
+            _ => None,
+        }),
+    );
     match filter {
         Filter::Builtin(n) => builtin::run(r, n, args),
         Filter::User(f) => run_user(r, f, name, args, scope),

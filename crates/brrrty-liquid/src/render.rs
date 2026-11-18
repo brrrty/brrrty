@@ -219,6 +219,13 @@ impl<'a> Renderer<'a> {
                             }
                         });
                     }
+                    brrrty_js::functions::check_filter_args(
+                        &f.name,
+                        std::iter::once(&v).chain(&argv).filter_map(|x| match x {
+                            Val::V(v) => Some(v),
+                            _ => None,
+                        }),
+                    );
                     let out = run(self, &v, &argv)?;
                     self.check_size(&out)?;
                     out
@@ -238,10 +245,17 @@ impl<'a> Renderer<'a> {
                             }
                         }
                     }
+                    let input = v.to_value();
+                    brrrty_js::functions::check_filter_args(
+                        &f.name,
+                        std::iter::once(&input)
+                            .chain(&args)
+                            .chain(kwargs.iter().map(|(_, v)| v)),
+                    );
                     let ctx = FilterCtx {
                         timezone: self.tz(),
                     };
-                    let out = run(&v.to_value(), &args, &kwargs, &ctx)
+                    let out = run(&input, &args, &kwargs, &ctx)
                         .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
                     self.check_size(&out)?;
                     out
@@ -273,10 +287,20 @@ impl<'a> Renderer<'a> {
                             }
                         });
                     }
+                    let input = v.to_value();
+                    brrrty_js::functions::check_filter_args(
+                        name,
+                        std::iter::once(&input)
+                            .chain(&argv)
+                            .chain(argv.iter().filter_map(|a| match a {
+                                Value::Array(pair) => pair.get(1),
+                                _ => None,
+                            })),
+                    );
                     let ctx = FilterCtx {
                         timezone: self.tz(),
                     };
-                    let out = run(&v.to_value(), &argv, &ctx)
+                    let out = run(&input, &argv, &ctx)
                         .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
                     self.check_size(&out)?;
                     out

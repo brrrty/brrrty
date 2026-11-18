@@ -45,6 +45,8 @@ fn strict_equals(l: &Value, r: &Value) -> bool {
         (Value::Array(a), Value::Array(b)) => Arc::ptr_eq(a, b),
         (Value::Object(a), Value::Object(b)) => Arc::ptr_eq(a, b),
         (Value::Date(a), Value::Date(b)) => a == b,
+        // One function from the data is one handle.
+        (Value::Function(a), Value::Function(b)) => a == b,
         _ => false,
     }
 }
@@ -78,8 +80,8 @@ fn empty_equals(other: &Val) -> bool {
         Value::String(s) => s.is_empty(),
         Value::Array(a) => a.is_empty(),
         Value::Object(o) => o.is_empty(),
-        // `Object.keys(date)` is empty.
-        Value::Date(_) => true,
+        // `Object.keys(date)` is empty, and so is a function's.
+        Value::Date(_) | Value::Function(_) => true,
         _ => false,
     }
 }
@@ -309,6 +311,11 @@ pub(crate) fn own_property(v: &Value, key: &str) -> Option<Value> {
             }
         },
         Value::Object(o) => o.get(key).cloned(),
+        // A function's own `name` and `length`: JavaScript's to say.
+        Value::Function(_) => {
+            brrrty_js::functions::used_as_value("reads a property of");
+            None
+        }
         _ => None,
     }
 }
