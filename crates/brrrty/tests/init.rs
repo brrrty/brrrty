@@ -794,6 +794,28 @@ fn data_files_that_need_node_turn_javascript_data_on() {
 }
 
 #[test]
+fn commonjs_in_an_es_module_package_is_not_translated() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\n  \"type\": \"module\",\n  \"devDependencies\": { \"@11ty/eleventy\": \"3.1.8\" }\n}\n",
+        ),
+        ("index.md", "# Hi\n"),
+        ("_data/site.js", "module.exports = { title: 'x' };\n"),
+        ("_data/esm.js", "export default { title: 'y' };\n"),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(!dir.path().join("_data/site.rhai").exists());
+    assert!(dir.path().join("_data/esm.rhai").is_file());
+    let text = stdout(&out);
+    assert!(
+        text.contains("_data/site.js (uses `module.exports` in a \"type\": \"module\" package, which 11ty can't load either)"),
+        "{text}"
+    );
+}
+
+#[test]
 fn two_files_for_one_key_are_never_translated() {
     let dir = site(&[
         ("package.json", PACKAGE),

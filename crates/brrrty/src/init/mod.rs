@@ -429,10 +429,25 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
     // One `.rhai` stands in for every JavaScript file of its name (`site.js` and
     // `site.mjs`, which 11ty merges): such files are never translated.
     let stem = |f: &str| f.rsplit_once('.').map_or(f, |(s, _)| s).to_string();
+    // In a `"type": "module"` package a `.js` file is an ES module, where
+    // `module.exports` throws: 11ty can't load such a file, so it isn't
+    // translated into one Brrrty can.
+    let esm_package = old_package
+        .as_deref()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+        .is_some_and(|v| v.get("type").and_then(|t| t.as_str()) == Some("module"));
     for f in &js_data {
         let shared = js_data.iter().any(|g| g != f && stem(g) == stem(f));
         let class = match read_inside(&root, f) {
             _ if shared => data::DataClass::NeedsNode,
+            Ok(Some(Read::Text(src)))
+                if esm_package && f.ends_with(".js") && data::uses_commonjs(&src) =>
+            {
+                js_node.push(format!(
+                    "{f} (uses `module.exports` in a \"type\": \"module\" package, which 11ty can't load either)"
+                ));
+                continue;
+            }
             Ok(Some(Read::Text(src))) => data::classify(src.strip_prefix(BOM).unwrap_or(&src)),
             _ => data::DataClass::NeedsNode,
         };

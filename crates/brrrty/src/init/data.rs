@@ -43,6 +43,21 @@ const NODE_ONLY: &[&str] = &[
     "WebSocket",
 ];
 
+/// Whether `src` exports the CommonJS way (`module.exports`, `exports.x`).
+pub fn uses_commonjs(src: &str) -> bool {
+    let Ok(toks) = tokenize(src) else {
+        return false;
+    };
+    toks.iter().enumerate().any(|(i, t)| {
+        let after_dot = toks.get(i.wrapping_sub(1)).is_some_and(|p| p.is("."));
+        let dot_next = toks.get(i + 1).is_some_and(|p| p.is("."));
+        !after_dot
+            && dot_next
+            && (t.is_ident("exports")
+                || (t.is_ident("module") && toks.get(i + 2).is_some_and(|p| p.is_ident("exports"))))
+    })
+}
+
 /// Sort the data file whose text is `src`.
 pub fn classify(src: &str) -> DataClass {
     let Ok(toks) = tokenize(src) else {
