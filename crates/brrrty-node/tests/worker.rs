@@ -414,3 +414,30 @@ process.exit(3);"#,
         start.elapsed()
     );
 }
+
+#[test]
+fn a_file_that_gives_the_same_data_again_crosses_once() {
+    let Some(node) = node() else { return };
+    let t = site(&[
+        (
+            "same.js",
+            "module.exports = () => ({ list: Array.from({ length: 50 }, (_, i) => ({ i })) });",
+        ),
+        (
+            "count.js",
+            "let n = 0; module.exports = () => ({ n: ++n });",
+        ),
+    ]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let same = |v: &Value| match v {
+        Value::Object(o) => std::sync::Arc::as_ptr(o) as usize,
+        other => panic!("{other:?}"),
+    };
+    let a = ok(w.load(&t.path().join("same.js"), true));
+    let b = ok(w.load(&t.path().join("same.js"), true));
+    assert_eq!(same(&a.value), same(&b.value), "decoded twice");
+    let one = ok(w.load(&t.path().join("count.js"), true));
+    let two = ok(w.load(&t.path().join("count.js"), true));
+    assert_eq!(get(&one.value, "n"), &Value::Number(1.0));
+    assert_eq!(get(&two.value, "n"), &Value::Number(2.0));
+}

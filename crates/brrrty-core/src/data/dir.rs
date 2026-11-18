@@ -321,7 +321,8 @@ fn settle_js(
     shown: &Path,
     results: Vec<(PathBuf, JsLoad)>,
 ) -> (LocalFile, Option<Problem>) {
-    let mut first: Option<(PathBuf, brrrty_js::runtime::Decoded, String)> = None;
+    // The first result, and its fingerprint once one is needed.
+    let mut first: Option<(PathBuf, brrrty_js::runtime::Decoded, Option<String>)> = None;
     for (template, r) in results {
         let d = match r {
             JsLoad::Value(d) => d,
@@ -330,10 +331,16 @@ fn settle_js(
             // the record.
             JsLoad::Unavailable => return (read_js(full, shown), None),
         };
-        let print = fingerprint(&d);
+        let differs = match &mut first {
+            None => false,
+            // The runtime hands back the very same value when the file gave
+            // the same data again.
+            Some((_, d0, _)) if same_value(d0, &d) => false,
+            Some((_, d0, p0)) => *p0.get_or_insert_with(|| fingerprint(d0)) != fingerprint(&d),
+        };
         match &first {
-            None => first = Some((template, d, print)),
-            Some((t0, _, p0)) if *p0 != print => {
+            None => first = Some((template, d, None)),
+            Some((t0, _, _)) if differs => {
                 return (
                     LocalFile::Failed(
                         Problem::error(
@@ -476,6 +483,16 @@ fn settle_js(
         data.shift_remove(&j.key);
     }
     (LocalFile::JsRan(Some(data), inexact), None)
+}
+
+/// Whether two results are one value handed back twice.
+fn same_value(a: &brrrty_js::runtime::Decoded, b: &brrrty_js::runtime::Decoded) -> bool {
+    let shared = match (&a.value, &b.value) {
+        (Value::Object(x), Value::Object(y)) => std::sync::Arc::ptr_eq(x, y),
+        (Value::Array(x), Value::Array(y)) => std::sync::Arc::ptr_eq(x, y),
+        _ => false,
+    };
+    shared && a.functions == b.functions && a.refused == b.refused
 }
 
 /// A result as text that tells any two different results apart: `-0`

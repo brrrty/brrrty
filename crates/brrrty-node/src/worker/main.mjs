@@ -46,7 +46,15 @@ function out(text) {
 }
 
 function frame(obj) {
-  const json = JSON.stringify(obj);
+  // A value already encoded as JSON text goes in as it is.
+  let json;
+  if (obj.okText !== undefined) {
+    const { okText, ...rest } = obj;
+    const head = JSON.stringify(rest);
+    json = `${head.slice(0, -1)}${head.length > 2 ? "," : ""}"ok":${okText}}`;
+  } else {
+    json = JSON.stringify(obj);
+  }
   out(`\x1eBRRRTY ${Buffer.byteLength(json, "utf8")}\n${json}`);
 }
 
@@ -153,6 +161,10 @@ function argumentPrint() {
   return argument === undefined ? "" : JSON.stringify(encodeValue(argument, () => -1));
 }
 
+// The argument's text as of the last check: it only changes when a data
+// function changes the argument, which stops the build.
+let argumentText;
+
 function deepFreeze(o) {
   if (o && typeof o === "object" && !Object.isFrozen(o)) {
     Object.freeze(o);
@@ -171,6 +183,8 @@ try {
 }
 
 const requestPromiseCache = new Map();
+// The JSON text last sent for each load, by call mode and path.
+const lastSent = new Map();
 let argument;
 
 // `dynamicImportAbsolutePath` from src/Util/Require.js, without the JSON
@@ -211,14 +225,17 @@ function dynamicImportAbsolutePath(absolutePath, type) {
 }
 
 // `getDataValue` from src/Data/TemplateData.js, for JavaScript files.
-async function getDataValue(absolutePath, call) {
+// `changed` is set when a data function changed its argument.
+async function getDataValue(absolutePath, call, state) {
   if (!fs.existsSync(absolutePath)) return {};
   const ext = path.extname(absolutePath).slice(1);
   let type = "cjs";
   if (ext === "mjs" || (ext === "js" && isEsm)) type = "esm";
   let value = await dynamicImportAbsolutePath(absolutePath, type);
   if (call && typeof value === "function") {
+    if (argumentText === undefined) argumentText = argumentPrint();
     value = await value(argument || {});
+    state.changed = argumentPrint() !== argumentText;
   }
   return value;
 }
@@ -278,20 +295,27 @@ async function handle(req) {
       const arg = fromWire(req.value);
       if (arg && typeof arg === "object" && arg.eleventy) deepFreeze(arg.eleventy);
       argument = arg;
+      argumentText = undefined;
       return { ok: null };
     }
     case "load": {
-      const before = argumentPrint();
+      const state = { changed: false };
       let value;
       try {
-        value = await getDataValue(req.path, req.call);
+        value = await getDataValue(req.path, req.call, state);
       } catch (e) {
         throw placeSyntaxError(e, req.path);
       }
-      if (argumentPrint() !== before) {
+      if (state.changed) {
         return { changedArgument: true };
       }
-      return { ok: encodeValue(rootValue(value), register) };
+      // A file loaded per template often gives the same data each time:
+      // say so instead of sending it again.
+      const text = JSON.stringify(encodeValue(rootValue(value), register));
+      const key = `${req.call ? "call" : "raw"}:${req.path}`;
+      if (lastSent.get(key) === text) return { same: true };
+      lastSent.set(key, text);
+      return { okText: text };
     }
     case "call": {
       const fn = handles[req.handle];

@@ -1,6 +1,6 @@
 //! One Node process running the worker, and the requests Brrrty makes of it.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -95,6 +95,10 @@ pub struct Worker {
     next_id: u64,
     /// Set once the worker failed: every later request fails the same way.
     failed: Option<RuntimeFailure>,
+    /// The value each load (by call mode and file) gave last.
+    last_loaded: HashMap<(bool, PathBuf), Decoded>,
+    /// The value a `same` reply to the request in flight stands for.
+    earlier: Option<Decoded>,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
@@ -142,6 +146,8 @@ impl Worker {
             root: root.to_path_buf(),
             next_id: 0,
             failed: None,
+            last_loaded: HashMap::new(),
+            earlier: None,
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -239,6 +245,13 @@ impl Worker {
         if let Some(t) = reply.get("thrown") {
             return JsResult::Thrown(js_error(t, &self.root));
         }
+        let earlier = self.earlier.take();
+        if reply.get("same").is_some() {
+            return match earlier {
+                Some(d) => JsResult::Ok(d),
+                None => JsResult::Failed(self.fail("a reply that repeats a value never sent")),
+            };
+        }
         match ok {
             Some(Ok(d)) => JsResult::Ok(d),
             Some(Err(e)) => JsResult::Failed(self.fail(&format!("a value Brrrty can't read: {e}"))),
@@ -330,10 +343,19 @@ impl JsRuntime for Worker {
 
     fn load(&mut self, file: &Path, call: bool) -> JsResult<Decoded> {
         let what = self.shown(file);
-        self.request(
+        let key = (call, file.to_path_buf());
+        // The worker says `same` when the value is the one it sent last
+        // time for this file, and the decoded value is used again: equal
+        // data, and the same objects, which Brrrty compares cheaply.
+        self.earlier = self.last_loaded.get(&key).cloned();
+        let r = self.request(
             json!({"op": "load", "path": file.to_string_lossy(), "call": call}),
             &what,
-        )
+        );
+        if let JsResult::Ok(d) = &r {
+            self.last_loaded.insert(key, d.clone());
+        }
+        r
     }
 
     fn call(&mut self, f: FnHandle, args: &[Value]) -> JsResult<Decoded> {

@@ -21,6 +21,12 @@ const MAX_DEPTH = 1000;
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+// `String.prototype.isWellFormed` where Node has it (20 and later).
+const wellFormed =
+  typeof String.prototype.isWellFormed === "function"
+    ? (s) => s.isWellFormed()
+    : (s) => !LONE_SURROGATE.test(s);
+
 function article(word) {
   // "a Uint8Array", "a URL", "an Uncommon".
   const vowel = /^[AEIOaeio]/.test(word) || (/^[Uu]/.test(word) && !/^U(int|RL|rl|ni|s)/.test(word));
@@ -56,15 +62,18 @@ const WELL_KNOWN = new Set(
 // `length`) and own well-known symbols. 11ty hands some objects to
 // templates as they are, where these stay readable.
 function unseen(v, isArray) {
-  const hidden = Object.getOwnPropertyNames(v).filter((k) => {
+  const symbols = Object.getOwnPropertySymbols(v);
+  const names = Object.getOwnPropertyNames(v);
+  // The common case, quickly: every string key enumerable (an array's
+  // `length` aside) and no symbols.
+  if (!symbols.length && names.length === Object.keys(v).length + (isArray ? 1 : 0)) return [];
+  const hidden = names.filter((k) => {
     if (isArray && (k === "length" || (String(k >>> 0) === k && (k >>> 0) !== 4294967295))) return false;
     const d = Object.getOwnPropertyDescriptor(v, k);
     return d && !d.enumerable;
   });
-  const symbols = Object.getOwnPropertySymbols(v)
-    .filter((s) => WELL_KNOWN.has(s))
-    .map((s) => s.description);
-  return [...hidden, ...symbols];
+  const known = symbols.filter((s) => WELL_KNOWN.has(s)).map((s) => s.description);
+  return [...hidden, ...known];
 }
 
 function pathText(path) {
@@ -82,7 +91,7 @@ function encodeValue(value, register) {
   const path = [];
 
   function encodeString(s) {
-    return LONE_SURROGATE.test(s) ? { $x: "a string with a lone surrogate" } : s;
+    return wellFormed(s) ? s : { $x: "a string with a lone surrogate" };
   }
 
   // `shared`: 11ty hands this value to templates as it is rather than
@@ -160,7 +169,7 @@ function encodeValue(value, register) {
       for (const key of Object.keys(v)) {
         path.push(key);
         let item;
-        if (LONE_SURROGATE.test(key)) {
+        if (!wellFormed(key)) {
           item = { $x: "a key with a lone surrogate" };
         } else {
           const desc = Object.getOwnPropertyDescriptor(v, key);
