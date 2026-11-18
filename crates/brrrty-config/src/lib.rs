@@ -127,6 +127,7 @@ mod glob;
 mod highlight;
 mod jshelpers;
 mod markdown_rules;
+pub mod markers;
 mod object;
 mod plugins;
 use brrrty_jsregex::matcher as regex;
@@ -198,6 +199,9 @@ pub struct SiteConfig {
     pub reads: brrrty_core::FileReads,
     /// Warnings its filters and collections raise while pages render.
     pub late_problems: brrrty_core::LateProblems,
+    /// The error that refuses every page while `brrrty init`'s TODO markers
+    /// are left in the file (see [`markers`]).
+    pub unported: Option<Problem>,
 }
 
 impl SiteConfig {
@@ -218,6 +222,7 @@ impl SiteConfig {
             template_engines: self.template_engines,
             reads: self.reads.clone(),
             late_problems: self.late_problems.clone(),
+            unported: self.unported.clone(),
         }
     }
 }
@@ -288,6 +293,8 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(unreadable(e.to_string())),
     };
+    let unported = markers::unported_problem(&src);
+    let stale = markers::stale_problem(root, &src);
     let root = root.to_path_buf();
     let run = std::thread::Builder::new()
         .name("brrrty-config".into())
@@ -314,7 +321,11 @@ pub fn load_with(root: &Path, clock: Clock) -> Result<Option<SiteConfig>, Vec<Pr
         )]),
     };
     result
-        .map(Some)
+        .map(|mut c| {
+            c.unported = unported;
+            c.problems.extend(stale);
+            Some(c)
+        })
         .map_err(|ps| ps.into_iter().map(|p| p.with_path(CONFIG_FILE)).collect())
 }
 
@@ -404,6 +415,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         feeds: state.feeds,
         reads,
         late_problems,
+        unported: None,
     })
 }
 

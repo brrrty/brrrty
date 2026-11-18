@@ -244,6 +244,7 @@ dependencies = [
  "regex-syntax",
  "rhai",
  "serde_json",
+ "sha2",
  "stacker",
  "tempfile",
  "url",

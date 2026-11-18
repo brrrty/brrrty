@@ -86,6 +86,9 @@ pub struct ConfigOptions {
     /// Warnings found while pages render (a `config` call made too late), reported with the
     /// build's.
     pub late_problems: LateProblems,
+    /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
+    /// nothing is written or copied.
+    pub unported: Option<Problem>,
 }
 
 /// Warnings a script raises while pages render, each kept once. Shared by the config's engine

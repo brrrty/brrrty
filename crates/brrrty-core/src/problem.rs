@@ -9,7 +9,9 @@ pub mod codes {
     pub const CONFIG_INVALID: &str = "config-invalid";
     pub const CONFIG_LATE_CALL: &str = "config-late-call";
     pub const CONFIG_LIMIT: &str = "config-limit";
+    pub const CONFIG_STALE: &str = "config-stale";
     pub const CONFIG_SYNTAX: &str = "config-syntax";
+    pub const CONFIG_TODO: &str = "config-todo";
     pub const CONFIG_UNREADABLE: &str = "config-unreadable";
     pub const CONFIG_UNSUPPORTED: &str = "config-unsupported";
     pub const CONTENT_CYCLE: &str = "content-cycle";

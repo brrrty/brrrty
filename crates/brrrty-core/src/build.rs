@@ -1680,6 +1680,10 @@ fn build_once(
         return finish(report, strict, start);
     }
     report.problems.extend(opts.config.problems.iter().cloned());
+    // `brrrty init` left parts of the 11ty config unported: any page could differ from
+    // 11ty's, so every page is refused once rendered (to find its other problems too).
+    let unported = opts.config.unported.as_ref();
+    report.problems.extend(unported.cloned());
     // A config file may add collections. Brrrty's own config can't yet, and
     // when there is one, 11ty's config is not read, so it isn't reported.
     let mut has_config = opts.config.file.is_some();
@@ -2413,6 +2417,12 @@ fn build_once(
                 }
                 return Err(Refused::Page(problem, None));
             }
+            if let Some(problem) = unported {
+                if let Some(log) = log {
+                    log.problem(shown, problem);
+                }
+                return Err(Refused::Page(problem.clone(), None));
+            }
             Ok((i, dest, rendered.html, shown.as_path()))
         })
         .collect();
@@ -2459,13 +2469,16 @@ fn build_once(
     // The pages of one template often fail the same way: say it once. A page
     // that isn't written reports its own problem only when another page's
     // problem points to it.
-    let mut seen = BTreeSet::new();
-    let mut report_problem = |report: &mut BuildReport, p: Problem| {
-        let key = format!(
+    let problem_key = |p: &Problem| {
+        format!(
             "{}|{:?}|{:?}|{:?}|{}",
             p.code, p.path, p.line, p.column, p.message
-        );
-        if seen.insert(key) {
+        )
+    };
+    // The unported config's error is in the report already.
+    let mut seen: BTreeSet<String> = unported.map(problem_key).into_iter().collect();
+    let mut report_problem = |report: &mut BuildReport, p: Problem| {
+        if seen.insert(problem_key(&p)) {
             report.problems.push(p);
         }
     };
@@ -2560,7 +2573,17 @@ fn build_once(
                 .map(|o| (out.join(o), input_rel.join(&p.source.input_path)))
         })
         .collect();
-    let pt = copy_passthrough_avoiding(opts, &pages, mode.dry_run);
+    // With the config unported, a passthrough copy may be a file 11ty processes: copy none.
+    let pt = match unported {
+        Some(_) => crate::passthrough::PassthroughResult {
+            copied: 0,
+            unchanged: 0,
+            overridden: HashSet::new(),
+            files: Vec::new(),
+            problems: Vec::new(),
+        },
+        None => copy_passthrough_avoiding(opts, &pages, mode.dry_run),
+    };
     // A passthrough file that replaced a page means that page was not really written.
     report.written = report.written.saturating_sub(pt.overridden.len());
     report
@@ -2582,6 +2605,14 @@ fn build_once(
     let mut report = finish(report, strict, start);
     if let Some(log) = log_owned {
         let mut templates = log.finish();
+        // Every refused page waits on the unported config, whatever else refused it.
+        if let Some(u) = unported {
+            for t in templates.values_mut() {
+                if t.refused > 0 && !t.problems.contains(u) {
+                    t.problems.push(u.clone());
+                }
+            }
+        }
         crate::scan::Scanner::new(&langs, template_engines, &root, &js_keys)
             .add_findings(&mut templates);
         report.survey = Some(crate::survey::Survey { templates, js_keys });

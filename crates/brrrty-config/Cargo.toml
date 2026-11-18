@@ -25,6 +25,7 @@ regex = "1.13.1"
 regex-syntax = "0.8.11"
 rhai = { version = "=1.27.0", features = ["sync", "no_closure", "no_time"] }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+sha2 = "0.11.1"
 stacker = "0.1.25"
 url = "2.5.8"
 

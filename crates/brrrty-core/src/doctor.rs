@@ -446,10 +446,21 @@ pub fn diagnose(report: BuildReport) -> Diagnosis {
             }
         })
         .collect();
-    // Blockers first; among them, the ones hiding pages no one can count yet.
+    // Blockers first, the unported config before every other: until it is ported, the
+    // rest may be its knock-ons. Then the ones hiding pages no one can count yet.
+    let unported = |g: &Group| {
+        matches!(
+            g.cause,
+            Cause::Other {
+                code: codes::CONFIG_TODO,
+                ..
+            }
+        )
+    };
     groups.sort_by(|a, b| {
         (!a.is_blocker())
             .cmp(&!b.is_blocker())
+            .then(unported(b).cmp(&unported(a)))
             .then(b.hides_pages.cmp(&a.hides_pages))
             .then((b.pages + b.also_pages).cmp(&(a.pages + a.also_pages)))
             .then(a.title.cmp(&b.title))
