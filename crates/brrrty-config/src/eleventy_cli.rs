@@ -1541,8 +1541,7 @@ mod tests {
         let unread = |file: &str, body: &str| {
             let t = site();
             write(&t, file, body);
-            let c = find(&json!({}), t.path()).unwrap_or_else(|| panic!("{body}: silent"));
-            c
+            find(&json!({}), t.path()).unwrap_or_else(|| panic!("{body}: silent"))
         };
         // Continued on the next line without `|`: read, not just marked.
         let c = unread(
