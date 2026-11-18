@@ -167,7 +167,8 @@ let keptObjects = new WeakSet();
 function markKept(v) {
   const stack = [v];
   while (stack.length) {
-    const x = stack.pop();
+    let x = stack.pop();
+    if (x !== null && typeof x === "object" && guardTarget.has(x)) x = guardTarget.get(x);
     if (x === null || typeof x !== "object" || keptObjects.has(x)) continue;
     keptObjects.add(x);
     for (const k of Object.keys(x)) {
@@ -175,6 +176,50 @@ function markKept(v) {
       if (d && "value" in d) stack.push(d.value);
     }
   }
+}
+
+// An object Brrrty can't answer every question about: `collections` when
+// the site's config may add collections (`missing`: a name it doesn't have
+// is a trap) or when 11ty's order of its names isn't known (`list`: listing
+// them is a trap). Reads give watched values, writes are noted, as the
+// membrane does.
+const guardTarget = new WeakMap();
+
+function guarded(o, c) {
+  const absent = (t, k) => typeof k === "string" && c.missing && !Object.prototype.hasOwnProperty.call(t, k) && !(k in Object.prototype);
+  const p = new Proxy(o, {
+    get(t, k, r) {
+      if (absent(t, k)) throw refuse(String(c.missing).replaceAll("{key}", k));
+      return watch(Reflect.get(t, k, r));
+    },
+    has(t, k) {
+      if (absent(t, k)) throw refuse(String(c.missing).replaceAll("{key}", k));
+      return Reflect.has(t, k);
+    },
+    ownKeys(t) {
+      if (c.list) throw refuse(String(c.list));
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t, k) {
+      const d = Reflect.getOwnPropertyDescriptor(t, k);
+      if (d && "value" in d && d.configurable) d.value = watch(d.value);
+      return d;
+    },
+    set(t, k, v) {
+      noteWrite();
+      return Reflect.set(t, k, unwrapProxy(v));
+    },
+    defineProperty(t, k, d) {
+      noteWrite();
+      return Reflect.defineProperty(t, k, d);
+    },
+    deleteProperty(t, k) {
+      noteWrite();
+      return Reflect.deleteProperty(t, k);
+    },
+  });
+  guardTarget.set(p, o);
+  return p;
 }
 
 // Before setting the dotted `key` of a page's data: an object on the way
@@ -687,8 +732,22 @@ function quickSame(rec) {
   return true;
 }
 
+let realRoot = root;
+try {
+  realRoot = fs.realpathSync(root);
+} catch {
+  realRoot = root;
+}
+
 function relFile(file) {
-  return path.relative(root, file).split(path.sep).join("/");
+  let real = file;
+  try {
+    real = fs.realpathSync(file);
+  } catch {
+    real = file;
+  }
+  const base = real.startsWith(realRoot + path.sep) ? realRoot : root;
+  return path.relative(base, base === realRoot ? real : file).split(path.sep).join("/");
 }
 
 // After a call from a page: whether it changed what the data files gave.
@@ -758,7 +817,7 @@ function fromWire(w, shared = new Map()) {
         Object.defineProperty(o, k, { value: fromWire(v, shared), writable: true, enumerable: true, configurable: true });
       }
     }
-    return o;
+    return w.$c ? guarded(o, w.$c) : o;
   }
   if ("$S" in w) {
     // A value Brrrty sends once and refers to in later requests: data
@@ -893,6 +952,217 @@ function rootValue(value) {
   const copy = {};
   for (const key in value) copy[key] = value[key];
   return copy;
+}
+
+// --- JavaScript templates, as Eleventy 3.1.8's src/Engines/JavaScript.js,
+// src/Util/GetJavaScriptData.js and src/Engines/Util/ContextAugmenter.js
+// make and render them (MIT, see NOTICE). ---
+
+// Every template and JavaScript layout loaded, by id: its instance, file,
+// and whether a layout's `this.page` is set up.
+const templates = [];
+// The names 11ty puts on a template's `this` as functions, in its order:
+// its own filters, then the config's (`templateSetup`).
+let filterNames = [];
+
+// `EleventyImport(inputPath, isEsm ? "esm" : "cjs", { cacheBust: true })`:
+// the engine isn't cacheable, so each template's URL is busted, and the
+// type is the project's, whatever the extension.
+function importTemplate(absolutePath) {
+  let urlPath;
+  try {
+    const u = new URL(`file:${absolutePath}`);
+    u.searchParams.set("_cache_bust", String(originalNow.call(OriginalDate)));
+    urlPath = u.toString();
+  } catch {
+    urlPath = absolutePath;
+  }
+  const type = isEsm ? "esm" : "cjs";
+  let promise = requestPromiseCache.get(urlPath);
+  if (!promise) {
+    promise = import(urlPath);
+    requestPromiseCache.set(urlPath, promise);
+  }
+  return promise.then((target) => {
+    if (Object.keys(target).length === 1 && "default" in target) {
+      return target.default;
+    }
+    if (type === "cjs" && "default" in target) {
+      let match = true;
+      for (const key in target) {
+        if (key === "default") continue;
+        if (key === "module.exports") continue;
+        if (target[key] !== target.default[key]) {
+          match = false;
+        }
+      }
+      if (match) {
+        return target.default;
+      }
+    }
+    return Object.assign({}, target);
+  });
+}
+
+// `JavaScript._getInstance`.
+function getInstance(mod) {
+  const noop = function () {
+    return "";
+  };
+  const originalModData = mod?.data;
+  if (typeof mod === "object" && mod.default && isEsm) {
+    mod = mod.default;
+  }
+  if (typeof mod === "string" || mod instanceof Buffer || mod.then) {
+    return { render: () => mod };
+  } else if (typeof mod === "function") {
+    if (mod.prototype?.data || mod.prototype?.render) {
+      if (!("render" in mod.prototype)) {
+        mod.prototype.render = noop;
+      }
+      if (!("data" in mod.prototype) && !mod.data && originalModData) {
+        mod.prototype.data = originalModData;
+      }
+      return new mod();
+    }
+    return {
+      ...(originalModData ? { data: originalModData } : undefined),
+      render: mod,
+    };
+  } else if ("data" in mod || "render" in mod) {
+    if (!mod.render) {
+      mod.render = noop;
+    }
+    if (!mod.data && originalModData) {
+      mod.data = originalModData;
+    }
+    return mod;
+  }
+  return undefined;
+}
+
+// 11ty's own refusal of a template: it stops the whole build.
+function invalidTemplate(message) {
+  const e = new Error(message);
+  e.brrrtyInvalid = true;
+  return e;
+}
+
+// Load a template or a JavaScript layout: its instance, then its data as
+// `getJavaScriptData` reads it, copied as `#getFrontMatterData` copies it
+// (`Object.assign({}, extraData)`).
+async function loadTemplate(req) {
+  const shown = relFile(req.path);
+  let mod;
+  try {
+    mod = await importTemplate(req.path);
+  } catch (e) {
+    throw placeSyntaxError(e, req.path);
+  }
+  let inst;
+  try {
+    inst = getInstance(mod);
+  } catch (e) {
+    throw invalidTemplate(`11ty can't make a template of what ${shown} exports: ${e && e.message}`);
+  }
+  if (!inst) {
+    throw invalidTemplate(`No JavaScript template returned from ${shown}. Did you assign module.exports (CommonJS) or export (ESM)?`);
+  }
+  let data;
+  if (inst && "data" in inst) {
+    data = await (typeof inst.data === "function" ? inst.data() : inst.data);
+    if (typeof data !== "object") {
+      throw invalidTemplate(`Invalid data format returned from ${shown}: typeof ${typeof data}`);
+    }
+  }
+  const root = Object.assign({}, data);
+  loadedRoots.set(root, req.path);
+  loadRecords.set(root, completeRecord(root, false));
+  templates.push({ inst, file: req.path, layout: req.layout === true, pageSet: false });
+  return { template: templates.length - 1, okText: JSON.stringify(encodeValue(root, register)) };
+}
+
+// The functions 11ty puts on `this` for a render (`getJavaScriptFunctions`):
+// one new wrapper per name, each render.
+function filterFunctions() {
+  const out = {};
+  for (const name of filterNames) {
+    out[name] = function () {
+      throw refuse(`calls \`this.${name}\`, one of the filters 11ty gives a JavaScript template, which Brrrty doesn't run from JavaScript yet`);
+    };
+  }
+  return out;
+}
+
+const LAYOUT_PAGE =
+  "reads `this.page` in a JavaScript layout, which 11ty sets from whichever page renders the layout first, and its pages render at the same time";
+
+// One render, as the function `JavaScript.compile()` returns: `page` and
+// `eleventy` added to the instance unless it has them (so `this.page` is
+// the first page's: Brrrty sends page 0's page as `first`), the filters
+// assigned, then `render` called and awaited.
+async function renderTemplate(t, data, first) {
+  refusedInCall = null;
+  takeWrote();
+  const inst = t.inst;
+  const wdata = watch(data);
+  let value;
+  try {
+    if (t.layout) {
+      if (!t.pageSet) {
+        t.pageSet = true;
+        if (!inst.page) trapKey(inst, "page", LAYOUT_PAGE);
+      }
+    } else if (!inst.page) {
+      const page = first !== undefined ? watch(first) : wdata.page;
+      if (page) inst.page = page;
+    }
+    if (!inst.eleventy) {
+      const eleventy = wdata.eleventy;
+      if (eleventy) inst.eleventy = eleventy;
+    }
+    Object.assign(inst, filterFunctions());
+    value = inst.render.call(inst, wdata);
+    if (Buffer.isBuffer(value)) value = value.toString();
+    if (value && typeof value.then === "function") {
+      value = await value;
+      if (Buffer.isBuffer(value)) {
+        throw refuse("returns a promise of a Buffer, which 11ty keeps as a Buffer");
+      }
+    }
+  } catch (e) {
+    const failed = renderRefusal(inst);
+    if (failed) return failed;
+    throw e;
+  }
+  const failed = renderRefusal(inst);
+  if (failed) return failed;
+  let text;
+  try {
+    text = JSON.stringify(encodeValue(unwrapProxy(value), register));
+  } catch (e) {
+    if (e && e.brrrtyRefusal) return { refused: `${describeRender(inst)} returns something that ${e.brrrtyRefusal}` };
+    throw e;
+  }
+  return { okText: text };
+}
+
+function describeRender(inst) {
+  return typeof inst.render === "function" ? describeFn(inst.render) : "the template's render";
+}
+
+// Why a render that just ran can't be used, if it can't.
+function renderRefusal(inst) {
+  const wroteData = takeWrote();
+  if (refusedInCall !== null) return { refused: `${describeRender(inst)} ${refusedInCall}` };
+  if (wroteData) {
+    dropPersistent();
+    return {
+      refused: `${describeRender(inst)} changes the data it is given (a \`list.sort()\` or a property set on it), which 11ty's later pages then see changed; Brrrty can't follow that, so sort or change a copy instead (\`[...list].sort()\`)`,
+      dropShared: true,
+    };
+  }
+  return null;
 }
 
 // --- Errors. ---
@@ -1267,6 +1537,21 @@ async function handle(req) {
       pages.delete(req.page);
       return { ok: null };
     }
+    case "templateSetup": {
+      filterNames = (req.filters || []).map(String);
+      return { ok: null };
+    }
+    case "templateLoad":
+      return loadTemplate(req);
+    case "render": {
+      const t = templates[req.template];
+      if (!t) throw new Error(`no template ${req.template}`);
+      const shared = new Map();
+      const data = fromWire(req.data, shared);
+      for (const [k, why] of req.traps || []) trapKey(data, k, why);
+      const first = req.first === undefined ? undefined : fromWire(req.first, shared);
+      return renderTemplate(t, data, first);
+    }
     case "reads":
       return { ok: allReads() };
     case "info":
@@ -1298,7 +1583,11 @@ lines.on("line", (line) => {
     try {
       reply = await handle(req);
     } catch (e) {
-      reply = e && e.brrrtyRefusal ? { refused: `a function ${e.brrrtyRefusal}` } : { thrown: thrown(e) };
+      reply = e && e.brrrtyRefusal
+        ? { refused: `a function ${e.brrrtyRefusal}` }
+        : e && e.brrrtyInvalid
+          ? { invalid: toWellFormed(String(e.message)) }
+          : { thrown: thrown(e) };
     }
     if (calling) {
       clockFeed = null;
@@ -1311,6 +1600,9 @@ lines.on("line", (line) => {
       checkAfterCall(() =>
         typeof req.handle === "number" && typeof handles[req.handle] === "function" ? describeFn(handles[req.handle]) : "a function from the data",
       );
+    }
+    if (calling && req.op === "render") {
+      checkAfterCall(() => (templates[req.template] ? describeRender(templates[req.template].inst) : "a JavaScript template"));
     }
   });
 });

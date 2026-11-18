@@ -34,7 +34,13 @@ use indexmap::IndexMap;
 use crate::Value;
 
 /// Properties that are traps when they hold `undefined`.
-pub const TRAP_KEYS: [&str; 4] = ["templateContent", "content", "template", "collections"];
+pub const TRAP_KEYS: [&str; 5] = [
+    "templateContent",
+    "content",
+    "template",
+    "collections",
+    "rawInput",
+];
 
 /// The properties that hold a collection item's rendered content.
 pub const CONTENT_KEYS: [&str; 2] = ["templateContent", "content"];
@@ -48,6 +54,14 @@ pub const OPEN_PREFIX: &str = "collections.";
 pub const WITHHELD_PREFIX: &str = "withheld.";
 
 static OPEN: RwLock<Vec<usize>> = RwLock::new(Vec::new());
+
+/// Objects whose names' order isn't known (the `collections` of a site
+/// where 11ty orders templates by file-read timing), with why.
+static UNORDERED: RwLock<Vec<(usize, Arc<str>, bool)>> = RwLock::new(Vec::new());
+
+/// Prefix of a trap recorded for a listing of an object whose order isn't
+/// known; the rest is why.
+pub const ORDER_PREFIX: &str = "order.";
 
 /// Withholding objects, by [`object_id`], with the keys they lack.
 static WITHHELD: LazyLock<RwLock<HashMap<usize, Arc<[String]>>>> =
@@ -100,6 +114,70 @@ pub fn open(id: usize) {
 pub fn close(id: usize) {
     if let Ok(mut v) = OPEN.write() {
         v.retain(|x| *x != id);
+    }
+}
+
+/// Register an object whose names' order isn't known: listing them is a
+/// trap, recorded with `why` ("whose order 11ty decides by ..."). `id` is
+/// [`object_id`] of the object; call [`ordered`] when the build ends.
+pub fn unordered(id: usize, why: impl Into<Arc<str>>) {
+    if let Ok(mut v) = UNORDERED.write() {
+        v.push((id, why.into(), false));
+    }
+}
+
+/// Register an object holding only some of the names it stands for, which
+/// ones depending on an order that isn't known: listing it, or reading a
+/// name it doesn't have, is a trap recorded with `why`. Call [`ordered`]
+/// when done.
+pub fn partial(id: usize, why: impl Into<Arc<str>>) {
+    if let Ok(mut v) = UNORDERED.write() {
+        v.push((id, why.into(), true));
+    }
+}
+
+pub fn ordered(id: usize) {
+    if let Ok(mut v) = UNORDERED.write() {
+        v.retain(|(x, _, _)| *x != id);
+    }
+}
+
+/// Why `o`'s names' order isn't known, when it was registered with
+/// [`unordered`] or [`partial`].
+pub fn unordered_reason(o: &IndexMap<String, Value>) -> Option<Arc<str>> {
+    unordered_entry(o).map(|(why, _)| why)
+}
+
+fn unordered_entry(o: &IndexMap<String, Value>) -> Option<(Arc<str>, bool)> {
+    let v = UNORDERED.read().ok()?;
+    if v.is_empty() {
+        return None;
+    }
+    let id = object_id(o);
+    v.iter()
+        .find(|(x, _, _)| *x == id)
+        .map(|(_, why, partial)| (why.clone(), *partial))
+}
+
+/// Why a name `o` doesn't have can't be read, when `o` was registered with
+/// [`partial`].
+fn partial_reason(o: &IndexMap<String, Value>) -> Option<Arc<str>> {
+    unordered_entry(o).and_then(|(why, partial)| partial.then_some(why))
+}
+
+/// Whether `o` traps a read or a listing ([`open`] or [`unordered`]).
+pub fn is_guarded_object(o: &IndexMap<String, Value>) -> bool {
+    is_open(o) || unordered_reason(o).is_some()
+}
+
+/// Record the trap for a listing of an object whose order isn't known.
+fn list_unordered(o: &IndexMap<String, Value>) -> bool {
+    match unordered_reason(o) {
+        Some(why) => {
+            hit(format!("{ORDER_PREFIX}{why}"));
+            true
+        }
+        None => false,
     }
 }
 
@@ -249,6 +327,12 @@ pub fn read(o: &IndexMap<String, Value>, key: &str, found: Option<Value>) -> Opt
             hit(format!("{WITHHELD_PREFIX}{key}"));
             found
         }
+        None if partial_reason(o).is_some() => {
+            if let Some(why) = partial_reason(o) {
+                hit(format!("{ORDER_PREFIX}{why}"));
+            }
+            found
+        }
         None if is_open(o) => {
             hit(format!("{OPEN_PREFIX}{key}"));
             found
@@ -287,6 +371,9 @@ pub fn keys(o: &IndexMap<String, Value>) -> bool {
     if list_withheld(o) {
         return true;
     }
+    if list_unordered(o) {
+        return true;
+    }
     if is_open(o) {
         hit(format!("{OPEN_PREFIX}*"));
         return true;
@@ -302,6 +389,8 @@ pub fn has(o: &IndexMap<String, Value>, key: &str) -> bool {
     }
     if withholds(o, key) {
         hit(format!("{WITHHELD_PREFIX}{key}"));
+    } else if let Some(why) = partial_reason(o) {
+        hit(format!("{ORDER_PREFIX}{why}"));
     } else if is_open(o) {
         hit(format!("{OPEN_PREFIX}{key}"));
     }
@@ -334,6 +423,9 @@ pub fn entries(o: &IndexMap<String, Value>) -> bool {
         }
     }
     if list_withheld(o) {
+        trapped = true;
+    }
+    if list_unordered(o) {
         trapped = true;
     }
     if is_open(o) {

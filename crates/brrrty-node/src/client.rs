@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use brrrty_js::Value;
 use brrrty_js::runtime::{
-    Decoded, FnHandle, JsError, JsResult, JsRuntime, PageId, PathPart, Refusal, RuntimeFailure,
-    Settle, This,
+    Decoded, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PathPart, Refusal,
+    RuntimeFailure, Settle, TemplateId, This,
 };
 use serde_json::{Value as Json, json};
 
@@ -141,6 +141,9 @@ pub struct Worker {
     /// How long a request may take before the worker is given up on (the
     /// replay check's workers only).
     pub(crate) deadline: Option<Duration>,
+    /// The last reply's head, for a request whose reply says more than its
+    /// value (`templateLoad`'s id).
+    last_head: Json,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
@@ -203,6 +206,7 @@ impl Worker {
             load_handles: 0,
             slowest: Duration::ZERO,
             deadline: None,
+            last_head: Json::Null,
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -269,6 +273,7 @@ impl Worker {
                 raw: frame.raw.clone(),
             });
         }
+        self.last_head = frame.head.clone();
         self.interpret(frame, what)
     }
 
@@ -358,6 +363,13 @@ impl Worker {
         }
         if let Some(t) = reply.get("thrown") {
             return JsResult::Thrown(js_error(t, &self.root));
+        }
+        if let Some(m) = reply.get("invalid") {
+            return JsResult::Thrown(JsError {
+                message: m.as_str().unwrap_or("").to_string(),
+                invalid: true,
+                ..JsError::default()
+            });
         }
         if reply.get("dropShared").is_some() {
             // The worker forgot them; ids go on rising, so none is reused.
@@ -664,6 +676,56 @@ impl JsRuntime for Worker {
         JsResult::Ok(())
     }
 
+    fn template_setup(&mut self, filters: &[String]) -> JsResult<()> {
+        match self.request(
+            json!({"op": "templateSetup", "filters": filters}),
+            "the JavaScript templates' setup",
+        ) {
+            JsResult::Ok(_) => JsResult::Ok(()),
+            JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
+            JsResult::Failed(f) => JsResult::Failed(f),
+        }
+    }
+
+    fn load_template(&mut self, file: &Path, layout: bool) -> JsResult<LoadedTemplate> {
+        let what = self.shown(file);
+        let r = self.request(
+            json!({"op": "templateLoad", "path": file.to_string_lossy(), "layout": layout}),
+            &what,
+        );
+        match r {
+            JsResult::Ok(data) => match self.last_head.get("template").and_then(Json::as_u64) {
+                Some(id) => JsResult::Ok(LoadedTemplate {
+                    id: TemplateId(id),
+                    data,
+                }),
+                None => JsResult::Failed(self.fail("templateLoad gave no template id")),
+            },
+            JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
+            JsResult::Failed(f) => JsResult::Failed(f),
+        }
+    }
+
+    fn render(
+        &mut self,
+        template: TemplateId,
+        data: &Value,
+        first: Option<&Value>,
+        traps: &[(String, String)],
+    ) -> JsResult<Decoded> {
+        let (data, first) = match encode_render(data, first, &mut self.kept) {
+            Ok(e) => e,
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
+        let mut req = json!({"op": "render", "template": template.0, "data": data, "traps": traps});
+        if let Some(first) = first {
+            req["first"] = first;
+        }
+        self.request(req, "a JavaScript template")
+    }
+
     fn verify(&mut self) -> JsResult<()> {
         // What the calls changed of the data files' values comes first: it
         // explains whatever the replay would find.
@@ -954,6 +1016,7 @@ fn js_error(t: &Json, root: &Path) -> JsError {
         line: place.as_ref().map(|p| p.line),
         column: place.and_then(|p| p.column),
         stack,
+        invalid: false,
     }
 }
 
@@ -982,6 +1045,7 @@ pub fn encode_all<'v>(
         kept,
         no_keep: None,
         in_kept: 0,
+        guard: false,
     };
     values.map(|v| e.encode(v)).collect()
 }
@@ -997,8 +1061,37 @@ fn encode_page(data: &Value, kept: &mut Kept) -> Result<Json, String> {
         kept: Some(kept),
         no_keep: ptr_of(data),
         in_kept: 0,
+        guard: false,
     };
     e.encode(data)
+}
+
+/// A render's data and `first` page in the worker's wire forms: the data's
+/// own top object isn't kept, `first` is page 0's `page` (the same object
+/// as the data's `page` on page 0, sent once), and a `collections` object
+/// Brrrty can't answer everything about crosses guarded (see
+/// [`Encoder::guard`]).
+fn encode_render(
+    data: &Value,
+    first: Option<&Value>,
+    kept: &mut Kept,
+) -> Result<(Json, Option<Json>), String> {
+    let mut counts: HashMap<usize, u32> = HashMap::new();
+    count(data, &mut counts, Some(kept));
+    if let Some(f) = first {
+        count(f, &mut counts, Some(kept));
+    }
+    let mut e = Encoder {
+        counts,
+        ids: HashMap::new(),
+        kept: Some(kept),
+        no_keep: ptr_of(data),
+        in_kept: 0,
+        guard: true,
+    };
+    let data = e.encode(data)?;
+    let first = first.map(|f| e.encode(f)).transpose()?;
+    Ok((data, first))
 }
 
 /// How many items or keys a list or object must have for the worker to
@@ -1049,7 +1142,18 @@ struct Encoder<'k> {
     no_keep: Option<usize>,
     /// How many kept values the encoder is inside.
     in_kept: usize,
+    /// Send a `collections` object that traps (an open or order-unknown
+    /// one) as a guarded object instead of refusing it: a render gets the
+    /// whole page data, `collections` included.
+    guard: bool,
 }
+
+/// Why a JavaScript template can't read a name an open `collections`
+/// object doesn't have (`{key}` is the name).
+const OPEN_MISSING: &str = "reads `collections.{key}`, which Brrrty doesn't have: the site's 11ty config may add it, or a page in it can't be built (see the other problems)";
+
+/// Why a JavaScript template can't list an open `collections` object.
+const OPEN_LIST: &str = "lists the names in `collections`, and the site's 11ty config may add collections Brrrty can't see";
 
 /// Why a property Brrrty marks as unknown can't be handed to a function.
 fn trap_reason(key: &str) -> String {
@@ -1059,6 +1163,9 @@ fn trap_reason(key: &str) -> String {
         ),
         "template" => {
             "reads `template` of a collection item, 11ty's internal template object".to_string()
+        }
+        "rawInput" => {
+            "reads `rawInput` of a JavaScript template's page, which in 11ty is its instance object, not text".to_string()
         }
         _ => format!("reads `{key}`, which Brrrty doesn't hand to JavaScript functions yet"),
     }
@@ -1071,7 +1178,7 @@ impl Encoder<'_> {
         };
         let big = match v {
             Value::Array(a) => a.len() >= KEPT_LEN,
-            Value::Object(o) => o.len() >= KEPT_LEN && !brrrty_js::traps::is_open_object(o),
+            Value::Object(o) => o.len() >= KEPT_LEN && !brrrty_js::traps::is_guarded_object(o),
             _ => false,
         };
         if big
@@ -1120,7 +1227,9 @@ impl Encoder<'_> {
                     .collect::<Result<Vec<_>, _>>()?,
             ),
             Value::Object(o) => {
-                if brrrty_js::traps::is_open_object(o) {
+                let open = brrrty_js::traps::is_open_object(o);
+                let unordered = brrrty_js::traps::unordered_reason(o);
+                if (open || unordered.is_some()) && !self.guard {
                     return Err(
                         "passes the whole `collections` object to a function, which Brrrty doesn't do yet; pass one collection, like `collections.post`".to_string(),
                     );
@@ -1140,6 +1249,25 @@ impl Encoder<'_> {
                     for k in keys.iter().filter(|k| !o.contains_key(k.as_str())) {
                         entries.push(json!([k, {"$t": format!("reads `{k}` of another page's `data`, which Brrrty can't supply")}]));
                     }
+                }
+                if open || unordered.is_some() {
+                    let mut c = serde_json::Map::new();
+                    if open {
+                        c.insert("missing".into(), json!(OPEN_MISSING));
+                    }
+                    match (&unordered, open) {
+                        (Some(why), _) => {
+                            c.insert(
+                                "list".into(),
+                                json!(format!("lists the names in `collections`, {why}")),
+                            );
+                        }
+                        (None, true) => {
+                            c.insert("list".into(), json!(OPEN_LIST));
+                        }
+                        (None, false) => {}
+                    }
+                    return Ok(json!({"$o": entries, "$c": c}));
                 }
                 json!({"$o": entries})
             }

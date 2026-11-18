@@ -93,6 +93,9 @@ pub struct JsError {
     pub file: Option<PathBuf>,
     pub line: Option<u32>,
     pub column: Option<u32>,
+    /// 11ty's own refusal of a JavaScript template ("No JavaScript template
+    /// returned from ..."), not the site's code throwing.
+    pub invalid: bool,
 }
 
 /// Why the runtime can't go on at all.
@@ -137,6 +140,19 @@ impl Refusal {
             impure: false,
         }
     }
+}
+
+/// A JavaScript template or layout (`.11ty.js`) loaded in the runtime: its
+/// instance stays there, by this id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TemplateId(pub u64);
+
+/// What loading a JavaScript template gave: its id, and its data (what
+/// 11ty takes as its front matter).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedTemplate {
+    pub id: TemplateId,
+    pub data: Decoded,
 }
 
 /// One page's data, kept in the runtime while its computed values run, as
@@ -193,6 +209,24 @@ pub trait JsRuntime: Send {
     /// `Refused` when a template or directory data file changed a value
     /// another file gave, or a built-in prototype.
     fn begin_calls(&mut self) -> JsResult<()>;
+    /// The names 11ty puts on a JavaScript template's `this` as functions
+    /// (its filters and shortcodes), in its order. Sent before any template
+    /// loads.
+    fn template_setup(&mut self, filters: &[String]) -> JsResult<()>;
+    /// Import the JavaScript template or layout `file` (absolute) as 11ty
+    /// does, make its instance, and read its `data`.
+    fn load_template(&mut self, file: &Path, layout: bool) -> JsResult<LoadedTemplate>;
+    /// Render a loaded template with the page's `data` (for a layout, with
+    /// `content`), as 11ty's JavaScript engine does: `first` is the `page`
+    /// 11ty's first render of it set as `this.page`. Each of `traps` (a
+    /// top-level key and why) is a key Brrrty can't supply.
+    fn render(
+        &mut self,
+        template: TemplateId,
+        data: &Value,
+        first: Option<&Value>,
+        traps: &[(String, String)],
+    ) -> JsResult<Decoded>;
     /// Check that no call's result depended on the calls made before it:
     /// run the same calls again, in fresh runtimes, in other orders, and
     /// compare every result. `Refused` (marked impure) names the first

@@ -18,8 +18,9 @@ These projects are released under the MIT License. Their notices:
 - Eleventy (11ty) 3.1.8, https://www.11ty.dev/: the build model, its
   `slug`, `slugify` and `url` filters, pagination and the HTML `<base>`
   plugin, and, in brrrty-node's JavaScript data worker, its data file
-  import logic (`Require.js`, `TemplateData.js`) and computed data proxy
-  (`ComputedDataProxy.js`)
+  import logic (`Require.js`, `TemplateData.js`), computed data proxy
+  (`ComputedDataProxy.js`) and JavaScript template engine
+  (`Engines/JavaScript.js`, `GetJavaScriptData.js`, `ContextAugmenter.js`)
   Copyright (c) 2017–2024 Zach Leatherman @zachleat
 
 - @11ty/eleventy-utils 2.0.7: `isPlainObject`, in brrrty-node's computed
