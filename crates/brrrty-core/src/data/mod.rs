@@ -291,7 +291,13 @@ pub(crate) fn key_line(text: &str, key: &str) -> Option<usize> {
 pub(crate) fn local_data_files(input: &Path, input_rel: &Path, rel: &Path) -> Vec<PathBuf> {
     let mut bases: Vec<PathBuf> = Vec::new();
     let dir = rel.parent().unwrap_or(Path::new(""));
-    if let Some(stem) = rel.file_stem() {
+    // `removeTemplateExtension`: `c.11ty.js` is `c`, not `c.11ty`.
+    let name = rel.file_name().map(|n| n.to_string_lossy().into_owned());
+    let stem = match name.as_deref().and_then(crate::page::without_js_extension) {
+        Some(base) => Some(std::ffi::OsString::from(base)),
+        None => rel.file_stem().map(|s| s.to_os_string()),
+    };
+    if let Some(stem) = stem {
         bases.push(dir.join(stem));
     }
     let mut d = Some(dir);
@@ -410,6 +416,20 @@ mod tests {
         assert_eq!(key_line(text, "title"), Some(2));
         assert_eq!(key_line(text, "nope"), None);
         assert_eq!(key_line("---\nlayouts: x\n---\n", "layout"), None);
+    }
+
+    #[test]
+    fn a_javascript_templates_own_data_file_drops_the_whole_extension() {
+        let t = tempfile::tempdir().unwrap();
+        let input = t.path().join("src");
+        std::fs::create_dir_all(input.join("posts")).unwrap();
+        for f in ["c.11tydata.json", "c.11ty.11tydata.json"] {
+            std::fs::write(input.join("posts").join(f), "{}").unwrap();
+        }
+        let found = local_data_files(&input, Path::new("src"), Path::new("posts/c.11ty.js"));
+        assert_eq!(found, vec![PathBuf::from("src/posts/c.11tydata.json")]);
+        let found = local_data_files(&input, Path::new("src"), Path::new("posts/c.11ty.mjs"));
+        assert_eq!(found, vec![PathBuf::from("src/posts/c.11tydata.json")]);
     }
 
     #[test]
