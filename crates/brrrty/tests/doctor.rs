@@ -1329,10 +1329,24 @@ fn a_non_english_locale_warns() {
     let out = build(&[("LANG", "de_DE.UTF-8")]);
     assert_eq!(out.status.code(), Some(0));
     assert!(
-        stderr(&out).contains("11ty run here would format dates in de_DE.UTF-8"),
+        stderr(&out)
+            .contains("11ty run here: LANG=de_DE.UTF-8, so 11ty formats dates like %x in de-DE"),
         "{}",
         stderr(&out)
     );
+    for loud in [
+        vec![("LANG", "en_GB.UTF-8")],
+        vec![("LANG", "en_CA.UTF-8")],
+        vec![("LANG", "")],
+        vec![("LC_ALL", ""), ("LANG", "en_US.UTF-8")],
+    ] {
+        let out = build(&loud);
+        assert!(
+            stderr(&out).contains("locale-differs"),
+            "{loud:?}: {}",
+            stderr(&out)
+        );
+    }
     for quiet in [
         vec![],
         vec![("LANG", "C.UTF-8")],
@@ -1354,7 +1368,7 @@ fn init_marks_an_inline_locale() {
     assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
     let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
     assert!(
-        rhai.contains("// TODO(brrrty): 11ty runs with LANG=de_DE.UTF-8 here"),
+        rhai.contains("// TODO(brrrty): 11ty runs with LANG=de_DE.UTF-8, so 11ty formats dates like %x in de-DE (15.3.2024); Brrrty uses en-US (3/15/2024)"),
         "{rhai}"
     );
 }
