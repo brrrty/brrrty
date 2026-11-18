@@ -465,8 +465,30 @@ fn a_lone_surrogate_in_a_key_or_an_error_is_the_sites_problem_not_a_crash() {
     ok(w.load(&t.path().join("key.js"), true));
 }
 
-/// Node starts child processes with only their standard three descriptors,
-/// so a child a data file leaves running never holds the replies' pipe.
+/// Where each open descriptor of process `pid` points (`pipe:[123]`).
+#[cfg(target_os = "linux")]
+fn fd_links(pid: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = fs::read_dir(format!("/proc/{pid}/fd"))
+        .map(|d| {
+            d.filter_map(|e| {
+                let e = e.ok()?;
+                let link = fs::read_link(e.path()).ok()?;
+                Some((
+                    e.file_name().to_string_lossy().into_owned(),
+                    link.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// A child process a data file leaves running holds nothing of the
+/// worker's beyond its standard three descriptors: never the replies'
+/// pipe. (A descriptor this test process already had, inherited from
+/// whatever started it, may pass through.)
 #[cfg(target_os = "linux")]
 #[test]
 fn a_child_process_never_inherits_the_reply_pipe() {
@@ -477,18 +499,22 @@ fn a_child_process_never_inherits_the_reply_pipe() {
 kid.unref();
 module.exports = { pid: kid.pid };"#,
     )]);
+    let before: Vec<String> = fd_links("self").into_iter().map(|(_, l)| l).collect();
     let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
     let d = ok(w.load(&t.path().join("kid.js"), true));
     let Value::Number(pid) = get(&d.value, "pid") else {
         panic!("{:?}", d.value)
     };
-    let mut fds: Vec<String> = fs::read_dir(format!("/proc/{}/fd", *pid as u32))
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+    let pid = format!("{}", *pid as u32);
+    let kid = fd_links(&pid);
+    let node_fds = fd_links(&w.pid().to_string());
+    let _ = Command::new("kill").arg(&pid).status();
+    let ours: Vec<&(String, String)> = kid
+        .iter()
+        .filter(|(n, l)| !["0", "1", "2"].contains(&n.as_str()) && !before.contains(l))
         .collect();
-    fds.sort();
-    let _ = Command::new("kill")
-        .arg(format!("{}", *pid as u32))
-        .status();
-    assert_eq!(fds, ["0", "1", "2"]);
+    assert!(
+        ours.is_empty(),
+        "child holds {ours:?}; Node holds {node_fds:?}"
+    );
 }
