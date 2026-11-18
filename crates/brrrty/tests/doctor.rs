@@ -1306,3 +1306,55 @@ fn init_marks_a_builtin_beside_11ty() {
     );
     assert!(stdout(&run(dir.path(), &["doctor"])).contains("0 of 1 page will build"));
 }
+
+/// A non-English locale in the environment Brrrty runs in: 11ty run here would format
+/// dates in it, and Brrrty formats them in English. A C or English locale is quiet.
+#[test]
+fn a_non_english_locale_warns() {
+    let dir = site(&[("index.md", "# Hi\n")]);
+    let build = |vars: &[(&str, &str)]| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_brrrty"));
+        c.arg("build")
+            .current_dir(dir.path())
+            .stdin(Stdio::null())
+            .env_remove("LC_ALL")
+            .env_remove("LC_MESSAGES")
+            .env_remove("LANG")
+            .env_remove("SOURCE_DATE_EPOCH");
+        for (k, v) in vars {
+            c.env(k, v);
+        }
+        c.output().unwrap()
+    };
+    let out = build(&[("LANG", "de_DE.UTF-8")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        stderr(&out).contains("11ty run here would format dates in de_DE.UTF-8"),
+        "{}",
+        stderr(&out)
+    );
+    for quiet in [
+        vec![],
+        vec![("LANG", "C.UTF-8")],
+        vec![("LANG", "en_US.UTF-8")],
+        vec![("LC_ALL", "C.UTF-8"), ("LANG", "C")],
+    ] {
+        let out = build(&quiet);
+        assert_eq!(stderr(&out), "", "{quiet:?}");
+    }
+}
+
+/// init marks a build script's non-English locale, which it can't carry.
+#[test]
+fn init_marks_an_inline_locale() {
+    let dir = site(&[
+        ("package.json", &pkg("LANG=de_DE.UTF-8 eleventy")),
+        ("index.md", "# Hi\n"),
+    ]);
+    assert_eq!(run(dir.path(), &["init", "--yes"]).status.code(), Some(0));
+    let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+    assert!(
+        rhai.contains("// TODO(brrrty): 11ty runs with LANG=de_DE.UTF-8 here"),
+        "{rhai}"
+    );
+}

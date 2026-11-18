@@ -23,7 +23,10 @@ Known limits, where Brrrty can't see what 11ty runs with:
 - `eval`: Brrrty reads files without running them, so code that rewrites itself through `eval` can still go unseen.
 - A `TZ` set for the whole CI file (GitLab's top-level `variables:`, a GitHub workflow's `env:`), or in Netlify's or Vercel's build environment. These apply to whichever tool the job runs, so the deployed output matches once it runs Brrrty, but a local `brrrty build` needs the same `TZ`.
 - Netlify's `base` setting, which moves the build into a folder.
-- A TypeScript loader such as `tsx` running 11ty's command, and node's `--conditions`. Without a `build` script or deploy command of its own, the site is taken to be built by hand with `npx @11ty/eleventy`. A `// 11ty flags from package.json:` line in the header records a hash of what `init` read there. `init` reads only files inside the site's folder, and never overwrites an existing `brrrty.config.rhai`.
+- A TypeScript loader such as `tsx` running 11ty's command, and node's `--conditions`.
+- A step that switches Node versions (`nvm use 20 && eleventy`), which can change what 11ty does.
+- A build script whose 11ty step `init` can't rewrite, such as one with a redirection (`eleventy > build.log`). init leaves it as it is and says which step to replace, but nothing checks that you replace it with the same settings.
+- The locale: Brrrty formats dates in English (en-US). It marks a non-English `LANG` or `LC_*` in front of the 11ty command, and warns (`locale-differs`) when it runs in one itself, but a locale set elsewhere (a CI job's variables, a shell profile) isn't seen. Without a `build` script or deploy command of its own, the site is taken to be built by hand with `npx @11ty/eleventy`. A `// 11ty flags from package.json:` line in the header records a hash of what `init` read there. `init` reads only files inside the site's folder, and never overwrites an existing `brrrty.config.rhai`.
 
 It also lists the JavaScript data files that need a `.rhai` port (step 2 below). It doesn't run `npm install`; run that next, then `npm run build`.
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Brrrty formats dates in English (en-US). A `LANG`, `LANGUAGE`, `LC_*` with a non-English locale, or a `NODE_PATH`, in front of the 11ty command is now a TODO. init didn't carry these, and carrying the locale wouldn't help.
+- `brrrty build`, `doctor` and `serve` warn (`locale-differs`) when they run in a non-English locale, since 11ty run there would format dates in it. The locale is the first of `LC_ALL`, `LC_MESSAGES` and `LANG` that names a real locale, as Node's ICU takes it. `C`, `POSIX`, `C.UTF-8`, an empty value and `en_*` are quiet.
 - A script that runs 11ty gets a TODO when another step changes shell state that 11ty's step would inherit:
   - its folder: `cd` (other than to `.`), `pushd`, `popd`;
   - an environment variable that can change what 11ty writes, through `export`, `unset`, `declare`/`typeset`/`readonly`/`local`, a bare `NAME=value`, or `set -a`. Those variables are `TZ`, the locale (`LANG`, `LC_*`), `PATH`, `NODE_PATH`, `NODE_OPTIONS`, any variable the 11ty config reads through `process.env`, and any name computed at run time;
