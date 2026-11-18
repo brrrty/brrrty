@@ -95,7 +95,10 @@ fn percent_decode(s: &str) -> String {
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(b) = u8::from_str_radix(hex, 16)
         {
             out.push(b);
             i += 3;
@@ -117,6 +120,13 @@ mod tests {
             line,
             column,
         }
+    }
+
+    #[test]
+    fn a_percent_before_a_multibyte_character_is_kept() {
+        assert_eq!(percent_decode("x%a\u{e9}y%41"), "x%a\u{e9}yA");
+        assert_eq!(percent_decode("%\u{e9}"), "%\u{e9}");
+        assert_eq!(frames("at file:///x%a\u{e9}:1:1").len(), 1);
     }
 
     #[test]
