@@ -972,3 +972,59 @@ fn an_absolute_config_path_is_the_file() {
     assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
     assert_eq!(stderr(&built), "");
 }
+
+/// Re-review 3: a deploy config's build command is read like a build script: its flags are
+/// ported or marked, and a later change to it warns.
+#[test]
+fn deploy_configs_carry_the_command_too() {
+    for (file, body) in [
+        (
+            "netlify.toml",
+            "[build]\ncommand = \"npx @11ty/eleventy --input=src --pathprefix=/blog/\"\n",
+        ),
+        (
+            "vercel.json",
+            "{\"buildCommand\": \"npx @11ty/eleventy --input=src --pathprefix=/blog/\"}\n",
+        ),
+        (
+            ".github/workflows/deploy.yml",
+            "jobs:\n  b:\n    steps:\n      - run: |\n          npm ci\n          npx @11ty/eleventy --input=src --pathprefix=/blog/\n",
+        ),
+        (
+            ".gitlab-ci.yml",
+            "pages:\n  script:\n    - npm ci\n    - npx @11ty/eleventy --input=src --pathprefix=/blog/\n",
+        ),
+    ] {
+        let dir = site(&[
+            (
+                "package.json",
+                "{\"devDependencies\":{\"@11ty/eleventy\":\"3.1.8\"}}\n",
+            ),
+            (file, body),
+            ("src/index.md", "# Hi\n"),
+        ]);
+        let init = run(dir.path(), &["init", "--yes"]);
+        assert_eq!(init.status.code(), Some(0), "{file}: {}", stderr(&init));
+        let rhai = std::fs::read_to_string(dir.path().join("brrrty.config.rhai")).unwrap();
+        assert!(rhai.contains("input: \"src\""), "{file}:\n{rhai}");
+        assert!(rhai.contains("`--pathprefix=/blog/`"), "{file}:\n{rhai}");
+        assert!(rhai.contains(&format!("// {file}")), "{file}:\n{rhai}");
+        let text = stdout(&run(dir.path(), &["doctor"]));
+        assert!(
+            text.ends_with("0 of 1 page will build; 1 blocker, grouped below.\n"),
+            "{file}: {text}"
+        );
+
+        // Ported: the marker deleted. Then the deploy config changes.
+        let ported: String = rhai
+            .lines()
+            .filter(|l| !l.starts_with("// TODO(brrrty)"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        std::fs::write(dir.path().join("brrrty.config.rhai"), ported).unwrap();
+        assert_eq!(stderr(&run(dir.path(), &["build"])), "", "{file}");
+        std::fs::write(dir.path().join(file), body.replace("/blog/", "/b/")).unwrap();
+        let err = stderr(&run(dir.path(), &["build"]));
+        assert!(err.contains("config-stale"), "{file}: {err}");
+    }
+}
