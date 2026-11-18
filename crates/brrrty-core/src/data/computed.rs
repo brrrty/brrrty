@@ -331,10 +331,10 @@ impl Plan {
                     p.set(&format!("eleventyComputed.{key}"), &value)?;
                 }
             }
+            self.set(&mut data, &step.path, value.clone(), shown)?;
             if !set_by_runtime && let Some(p) = page.as_mut() {
                 p.set(&key, &value)?;
             }
-            self.set(&mut data, &step.path, value, shown)?;
         }
         drop(page);
         // The data is a JavaScript object: index-like keys come first. The

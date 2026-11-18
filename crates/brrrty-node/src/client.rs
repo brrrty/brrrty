@@ -101,6 +101,9 @@ pub struct Worker {
     last_loaded: HashMap<(bool, PathBuf), Decoded>,
     /// The value a `same` reply to the request in flight stands for.
     earlier: Option<Decoded>,
+    /// Lists sent to the worker and kept there, by their data's address
+    /// (the value is held, so the address can't be reused).
+    kept: Kept,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
@@ -150,6 +153,7 @@ impl Worker {
             failed: None,
             last_loaded: HashMap::new(),
             earlier: None,
+            kept: Kept::default(),
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -246,6 +250,9 @@ impl Worker {
         }
         if let Some(t) = reply.get("thrown") {
             return JsResult::Thrown(js_error(t, &self.root));
+        }
+        if reply.get("dropShared").is_some() {
+            self.kept = Kept::default();
         }
         if let Some(r) = reply.get("refused") {
             return JsResult::Refused(Refusal {
@@ -383,10 +390,10 @@ impl JsRuntime for Worker {
     ) -> JsResult<Decoded> {
         let mut req = json!({"op": "call", "handle": f.0, "await": settle == Settle::Await});
         let encoded = match this {
-            This::Value(v) => encode_all(std::iter::once(v).chain(args)),
+            This::Value(v) => encode_all(std::iter::once(v).chain(args), Some(&mut self.kept)),
             This::Opaque(what) => {
                 req["opaque"] = json!(what);
-                encode_all(args.iter())
+                encode_all(args.iter(), Some(&mut self.kept))
             }
         };
         let mut encoded = match encoded {
@@ -406,7 +413,7 @@ impl JsRuntime for Worker {
         traps: &[(String, String)],
         defaults: &[String],
     ) -> JsResult<PageId> {
-        let data = match encode_all(std::iter::once(data)) {
+        let data = match encode_all(std::iter::once(data), Some(&mut self.kept)) {
             Ok(mut e) => e.remove(0),
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
@@ -449,7 +456,7 @@ impl JsRuntime for Worker {
     }
 
     fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()> {
-        let value = match encode_all(std::iter::once(value)) {
+        let value = match encode_all(std::iter::once(value), Some(&mut self.kept)) {
             Ok(mut e) => e.remove(0),
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
@@ -720,18 +727,35 @@ fn js_error(t: &Json, root: &Path) -> JsError {
 /// collection item's content, a key it withholds) is sent as a trap,
 /// `{"$t": why}`, which refuses the call when the function reads it. `Err`
 /// when a value can't be handed over at all.
+///
+/// With `kept`, a list of [`KEPT_LEN`] items or more is kept by the worker
+/// between requests (`{"$S": [id, value]}`, then `{"$R": id}`): the lists
+/// global data gives every page cross once, and stay one list, as in 11ty.
 pub fn encode_all<'v>(
     values: impl Iterator<Item = &'v Value> + Clone,
+    kept: Option<&mut Kept>,
 ) -> Result<Vec<Json>, String> {
     let mut counts: HashMap<usize, u32> = HashMap::new();
     for v in values.clone() {
-        count(v, &mut counts);
+        count(v, &mut counts, kept.as_deref());
     }
     let mut e = Encoder {
         counts,
         ids: HashMap::new(),
+        kept,
     };
     values.map(|v| e.encode(v)).collect()
+}
+
+/// How long a list must be for the worker to keep it between requests.
+pub const KEPT_LEN: usize = 8;
+
+/// The lists the worker keeps, by address, each held so the address stays
+/// its own.
+#[derive(Default)]
+pub struct Kept {
+    lists: HashMap<usize, (Value, u64)>,
+    next: u64,
 }
 
 fn ptr_of(v: &Value) -> Option<usize> {
@@ -742,13 +766,15 @@ fn ptr_of(v: &Value) -> Option<usize> {
     }
 }
 
-fn count(v: &Value, counts: &mut HashMap<usize, u32>) {
+/// How often each object and list appears in a request. A list the worker
+/// keeps already is sent as a reference, so what is inside it doesn't count.
+fn count(v: &Value, counts: &mut HashMap<usize, u32>, kept: Option<&Kept>) {
     let mut stack = vec![v];
     while let Some(v) = stack.pop() {
         let Some(p) = ptr_of(v) else { continue };
         let n = counts.entry(p).or_insert(0);
         *n += 1;
-        if *n > 1 {
+        if *n > 1 || kept.is_some_and(|k| k.lists.contains_key(&p)) {
             continue;
         }
         match v {
@@ -759,10 +785,11 @@ fn count(v: &Value, counts: &mut HashMap<usize, u32>) {
     }
 }
 
-struct Encoder {
+struct Encoder<'k> {
     counts: HashMap<usize, u32>,
     /// The id of each shared object or array sent so far.
     ids: HashMap<usize, usize>,
+    kept: Option<&'k mut Kept>,
 }
 
 /// Why a property Brrrty marks as unknown can't be handed to a function.
@@ -778,11 +805,27 @@ fn trap_reason(key: &str) -> String {
     }
 }
 
-impl Encoder {
+impl Encoder<'_> {
     fn encode(&mut self, v: &Value) -> Result<Json, String> {
         let Some(p) = ptr_of(v) else {
             return Ok(encode(v));
         };
+        if let (Value::Array(a), Some(kept)) = (v, self.kept.as_deref_mut())
+            && a.len() >= KEPT_LEN
+        {
+            if let Some((_, id)) = kept.lists.get(&p) {
+                return Ok(json!({"$R": id}));
+            }
+            let id = kept.next;
+            kept.next += 1;
+            kept.lists.insert(p, (v.clone(), id));
+            let inner = Json::Array(
+                a.iter()
+                    .map(|x| self.encode(x))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            return Ok(json!({"$S": [id, inner]}));
+        }
         if let Some(id) = self.ids.get(&p) {
             return Ok(json!({"$r": id}));
         }

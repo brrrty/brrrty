@@ -157,6 +157,118 @@ function allReads() {
 const handles = [];
 const handleOf = new Map();
 
+// Lists kept between requests, by Brrrty's id, and every object and list
+// inside them.
+let persistent = new Map();
+let persistentObjects = new WeakSet();
+
+function markPersistent(v) {
+  const stack = [v];
+  while (stack.length) {
+    const x = stack.pop();
+    if (x === null || typeof x !== "object" || persistentObjects.has(x)) continue;
+    persistentObjects.add(x);
+    for (const k of Object.keys(x)) {
+      const d = Object.getOwnPropertyDescriptor(x, k);
+      if (d && "value" in d) stack.push(d.value);
+    }
+  }
+}
+
+// --- What a call writes. ---
+//
+// Data handed to a function is wrapped in a membrane: reads give wrapped
+// plain objects and lists, and any write through it is noted, so a call
+// that changes its data is caught without walking the data before and
+// after. A write to a list pages share is noted apart: other pages may
+// have read it already.
+
+let wrote = false;
+let wroteShared = false;
+const membraneOf = new WeakMap();
+const targetOf = new WeakMap();
+let touchedDates = [];
+
+function unwrapProxy(v) {
+  return (v !== null && typeof v === "object" && targetOf.get(v)) || v;
+}
+unwrapHook = unwrapProxy;
+
+function noteWrite(t) {
+  wrote = true;
+  if (persistentObjects.has(t)) wroteShared = true;
+}
+
+const membrane = {
+  get(t, k, r) {
+    const v = Reflect.get(t, k, r);
+    const d = Reflect.getOwnPropertyDescriptor(t, k);
+    if (d && !d.configurable && "value" in d && !d.writable) return v;
+    return watch(v);
+  },
+  getOwnPropertyDescriptor(t, k) {
+    const d = Reflect.getOwnPropertyDescriptor(t, k);
+    if (d && "value" in d && d.configurable) d.value = watch(d.value);
+    return d;
+  },
+  set(t, k, v) {
+    noteWrite(t);
+    return Reflect.set(t, k, unwrapProxy(v));
+  },
+  defineProperty(t, k, d) {
+    noteWrite(t);
+    if ("value" in d) d = { ...d, value: unwrapProxy(d.value) };
+    return Reflect.defineProperty(t, k, d);
+  },
+  deleteProperty(t, k) {
+    noteWrite(t);
+    return Reflect.deleteProperty(t, k);
+  },
+  setPrototypeOf(t, p) {
+    noteWrite(t);
+    return Reflect.setPrototypeOf(t, p);
+  },
+  preventExtensions(t) {
+    noteWrite(t);
+    return Reflect.preventExtensions(t);
+  },
+};
+
+function watch(v) {
+  if (v === null || typeof v !== "object" || targetOf.has(v) || utilTypes.isProxy(v)) return v;
+  if (v instanceof Date) {
+    touchedDates.push([v, Date.prototype.getTime.call(v)]);
+    return v;
+  }
+  if (!Array.isArray(v) && !isPlainObject11ty(v)) return v;
+  let p = membraneOf.get(v);
+  if (!p) {
+    p = new Proxy(v, membrane);
+    membraneOf.set(v, p);
+    targetOf.set(p, v);
+  }
+  return p;
+}
+
+// After a call: whether it wrote to its data, and to data pages share.
+function writes() {
+  for (const [d, t] of touchedDates) {
+    if (Date.prototype.getTime.call(d) !== t && !Number.isNaN(t)) noteWrite(d);
+  }
+  touchedDates = [];
+  const out = { wrote, shared: wroteShared };
+  wrote = false;
+  wroteShared = false;
+  return out;
+}
+
+// Forget the kept lists: one was changed. Brrrty sends them again.
+function dropPersistent() {
+  persistent = new Map();
+  persistentObjects = new WeakSet();
+  canonicalKept = new WeakMap();
+}
+
 function register(fn) {
   const at = handleOf.get(fn);
   if (at !== undefined) return at;
@@ -188,6 +300,20 @@ function fromWire(w, shared = new Map()) {
       }
     }
     return o;
+  }
+  if ("$S" in w) {
+    // A list Brrrty sends once and refers to in later requests: data pages
+    // share, as 11ty shares lists between pages.
+    const [id, inner] = w.$S;
+    if (persistent.has(id)) return persistent.get(id);
+    const v = fromWire(inner, shared);
+    markPersistent(v);
+    persistent.set(id, v);
+    return v;
+  }
+  if ("$R" in w) {
+    if (!persistent.has(w.$R)) throw new Error(`no kept value ${w.$R}`);
+    return persistent.get(w.$R);
   }
   if ("$s" in w) {
     const [id, inner] = w.$s;
@@ -487,17 +613,32 @@ function fnKey(fn) {
 // A value as code would see it, to compare two results or two calls'
 // arguments: functions by `fnKey`, accessors as such.
 function canonical(v) {
-  return fingerprint(v, (f) => `f${fnKey(f)}`, false);
+  return fingerprint(v, (f) => `f${fnKey(f)}`, false, true);
 }
+
+// The canonical text of each kept list, which can't change: a write to one
+// stops the build.
+let canonicalKept = new WeakMap();
 
 // A value's state, to tell whether a call changed it: every own property
 // (getters by identity, never called), in order, objects seen again by
 // their first place. `fnToken` names a function; `accessors` says whether
 // a getter's own identity counts.
-function fingerprint(v, fnToken = (f) => `f${register(f)}`, accessors = true) {
+function fingerprint(v, fnToken = (f) => `f${register(f)}`, accessors = true, cacheKept = false) {
   const seen = new Map();
   const parts = [];
   const walk = (x) => {
+    x = unwrapProxy(x);
+    if (cacheKept && x !== null && typeof x === "object" && persistentObjects.has(x) && !seen.has(x)) {
+      let text = canonicalKept.get(x);
+      if (text === undefined) {
+        text = fingerprint(x, fnToken, accessors, false);
+        canonicalKept.set(x, text);
+      }
+      seen.set(x, seen.size);
+      parts.push(text);
+      return;
+    }
     switch (typeof x) {
       case "undefined":
         parts.push("u");
@@ -550,13 +691,13 @@ function fingerprint(v, fnToken = (f) => `f${register(f)}`, accessors = true) {
 }
 
 // Run one call; the reply's `refused` when it can't be used exactly.
-async function runCall(fn, makeArgs, settle, label) {
-  const { thisArg, args, watched } = makeArgs();
-  const before = fingerprint(watched);
+async function runCall(fn, makeArgs, settle) {
+  const { thisArg, args } = makeArgs();
   refusedInCall = null;
+  writes();
   let value;
   try {
-    value = fn.apply(thisArg, args);
+    value = fn.apply(watch(thisArg), args.map(watch));
     if (settle === "await") {
       value = await value;
     } else if (value && typeof value.then === "function" && typeof value.catch === "function") {
@@ -564,14 +705,16 @@ async function runCall(fn, makeArgs, settle, label) {
       value.catch(() => {});
     }
   } catch (e) {
+    const w = writes();
+    if (w.shared) return { shared: true };
     if (refusedInCall !== null) return { refused: refusedInCall };
     throw e;
   }
+  const w = writes();
+  if (w.shared) return { shared: true };
   if (refusedInCall !== null) return { refused: refusedInCall };
-  if (fingerprint(watched) !== before) {
-    return { changed: true };
-  }
-  return { value };
+  if (w.wrote) return { changed: true };
+  return { value: unwrapProxy(value) };
 }
 
 // Each call's result by the call: a later call with the same function and
@@ -592,8 +735,18 @@ function impure(fn) {
 
 // Call twice, compare, and check against earlier calls. `memoKey` is the
 // call's arguments as text, or null to skip that check.
+function sharedWrite(fn) {
+  dropPersistent();
+  return {
+    refused: `${describeFn(fn)} changes a list that pages share (11ty hands every page the same list), so what later pages see depends on the order pages are built in, which differs between 11ty and Brrrty`,
+    impure: true,
+    dropShared: true,
+  };
+}
+
 async function callTwice(fn, makeArgs, settle, memoKey) {
   const first = await runCall(fn, makeArgs, settle);
+  if (first.shared) return sharedWrite(fn);
   if (first.refused !== undefined) return { refused: `${describeFn(fn)} ${first.refused}` };
   if (first.changed) {
     return { refused: `${describeFn(fn)} changes the data it is given, which 11ty keeps for later pages and templates; Brrrty can't follow that, so return a new value instead` };
@@ -610,6 +763,7 @@ async function callTwice(fn, makeArgs, settle, memoKey) {
   const result = canonical(first.value);
   // A second call, with the same data, must give the same result.
   const second = await runCall(fn, makeArgs, settle);
+  if (second.shared) return sharedWrite(fn);
   if (second.refused !== undefined || second.changed || canonical(second.value) !== result) {
     return impure(fn);
   }
@@ -625,6 +779,20 @@ async function callTwice(fn, makeArgs, settle, memoKey) {
 
 const pages = new Map();
 let nextPage = 0;
+
+// Whether setting the dotted `key` would go through a list (or a
+// function): lodash would set a property on it, and lists are shared
+// between pages.
+function throughList(data, key) {
+  const path = key.split(".");
+  let o = data;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (o === null || typeof o !== "object") return false;
+    o = o[path[i]];
+    if (Array.isArray(o) || typeof o === "function" || o instanceof Date) return true;
+  }
+  return false;
+}
 
 function getHandle(h) {
   const fn = handles[h];
@@ -681,19 +849,22 @@ async function handle(req) {
         const shared = new Map();
         const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this, shared);
         const args = (req.args || []).map((a) => fromWire(a, shared));
-        return { thisArg, args, watched: req.opaque !== undefined ? args : [thisArg, args] };
+        return { thisArg, args };
       };
       const { thisArg, args } = makeArgs();
       const memoKey = canonical([req.opaque !== undefined ? `opaque:${req.opaque}` : thisArg, args]);
       const r = await callTwice(fn, makeArgs, settle, memoKey);
-      if (r.refused !== undefined) return { refused: r.refused, impure: r.impure };
+      if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       return { okText: r.okText };
     }
     case "pageOpen": {
       const data = fromWire(req.data);
       for (const [k, why] of req.traps || []) trapKey(data, k, why);
       for (const key of req.defaults || []) {
-        if (lodashGet(data, key, UNDEFINED_VALUE) === UNDEFINED_VALUE) lodashSet(data, key, "");
+        if (lodashGet(data, key, UNDEFINED_VALUE) === UNDEFINED_VALUE) {
+          if (throughList(data, key)) return { refused: `computed key \`${key}\` would be set inside a list, which Brrrty doesn't do` };
+          lodashSet(data, key, "");
+        }
       }
       nextPage += 1;
       pages.set(nextPage, { data });
@@ -717,14 +888,18 @@ async function handle(req) {
     case "pageCall": {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
-      const makeArgs = () => ({ thisArg: opaqueThis(FILTERS_THIS), args: [p.data], watched: p.data });
+      const makeArgs = () => ({ thisArg: opaqueThis(FILTERS_THIS), args: [p.data] });
       const r = await callTwice(fn, makeArgs, "await", null);
-      if (r.refused !== undefined) return { refused: r.refused, impure: r.impure };
-      if (typeof req.set === "string") lodashSet(p.data, req.set, r.value);
+      if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
+      if (typeof req.set === "string") {
+        if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };
+        lodashSet(p.data, req.set, r.value);
+      }
       return { okText: r.okText };
     }
     case "pageSet": {
       const p = getPage(req.page);
+      if (throughList(p.data, req.key)) return { refused: `computed key \`${req.key}\` would be set inside a list, which Brrrty doesn't do` };
       lodashSet(p.data, req.key, fromWire(req.value));
       return { ok: null };
     }

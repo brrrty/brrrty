@@ -114,19 +114,57 @@ pub(crate) fn config_global(added: &Data) -> Result<Data, Problem> {
 /// `v` with every object's keys in JavaScript order: integer-like keys first
 /// in ascending order, then the other keys in insertion order, as JavaScript
 /// objects do; 11ty's data is a JavaScript object.
+#[cfg(test)]
 pub(crate) fn js_value(v: &Value) -> Value {
-    match v {
-        Value::Object(o) => Value::Object(Arc::new(js_object(o))),
-        Value::Array(a) => Value::Array(Arc::new(a.iter().map(js_value).collect())),
-        other => other.clone(),
-    }
+    reordered(v).unwrap_or_else(|| v.clone())
 }
 
 pub(crate) fn js_object(o: &Data) -> Data {
-    Value::js_entries(o)
-        .into_iter()
-        .map(|(k, v)| (k.clone(), js_value(v)))
-        .collect()
+    reordered_object(o).unwrap_or_else(|| o.clone())
+}
+
+/// `v` in JavaScript key order, or `None` when it already is, so data that
+/// pages share (a global data list) stays one shared value.
+fn reordered(v: &Value) -> Option<Value> {
+    match v {
+        Value::Object(o) => reordered_object(o).map(|d| Value::Object(Arc::new(d))),
+        Value::Array(a) => {
+            let mut out: Option<Vec<Value>> = None;
+            for (i, x) in a.iter().enumerate() {
+                match (reordered(x), &mut out) {
+                    (Some(y), None) => {
+                        let mut list = a[..i].to_vec();
+                        list.push(y);
+                        out = Some(list);
+                    }
+                    (Some(y), Some(list)) => list.push(y),
+                    (None, Some(list)) => list.push(x.clone()),
+                    (None, None) => {}
+                }
+            }
+            out.map(|list| Value::Array(Arc::new(list)))
+        }
+        _ => None,
+    }
+}
+
+fn reordered_object(o: &Data) -> Option<Data> {
+    let has_index = o.keys().any(|k| brrrty_js::array_index(k).is_some());
+    let inner: Vec<Option<Value>> = o.values().map(reordered).collect();
+    if !has_index && inner.iter().all(Option::is_none) {
+        return None;
+    }
+    let fresh: Data = o
+        .iter()
+        .zip(inner)
+        .map(|((k, v), r)| (k.clone(), r.unwrap_or_else(|| v.clone())))
+        .collect();
+    Some(
+        Value::js_entries(&fresh)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
 }
 
 /// `v` the way `JSON.stringify` writes it, for messages: dates are ISO strings and

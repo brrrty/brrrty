@@ -954,3 +954,66 @@ fn builds_with_data_functions_are_the_same_every_time() {
     assert!(index.contains("Post 3 / post-3 $"), "{index}");
     assert!(index.contains("/p/post-3/"), "{index}");
 }
+
+#[test]
+fn a_function_that_changes_a_shared_list_writes_nothing() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/list.js",
+            "module.exports = { items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] };",
+        ),
+        (
+            "src/_data/eleventyComputed.js",
+            "module.exports = { n: (d) => { d.list.items.push(0); return d.list.items.length; } };",
+        ),
+        ("src/a.njk", "{{ n }}"),
+        ("src/b.njk", "{{ n }}"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("changes a list that pages share"), "{out}");
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert_eq!(written(&t, "a/index.html"), None);
+}
+
+#[test]
+fn a_long_list_passed_to_functions_on_many_pages_stays_one_list() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/list.js".into(),
+            "module.exports = { items: Array.from({ length: 50 }, (_, i) => ({ i })) };".into(),
+        ),
+        (
+            "src/_data/h.js".into(),
+            "let seen; module.exports = { same: (l) => { const s = seen === undefined || seen === l; seen = seen || l; return l.length + (s ? ' same' : ' other'); } };".into(),
+        ),
+    ];
+    for i in 0..20 {
+        files.push((format!("src/p{i}.njk"), "{{ h.same(list.items) }}".into()));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&refs);
+    let o = build(t.path(), &[], &[]);
+    // The function keeps state (the first list it saw), so it is checked:
+    // each page hands it the same list, as 11ty does, and it gives the
+    // same result every time.
+    assert!(o.status.success(), "{}", text(&o));
+    for i in 0..20 {
+        assert_eq!(
+            written(&t, &format!("p{i}/index.html")).as_deref(),
+            Some("50 same")
+        );
+    }
+}

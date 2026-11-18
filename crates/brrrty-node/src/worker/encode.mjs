@@ -96,6 +96,10 @@ function pathTextRaw(path) {
   return out;
 }
 
+// What stands behind a value the worker wrapped to watch a call's writes;
+// the worker sets it.
+let unwrapHook = (v) => v;
+
 // Encode `value`. `register(fn)` returns a handle for a function value.
 function encodeValue(value, register) {
   const stack = [];
@@ -131,6 +135,8 @@ function encodeValue(value, register) {
         return { $f: register(v) };
     }
     if (v === null) return null;
+    // The worker's own view of data it handed a function is the data.
+    v = unwrapHook(v);
     // A proxy can answer reads its own properties don't hold.
     if (utilTypes.isProxy(v)) return { $x: "a Proxy" };
     const at = stack.indexOf(v);
