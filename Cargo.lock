@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-compat",
  "brrrty-config",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-compat"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "globset",
  "regex",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-config"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-core",
  "brrrty-js",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-core"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-js",
  "brrrty-liquid",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-js"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "chrono",
  "icu_collator",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-jsregex"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "fancy-regex",
  "regex",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-liquid"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-js",
  "chrono",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-markdown"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-jsregex",
  "markdown-it",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-node"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-js",
  "chrono",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-nunjucks"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-js",
  "brrrty-jsregex",
@@ -358,7 +358,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-prism"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "brrrty-jsregex",
  "fancy-regex",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "brrrty-serve"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "tempfile",
  "thiserror",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "brrty"
-version = "0.0.23"
+version = "0.0.24"
 
 [[package]]
 name = "bstr"
