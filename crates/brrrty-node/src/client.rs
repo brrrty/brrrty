@@ -87,7 +87,15 @@ pub(crate) struct Frame {
     /// The `ok` value as sent, kept when the worker records its requests
     /// for the replay check (see `JsRuntime::verify`).
     pub raw: Option<Json>,
+    /// The whole reply as text, kept while the data loads: the replay
+    /// check compares loads, and a deep value is safer kept as text than
+    /// as a parsed value on a thread with a small stack.
+    pub text: Option<Box<str>>,
 }
+
+/// What a reply's reader keeps besides the decoded value.
+pub(crate) const KEEP_RAW: u8 = 1;
+pub(crate) const KEEP_TEXT: u8 = 2;
 
 impl Record {
     /// The request, parsed.
@@ -101,8 +109,9 @@ impl Record {
 #[derive(Clone)]
 pub(crate) struct LoadRecord {
     pub req: Json,
-    pub head: Json,
-    pub raw: Option<Json>,
+    /// The whole reply, as text: parsed by the replay check, on its roomy
+    /// stack.
+    pub text: Box<str>,
 }
 
 /// One request made after the data files loaded, with its reply, for the
@@ -154,7 +163,7 @@ pub struct Worker {
     node: NodeInfo,
     run_mode: RunMode,
     /// Keep each reply's value as sent, as well as decoded.
-    pub(crate) keep_raw: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) keep_raw: Arc<std::sync::atomic::AtomicU8>,
     /// The requests that loaded the data, in order, with their replies.
     load_log: Vec<LoadRecord>,
     /// How many of them loaded global data (the rest are template and
@@ -200,8 +209,8 @@ impl Worker {
         let (mut child, frames, stderr, answers) = spawn(cmd).map_err(cannot)?;
         live(child.id(), true);
         let (tx, replies) = mpsc::channel();
-        // Replies are kept as sent too: the replay check compares loads.
-        let keep_raw = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        // Load replies are kept as text: the replay check compares them.
+        let keep_raw = Arc::new(std::sync::atomic::AtomicU8::new(KEEP_TEXT));
         let keep = keep_raw.clone();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
@@ -321,8 +330,7 @@ impl Worker {
         if logged && !self.calls_begun {
             self.load_log.push(LoadRecord {
                 req: req.clone(),
-                head: frame.head.clone(),
-                raw: frame.raw.clone(),
+                text: frame.text.clone().unwrap_or_default(),
             });
         }
         if logged && self.calls_begun {
@@ -776,7 +784,7 @@ impl JsRuntime for Worker {
 
     fn begin_calls(&mut self) -> JsResult<()> {
         self.keep_raw
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+            .store(KEEP_RAW, std::sync::atomic::Ordering::SeqCst);
         let frame = match self.exchange(json!({"op": "callsBegin"}), "the data files") {
             Ok(f) => f,
             Err(f) => return JsResult::Failed(f),
@@ -1068,7 +1076,7 @@ fn signal_of(_: &std::process::ExitStatus) -> Option<i32> {
 fn read_frames(
     stdout: impl Read,
     tx: mpsc::Sender<Reply>,
-    keep_raw: Arc<std::sync::atomic::AtomicBool>,
+    keep_raw: Arc<std::sync::atomic::AtomicU8>,
 ) {
     let mut r = BufReader::new(stdout);
     loop {
@@ -1103,8 +1111,15 @@ fn read_frames(
         let parsed = parse_reply(&body).map(|mut head| {
             let value = head.as_object_mut().and_then(|o| o.remove("ok"));
             let ok = value.as_ref().map(decode);
-            let raw = if keep { value } else { None };
-            Frame { head, ok, raw }
+            let raw = if keep == KEEP_RAW { value } else { None };
+            let text = (keep == KEEP_TEXT)
+                .then(|| String::from_utf8_lossy(&body).into_owned().into_boxed_str());
+            Frame {
+                head,
+                ok,
+                raw,
+                text,
+            }
         });
         if tx.send(parsed).is_err() {
             return;
@@ -1127,7 +1142,7 @@ fn strings(v: &Value) -> Option<Vec<String>> {
 }
 
 /// One reply body, without serde's nesting limit (see [`REPLY_STACK`]).
-fn parse_reply(body: &[u8]) -> Result<Json, String> {
+pub(crate) fn parse_reply(body: &[u8]) -> Result<Json, String> {
     let mut de = serde_json::Deserializer::from_slice(body);
     de.disable_recursion_limit();
     let v = serde::Deserialize::deserialize(&mut de)

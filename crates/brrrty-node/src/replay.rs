@@ -171,7 +171,8 @@ impl Log<'_> {
     ) -> Result<(), Failure> {
         let mut w = Worker::start(self.node, self.root, self.run_mode)
             .map_err(|e| Self::runtime(format!("the replay check couldn't start Node: {e}")))?;
-        w.keep_raw.store(true, std::sync::atomic::Ordering::SeqCst);
+        w.keep_raw
+            .store(crate::client::KEEP_RAW, std::sync::atomic::Ordering::SeqCst);
         // A request may take a while again, but not without end: the
         // first run finished.
         w.deadline = Some((self.slowest * 4).max(std::time::Duration::from_secs(10)));
@@ -300,13 +301,19 @@ impl Log<'_> {
         w: &mut Worker,
         send: &dyn Fn(&mut Worker, Json) -> Result<crate::client::Frame, Failure>,
     ) -> Result<(), Failure> {
-        let feed = |r: &LoadRecord| r.head.get("loadClock").cloned().unwrap_or(json!([]));
+        // Each load's reply, parsed here, on this thread's roomy stack.
+        let replies: Vec<Json> = self
+            .loads
+            .iter()
+            .map(|r| crate::client::parse_reply(r.text.as_bytes()).unwrap_or(Json::Null))
+            .collect();
+        let feed = |i: usize| replies[i].get("loadClock").cloned().unwrap_or(json!([]));
         // A replay worker, handed no clock of its own: each load brings its own.
         send(w, json!({"op": "feedClock", "values": []}))?;
         let split = self.global_end.min(self.loads.len());
-        for r in &self.loads[..split] {
+        for (i, r) in self.loads[..split].iter().enumerate() {
             let mut req = r.req.clone();
-            req["feed"] = feed(r);
+            req["feed"] = feed(i);
             send(w, req)?;
         }
         let tail = &self.loads[split..];
@@ -332,7 +339,10 @@ impl Log<'_> {
                 "load" if seen.insert(path.clone()) => "data",
                 _ => continue,
             };
-            items.push((i, json!({"kind": kind, "path": path, "feed": feed(r)})));
+            items.push((
+                i,
+                json!({"kind": kind, "path": path, "feed": feed(split + i)}),
+            ));
         }
         items.reverse();
         let got = send(
@@ -360,7 +370,7 @@ impl Log<'_> {
         for (i, r) in tail.iter().enumerate() {
             let mut req = r.req.clone();
             // What its module code read ran already.
-            let rest: Vec<Json> = feed(r)
+            let rest: Vec<Json> = feed(split + i)
                 .as_array()
                 .map(|a| {
                     a.iter()
@@ -371,7 +381,9 @@ impl Log<'_> {
                 .unwrap_or_default();
             req["feed"] = Json::Array(rest);
             let got = send(w, req)?;
-            if strip(&got.head) != strip(&r.head) || got.raw != r.raw {
+            let mut want = strip(&replies[split + i]);
+            let want_ok = want.as_object_mut().and_then(|o| o.remove("ok"));
+            if strip(&got.head) != want || got.raw != want_ok {
                 let what = r.req.get("path").and_then(Json::as_str).unwrap_or("a file");
                 let shown = Path::new(what)
                     .strip_prefix(self.root)
