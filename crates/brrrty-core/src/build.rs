@@ -2308,6 +2308,10 @@ fn build_once(
     // The pages call the functions in the data through the runtime, from
     // every render thread.
     let js_calls = js.take_calls();
+    if let Some(p) = js.failed.take() {
+        report.problems.push(p);
+        return finish(report, strict, start);
+    }
     let js_hooks = matches!(&opts.js.node, Some(Ok(n)) if n.load_hooks);
     {
         let c = js_calls.clone();

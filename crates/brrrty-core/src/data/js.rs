@@ -196,6 +196,30 @@ impl<'a> JsSession<'a> {
         }
     }
 
+    /// The global data files' values a later file changed, as they are now
+    /// (absolute file, value): what 11ty's pages see.
+    pub fn loads_changed(&mut self) -> Vec<(PathBuf, Decoded)> {
+        let Some(rt) = self.runtime.as_mut() else {
+            return Vec::new();
+        };
+        match rt.loads_changed() {
+            JsResult::Ok(list) => list,
+            JsResult::Failed(f) => {
+                self.failed = Some(worker_failed_with(&f));
+                self.runtime = None;
+                Vec::new()
+            }
+            JsResult::Thrown(e) => {
+                self.failed = Some(worker_failed(&e.message));
+                Vec::new()
+            }
+            JsResult::Refused(r) => {
+                self.failed = Some(worker_failed(&r.why));
+                Vec::new()
+            }
+        }
+    }
+
     /// Hand the runtime over for the pages to call the functions in the
     /// data: `None` when no file ran.
     pub fn take_calls(&mut self) -> Option<Arc<JsCalls>> {
@@ -206,8 +230,15 @@ impl<'a> JsSession<'a> {
                 self.failed = Some(worker_failed_with(&f));
                 return None;
             }
-            JsResult::Thrown(JsError { message: why, .. })
-            | JsResult::Refused(Refusal { why, .. }) => {
+            JsResult::Refused(Refusal { why, .. }) => {
+                self.failed = Some(
+                    Problem::error(codes::JS_DATA_IMPURE, why).with_help(
+                        "Change a copy instead: a data file that sorts, adds to or sets something on another file's value gives pages that depend on the order 11ty loads files. Nothing was written.",
+                    ),
+                );
+                return None;
+            }
+            JsResult::Thrown(JsError { message: why, .. }) => {
                 self.failed = Some(worker_failed(&why));
                 return None;
             }
@@ -217,8 +248,6 @@ impl<'a> JsSession<'a> {
             root: self.root.clone(),
             failed: Mutex::new(None),
             impure: Mutex::new(Vec::new()),
-            unit_owner: Mutex::new(None),
-            unit_free: std::sync::Condvar::new(),
         }))
     }
 
@@ -265,11 +294,6 @@ pub(crate) struct JsCalls {
     /// page's result from them may differ from 11ty's, so nothing is
     /// written.
     impure: Mutex<Vec<Problem>>,
-    /// The thread whose render is calling functions now: one render calls
-    /// at a time, start to end, as 11ty renders one page at a time, so a
-    /// helper that keeps state within a page sees only that page's calls.
-    unit_owner: Mutex<Option<std::thread::ThreadId>>,
-    unit_free: std::sync::Condvar,
 }
 
 thread_local! {
@@ -323,40 +347,8 @@ impl JsCalls {
         }
     }
 
-    /// Wait until no other render is calling functions, and hold the
-    /// calls for this render until it ends. Renders never wait on each
-    /// other while they hold it, so this can't deadlock.
-    fn enter_unit(&self) {
-        if brrrty_js::functions::unit().is_none() {
-            return;
-        }
-        let Some(me) = calls() else { return };
-        let id = std::thread::current().id();
-        let mut owner = lock(&self.unit_owner);
-        if *owner == Some(id) {
-            return;
-        }
-        while owner.is_some() {
-            owner = self
-                .unit_free
-                .wait(owner)
-                .unwrap_or_else(|e| e.into_inner());
-        }
-        *owner = Some(id);
-        drop(owner);
-        let release = move || {
-            *lock(&me.unit_owner) = None;
-            me.unit_free.notify_all();
-        };
-        let held = brrrty_js::functions::at_unit_end(Box::new(release.clone()));
-        if !held {
-            release();
-        }
-    }
-
     /// One request, or the problem for a runtime that already stopped.
     fn with<T>(&self, f: impl FnOnce(&mut dyn JsRuntime) -> JsResult<T>) -> JsResult<T> {
-        self.enter_unit();
         let mut rt = lock(&self.runtime);
         let Some(r) = rt.as_mut() else {
             return JsResult::Failed(RuntimeFailure {

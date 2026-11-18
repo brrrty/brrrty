@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 
 use brrrty_js::Value;
 use brrrty_js::runtime::{
-    Decoded, FnHandle, JsError, JsResult, JsRuntime, PageId, Refusal, RuntimeFailure, Settle, This,
+    Decoded, FnHandle, JsError, JsResult, JsRuntime, PageId, PathPart, Refusal, RuntimeFailure,
+    Settle, This,
 };
 use serde_json::{Value as Json, json};
 
@@ -237,7 +238,17 @@ impl Worker {
             .and_then(Json::as_str)
             .unwrap_or("")
             .to_string();
-        let logged = !matches!(op.as_str(), "reads" | "info" | "callsBegin" | "feedClock");
+        let logged = !matches!(
+            op.as_str(),
+            "reads"
+                | "info"
+                | "callsBegin"
+                | "feedClock"
+                | "feedCalls"
+                | "loadsChanged"
+                | "exportsFinal"
+                | "describe"
+        );
         if logged && !self.calls_begun {
             self.load_log.push(req.clone());
         }
@@ -573,6 +584,51 @@ impl JsRuntime for Worker {
         let _ = self.request(json!({"op": "pageClose", "page": page.0}), "a page's data");
     }
 
+    fn loads_changed(&mut self) -> JsResult<Vec<(PathBuf, Decoded)>> {
+        let d = match self.request(json!({"op": "loadsChanged"}), "the data files") {
+            JsResult::Ok(d) => d,
+            JsResult::Thrown(e) => return JsResult::Thrown(e),
+            JsResult::Refused(r) => return JsResult::Refused(r),
+            JsResult::Failed(f) => return JsResult::Failed(f),
+        };
+        let Value::Array(items) = &d.value else {
+            return JsResult::Failed(self.fail("loadsChanged gave something other than a list"));
+        };
+        let mut out = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let (Value::String(p), value) = (item.get("path"), item.get("value")) else {
+                return JsResult::Failed(self.fail("loadsChanged gave an item without a path"));
+            };
+            let under = |at: &[PathPart]| -> Option<Vec<PathPart>> {
+                match at {
+                    [PathPart::Index(j), PathPart::Key(k), rest @ ..]
+                        if *j == i && k == "value" =>
+                    {
+                        Some(rest.to_vec())
+                    }
+                    _ => None,
+                }
+            };
+            out.push((
+                PathBuf::from(&*p),
+                Decoded {
+                    value,
+                    functions: d
+                        .functions
+                        .iter()
+                        .filter_map(|(at, h)| under(at).map(|a| (a, *h)))
+                        .collect(),
+                    refused: d
+                        .refused
+                        .iter()
+                        .filter_map(|(at, w)| under(at).map(|a| (a, w.clone())))
+                        .collect(),
+                },
+            ));
+        }
+        JsResult::Ok(out)
+    }
+
     fn begin_calls(&mut self) -> JsResult<()> {
         self.keep_raw
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -584,10 +640,44 @@ impl JsRuntime for Worker {
         self.clock = raw.get("clock").cloned().unwrap_or(Json::Array(Vec::new()));
         self.load_handles = raw.get("handles").and_then(Json::as_u64).unwrap_or(0);
         self.calls_begun = true;
+        let changed: Vec<&str> = raw
+            .get("changed")
+            .and_then(Json::as_array)
+            .map(|a| a.iter().filter_map(Json::as_str).collect())
+            .unwrap_or_default();
+        if !changed.is_empty() {
+            return JsResult::Refused(Refusal {
+                why: format!(
+                    "the data {} {} gave changed while template and directory data files loaded; 11ty's pages see it as it was when each page was placed, which depends on the order 11ty loads them",
+                    if changed.len() == 1 { "file" } else { "files" },
+                    changed.join(", ")
+                ),
+                impure: true,
+            });
+        }
+        if raw.get("protos").and_then(Json::as_bool) == Some(true) {
+            return JsResult::Refused(Refusal {
+                why: "a JavaScript data file changes one of JavaScript's built-in prototypes (`Array.prototype` and the like), which 11ty's templates use and Brrrty's don't".into(),
+                impure: true,
+            });
+        }
         JsResult::Ok(())
     }
 
     fn verify(&mut self) -> JsResult<()> {
+        // What the calls changed of the data files' values comes first: it
+        // explains whatever the replay would find.
+        match self.request(json!({"op": "exportsFinal"}), "the data files' values") {
+            JsResult::Ok(_) => {}
+            other @ (JsResult::Refused(_) | JsResult::Failed(_)) => {
+                return match other {
+                    JsResult::Refused(r) => JsResult::Refused(r),
+                    JsResult::Failed(f) => JsResult::Failed(f),
+                    _ => JsResult::Ok(()),
+                };
+            }
+            JsResult::Thrown(e) => return JsResult::Thrown(e),
+        }
         let log = crate::replay::Log {
             node: &self.node,
             root: &self.root,
@@ -891,6 +981,7 @@ pub fn encode_all<'v>(
         ids: HashMap::new(),
         kept,
         no_keep: None,
+        in_kept: 0,
     };
     values.map(|v| e.encode(v)).collect()
 }
@@ -905,6 +996,7 @@ fn encode_page(data: &Value, kept: &mut Kept) -> Result<Json, String> {
         ids: HashMap::new(),
         kept: Some(kept),
         no_keep: ptr_of(data),
+        in_kept: 0,
     };
     e.encode(data)
 }
@@ -955,6 +1047,8 @@ struct Encoder<'k> {
     kept: Option<&'k mut Kept>,
     /// The one object or list not to keep.
     no_keep: Option<usize>,
+    /// How many kept values the encoder is inside.
+    in_kept: usize,
 }
 
 /// Why a property Brrrty marks as unknown can't be handed to a function.
@@ -990,8 +1084,16 @@ impl Encoder<'_> {
             let id = kept.next;
             kept.next += 1;
             kept.lists.insert(p, (v.clone(), id));
-            let inner = self.inner(v)?;
-            return Ok(json!({"$S": [id, inner]}));
+            // A kept value stands on its own: it may be sent again, by
+            // itself, in another request (the replay check does), so what
+            // is inside it never refers to this request's shared values.
+            self.in_kept += 1;
+            let inner = self.inner(v);
+            self.in_kept -= 1;
+            return Ok(json!({"$S": [id, inner?]}));
+        }
+        if self.in_kept > 0 {
+            return self.inner(v);
         }
         if let Some(id) = self.ids.get(&p) {
             return Ok(json!({"$r": id}));

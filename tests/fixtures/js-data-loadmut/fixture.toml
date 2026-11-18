@@ -1,0 +1,11 @@
+# Built by 11ty 3.1.8 on node:22 and node:24-alpine (cargo xtask fixtures-refresh --docker js-data-loadmut):
+# both give the same bytes. Brrrty builds it with config.set_js_data("node").
+node = true
+input = "src"
+tz = "America/Chicago"
+lang = "en_US.UTF-8"
+
+# Probed with 11ty 3.1.8: a global data file that changes another's value
+# while it loads (a list it pushes to, a property it sets, a list it sorts)
+# changes what every page sees, since 11ty places pages only once all the
+# global data has loaded.

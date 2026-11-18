@@ -68,57 +68,19 @@ pub fn unit() -> Option<(u64, Arc<str>)> {
 
 /// Marks the calls made on this thread, until it drops, as one render
 /// named `label`.
-pub struct UnitGuard {
-    id: u64,
-    before: Option<(u64, Arc<str>)>,
-}
-
-/// A render's id, and what to run when it ends.
-type UnitEnd = (u64, Box<dyn FnOnce()>);
-
-thread_local! {
-    /// What to do when the unit with this id ends: let other renders call
-    /// functions again.
-    static UNIT_END: RefCell<Option<UnitEnd>> = const { RefCell::new(None) };
-}
+pub struct UnitGuard(Option<(u64, Arc<str>)>);
 
 impl UnitGuard {
     pub fn enter(label: impl Into<Arc<str>>) -> UnitGuard {
         let id = NEXT_UNIT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let before = UNIT.with(|u| u.borrow_mut().replace((id, label.into())));
-        UnitGuard { id, before }
+        UnitGuard(before)
     }
-}
-
-/// Run `f` when the render now on this thread ends (see [`UnitGuard`]).
-/// `false` when no render is on, or one already has something to run.
-pub fn at_unit_end(f: Box<dyn FnOnce()>) -> bool {
-    let Some((id, _)) = unit() else {
-        return false;
-    };
-    UNIT_END.with(|e| {
-        let mut e = e.borrow_mut();
-        if e.is_some() {
-            return false;
-        }
-        *e = Some((id, f));
-        true
-    })
 }
 
 impl Drop for UnitGuard {
     fn drop(&mut self) {
-        let end = UNIT_END.with(|e| {
-            let mut e = e.borrow_mut();
-            match e.as_ref() {
-                Some((id, _)) if *id == self.id => e.take().map(|(_, f)| f),
-                _ => None,
-            }
-        });
-        if let Some(f) = end {
-            f();
-        }
-        let before = self.before.take();
+        let before = self.0.take();
         UNIT.with(|u| *u.borrow_mut() = before);
     }
 }

@@ -307,19 +307,36 @@ let clockFeed = null;
 
 // One read of an ambient source: `real()` gives it, `toJson`/`fromJson`
 // carry it in the record.
-function ambient(real, toJson = (v) => v, fromJson = (v) => v) {
+// Each value is recorded as `[kind, value]`. A replayed load or call is
+// handed its own values first; a replayed call that reads more of a kind
+// than it read the first time (a value it saves, read first by another
+// page the first time: `t ??= new Date()`) gets the first run's values of
+// that kind in the order the first run read them.
+let globalFeed = null;
+const globalCursor = new Map();
+
+function ambient(kind, real, toJson = (v) => v, fromJson = (v) => v) {
   const record = clockPhase === "calls" ? callClock : clockRecord;
-  if (clockFeed !== null && clockFeed.length) {
+  if (clockFeed !== null && clockFeed.length && clockFeed[0][0] === kind) {
     const fed = clockFeed.shift();
     record.push(fed);
-    return fromJson(fed);
+    return fromJson(fed[1]);
+  }
+  if (clockPhase === "calls" && globalFeed !== null && Array.isArray(globalFeed[kind])) {
+    const at = globalCursor.get(kind) || 0;
+    if (at < globalFeed[kind].length) {
+      globalCursor.set(kind, at + 1);
+      const v = globalFeed[kind][at];
+      record.push([kind, v]);
+      return fromJson(v);
+    }
   }
   const v = real();
-  record.push(toJson(v));
+  record.push([kind, toJson(v)]);
   return v;
 }
 
-const nowMs = () => ambient(() => originalNow.call(OriginalDate));
+const nowMs = () => ambient("now", () => originalNow.call(OriginalDate));
 
 // Replace a function property, whatever kind of property it is; one that
 // can't be replaced stays as it is.
@@ -351,7 +368,7 @@ PatchedDate.now = function now() {
 Object.defineProperty(OriginalDate.prototype, "constructor", { value: PatchedDate, writable: true, configurable: true, enumerable: false });
 globalThis.Date = PatchedDate;
 Math.random = function random() {
-  return ambient(() => originalRandom.call(Math));
+  return ambient("random", () => originalRandom.call(Math));
 };
 
 // `Intl.DateTimeFormat`: with no date, `format` and `formatToParts` read
@@ -377,12 +394,12 @@ Math.random = function random() {
   const perf = globalThis.performance;
   const perfNow = perf.now.bind(perf);
   setFn(perf, "now", function now() {
-    return ambient(perfNow);
+    return ambient("perf", perfNow);
   });
   const hrtime = process.hrtime;
   const hrBig = process.hrtime.bigint;
   const patched = function hrtime(prev) {
-    const t = ambient(() => hrtime());
+    const t = ambient("hrtime", () => hrtime());
     if (!prev) return t;
     let s = t[0] - prev[0];
     let ns = t[1] - prev[1];
@@ -393,12 +410,12 @@ Math.random = function random() {
     return [s, ns];
   };
   patched.bigint = function bigint() {
-    return ambient(() => hrBig(), (v) => String(v), (v) => BigInt(v));
+    return ambient("hrbig", () => hrBig(), (v) => String(v), (v) => BigInt(v));
   };
   process.hrtime = patched;
   const uptime = process.uptime;
   process.uptime = function () {
-    return ambient(() => uptime());
+    return ambient("uptime", () => uptime());
   };
 }
 
@@ -410,7 +427,7 @@ Math.random = function random() {
   };
   const rb = nodeCrypto.randomBytes;
   setFn(nodeCrypto, "randomBytes", function randomBytes(size, cb) {
-    const bytes = ambient(() => rb(size), hex, (h) => Buffer.from(h, "hex"));
+    const bytes = ambient("bytes", () => rb(size), hex, (h) => Buffer.from(h, "hex"));
     if (typeof cb === "function") {
       setImmediate(() => cb(null, bytes));
       return undefined;
@@ -419,12 +436,12 @@ Math.random = function random() {
   });
   const uuid = nodeCrypto.randomUUID;
   setFn(nodeCrypto, "randomUUID", function randomUUID(options) {
-    return ambient(() => uuid(options));
+    return ambient("uuid", () => uuid(options));
   });
   const rint = nodeCrypto.randomInt;
   setFn(nodeCrypto, "randomInt", function randomInt(...args) {
     const cb = typeof args[args.length - 1] === "function" ? args.pop() : null;
-    const n = ambient(() => rint(...args));
+    const n = ambient("int", () => rint(...args));
     if (cb) {
       setImmediate(() => cb(null, n));
       return undefined;
@@ -436,135 +453,276 @@ Math.random = function random() {
     const view = ArrayBuffer.isView(buf) ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) : new Uint8Array(buf);
     const n = size ?? view.byteLength - offset;
     const part = view.subarray(offset, offset + n);
-    ambient(() => rfs(part), hex, (h) => fill(part, h));
+    ambient("bytes", () => rfs(part), hex, (h) => fill(part, h));
     return buf;
   });
   const grv = nodeCrypto.getRandomValues;
   setFn(nodeCrypto, "getRandomValues", function getRandomValues(arr) {
-    return ambient(() => grv.call(nodeCrypto.webcrypto, arr), hex, (h) => fill(arr, h));
+    return ambient("bytes", () => grv.call(nodeCrypto.webcrypto, arr), hex, (h) => fill(arr, h));
   });
   const web = globalThis.crypto;
   if (web) {
     const wgrv = web.getRandomValues.bind(web);
     const wuuid = web.randomUUID.bind(web);
     setFn(web, "getRandomValues", function getRandomValues(arr) {
-      return ambient(() => wgrv(arr), hex, (h) => fill(arr, h));
+      return ambient("bytes", () => wgrv(arr), hex, (h) => fill(arr, h));
     });
     setFn(web, "randomUUID", function randomUUID() {
-      return ambient(() => wuuid());
+      return ambient("uuid", () => wuuid());
     });
   }
   nodeModule.syncBuiltinESMExports();
 }
 
-// --- What a page's calls may not change. ---
+// --- What the data's own code may not change. ---
 //
-// 11ty hands templates a data file's lists (and the objects in them) as
-// they are, so a function that changes one, through a variable it keeps
-// (`all.sort()`, `styles.push(name)`), changes what later templates show.
-// Brrrty's templates read the data as it was when it loaded. So every value
-// a data file gave is walked once the files are loaded and again after
-// every call; a change stops the build.
+// 11ty hands templates the values data files give as they are (lists, and
+// what is in them; plain objects are copied into each page as it is
+// placed), and its `getData` merges them only after every global data
+// file has loaded. Brrrty's templates read each value as Brrrty received
+// it. So:
+// - each value a data file gives is recorded in full when it loads
+//   ("complete": every own key, string or symbol, enumerable or not, each
+//   getter read again, prototypes);
+// - once the global data files have loaded, any of their values changed
+//   since is sent again (`loadsChanged`), as 11ty's pages see it;
+// - at the start of the pages' calls, a value changed since (by a template
+//   or directory data file loading later) stops the build;
+// - after each call, a quicker walk (values, list items, enumerable key
+//   counts, prototypes, Dates, getters) of every value, plus the built-in
+//   prototypes; a call that defines a property on one of these objects
+//   gets the complete walk instead. Any change stops the build.
+// A property added with a symbol key by plain assignment, and removed
+// again before the end of the build, is seen only by the complete walk at
+// the end (`exportsFinal`); templates can't read symbol keys.
 
-// Every value a data file gave, with the file.
+// Every value a data file gave: value -> file.
 const loadedRoots = new Map();
-let rootSnapshots = null;
+// Complete records, by value, as of its load (or as last sent).
+const loadRecords = new Map();
+let quickRecords = null;
+let finalRecords = null;
 let replaying = false;
+let exportChange = null;
+// Every object inside a recorded value, and the built-in prototypes: a
+// property defined on one of them marks the call for the complete walk.
+let watchedObjects = new WeakSet();
+let definedOnWatched = false;
 
-// A value's state as a flat list, walked depth first: each object or list
-// itself (its identity), then its length or key count, and each key and
-// value; a Date's time; an object seen before as its first place. A getter
-// counts as itself, and isn't called. Other objects count by identity
-// only: templates can't read into them.
-const withAccessors = new WeakSet();
+const BUILTIN_PROTOS = [
+  Object.prototype, Array.prototype, String.prototype, Number.prototype, Boolean.prototype,
+  Function.prototype, OriginalDate.prototype, RegExp.prototype, Map.prototype, Set.prototype,
+  Promise.prototype, Symbol.prototype, Error.prototype,
+];
+for (const p of BUILTIN_PROTOS) watchedObjects.add(p);
 
-function snapshot(v) {
+function protosRecord() {
   const out = [];
-  walkState(v, out, null);
+  for (const p of BUILTIN_PROTOS) {
+    for (const k of Reflect.ownKeys(p)) {
+      const d = Reflect.getOwnPropertyDescriptor(p, k);
+      out.push(k, d.value, d.get, d.set, d.enumerable, d.writable);
+    }
+    out.push(Object.getPrototypeOf(p));
+  }
   return out;
 }
+const startProtos = protosRecord();
 
-// Whether `v` is still as `snap` lists it.
-function sameAs(v, snap) {
-  return walkState(v, null, snap);
+function sameList(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x !== y && !(x !== x && y !== y)) return false;
+  }
+  return true;
 }
 
-// List `v` into `out`, or compare it with `snap` as it goes (stopping at
-// the first difference).
-function walkState(v, out, snap) {
-  let i = 0;
-  const put = out
-    ? (x) => {
-        out.push(x);
-        return true;
-      }
-    : (x) => {
-        const y = snap[i++];
-        return x === y || (x !== x && y !== y);
-      };
+// The complete record of `v`: every object's identity (an object read
+// through a getter by its shape only, since a getter may build it anew),
+// prototype, and every own key with its kind, attributes and value; a
+// getter is read, and what it gives is recorded too.
+function completeRecord(v, mark, byShape = false) {
+  const out = [];
   const seen = new Map();
-  const stack = [v];
+  const stack = [[v, byShape]];
   while (stack.length) {
-    const x = stack.pop();
-    if (x === null || typeof x !== "object") {
-      if (!put(x)) return false;
+    const [x, viaGetter] = stack.pop();
+    if (x === null || (typeof x !== "object" && typeof x !== "function")) {
+      out.push(x);
       continue;
     }
-    const at = seen.get(x);
-    if (at !== undefined) {
-      if (!put(at)) return false;
+    if (typeof x === "function") {
+      out.push(x);
+      continue;
+    }
+    if (seen.has(x)) {
+      out.push(seen.get(x));
       continue;
     }
     seen.set(x, -1 - seen.size);
-    if (!put(x)) return false;
+    if (mark) watchedObjects.add(x);
+    out.push(viaGetter ? "object" : x, Object.getPrototypeOf(x));
+    if (x instanceof OriginalDate) out.push(OriginalDate.prototype.getTime.call(x));
+    if (utilTypes.isProxy(x)) continue;
+    const keys = Reflect.ownKeys(x);
+    out.push(keys.length);
+    for (let i = keys.length - 1; i >= 0; i--) {
+      const k = keys[i];
+      const d = Reflect.getOwnPropertyDescriptor(x, k);
+      out.push(k, d.enumerable, d.configurable);
+      if ("value" in d) {
+        out.push(d.writable);
+        stack.push([d.value, viaGetter]);
+      } else {
+        out.push(d.get, d.set);
+        stack.push([getterValue(x, d.get), true]);
+      }
+    }
+  }
+  return out;
+}
+
+// The quick record of `v`, as `quickSame` checks it.
+function quickRecord(v) {
+  const out = [];
+  const seen = new Set();
+  const stack = [v];
+  while (stack.length) {
+    const x = stack.pop();
+    if (x === null || typeof x !== "object" || seen.has(x)) continue;
+    seen.add(x);
+    watchedObjects.add(x);
+    const proto = Object.getPrototypeOf(x);
     if (Array.isArray(x)) {
-      const n = x.length;
-      if (!put(n)) return false;
-      for (let k = n - 1; k >= 0; k--) stack.push(x[k]);
+      out.push(x, proto, 0, x.slice(), Object.keys(x).length);
+      for (let i = 0; i < x.length; i++) stack.push(x[i]);
       continue;
     }
     if (x instanceof OriginalDate) {
-      if (!put(OriginalDate.prototype.getTime.call(x))) return false;
+      out.push(x, proto, 1, OriginalDate.prototype.getTime.call(x), 0);
       continue;
     }
-    if (!isPlainObject11ty(x)) continue;
     const keys = Object.keys(x);
-    if (!put(keys.length)) return false;
-    if (out) {
-      for (const k of keys) {
-        const d = Object.getOwnPropertyDescriptor(x, k);
-        if (d && !("value" in d)) withAccessors.add(x);
-      }
-    }
-    const slow = withAccessors.has(x);
-    for (let k = keys.length - 1; k >= 0; k--) {
-      const key = keys[k];
-      if (!put(key)) return false;
-      if (slow) {
-        const d = Object.getOwnPropertyDescriptor(x, key);
-        if (d === undefined || !("value" in d)) {
-          if (!put(d && d.get)) return false;
-          continue;
-        }
-        stack.push(d.value);
+    const vals = new Array(keys.length);
+    const getters = [];
+    for (let i = 0; i < keys.length; i++) {
+      const d = Object.getOwnPropertyDescriptor(x, keys[i]);
+      if (d && !("value" in d)) {
+        // What a getter gives is compared by its shape: it may build it anew.
+        getters.push(i);
+        vals[i] = completeRecord(readGetter(x, keys[i]), false, true);
       } else {
-        stack.push(x[key]);
+        vals[i] = d ? d.value : undefined;
+        stack.push(vals[i]);
       }
     }
+    out.push(x, proto, 2, [keys, vals, getters], keys.length);
   }
-  return snap === null || i === snap.length;
+  return out;
 }
 
-// The data file whose value changed since the files loaded, if any.
-function changedRoot() {
-  if (rootSnapshots === null) return null;
-  for (const [v, [file, snap]] of rootSnapshots) {
-    if (!sameAs(v, snap)) {
-      rootSnapshots.set(v, [file, snapshot(v)]);
-      return file;
+// A getter's value, read twice as the encoding reads it: one that gives a
+// different number or string each time is refused where it crosses, so it
+// counts as one fixed token here; one that builds a new object each time
+// is compared by what is in it.
+const UNSTABLE = "a getter whose value changes as it is read";
+
+function getterValue(x, get) {
+  if (!get) return undefined;
+  try {
+    const a = get.call(x);
+    const b = get.call(x);
+    if (a === b || (a !== a && b !== b)) return a;
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object") return a;
+    return UNSTABLE;
+  } catch {
+    return "a getter that throws";
+  }
+}
+
+function readGetter(x, k) {
+  const d = Object.getOwnPropertyDescriptor(x, k);
+  return d && !("value" in d) ? getterValue(x, d.get) : x[k];
+}
+
+// Whether every value still is as `rec` (from `quickRecord`) has it.
+function quickSame(rec) {
+  for (let j = 0; j < rec.length; j += 5) {
+    const x = rec[j];
+    if (Object.getPrototypeOf(x) !== rec[j + 1]) return false;
+    const kind = rec[j + 2];
+    if (kind === 0) {
+      const items = rec[j + 3];
+      if (x.length !== items.length) return false;
+      for (let i = 0; i < items.length; i++) {
+        const a = x[i];
+        const b = items[i];
+        if (a !== b && !(a !== a && b !== b)) return false;
+      }
+      if (Object.keys(x).length !== rec[j + 4]) return false;
+    } else if (kind === 1) {
+      const t = OriginalDate.prototype.getTime.call(x);
+      if (t !== rec[j + 3] && !(t !== t && rec[j + 3] !== rec[j + 3])) return false;
+    } else {
+      const [keys, vals, getters] = rec[j + 3];
+      let gi = 0;
+      for (let i = 0; i < keys.length; i++) {
+        const was = vals[i];
+        if (gi < getters.length && getters[gi] === i) {
+          gi++;
+          if (!sameList(completeRecord(readGetter(x, keys[i]), false, true), was)) return false;
+          continue;
+        }
+        const now = x[keys[i]];
+        if (now !== was && !(now !== now && was !== was)) return false;
+      }
+      if (Object.keys(x).length !== rec[j + 4]) return false;
     }
   }
-  return null;
+  return true;
+}
+
+function relFile(file) {
+  return path.relative(root, file).split(path.sep).join("/");
+}
+
+// After a call from a page: whether it changed what the data files gave.
+// Run once the call's reply is sent, before the next request.
+function checkAfterCall(labelOf) {
+  if (quickRecords === null || exportChange !== null) return;
+  const complete = definedOnWatched;
+  definedOnWatched = false;
+  if (!sameList(protosRecord(), startProtos)) {
+    exportChange = `${labelOf()} changes one of JavaScript's built-in prototypes (\`Array.prototype\` and the like), which 11ty's templates use and Brrrty's don't`;
+    return;
+  }
+  for (const [v, rec] of quickRecords) {
+    const changed = complete ? !sameList(completeRecord(v, false), loadRecords.get(v)) : !quickSame(rec);
+    if (changed) {
+      exportChange = `${labelOf()} changes the data ${relFile(loadedRoots.get(v))} gives (an \`all.sort()\`, a \`list.push()\` or a property set on a value the file exports), which 11ty's templates then show changed from that call on; Brrrty's templates show the data as it loaded, so the pages would differ. Sort or add to a copy instead (\`[...all].sort()\`)`;
+      return;
+    }
+  }
+}
+
+// Mark a call that defines a property on a watched object.
+for (const [obj, name] of [
+  [Object, "defineProperty"],
+  [Object, "defineProperties"],
+  [Reflect, "defineProperty"],
+  [Object, "setPrototypeOf"],
+  [Reflect, "setPrototypeOf"],
+  [Reflect, "deleteProperty"],
+]) {
+  const original = obj[name];
+  setFn(obj, name, function (target, ...rest) {
+    if (target !== null && (typeof target === "object" || typeof target === "function") && watchedObjects.has(target)) {
+      definedOnWatched = true;
+    }
+    return original.call(this, target, ...rest);
+  });
 }
 
 function register(fn) {
@@ -902,14 +1060,6 @@ async function runOnce(fn, thisArg, args, settle) {
 // Why a call that just ran can't be used, if it can't.
 function callRefusal(fn) {
   const wroteData = takeWrote();
-  const changed = changedRoot();
-  if (changed !== null) {
-    const rel = path.relative(root, changed).split(path.sep).join("/");
-    return {
-      refused: `${describeFn(fn)} changes the data ${rel} gives (an \`all.sort()\` or a \`list.push()\` on a value the file exports), which 11ty's templates then show changed from that call on; Brrrty's templates show the data as it loaded, so the pages would differ. Sort or add to a copy instead (\`[...all].sort()\`)`,
-      impure: true,
-    };
-  }
   if (refusedInCall !== null) return { refused: `${describeFn(fn)} ${refusedInCall}` };
   if (wroteData) {
     // Kept values may be what it changed: Brrrty sends them again.
@@ -978,7 +1128,10 @@ async function handle(req) {
         return { changedArgument: true };
       }
       const root = rootValue(value);
-      if (root !== null && typeof root === "object" && !loadedRoots.has(root)) loadedRoots.set(root, req.path);
+      if (root !== null && typeof root === "object" && !loadedRoots.has(root)) {
+        loadedRoots.set(root, req.path);
+        loadRecords.set(root, completeRecord(root, false));
+      }
       // A file loaded per template often gives the same data each time:
       // say so instead of sending it again.
       const text = JSON.stringify(encodeValue(root, register));
@@ -1000,11 +1153,55 @@ async function handle(req) {
       // The data files are loaded: from here on the clock marks a call.
       clockPhase = "calls";
       clockFeed = null;
-      if (!replaying) rootSnapshots = new Map([...loadedRoots].map(([v, file]) => [v, [file, snapshot(v)]]));
-      return { ok: { clock: clockRecord, handles: handles.length } };
+      const changed = [];
+      let protos = false;
+      if (!replaying) {
+        for (const [v, file] of loadedRoots) {
+          if (!sameList(completeRecord(v, false), loadRecords.get(v))) changed.push(relFile(file));
+        }
+        protos = !sameList(protosRecord(), startProtos);
+        for (const v of loadedRoots.keys()) {
+          loadRecords.set(v, completeRecord(v, true));
+        }
+        quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v)]));
+      }
+      return { ok: { clock: clockRecord, handles: handles.length, changed, protos } };
+    }
+    case "loadsChanged": {
+      // The global data files have loaded: their values as 11ty's pages
+      // will see them, where one file changed another's.
+      const out = [];
+      for (const [v, file] of loadedRoots) {
+        const now = completeRecord(v, false);
+        if (!sameList(now, loadRecords.get(v))) {
+          loadRecords.set(v, now);
+          out.push({ path: file, value: v });
+        }
+      }
+      return { okText: JSON.stringify(encodeValue(out, register)) };
+    }
+    case "exportsFinal": {
+      if (exportChange !== null) return { refused: exportChange, impure: true };
+      if (quickRecords === null) return { ok: null };
+      for (const [v, file] of loadedRoots) {
+        if (!sameList(completeRecord(v, false), loadRecords.get(v))) {
+          return {
+            refused: `a function from the data changes the data ${relFile(file)} gives (a property it defines, or one with a symbol key), which 11ty's templates then show changed; Brrrty's templates show the data as it loaded, so the pages would differ`,
+            impure: true,
+          };
+        }
+      }
+      if (!sameList(protosRecord(), startProtos)) {
+        return { refused: "a function from the data changes one of JavaScript's built-in prototypes (`Array.prototype` and the like), which 11ty's templates use and Brrrty's don't", impure: true };
+      }
+      return { ok: null };
     }
     case "describe":
       return { ok: describeFn(getHandle(req.handle)) };
+    case "feedCalls": {
+      globalFeed = req.values || {};
+      return { ok: null };
+    }
     case "feedClock": {
       // A replay check's worker: it compares replies; the first run
       // already watched the data files' values.
@@ -1106,6 +1303,12 @@ lines.on("line", (line) => {
       callClock = [];
     }
     frame({ id: req.id, ...reply });
+    // What the call changed, checked once its reply is on its way.
+    if (calling && (req.op === "call" || req.op === "pageCall" || req.op === "pageVars")) {
+      checkAfterCall(() =>
+        typeof req.handle === "number" && typeof handles[req.handle] === "function" ? describeFn(handles[req.handle]) : "a function from the data",
+      );
+    }
   });
 });
 lines.on("close", () => process.exit(0));

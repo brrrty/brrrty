@@ -70,8 +70,8 @@ impl Log<'_> {
         let mut named: Vec<usize> = (0..units.len()).collect();
         named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
         let (a, b) = std::thread::scope(|s| {
-            let a = s.spawn(|| self.replay(&units, &reverse));
-            let b = s.spawn(|| self.replay(&units, &named));
+            let a = s.spawn(|| self.replay(&units, &reverse, true));
+            let b = s.spawn(|| self.replay(&units, &named, false));
             (a.join(), b.join())
         });
         let joined = |r: std::thread::Result<Result<(), Failure>>| {
@@ -131,7 +131,7 @@ impl Log<'_> {
         })
     }
 
-    fn replay(&self, units: &[Unit], order: &[usize]) -> Result<(), Failure> {
+    fn replay(&self, units: &[Unit], order: &[usize], interleave: bool) -> Result<(), Failure> {
         let mut w = Worker::start(self.node, self.root, self.run_mode)
             .map_err(|e| Self::runtime(format!("the replay check couldn't start Node: {e}")))?;
         w.keep_raw.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -169,6 +169,26 @@ impl Log<'_> {
                 None,
             ));
         }
+        // The clock and random values the first run's calls read, by kind,
+        // in the order it read them.
+        let mut by_kind = serde_json::Map::new();
+        for r in self.calls {
+            if let Some(Json::Array(reads)) = r.head.get("clock") {
+                for read in reads {
+                    if let Some([Json::String(kind), v]) = read.as_array().map(Vec::as_slice)
+                        && let Json::Array(list) = by_kind
+                            .entry(kind.clone())
+                            .or_insert_with(|| Json::Array(Vec::new()))
+                    {
+                        list.push(v.clone());
+                    }
+                }
+            }
+        }
+        send(
+            &mut w,
+            json!({"op": "feedCalls", "values": Json::Object(by_kind)}),
+        )?;
         // Every value Brrrty kept in the worker, as it was first sent.
         let mut kept: HashMap<u64, Json> = HashMap::new();
         for r in self.calls {
@@ -181,69 +201,114 @@ impl Log<'_> {
             defined: HashSet::new(),
             kept,
         };
-        let mut pending: Vec<usize> = order.to_vec();
-        while !pending.is_empty() {
-            let Some(pos) = pending
-                .iter()
-                .position(|&u| units[u].needs.iter().all(|h| st.functions.contains_key(h)))
-            else {
-                return Err(Failure::Differs(
-                    "a function made by one page's call is used by another in a way Brrrty can't check".into(),
-                    None,
-                ));
-            };
-            let u = pending.remove(pos);
-            for &i in &units[u].records {
-                let r = &self.calls[i];
-                let mut req = st.rewrite(&r.req, true);
-                // The clock and random values the call read the first time.
-                if let Some(clock) = r.head.get("clock") {
-                    req["feed"] = clock.clone();
+        let unready = || {
+            Failure::Differs(
+                "a function made by one page's call is used by another in a way Brrrty can't check"
+                    .into(),
+                None,
+            )
+        };
+        if interleave {
+            // One request from each render in turn: renders that call
+            // functions at the same time, as Brrrty's threads may, and as
+            // 11ty never does.
+            let mut active: Vec<(usize, usize)> = order.iter().map(|&u| (u, 0)).collect();
+            while !active.is_empty() {
+                let mut progressed = false;
+                for slot in active.iter_mut() {
+                    let (u, at) = *slot;
+                    let i = units[u].records[at];
+                    let mut used = Vec::new();
+                    handles_in(&self.calls[i].req, &mut used, true);
+                    if !used
+                        .iter()
+                        .all(|h| *h < self.load_handles || st.functions.contains_key(h))
+                    {
+                        continue;
+                    }
+                    self.step(&mut w, &mut st, i, &send)?;
+                    slot.1 += 1;
+                    progressed = true;
                 }
-                let got = send(&mut w, req)?;
-                // The clock values a call read only feed the replay: a call
-                // may read the clock more or less often in another order
-                // (a cache warmed or not), which matters only when its
-                // result shows it.
-                let mut head = got.head.clone();
-                if let Some(o) = head.as_object_mut() {
-                    o.remove("id");
-                    o.remove("clock");
-                }
-                let mut want = r.head.clone();
-                if let Some(o) = want.as_object_mut() {
-                    o.remove("id");
-                    o.remove("clock");
-                }
-                // A page's number is the worker's own count: it is matched
-                // up, not compared.
-                let opens = r.req.get("op").and_then(Json::as_str) == Some("pageOpen");
-                let same = st.same(&want, &head)
-                    && match (&r.raw, &got.raw) {
-                        _ if opens => true,
-                        (Some(a), Some(b)) => st.same(a, b),
-                        (None, None) => true,
-                        _ => false,
-                    };
-                if !same {
-                    let handle = r.req.get("handle").and_then(Json::as_u64);
-                    return Err(Failure::Differs(
-                        difference(r, &head, got.raw.as_ref()),
-                        handle,
-                    ));
-                }
-                if r.req.get("op").and_then(Json::as_str) == Some("pageOpen")
-                    && let (Some(a), Some(b)) = (
-                        r.raw.as_ref().and_then(Json::as_u64),
-                        got.raw.as_ref().and_then(Json::as_u64),
-                    )
-                {
-                    st.pages.insert(a, b);
-                }
-                if head.get("dropShared").is_some() {
-                    st.defined.clear();
+                active.retain(|(u, at)| *at < units[*u].records.len());
+                if !progressed && !active.is_empty() {
+                    return Err(unready());
                 }
             }
+        } else {
+            let mut pending: Vec<usize> = order.to_vec();
+            while !pending.is_empty() {
+                let Some(pos) = pending
+                    .iter()
+                    .position(|&u| units[u].needs.iter().all(|h| st.functions.contains_key(h)))
+                else {
+                    return Err(unready());
+                };
+                let u = pending.remove(pos);
+                for &i in &units[u].records {
+                    self.step(&mut w, &mut st, i, &send)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Send the first run's request `i` again, and compare the reply.
+    fn step(
+        &self,
+        w: &mut Worker,
+        st: &mut State,
+        i: usize,
+        send: &dyn Fn(&mut Worker, Json) -> Result<crate::client::Frame, Failure>,
+    ) -> Result<(), Failure> {
+        let r = &self.calls[i];
+        let mut req = st.rewrite(&r.req, true);
+        // The clock and random values the call read the first time.
+        if let Some(clock) = r.head.get("clock") {
+            req["feed"] = clock.clone();
+        }
+        let got = send(w, req)?;
+        // The clock values a call read only feed the replay: a call
+        // may read the clock more or less often in another order
+        // (a cache warmed or not), which matters only when its
+        // result shows it.
+        let mut head = got.head.clone();
+        if let Some(o) = head.as_object_mut() {
+            o.remove("id");
+            o.remove("clock");
+        }
+        let mut want = r.head.clone();
+        if let Some(o) = want.as_object_mut() {
+            o.remove("id");
+            o.remove("clock");
+        }
+        // A page's number is the worker's own count: it is matched
+        // up, not compared.
+        let opens = r.req.get("op").and_then(Json::as_str) == Some("pageOpen");
+        let same = st.same(&want, &head)
+            && match (&r.raw, &got.raw) {
+                _ if opens => true,
+                (Some(a), Some(b)) => st.same(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+        if !same {
+            let handle = r.req.get("handle").and_then(Json::as_u64);
+            return Err(Failure::Differs(
+                difference(r, &head, got.raw.as_ref()),
+                handle,
+            ));
+        }
+        if r.req.get("op").and_then(Json::as_str) == Some("pageOpen")
+            && let (Some(a), Some(b)) = (
+                r.raw.as_ref().and_then(Json::as_u64),
+                got.raw.as_ref().and_then(Json::as_u64),
+            )
+        {
+            st.pages.insert(a, b);
+        }
+        if head.get("dropShared").is_some() {
+            st.defined.clear();
         }
         Ok(())
     }

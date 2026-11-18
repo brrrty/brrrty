@@ -1279,12 +1279,13 @@ fn state_a_function_keeps_to_itself_and_returns_later_is_caught() {
 }
 
 #[test]
-fn a_helper_that_resets_and_counts_within_each_page_builds_every_time() {
+fn a_helper_that_resets_and_counts_within_each_page_is_refused_every_time() {
     if !has_node() {
         return;
     }
-    // 11ty renders one page at a time; Brrrty lets one page call functions
-    // at a time, so each page counts from its own reset.
+    // 11ty renders one page at a time and builds this; Brrrty's pages call
+    // functions at the same time, and the replay check runs the calls
+    // interleaved too, so it refuses it every time, never only sometimes.
     let mut files = vec![
         ("brrrty.config.rhai", ON),
         (
@@ -1301,9 +1302,9 @@ fn a_helper_that_resets_and_counts_within_each_page_builds_every_time() {
         })
         .collect();
     files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
-    let (o, t) = same_every_run(&files, 10);
-    assert!(o.status.success(), "{}", text(&o));
-    assert_eq!(written(&t, "n7/index.html").as_deref(), Some("123"));
+    let (o, _t) = same_every_run(&files, 10);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
 }
 
 #[test]
@@ -1333,4 +1334,174 @@ fn a_replay_that_never_finishes_is_given_up_on() {
         "{}",
         text(&o)
     );
+}
+
+#[test]
+fn every_kind_of_change_to_a_data_files_value_is_refused() {
+    if !has_node() {
+        return;
+    }
+    // Each changes, in a call, something 11ty's templates then read.
+    for (data, page) in [
+        (
+            "const list = [1,2]; module.exports = { list, f() { list.label = \"L\"; return \"\"; } };",
+            "{{ h.f() }}[{{ h.list.label }}]",
+        ),
+        (
+            "const list = [1,2]; module.exports = { list, f() { Object.defineProperty(list, \"label\", { value: \"L\", enumerable: false }); return \"\"; } };",
+            "{{ h.f() }}[{{ h.list.label }}]",
+        ),
+        (
+            "const arr = [1]; module.exports = { get list() { return arr; }, f() { arr.push(2); return \"\"; } };",
+            "{{ h.f() }}[{{ h.list | length }}]",
+        ),
+        (
+            "module.exports = { l: [1], f() { Array.prototype.extra = \"E\"; return \"\"; } };",
+            "{{ h.f() }}[{{ h.l.extra }}]",
+        ),
+        (
+            "module.exports = { o: { a: 1 }, f() { Object.prototype.polluted = \"P\"; return \"\"; } };",
+            "{{ h.f() }}[{{ h.o.polluted }}]",
+        ),
+        (
+            "const d = new Date(Date.UTC(2020,0,1)); module.exports = { d, f() { d.setUTCFullYear(2021); return \"\"; } };",
+            "{{ h.f() }}[{{ h.d.getUTCFullYear() }}]",
+        ),
+        (
+            "const o = { a: { b: [ { c: 1 } ] } }; module.exports = { o, f() { o.a.b[0].c = 2; return \"\"; } };",
+            "{{ h.f() }}[{{ h.o.a.b[0].c }}]",
+        ),
+        (
+            "const o = { a: 1 }; module.exports = { o, f() { Object.setPrototypeOf(o, { inh: \"I\" }); return \"\"; } };",
+            "{{ h.f() }}[{{ h.o.inh }}]",
+        ),
+        (
+            "const o = { a: 1 }; module.exports = { o, f() { o[Symbol(\"s\")] = 1; return \"\"; } };",
+            "{{ h.f() }}[{{ h.o.a }}]",
+        ),
+        (
+            "const list = [{ on: false }, { on: false }]; module.exports = { list, on(i) { list[i].on = true; return \"\"; }, off(i) { list[i].on = false; return \"\"; } };",
+            "{{ h.on(0) }}[{{ h.list[0].on }}]{{ h.off(0) }}",
+        ),
+    ] {
+        let (o, t) = same_every_run(
+            &[
+                ("brrrty.config.rhai", ON),
+                ("src/_data/h.js", data),
+                ("src/a.njk", page),
+            ],
+            2,
+        );
+        assert_eq!(o.status.code(), Some(1), "{data}\n{}", text(&o));
+        let out = text(&o);
+        assert!(out.contains("js-data-impure"), "{data}\n{out}");
+        // One problem for one cause.
+        assert_eq!(out.matches("  × ").count(), 1, "{data}\n{out}");
+        assert_eq!(written(&t, "a/index.html"), None);
+    }
+}
+
+#[test]
+fn a_data_file_that_changes_another_while_template_data_loads_is_refused() {
+    if !has_node() {
+        return;
+    }
+    // 11ty 3.1.8 prints `[1,3,2]`: it loads a template's directory data
+    // before the global data, and then the order is its own.
+    for f in [
+        "module.exports = { list: [1] };",
+        "module.exports = { list: [1], f() { return \"f\"; } };",
+    ] {
+        let (o, t) = same_every_run(
+            &[
+                ("brrrty.config.rhai", ON),
+                ("src/_data/a.js", f),
+                (
+                    "src/_data/b.js",
+                    "require(\"./a\").list.push(2); module.exports = { b: 1 };",
+                ),
+                (
+                    "src/sub/sub.11tydata.js",
+                    "require(\"../_data/a\").list.push(3); module.exports = { t: 1 };",
+                ),
+                ("src/sub/p1.njk", "{{ a.list | dump | safe }}"),
+                ("src/p2.njk", "{{ a.list | dump | safe }}"),
+            ],
+            2,
+        );
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+        let out = text(&o);
+        assert!(
+            out.contains(
+                "src/_data/a.js gave changed while template and directory data files loaded"
+            ),
+            "{out}"
+        );
+        assert_eq!(written(&t, "p2/index.html"), None);
+    }
+}
+
+#[test]
+fn a_value_saved_from_the_first_call_that_read_the_clock_builds_every_time() {
+    if !has_node() {
+        return;
+    }
+    let mut files = vec![
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "const c = require(\"crypto\");\nlet t; let id;\nmodule.exports = { when() { if (!t) t = new Date(); return t.toISOString(); }, id() { id ??= c.randomUUID(); return id; } };\n",
+        ),
+    ];
+    let pages: Vec<(String, String)> = (0..6)
+        .map(|i| {
+            (
+                format!("src/p{i}.njk"),
+                "{{ h.when() }} {{ h.id() }}".to_string(),
+            )
+        })
+        .collect();
+    files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
+    let t = site(&files);
+    for _ in 0..6 {
+        let _ = fs::remove_dir_all(t.path().join("_site"));
+        let o = build(t.path(), &[], &[]);
+        assert!(o.status.success(), "{}", text(&o));
+        let pages: Vec<String> = (0..6)
+            .map(|i| written(&t, &format!("p{i}/index.html")).unwrap())
+            .collect();
+        assert!(pages.iter().all(|p| *p == pages[0]), "{pages:?}");
+    }
+}
+
+#[test]
+fn pure_functions_on_pages_paginated_over_a_collection_build() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        ("src/_data/h.js".into(), "module.exports = { up(s) { return String(s).toUpperCase(); } };".into()),
+        ("src/_data/eleventyComputed.js".into(), "module.exports = { shout: (d) => (d.title || \"\") + \"!\" };".into()),
+        ("src/posts/posts.json".into(), "{\"tags\":[\"posts\"],\"layout\":\"post.njk\"}".into()),
+        ("src/_includes/post.njk".into(), "{{ h.up(title) }}{{ content | safe }}".into()),
+        ("src/_includes/base.njk".into(), "<html>{{ h.up(\"x\") }}{{ content | safe }}</html>".into()),
+        (
+            "src/list.njk".into(),
+            "---\npagination:\n  data: collections.posts\n  size: 10\nlayout: base.njk\npermalink: \"/list/{{ pagination.pageNumber }}/\"\n---\n{% for p in pagination.items %}{{ h.up(p.data.title) }}{{ p.templateContent | safe }}{% endfor %}".into(),
+        ),
+    ];
+    for i in 0..60 {
+        files.push((
+            format!("src/posts/p{i}.njk"),
+            format!("---\ntitle: post {i}\n---\n{{{{ shout }}}}"),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (o, t) = same_every_run(&refs, 3);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(written(&t, "list/2/index.html").unwrap().contains("POST"));
 }

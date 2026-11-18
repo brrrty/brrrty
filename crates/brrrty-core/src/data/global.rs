@@ -118,6 +118,8 @@ pub(crate) fn load_global(
     let mut seen: Vec<Vec<String>> = Vec::new();
     // JavaScript files a `.rhai` port stands in for: compared after the loop.
     let mut ported_files: Vec<(PathBuf, PathBuf, Vec<String>)> = Vec::new();
+    // Each JavaScript file that gave a value: (file, key path, shown).
+    let mut js_loaded: Vec<(PathBuf, Vec<String>, PathBuf)> = Vec::new();
     for file in files {
         let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
         let path = key_path(&file);
@@ -144,6 +146,11 @@ pub(crate) fn load_global(
                 }
                 match js.load(&file, &shown, true) {
                     JsLoad::Value(d) => {
+                        js_loaded.push((
+                            file.canonicalize().unwrap_or_else(|_| file.clone()),
+                            path.clone(),
+                            shown.clone(),
+                        ));
                         if let Some((at, what)) = first_unusable(&d) {
                             out.js_values.push(JsValueRef {
                                 key_path: path.clone(),
@@ -214,6 +221,39 @@ pub(crate) fn load_global(
                 out.unavailable.insert(root_key);
             }
         }
+    }
+
+    // 11ty's pages get the global data once every file has loaded: a value
+    // one file changed in another (`require("./a").list.push(2)`) is seen
+    // as it is now.
+    for (full, d) in js.loads_changed() {
+        let full = full.canonicalize().unwrap_or(full);
+        let Some((_, path, shown)) = js_loaded.iter().find(|(f, _, _)| *f == full) else {
+            continue;
+        };
+        let root_key = path[0].clone();
+        if seen.iter().filter(|p| *p == path).count() > 1 {
+            out.js_values.push(JsValueRef {
+                key_path: path.clone(),
+                file: shown.clone(),
+                at: Vec::new(),
+                what:
+                    "a value another data file changed, merged with another file of the same name"
+                        .into(),
+            });
+            out.unavailable.insert(root_key);
+            continue;
+        }
+        if let Some((at, what)) = first_unusable(&d) {
+            out.js_values.push(JsValueRef {
+                key_path: path.clone(),
+                file: shown.clone(),
+                at,
+                what,
+            });
+            out.unavailable.insert(root_key.clone());
+        }
+        let _ = set_path(&mut data, path, d.value);
     }
 
     for (file, shown, path) in ported_files {
