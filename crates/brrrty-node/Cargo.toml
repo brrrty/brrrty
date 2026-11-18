@@ -1,0 +1,21 @@
+[package]
+name = "brrrty-node"
+version = "0.0.21"
+description = "Runs an Eleventy site's JavaScript data files in the site's own Node, for Brrrty, an Eleventy-compatible static site generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["static-site", "ssg", "eleventy", "11ty", "site-generator"]
+categories = ["command-line-utilities", "web-programming"]
+readme = false
+
+[dependencies]
+brrrty-js = { path = "../brrrty-js", version = "0.0.21" }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
+indexmap = "2"
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

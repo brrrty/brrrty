@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New crate `brrrty-node`: runs a site's JavaScript data files in the site's own Node. Its value encoding carries plain objects (in JavaScript key order), arrays, strings, numbers (`-0`, `NaN` and infinities included), `null`, `undefined` and `Date`s exactly, keeps functions as handles, and refuses everything else (a `Map`, a class instance such as a luxon `DateTime`, a `BigInt`, an invalid `Date`, a circular reference, a getter that changes between reads) naming the value's path.
 - For contributors: `cargo xtask fixtures-refresh --docker <name>` builds a fixture's reference output with 11ty 3.1.8 inside Docker, once per `--image` (`node:22` and `node:24` by default), with no network, and keeps it only when every image gives the same bytes.
 
 ## 0.0.21 - 2026-11-18
