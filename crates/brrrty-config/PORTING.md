@@ -685,6 +685,25 @@ The plugin's filters for every template language work in Liquid too:
 `absoluteUrl`, `htmlToAbsoluteUrls`) are Nunjucks-only in 11ty, so a
 Liquid template can't use them there either.
 
+A site that writes its own feed template adds the plugin's default export,
+which brings the filters and no feed. That is `feed: false`:
+
+```js
+const pluginRss = require("@11ty/eleventy-plugin-rss");
+eleventyConfig.addPlugin(pluginRss);
+```
+
+```rhai
+config.add_plugin("rss", #{ feed: false });
+```
+
+It takes no other options yet: `htmlBasePluginOptions` and
+`posthtmlRenderOptions` are refused. The filters are version 3's
+(`@11ty/eleventy-plugin-rss` 3.0.0 to 3.1.0 have the same ones);
+version 2's `dateToRfc822` writes the time zone another way (`CST` for
+`-0600`), so `brrrty init` ports the call only for a site that installs
+version 3.
+
 ## Regular expressions
 
 `regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`

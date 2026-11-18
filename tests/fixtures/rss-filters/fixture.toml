@@ -1,0 +1,12 @@
+# No `input`: the folders come from brrrty.config.rhai, as 11ty's come from
+# eleventy.config.js (ESM), which adds @11ty/eleventy-plugin-rss's default export:
+# its filters, and no feed. The site writes its own feed templates.
+# 2026-01-01T12:00:00Z, in a zone with daylight saving time, as RSS dates
+# print in the local zone.
+source_date_epoch = 1767268800
+tz = "America/Chicago"
+
+# `htmlToAbsoluteUrls` is an async Nunjucks filter, which Brrrty doesn't run
+# yet: the page is refused.
+[refused]
+"src/absolute.njk" = "absolute.html"

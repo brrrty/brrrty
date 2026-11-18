@@ -593,3 +593,45 @@ fn a_highlight_tag_with_a_variable_language_counts_as_any_language() {
         errs[0].message
     );
 }
+
+/// `addPlugin(pluginRss)`, the plugin's default export, adds its filters
+/// and no feed: `#{ feed: false }`.
+#[test]
+fn the_rss_filters_come_without_a_feed() {
+    let (t, r) = site(
+        r#"config.add_plugin("rss", #{ feed: false });"#,
+        &posts(&[
+            (
+                "feed.njk",
+                "---\npermalink: feed.xml\n---\n{{ collections.posts | getNewestCollectionItemDate | dateToRfc3339 }} {{ '/a/' | absoluteUrl('https://example.com/') }} {{ '/b/' | htmlBaseUrl('https://example.com/') }}",
+            ),
+            (
+                "a.liquid",
+                "{{ '/x/' | htmlBaseUrl: 'https://example.com/s/' }}",
+            ),
+        ]),
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "feed.xml").unwrap(),
+        "2024-01-02T00:00:00Z https://example.com/a/ https://example.com/b/"
+    );
+    assert_eq!(out(&t, "a/index.html").unwrap(), "https://example.com/x/");
+    // No feed of its own: the two posts and the two pages.
+    assert_eq!(r.written, 4);
+}
+
+#[test]
+fn the_rss_filters_take_no_feed_options() {
+    for (options, part) in [
+        ("#{ feed: true }", "`feed` can only be `false`"),
+        (
+            "#{ feed: false, collection: #{ name: \"p\" } }",
+            "takes no other options",
+        ),
+    ] {
+        let p = feed_err(options);
+        assert_eq!(p.code, codes::CONFIG_INVALID, "{options}");
+        assert!(p.message.contains(part), "{options}: {}", p.message);
+    }
+}

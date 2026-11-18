@@ -1,0 +1,18 @@
+---
+permalink: /rss.xml
+eleventyExcludeFromCollections: true
+---
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <lastBuildDate>{{ collections.post | getNewestCollectionItemDate | dateToRfc822 }}</lastBuildDate>
+    {%- for post in collections.post %}
+    <item>
+      <title>{{ post.data.title }}</title>
+      <link>{{ post.url | absoluteUrl("https://example.com") }}</link>
+      <pubDate>{{ post.date | dateToRfc822 }}</pubDate>
+    </item>
+    {%- endfor %}
+    <empty>{{ [] | getNewestCollectionItemDate }}</empty>
+  </channel>
+</rss>

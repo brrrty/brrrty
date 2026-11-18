@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `config.add_plugin("rss", #{ feed: false })` adds the RSS plugin's filters without a feed: `dateToRfc3339`, `dateToRfc822`, `getNewestCollectionItemDate`, `absoluteUrl` and `htmlToAbsoluteUrls` in Nunjucks, and `htmlBaseUrl`, `addPathPrefixToFullUrl` and the `eleventyFeed*` filters everywhere. It is 11ty's `addPlugin(pluginRss)`, the plugin's default export, for a site with a feed template of its own. Before, the filters came only with a feed.
+
 ## 0.0.20 - 2026-11-18
 
 - Brrrty formats locale dates (Liquid's `%c`, `%x` and `%X`, which use `toLocaleString()`) for en-US. Two things now get a TODO in front of the 11ty command, since init didn't carry them and carrying the locale wouldn't help:

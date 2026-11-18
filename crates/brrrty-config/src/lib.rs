@@ -195,6 +195,8 @@ pub struct SiteConfig {
     pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
+    /// `add_plugin("rss", #{ feed: false })`: the RSS plugin's filters without a feed.
+    pub rss_filters: bool,
     /// Renderer rules `amend_library("md", ...)` set on 11ty's library.
     pub markdown_rules: Option<brrrty_core::MarkdownRules>,
     /// What the script read from the project, and its filters and collections read later.
@@ -221,6 +223,7 @@ impl SiteConfig {
             syntax_highlight: self.syntax_highlight.clone(),
             markdown_rules: self.markdown_rules.clone(),
             feeds: self.feeds.clone(),
+            rss_filters: self.rss_filters,
             template_engines: self.template_engines,
             reads: self.reads.clone(),
             late_problems: self.late_problems.clone(),
@@ -419,6 +422,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         syntax_highlight: state.syntax_highlight,
         markdown_rules,
         feeds: state.feeds,
+        rss_filters: state.rss_filters,
         reads,
         late_problems,
         unported: None,

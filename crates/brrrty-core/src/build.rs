@@ -1912,7 +1912,8 @@ fn build_once(
     }
     // 11ty runs a config's plugins after the config, so a plugin's filters
     // win over the config's own of the same name.
-    if !opts.config.feeds.is_empty() {
+    let rss = opts.config.rss_filters || !opts.config.feeds.is_empty();
+    if rss {
         for (name, f) in crate::plugins::rss::universal_filters() {
             engine.register_args_filter(name, f);
         }
@@ -1923,11 +1924,7 @@ fn build_once(
         timezone: Tz::Local,
         autoescape: true,
     });
-    crate::filters::register_nunjucks_filters(
-        &mut nunjucks,
-        &opts.config.filters,
-        !opts.config.feeds.is_empty(),
-    );
+    crate::filters::register_nunjucks_filters(&mut nunjucks, &opts.config.filters, rss);
     let includes = input.join("_includes");
     let includes = includes.canonicalize().unwrap_or(includes);
     let loader = FsLoader::new(

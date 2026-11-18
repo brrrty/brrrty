@@ -74,6 +74,8 @@ pub struct State {
     pub syntax_highlight: Option<brrrty_core::plugins::syntaxhighlight::SyntaxHighlight>,
     /// `add_plugin("rss", ...)` feeds, in order.
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
+    /// `add_plugin("rss", #{ feed: false })`: the plugin's filters, without a feed.
+    pub rss_filters: bool,
     /// 11ty's markdown-it, once `amend_library("md", ...)` has been called.
     pub markdown_lib: Option<crate::markdown_rules::MdLib>,
     /// Where a `config` call made once the script has run (from a filter, a collection or a
@@ -607,6 +609,24 @@ fn add_plugin(
         // `@11ty/eleventy-plugin-rss`'s `feedPlugin`: one feed per call.
         "rss" => {
             let options = options.unwrap_or_default();
+            // `addPlugin(pluginRss)`, the plugin's default export: its
+            // filters (and the HTML <base> plugin's), and no feed.
+            if let Some(feed) = options.get("feed") {
+                if feed.as_bool().ok() != Some(false) {
+                    return Err(invalid(
+                        "add_plugin(\"rss\", ...): `feed` can only be `false`, which adds the plugin's filters without a feed; leave it out to add a feed".to_string(),
+                        pos,
+                    ));
+                }
+                if options.len() > 1 {
+                    return Err(invalid(
+                        "add_plugin(\"rss\", #{ feed: false }) takes no other options; Brrrty doesn't support `htmlBasePluginOptions` or `posthtmlRenderOptions` yet, and a feed's options go in a call of its own".to_string(),
+                        pos,
+                    ));
+                }
+                state.rss_filters = true;
+                return Ok(());
+            }
             let value = to_value(&Dynamic::from_map(options))
                 .map_err(|why| invalid(format!("add_plugin(\"rss\", ...): {why}"), pos))?;
             let feed = crate::plugins::feed(&value).map_err(|why| invalid(why, pos))?;

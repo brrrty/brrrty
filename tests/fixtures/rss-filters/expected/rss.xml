@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <lastBuildDate>Thu, 04 Jul 2024 18:30:00 -0500</lastBuildDate>
+    <item>
+      <title>Winter</title>
+      <link>https://example.com/posts/2024-01-15-winter/</link>
+      <pubDate>Sun, 14 Jan 2024 18:00:00 -0600</pubDate>
+    </item>
+    <item>
+      <title>The night the clocks change</title>
+      <link>https://example.com/posts/2024-03-10-change/</link>
+      <pubDate>Sun, 10 Mar 2024 03:30:00 -0500</pubDate>
+    </item>
+    <item>
+      <title>Summer</title>
+      <link>https://example.com/posts/2024-07-04-summer/</link>
+      <pubDate>Thu, 04 Jul 2024 18:30:00 -0500</pubDate>
+    </item>
+    <empty>Thu Jan 01 2026 06:00:00 GMT-0600 (Central Standard Time)</empty>
+  </channel>
+</rss>

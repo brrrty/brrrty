@@ -1,0 +1,6 @@
+---
+permalink: /links.txt
+---
+{{ "/x/" | htmlBaseUrl: "https://example.com/sub/" }}
+{{ "https://example.com" | addPathPrefixToFullUrl }}
+{% assign two = collections.post | eleventyFeedSortByDate: "descending" | eleventyFeedHead: 2 %}{% for p in two %}{{ p.url }} {% endfor %}

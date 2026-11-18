@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <updated>2024-07-04T23:30:00Z</updated>
+  <link href="https://example.com/feed.xml" rel="self"/>
+  <entry>
+    <title>Summer</title>
+    <link href="https://example.com/posts/2024-07-04-summer/"/>
+    <updated>2024-07-04T23:30:00Z</updated>
+    <content type="html">&lt;p&gt;Some &lt;a href=&quot;/x/y/&quot;&gt;HTML&lt;/a&gt; and &lt;img src=&quot;z.png&quot; srcset=&quot;z.png 1x, /z@2.png 2x&quot;&gt;&lt;/p&gt;
+</content>
+  </entry>
+  <entry>
+    <title>The night the clocks change</title>
+    <link href="https://example.com/posts/2024-03-10-change/"/>
+    <updated>2024-03-10T08:30:00Z</updated>
+    <content type="html">&lt;p&gt;Text &amp;amp; &amp;quot;quotes&amp;quot;.&lt;/p&gt;
+</content>
+  </entry>
+  <entry>
+    <title>Winter</title>
+    <link href="https://example.com/posts/2024-01-15-winter/"/>
+    <updated>2024-01-15T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;A &lt;a href=&quot;next/&quot;&gt;relative link&lt;/a&gt;, a &lt;a href=&quot;/about/&quot;&gt;rooted one&lt;/a&gt;, an &lt;a href=&quot;#top&quot;&gt;anchor&lt;/a&gt;,
+&lt;a href=&quot;../other/&quot;&gt;up&lt;/a&gt;, &lt;img src=&quot;/img/a.png&quot; alt=&quot;a picture&quot; title=&quot;pic&quot;&gt; and &lt;a href=&quot;https://example.org/x?y=1&amp;amp;z=2&quot;&gt;full&lt;/a&gt;.&lt;/p&gt;
+</content>
+  </entry>
+</feed>

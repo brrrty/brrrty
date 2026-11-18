@@ -79,6 +79,9 @@ pub struct ConfigOptions {
     /// The feeds `feedPlugin` (`@11ty/eleventy-plugin-rss`) adds, in the
     /// order they were added: each is a virtual template.
     pub feeds: Vec<crate::plugins::rss::FeedOptions>,
+    /// The RSS plugin's filters without a feed (its default export,
+    /// `rssPlugin`). A feed adds them too.
+    pub rss_filters: bool,
     /// `markdownTemplateEngine` and `htmlTemplateEngine`.
     pub template_engines: TemplateEngines,
     /// What the config's and the data files' scripts read from the project folder.

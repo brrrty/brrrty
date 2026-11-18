@@ -1,0 +1,20 @@
+---
+permalink: /feed.xml
+eleventyExcludeFromCollections: true
+metadata:
+  base: "https://example.com/blog/"
+---
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <updated>{{ collections.post | getNewestCollectionItemDate | dateToRfc3339 }}</updated>
+  <link href="{{ permalink | htmlBaseUrl(metadata.base) }}" rel="self"/>
+  {%- for post in collections.post | reverse %}
+  {%- set absolutePostUrl = post.url | absoluteUrl(metadata.base) %}
+  <entry>
+    <title>{{ post.data.title }}</title>
+    <link href="{{ absolutePostUrl }}"/>
+    <updated>{{ post.date | dateToRfc3339 }}</updated>
+    <content type="html">{{ post.templateContent }}</content>
+  </entry>
+  {%- endfor %}
+</feed>
