@@ -188,7 +188,7 @@ impl Worker {
             return JsResult::Failed(self.fail(&format!("the worker refused a request: {p}")));
         }
         if let Some(t) = reply.get("thrown") {
-            return JsResult::Thrown(js_error(t));
+            return JsResult::Thrown(js_error(t, &self.root));
         }
         match reply.get("ok") {
             Some(v) => JsResult::Ok(v.clone()),
@@ -415,15 +415,21 @@ fn drain_stderr(stderr: impl Read, tail: Arc<Mutex<VecDeque<String>>>) {
     }
 }
 
-fn js_error(t: &Json) -> JsError {
+/// The site's error, placed: a SyntaxError at the header Node prints for
+/// it, anything else at the first stack frame inside the project and
+/// outside `node_modules`.
+fn js_error(t: &Json, root: &Path) -> JsError {
     let s = |k: &str| t.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    let stack = s("stack");
+    let place = crate::stack::syntax_header(&s("inspect"))
+        .or_else(|| crate::stack::pick(&crate::stack::frames(&stack), root));
     JsError {
         name: s("name"),
         message: s("message"),
-        stack: s("stack"),
-        file: None,
-        line: None,
-        column: None,
+        file: place.as_ref().map(|p| p.file.clone()),
+        line: place.as_ref().map(|p| p.line),
+        column: place.and_then(|p| p.column),
+        stack,
     }
 }
 

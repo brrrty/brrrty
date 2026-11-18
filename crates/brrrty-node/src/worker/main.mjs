@@ -16,6 +16,7 @@ import path from "node:path";
 import util from "node:util";
 import nodeModule, { createRequire } from "node:module";
 import readline from "node:readline";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // --- Frames, written before anything else can touch stdout. ---
@@ -216,11 +217,27 @@ function thrown(e) {
       name: String(e.name || "Error"),
       message: String(e.message ?? ""),
       stack: String(e.stack || ""),
-      inspect: util.inspect(e),
+      inspect: e.brrrtyPlace || util.inspect(e),
     };
   }
   const text = typeof e === "string" ? JSON.stringify(e) : util.inspect(e);
   return { name: "", message: `Uncaught ${text}`, stack: "", inspect: "" };
+}
+
+// An ES module's SyntaxError from import() carries no file or line (Node
+// prints them only for an uncaught one), so ask `node --check`, which does.
+function placeSyntaxError(e, file) {
+  if (!(e instanceof SyntaxError) || String(e.stack).includes(file)) return e;
+  try {
+    const r = spawnSync(process.execPath, ["--check", file], { encoding: "utf8", timeout: 10000 });
+    const header = String(r.stderr || "").split("\n")[0];
+    if (/^(file:\/\/|\/)\S*:\d+$/.test(header)) {
+      Object.defineProperty(e, "brrrtyPlace", { value: header, enumerable: false });
+    }
+  } catch {
+    // Keep the error as it is.
+  }
+  return e;
 }
 
 // --- The request loop. ---
@@ -234,7 +251,12 @@ async function handle(req) {
       return { ok: null };
     }
     case "load": {
-      const value = await getDataValue(req.path, req.call);
+      let value;
+      try {
+        value = await getDataValue(req.path, req.call);
+      } catch (e) {
+        throw placeSyntaxError(e, req.path);
+      }
       return { ok: encodeValue(value, register) };
     }
     case "call": {

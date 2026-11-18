@@ -341,3 +341,108 @@ fn a_local_data_file_that_is_not_an_object_is_skipped_with_a_warning() {
         "[]"
     );
 }
+
+/// The build's output for one global data file `src/_data/d.<ext>` that a
+/// page reads, plus `extra` files.
+fn failing(ext: &str, body: &str, extra: &[(&str, &str)]) -> String {
+    let name = format!("src/_data/d.{ext}");
+    let mut files = vec![
+        ("brrrty.config.rhai", ON),
+        (name.as_str(), body),
+        ("src/index.njk", "{{ d }}"),
+    ];
+    files.extend_from_slice(extra);
+    let t = site(&files);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    text(&o)
+}
+
+#[test]
+fn a_sync_throw_is_reported_at_its_line_and_column() {
+    if !has_node() {
+        return;
+    }
+    let out = failing(
+        "js",
+        "module.exports = () => {\n  const posts = undefined;\n  return posts.map((p) => p);\n};\n",
+        &[],
+    );
+    assert!(out.contains("js-data-error"), "{out}");
+    assert!(out.contains("[src/_data/d.js:3:16]"), "{out}");
+    assert!(
+        out.contains("TypeError: Cannot read properties of undefined (reading 'map')"),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_async_rejection_is_reported_at_its_line() {
+    if !has_node() {
+        return;
+    }
+    let out = failing(
+        "js",
+        "module.exports = async () => {\n  await null;\n  throw new RangeError(\"too far\");\n};\n",
+        &[],
+    );
+    assert!(out.contains("[src/_data/d.js:3:9]"), "{out}");
+    assert!(out.contains("RangeError: too far"), "{out}");
+}
+
+#[test]
+fn syntax_errors_are_reported_at_their_line() {
+    if !has_node() {
+        return;
+    }
+    let cjs = failing("js", "module.exports = {\n  a: 1,\n  b: ,\n};\n", &[]);
+    assert!(cjs.contains("[src/_data/d.js:3"), "{cjs}");
+    assert!(cjs.contains("SyntaxError"), "{cjs}");
+    let esm = failing("mjs", "export default {\n  a: 1\n  b: 2,\n};\n", &[]);
+    assert!(esm.contains("[src/_data/d.mjs:3"), "{esm}");
+    assert!(esm.contains("SyntaxError"), "{esm}");
+}
+
+#[test]
+fn an_error_in_a_required_helper_is_reported_there() {
+    if !has_node() {
+        return;
+    }
+    let out = failing(
+        "js",
+        "const h = require(\"../../lib/h.js\");\nmodule.exports = () => h.run();\n",
+        &[(
+            "lib/h.js",
+            "exports.run = function () {\n  return null.x;\n};\n",
+        )],
+    );
+    assert!(out.contains("[lib/h.js:2:15]"), "{out}");
+    assert!(out.contains("src/_data/d.js"), "{out}");
+}
+
+#[test]
+fn an_error_inside_a_package_is_reported_where_the_data_file_calls_it() {
+    if !has_node() {
+        return;
+    }
+    let out = failing(
+        "js",
+        "const t = require(\"thrower\");\nmodule.exports = () => {\n  return t();\n};\n",
+        &[(
+            "node_modules/thrower/index.js",
+            "module.exports = function () { throw new Error(\"inside\"); };\n",
+        )],
+    );
+    assert!(out.contains("[src/_data/d.js:3:10]"), "{out}");
+    assert!(out.contains("Error: inside"), "{out}");
+}
+
+#[test]
+fn a_thrown_non_error_is_reported_at_the_data_file() {
+    if !has_node() {
+        return;
+    }
+    let out = failing("js", "throw \"plain text\";\n", &[]);
+    assert!(out.contains("Uncaught \"plain text\""), "{out}");
+    assert!(out.contains("src/_data/d.js"), "{out}");
+}

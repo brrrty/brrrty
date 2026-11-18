@@ -150,16 +150,48 @@ fn worker_failed_with(why: &str, stderr: &[String]) -> Problem {
     p
 }
 
-/// The problem for a data file that threw.
-pub(crate) fn thrown_problem(e: &JsError, shown: &Path, _root: &Path) -> Problem {
-    let head = if e.name.is_empty() {
+/// The problem for a data file that threw, at the place the error names
+/// (relative to the project) when it has one, else at the data file.
+pub(crate) fn thrown_problem(e: &JsError, shown: &Path, root: &Path) -> Problem {
+    let mut head = if e.name.is_empty() {
         e.message.clone()
     } else {
         format!("{}: {}", e.name, e.message)
     };
-    Problem::error(codes::JS_DATA_ERROR, head)
-        .with_path(shown)
-        .with_help("11ty stops the whole build on this file. Fix the data file.")
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let place = e.file.as_ref().map(|f| {
+        let f = f.canonicalize().unwrap_or_else(|_| f.clone());
+        f.strip_prefix(&root).map(Path::to_path_buf).unwrap_or(f)
+    });
+    let p = match (&place, e.line) {
+        (Some(file), Some(line)) => {
+            if file != shown {
+                head.push_str(&format!(" (loading {})", shown.display()));
+            }
+            Problem::error(codes::JS_DATA_ERROR, head)
+                .with_path(file)
+                .at(line as usize, e.column.unwrap_or(1) as usize)
+        }
+        _ => Problem::error(codes::JS_DATA_ERROR, head).with_path(shown),
+    };
+    // Node's and the worker's own frames say nothing to the site's author;
+    // the rest do, with paths inside the project shown relative to it.
+    let prefix = format!("{}/", root.display());
+    let url_prefix = format!("file://{prefix}");
+    let frames: Vec<String> = e
+        .stack
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("at ") && !l.contains("node:") && !l.contains("[eval"))
+        .take(5)
+        .map(|l| l.replace(&url_prefix, "").replace(&prefix, ""))
+        .collect();
+    let mut help = String::from("11ty stops the whole build on this file. Fix the data file.");
+    if !frames.is_empty() {
+        help.push_str("\nStack:\n  ");
+        help.push_str(&frames.join("\n  "));
+    }
+    p.with_help(help)
 }
 
 /// The problem for a page that reads a key whose JavaScript value can't
