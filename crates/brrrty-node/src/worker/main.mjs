@@ -678,7 +678,10 @@ function quickSame(rec) {
         const now = x[keys[i]];
         if (now !== was && !(now !== now && was !== was)) return false;
       }
-      if (Object.keys(x).length !== rec[j + 4]) return false;
+      // The keys in their order: 11ty's templates list them in it.
+      const nowKeys = Object.keys(x);
+      if (nowKeys.length !== keys.length) return false;
+      for (let i = 0; i < keys.length; i++) if (nowKeys[i] !== keys[i]) return false;
     }
   }
   return true;

@@ -1505,3 +1505,31 @@ fn pure_functions_on_pages_paginated_over_a_collection_build() {
     assert!(o.status.success(), "{}", text(&o));
     assert!(written(&t, "list/2/index.html").unwrap().contains("POST"));
 }
+
+#[test]
+fn a_key_order_changed_and_restored_between_pages_is_refused() {
+    if !has_node() {
+        return;
+    }
+    // 11ty prints `ba` on b (a.njk's call moved `a` last); Brrrty's
+    // templates list the keys as they loaded.
+    let (o, t) = same_every_run(
+        &[
+            ("brrrty.config.rhai", ON),
+            (
+                "src/_data/h.js",
+                "const list=[{a:1,b:2}]; module.exports={list, f1(){ const o=list[0]; const v=o.a; delete o.a; o.a=v; return \"\"; }, f2(){ const o=list[0]; const v=o.b; delete o.b; o.b=v; return \"\"; }};",
+            ),
+            ("src/a.njk", "{{ h.f1() }}"),
+            (
+                "src/b.njk",
+                "{% for k, v in h.list[0] %}{{ k }}{% endfor %}",
+            ),
+            ("src/c.njk", "{{ h.f2() }}"),
+        ],
+        3,
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
+    assert_eq!(written(&t, "b/index.html"), None);
+}
