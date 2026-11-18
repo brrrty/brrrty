@@ -39,6 +39,8 @@ pub(crate) struct Log<'a> {
     pub clock: &'a Json,
     pub load_handles: u64,
     pub calls: &'a [Record],
+    /// The longest any request took the first time.
+    pub slowest: std::time::Duration,
 }
 
 pub(crate) enum Failure {
@@ -133,9 +135,23 @@ impl Log<'_> {
         let mut w = Worker::start(self.node, self.root, self.run_mode)
             .map_err(|e| Self::runtime(format!("the replay check couldn't start Node: {e}")))?;
         w.keep_raw.store(true, std::sync::atomic::Ordering::SeqCst);
+        // A request may take a while again, but not without end: the
+        // first run finished.
+        w.deadline = Some((self.slowest * 4).max(std::time::Duration::from_secs(10)));
         let send = |w: &mut Worker, req: Json| {
-            w.exchange(req, "the replay check")
-                .map_err(Failure::Runtime)
+            w.exchange(req, "a request of the replay check").map_err(|f| {
+                if f.message.contains("longer than the first run allows") {
+                    Failure::Differs(
+                        format!(
+                            "the replay check ran the JavaScript data again, and {}: the data or a function behaves differently when it runs again, so Brrrty can't check the pages' calls",
+                            f.message
+                        ),
+                        None,
+                    )
+                } else {
+                    Failure::Runtime(f)
+                }
+            })
         };
         send(&mut w, json!({"op": "feedClock", "values": self.clock}))?;
         for req in self.loads {
@@ -179,15 +195,25 @@ impl Log<'_> {
             let u = pending.remove(pos);
             for &i in &units[u].records {
                 let r = &self.calls[i];
-                let req = st.rewrite(&r.req, true);
+                let mut req = st.rewrite(&r.req, true);
+                // The clock and random values the call read the first time.
+                if let Some(clock) = r.head.get("clock") {
+                    req["feed"] = clock.clone();
+                }
                 let got = send(&mut w, req)?;
+                // The clock values a call read only feed the replay: a call
+                // may read the clock more or less often in another order
+                // (a cache warmed or not), which matters only when its
+                // result shows it.
                 let mut head = got.head.clone();
                 if let Some(o) = head.as_object_mut() {
                     o.remove("id");
+                    o.remove("clock");
                 }
                 let mut want = r.head.clone();
                 if let Some(o) = want.as_object_mut() {
                     o.remove("id");
+                    o.remove("clock");
                 }
                 // A page's number is the worker's own count: it is matched
                 // up, not compared.
@@ -246,16 +272,35 @@ fn difference(r: &Record, head: &Json, raw: Option<&Json>) -> String {
         Some("pageCall" | "pageVars") => "{fn}, a computed or permalink function,",
         _ => "a function from JavaScript data",
     };
-    let place = if r.label.is_empty() {
-        String::new()
-    } else {
-        format!(" (in {})", r.label)
+    let place = match where_(&r.label) {
+        Some(w) => format!(" ({w})"),
+        None => String::new(),
     };
     format!(
         "{what}{place} gives a different result when the pages' calls come in another order ({} the first time, {} the second), so it keeps state between calls and its results follow the order pages are built in, which differs between 11ty and Brrrty",
         shown(&r.head, r.raw.as_ref()),
         shown(head, raw)
     )
+}
+
+/// A render's name as a message shows it: "in the content of src/a.njk".
+fn where_(label: &str) -> Option<String> {
+    let (kind, rest) = label.split_once(' ')?;
+    let page = |rest: &str| match rest.rsplit_once(' ') {
+        Some((file, n)) if n.parse::<usize>().is_ok() => format!("page {n} of {file}"),
+        _ => rest.to_string(),
+    };
+    Some(match kind {
+        "1" => format!("computing the data of {}", rest.strip_prefix("load ")?),
+        "2" => format!("placing {}", page(rest.strip_prefix("place ")?)),
+        "3" => format!(
+            "computing the data of {}",
+            page(rest.strip_prefix("page ")?)
+        ),
+        "5" => format!("in the content of {}", rest.strip_prefix("content ")?),
+        "6" => format!("in the layouts of {}", rest.strip_prefix("layout ")?),
+        _ => return None,
+    })
 }
 
 struct State {

@@ -135,6 +135,11 @@ pub struct Worker {
     clock: Json,
     /// How many function handles the data files' values made.
     load_handles: u64,
+    /// The longest a request took.
+    slowest: Duration,
+    /// How long a request may take before the worker is given up on (the
+    /// replay check's workers only).
+    pub(crate) deadline: Option<Duration>,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
@@ -195,6 +200,8 @@ impl Worker {
             calls_begun: false,
             clock: Json::Array(Vec::new()),
             load_handles: 0,
+            slowest: Duration::ZERO,
+            deadline: None,
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -281,6 +288,14 @@ impl Worker {
                 Ok(r) => break r,
                 Err(RecvTimeoutError::Timeout) => {
                     let now = Instant::now();
+                    if let Some(d) = self.deadline
+                        && now.duration_since(start) > d
+                    {
+                        break Err(format!(
+                            "{what} took more than {} s, longer than the first run allows",
+                            d.as_secs()
+                        ));
+                    }
                     if now >= next_note {
                         (self.notes)(&format!(
                             "note: still waiting on {what}, {} s",
@@ -305,6 +320,7 @@ impl Worker {
                 }
             }
         };
+        self.slowest = self.slowest.max(start.elapsed());
         let frame = match reply {
             Ok(r) => r,
             Err(why) => return Err(self.fail(&why)),
@@ -580,6 +596,7 @@ impl JsRuntime for Worker {
             clock: &self.clock,
             load_handles: self.load_handles,
             calls: &self.call_log,
+            slowest: self.slowest,
         };
         match log.check() {
             Ok(()) => JsResult::Ok(()),

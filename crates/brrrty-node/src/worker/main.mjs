@@ -21,6 +21,7 @@ import nodeModule, { createRequire } from "node:module";
 import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 import inspector from "node:inspector";
+import nodeCrypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // --- Frames, written before anything else can touch stdout. ---
@@ -285,51 +286,286 @@ function dropPersistent() {
   keptObjects = new WeakSet();
 }
 
-// --- The clock and random numbers. ---
+// --- The clock, timers and random numbers. ---
 //
-// While data files load, `Date.now()`, `new Date()`, `Date()` and
-// `Math.random()` give what they always give, and each value is recorded,
-// so a second worker checking the build (see `replay` in the client) can be
-// handed the same ones. During a call from a page they mark the call: its
-// result would be the moment or the luck of that call, so it is refused,
-// every time, rather than only when two runs happen to differ.
+// `Date.now()`, `new Date()`, `Date()`, `Intl.DateTimeFormat`'s `format()`
+// with no date, `performance.now()`, `process.hrtime()`, `process.uptime()`
+// and the random sources of `Math` and `crypto` give what they always give,
+// as under 11ty, and each value is recorded: while the data files load,
+// for the whole load; during a page's call, for that call (sent back with
+// its reply). The replay check (see `replay` in the client) hands each
+// replayed load and call the same values, so the check only sees what the
+// order of calls changes. A value read in a `vm` context isn't seen.
 
 const OriginalDate = Date;
 const originalNow = Date.now;
 const originalRandom = Math.random;
 let clockPhase = "load"; // "load" | "calls"
 const clockRecord = [];
+let callClock = [];
 let clockFeed = null;
-let clockInCall = null;
 
-function clockValue(kind, real) {
-  if (clockPhase === "calls") {
-    if (clockInCall === null) clockInCall = kind;
-    return real();
+// One read of an ambient source: `real()` gives it, `toJson`/`fromJson`
+// carry it in the record.
+function ambient(real, toJson = (v) => v, fromJson = (v) => v) {
+  const record = clockPhase === "calls" ? callClock : clockRecord;
+  if (clockFeed !== null && clockFeed.length) {
+    const fed = clockFeed.shift();
+    record.push(fed);
+    return fromJson(fed);
   }
-  if (clockFeed !== null && clockFeed.length) return clockFeed.shift();
   const v = real();
-  clockRecord.push(v);
+  record.push(toJson(v));
   return v;
 }
 
+const nowMs = () => ambient(() => originalNow.call(OriginalDate));
+
+// Replace a function property, whatever kind of property it is; one that
+// can't be replaced stays as it is.
+function setFn(obj, name, fn) {
+  try {
+    const d = Object.getOwnPropertyDescriptor(obj, name);
+    Object.defineProperty(obj, name, {
+      value: fn,
+      writable: true,
+      configurable: true,
+      enumerable: d ? d.enumerable : false,
+    });
+  } catch {
+    // Left as it is.
+  }
+}
+
 function PatchedDate(...args) {
-  const now = () => clockValue("the current time", () => originalNow.call(OriginalDate));
-  if (!new.target) return new OriginalDate(now()).toString();
-  return Reflect.construct(OriginalDate, args.length ? args : [now()], new.target);
+  if (!new.target) return new OriginalDate(nowMs()).toString();
+  return Reflect.construct(OriginalDate, args.length ? args : [nowMs()], new.target);
 }
 Object.setPrototypeOf(PatchedDate, OriginalDate);
 Object.defineProperty(PatchedDate, "prototype", { value: OriginalDate.prototype, writable: false });
 Object.defineProperty(PatchedDate, "name", { value: "Date" });
 Object.defineProperty(PatchedDate, "length", { value: 7 });
 PatchedDate.now = function now() {
-  return clockValue("the current time", () => originalNow.call(OriginalDate));
+  return nowMs();
 };
 Object.defineProperty(OriginalDate.prototype, "constructor", { value: PatchedDate, writable: true, configurable: true, enumerable: false });
 globalThis.Date = PatchedDate;
 Math.random = function random() {
-  return clockValue("a random number", () => originalRandom.call(Math));
+  return ambient(() => originalRandom.call(Math));
 };
+
+// `Intl.DateTimeFormat`: with no date, `format` and `formatToParts` read
+// the clock themselves.
+{
+  const proto = Intl.DateTimeFormat.prototype;
+  const formatGetter = Object.getOwnPropertyDescriptor(proto, "format").get;
+  Object.defineProperty(proto, "format", {
+    configurable: true,
+    enumerable: false,
+    get() {
+      const bound = formatGetter.call(this);
+      return (date) => bound(date === undefined ? nowMs() : date);
+    },
+  });
+  const toParts = proto.formatToParts;
+  proto.formatToParts = function formatToParts(date) {
+    return toParts.call(this, date === undefined ? nowMs() : date);
+  };
+}
+
+{
+  const perf = globalThis.performance;
+  const perfNow = perf.now.bind(perf);
+  setFn(perf, "now", function now() {
+    return ambient(perfNow);
+  });
+  const hrtime = process.hrtime;
+  const hrBig = process.hrtime.bigint;
+  const patched = function hrtime(prev) {
+    const t = ambient(() => hrtime());
+    if (!prev) return t;
+    let s = t[0] - prev[0];
+    let ns = t[1] - prev[1];
+    if (ns < 0) {
+      s -= 1;
+      ns += 1e9;
+    }
+    return [s, ns];
+  };
+  patched.bigint = function bigint() {
+    return ambient(() => hrBig(), (v) => String(v), (v) => BigInt(v));
+  };
+  process.hrtime = patched;
+  const uptime = process.uptime;
+  process.uptime = function () {
+    return ambient(() => uptime());
+  };
+}
+
+{
+  const hex = (b) => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("hex");
+  const fill = (target, h) => {
+    Buffer.from(h, "hex").copy(Buffer.from(target.buffer, target.byteOffset, target.byteLength));
+    return target;
+  };
+  const rb = nodeCrypto.randomBytes;
+  setFn(nodeCrypto, "randomBytes", function randomBytes(size, cb) {
+    const bytes = ambient(() => rb(size), hex, (h) => Buffer.from(h, "hex"));
+    if (typeof cb === "function") {
+      setImmediate(() => cb(null, bytes));
+      return undefined;
+    }
+    return bytes;
+  });
+  const uuid = nodeCrypto.randomUUID;
+  setFn(nodeCrypto, "randomUUID", function randomUUID(options) {
+    return ambient(() => uuid(options));
+  });
+  const rint = nodeCrypto.randomInt;
+  setFn(nodeCrypto, "randomInt", function randomInt(...args) {
+    const cb = typeof args[args.length - 1] === "function" ? args.pop() : null;
+    const n = ambient(() => rint(...args));
+    if (cb) {
+      setImmediate(() => cb(null, n));
+      return undefined;
+    }
+    return n;
+  });
+  const rfs = nodeCrypto.randomFillSync;
+  setFn(nodeCrypto, "randomFillSync", function randomFillSync(buf, offset = 0, size) {
+    const view = ArrayBuffer.isView(buf) ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) : new Uint8Array(buf);
+    const n = size ?? view.byteLength - offset;
+    const part = view.subarray(offset, offset + n);
+    ambient(() => rfs(part), hex, (h) => fill(part, h));
+    return buf;
+  });
+  const grv = nodeCrypto.getRandomValues;
+  setFn(nodeCrypto, "getRandomValues", function getRandomValues(arr) {
+    return ambient(() => grv.call(nodeCrypto.webcrypto, arr), hex, (h) => fill(arr, h));
+  });
+  const web = globalThis.crypto;
+  if (web) {
+    const wgrv = web.getRandomValues.bind(web);
+    const wuuid = web.randomUUID.bind(web);
+    setFn(web, "getRandomValues", function getRandomValues(arr) {
+      return ambient(() => wgrv(arr), hex, (h) => fill(arr, h));
+    });
+    setFn(web, "randomUUID", function randomUUID() {
+      return ambient(() => wuuid());
+    });
+  }
+  nodeModule.syncBuiltinESMExports();
+}
+
+// --- What a page's calls may not change. ---
+//
+// 11ty hands templates a data file's lists (and the objects in them) as
+// they are, so a function that changes one, through a variable it keeps
+// (`all.sort()`, `styles.push(name)`), changes what later templates show.
+// Brrrty's templates read the data as it was when it loaded. So every value
+// a data file gave is walked once the files are loaded and again after
+// every call; a change stops the build.
+
+// Every value a data file gave, with the file.
+const loadedRoots = new Map();
+let rootSnapshots = null;
+let replaying = false;
+
+// A value's state as a flat list, walked depth first: each object or list
+// itself (its identity), then its length or key count, and each key and
+// value; a Date's time; an object seen before as its first place. A getter
+// counts as itself, and isn't called. Other objects count by identity
+// only: templates can't read into them.
+const withAccessors = new WeakSet();
+
+function snapshot(v) {
+  const out = [];
+  walkState(v, out, null);
+  return out;
+}
+
+// Whether `v` is still as `snap` lists it.
+function sameAs(v, snap) {
+  return walkState(v, null, snap);
+}
+
+// List `v` into `out`, or compare it with `snap` as it goes (stopping at
+// the first difference).
+function walkState(v, out, snap) {
+  let i = 0;
+  const put = out
+    ? (x) => {
+        out.push(x);
+        return true;
+      }
+    : (x) => {
+        const y = snap[i++];
+        return x === y || (x !== x && y !== y);
+      };
+  const seen = new Map();
+  const stack = [v];
+  while (stack.length) {
+    const x = stack.pop();
+    if (x === null || typeof x !== "object") {
+      if (!put(x)) return false;
+      continue;
+    }
+    const at = seen.get(x);
+    if (at !== undefined) {
+      if (!put(at)) return false;
+      continue;
+    }
+    seen.set(x, -1 - seen.size);
+    if (!put(x)) return false;
+    if (Array.isArray(x)) {
+      const n = x.length;
+      if (!put(n)) return false;
+      for (let k = n - 1; k >= 0; k--) stack.push(x[k]);
+      continue;
+    }
+    if (x instanceof OriginalDate) {
+      if (!put(OriginalDate.prototype.getTime.call(x))) return false;
+      continue;
+    }
+    if (!isPlainObject11ty(x)) continue;
+    const keys = Object.keys(x);
+    if (!put(keys.length)) return false;
+    if (out) {
+      for (const k of keys) {
+        const d = Object.getOwnPropertyDescriptor(x, k);
+        if (d && !("value" in d)) withAccessors.add(x);
+      }
+    }
+    const slow = withAccessors.has(x);
+    for (let k = keys.length - 1; k >= 0; k--) {
+      const key = keys[k];
+      if (!put(key)) return false;
+      if (slow) {
+        const d = Object.getOwnPropertyDescriptor(x, key);
+        if (d === undefined || !("value" in d)) {
+          if (!put(d && d.get)) return false;
+          continue;
+        }
+        stack.push(d.value);
+      } else {
+        stack.push(x[key]);
+      }
+    }
+  }
+  return snap === null || i === snap.length;
+}
+
+// The data file whose value changed since the files loaded, if any.
+function changedRoot() {
+  if (rootSnapshots === null) return null;
+  for (const [v, [file, snap]] of rootSnapshots) {
+    if (!sameAs(v, snap)) {
+      rootSnapshots.set(v, [file, snapshot(v)]);
+      return file;
+    }
+  }
+  return null;
+}
 
 function register(fn) {
   const at = handleOf.get(fn);
@@ -636,7 +872,6 @@ function describeFn(fn) {
 // be used exactly.
 async function runOnce(fn, thisArg, args, settle) {
   refusedInCall = null;
-  clockInCall = null;
   takeWrote();
   let value;
   try {
@@ -667,15 +902,15 @@ async function runOnce(fn, thisArg, args, settle) {
 // Why a call that just ran can't be used, if it can't.
 function callRefusal(fn) {
   const wroteData = takeWrote();
-  const clock = clockInCall;
-  clockInCall = null;
-  if (refusedInCall !== null) return { refused: `${describeFn(fn)} ${refusedInCall}` };
-  if (clock !== null) {
+  const changed = changedRoot();
+  if (changed !== null) {
+    const rel = path.relative(root, changed).split(path.sep).join("/");
     return {
-      refused: `${describeFn(fn)} reads ${clock}, so its result is the moment (or the luck) of the call, and depends on when pages are built`,
+      refused: `${describeFn(fn)} changes the data ${rel} gives (an \`all.sort()\` or a \`list.push()\` on a value the file exports), which 11ty's templates then show changed from that call on; Brrrty's templates show the data as it loaded, so the pages would differ. Sort or add to a copy instead (\`[...all].sort()\`)`,
       impure: true,
     };
   }
+  if (refusedInCall !== null) return { refused: `${describeFn(fn)} ${refusedInCall}` };
   if (wroteData) {
     // Kept values may be what it changed: Brrrty sends them again.
     dropPersistent();
@@ -742,9 +977,11 @@ async function handle(req) {
       if (state.changed) {
         return { changedArgument: true };
       }
+      const root = rootValue(value);
+      if (root !== null && typeof root === "object" && !loadedRoots.has(root)) loadedRoots.set(root, req.path);
       // A file loaded per template often gives the same data each time:
       // say so instead of sending it again.
-      const text = JSON.stringify(encodeValue(rootValue(value), register));
+      const text = JSON.stringify(encodeValue(root, register));
       const key = `${req.call ? "call" : "raw"}:${req.path}`;
       if (lastSent.get(key) === text) return { same: true };
       lastSent.set(key, text);
@@ -763,11 +1000,15 @@ async function handle(req) {
       // The data files are loaded: from here on the clock marks a call.
       clockPhase = "calls";
       clockFeed = null;
+      if (!replaying) rootSnapshots = new Map([...loadedRoots].map(([v, file]) => [v, [file, snapshot(v)]]));
       return { ok: { clock: clockRecord, handles: handles.length } };
     }
     case "describe":
       return { ok: describeFn(getHandle(req.handle)) };
     case "feedClock": {
+      // A replay check's worker: it compares replies; the first run
+      // already watched the data files' values.
+      replaying = true;
       clockFeed = (req.values || []).slice();
       return { ok: null };
     }
@@ -791,7 +1032,6 @@ async function handle(req) {
       const proxy = new ComputedDataProxy(req.keys);
       const thisArg = opaqueThis(FILTERS_THIS);
       refusedInCall = null;
-      clockInCall = null;
       let vars;
       try {
         vars = await proxy.findVarsUsed((d) => fn.call(thisArg, d), p.data);
@@ -849,10 +1089,21 @@ lines.on("line", (line) => {
     }
     if (req.op === "bye") process.exit(0);
     let reply;
+    // A call's clock and random reads, recorded, or handed back on a replay.
+    const calling = clockPhase === "calls";
+    if (calling) {
+      callClock = [];
+      clockFeed = Array.isArray(req.feed) ? req.feed.slice() : null;
+    }
     try {
       reply = await handle(req);
     } catch (e) {
       reply = e && e.brrrtyRefusal ? { refused: `a function ${e.brrrtyRefusal}` } : { thrown: thrown(e) };
+    }
+    if (calling) {
+      clockFeed = null;
+      if (callClock.length) reply = { ...reply, clock: callClock };
+      callClock = [];
     }
     frame({ id: req.id, ...reply });
   });
