@@ -152,6 +152,10 @@ fn run_build(args: BuildArgs) -> ExitCode {
         }
     };
     let color = std::io::stderr().is_terminal();
+    if let Err(e) = brrrty::cleanup::stop_workers_on_signals() {
+        brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
+        return ExitCode::from(1);
+    }
     let flags = Flags {
         input: args.input,
         output: args.output,
@@ -354,6 +358,9 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
                 return ExitCode::from(1);
             }
         }
+    } else if let Err(e) = brrrty::cleanup::stop_workers_on_signals() {
+        brrrty::say_err!("Brrrty could not listen for Ctrl-C: {e}");
+        return ExitCode::from(1);
     }
     let flags = Flags {
         input: args.input,

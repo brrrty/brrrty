@@ -35,6 +35,13 @@ const REPLY_STACK: usize = 32 * 1024 * 1024;
 /// How many of Node's last stderr lines a failure shows.
 const STDERR_TAIL: usize = 20;
 
+/// How long a stopped worker's stderr may take to reach its end: past this,
+/// a process Node started still holds it, and Brrrty stops reading.
+const STDERR_GRACE: Duration = Duration::from_millis(200);
+
+/// How often a wait for a reply checks that Node still runs.
+const POLL: Duration = Duration::from_millis(100);
+
 /// The first note about a slow request, then the gap between notes.
 const FIRST_NOTE: Duration = Duration::from_secs(10);
 const NEXT_NOTE: Duration = Duration::from_secs(30);
@@ -109,6 +116,7 @@ impl Worker {
         let cannot =
             |e: std::io::Error| WorkerError(format!("cannot start {}: {e}", node.path.display()));
         let (mut child, frames, stderr) = spawn(cmd).map_err(cannot)?;
+        live(child.id(), true);
         let (tx, replies) = mpsc::channel();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
@@ -180,16 +188,33 @@ impl Worker {
             return JsResult::Failed(self.fail("Node stopped reading requests"));
         }
         let start = Instant::now();
-        let mut wait = self.note_times.0;
+        let mut next_note = start + self.note_times.0;
+        // Node exiting ends the wait even when a process it started keeps
+        // the replies' pipe open.
+        let mut exited_at: Option<Instant> = None;
         let reply = loop {
-            match self.replies.recv_timeout(wait) {
+            match self.replies.recv_timeout(POLL) {
                 Ok(r) => break r,
                 Err(RecvTimeoutError::Timeout) => {
-                    (self.notes)(&format!(
-                        "note: still waiting on {what}, {} s",
-                        start.elapsed().as_secs()
-                    ));
-                    wait = self.note_times.1;
+                    let now = Instant::now();
+                    if now >= next_note {
+                        (self.notes)(&format!(
+                            "note: still waiting on {what}, {} s",
+                            start.elapsed().as_secs()
+                        ));
+                        next_note = now + self.note_times.1;
+                    }
+                    match exited_at {
+                        Some(t) if now.duration_since(t) >= POLL => {
+                            break Err("Node exited without replying".to_string());
+                        }
+                        Some(_) => {}
+                        None => {
+                            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                                exited_at = Some(now);
+                            }
+                        }
+                    }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     break Err("Node closed its output".to_string());
@@ -238,9 +263,8 @@ impl Worker {
                 }
             }
         };
-        if let Some(t) = self.stderr_thread.take() {
-            let _ = t.join();
-        }
+        self.stop_group();
+        self.finish_stderr();
         let message = match status {
             Some(s) => match (s.code(), signal_of(&s)) {
                 (Some(code), _) => format!("Node exited with status {code} ({why})"),
@@ -259,6 +283,29 @@ impl Worker {
         };
         self.failed = Some(failure.clone());
         failure
+    }
+
+    /// Kill what is left of Node's process group: processes the site's
+    /// code started and left running. One started in a session of its
+    /// own (`detached`) is out of reach and keeps running, as under 11ty.
+    fn stop_group(&mut self) {
+        #[cfg(unix)]
+        kill_group(self.child.id());
+        live(self.child.id(), false);
+    }
+
+    /// Wait briefly for the rest of Node's stderr, then stop waiting: a
+    /// process Node started may hold it open for as long as it runs.
+    fn finish_stderr(&mut self) {
+        if let Some(t) = self.stderr_thread.take() {
+            let deadline = Instant::now() + STDERR_GRACE;
+            while !t.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            }
+        }
     }
 
     fn shown(&self, file: &Path) -> String {
@@ -343,8 +390,39 @@ impl Drop for Worker {
                 }
             }
         }
-        if let Some(t) = self.stderr_thread.take() {
-            let _ = t.join();
+        self.stop_group();
+        self.finish_stderr();
+    }
+}
+
+/// The process ids of the workers running now. Each leads its own process
+/// group, so a terminal's Ctrl-C doesn't reach it: [`stop_all`] does.
+static LIVE: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+fn live(pid: u32, running: bool) {
+    let mut l = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    l.retain(|p| *p != pid);
+    if running {
+        l.push(pid);
+    }
+}
+
+/// Kill every running worker and what it started, at once: for Ctrl-C,
+/// SIGTERM and a panic. Safe to call from a signal handler thread.
+pub fn stop_all() {
+    let l = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    #[cfg(unix)]
+    for pid in l.iter() {
+        kill_group(*pid);
+    }
+}
+
+#[cfg(unix)]
+fn kill_group(pid: u32) {
+    if let Ok(pid) = i32::try_from(pid) {
+        // SAFETY: killpg only sends a signal, to the group Node leads.
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
         }
     }
 }
@@ -364,7 +442,9 @@ fn spawn(mut cmd: Command) -> std::io::Result<(Child, std::io::PipeReader, std::
     let fd = frames_w.as_raw_fd();
     cmd.stdout(err_w.try_clone()?)
         .stderr(err_w)
-        .env("BRRRTY_FRAMES_FD", fd.to_string());
+        .env("BRRRTY_FRAMES_FD", fd.to_string())
+        // A group of its own, so what Node starts can be stopped with it.
+        .process_group(0);
     // SAFETY: fcntl is async-signal-safe, and the descriptor is this
     // process's own, open until after the spawn.
     unsafe {

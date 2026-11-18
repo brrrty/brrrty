@@ -40,6 +40,9 @@ impl Interrupts {
                 .name("brrrty-signals".into())
                 .spawn(move || {
                     for sig in signals.forever() {
+                        // A JavaScript data worker leads a process group of its own,
+                        // which a terminal's Ctrl-C doesn't reach.
+                        brrrty_node::stop_all();
                         let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
                         if s.signal.is_some() {
                             // The second one: don't wait for the clean stop.

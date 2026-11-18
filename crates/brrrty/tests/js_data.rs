@@ -258,6 +258,76 @@ fn ctrl_c_mid_load_leaves_no_node_behind() {
     assert!(!alive(&node_pid), "Node {node_pid} outlived brrrty");
 }
 
+#[cfg(unix)]
+#[test]
+fn ctrl_c_stops_a_data_file_stuck_in_a_loop() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/spin.js",
+            "require(\"fs\").writeFileSync(require(\"path\").join(__dirname, \"..\", \"..\", \"pid\"), String(process.pid));\nfor (;;) {}",
+        ),
+        ("src/index.njk", "{{ spin }}"),
+    ]);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .current_dir(t.path())
+        .args(["build", "--input", "src"])
+        .env_remove("BRRRTY_NODE")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid_file = t.path().join("pid");
+    let start = Instant::now();
+    while !pid_file.exists() && start.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    let node_pid = fs::read_to_string(&pid_file).expect("the data file ran");
+    assert!(alive(&node_pid));
+    Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    let _ = child.wait();
+    let start = Instant::now();
+    while alive(&node_pid) && start.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let survived = alive(&node_pid);
+    if survived {
+        let _ = Command::new("kill").args(["-9", &node_pid]).status();
+    }
+    assert!(!survived, "Node {node_pid} outlived brrrty");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_process_a_data_file_leaves_running_does_not_keep_the_build_open() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/kid.js",
+            "require(\"child_process\").spawn(\"sleep\", [\"8\"], { stdio: \"inherit\", detached: true }).unref();\nmodule.exports = { a: 1 };",
+        ),
+        ("src/index.njk", "{{ kid.a }}"),
+    ]);
+    let start = Instant::now();
+    let o = build(t.path(), &[], &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        start.elapsed()
+    );
+}
+
 #[test]
 fn a_local_data_function_runs_once_for_each_template_it_applies_to() {
     if !has_node() {

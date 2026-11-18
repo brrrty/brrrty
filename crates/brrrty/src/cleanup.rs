@@ -1,4 +1,5 @@
 //! Stopping `brrrty doctor --verify` on Ctrl-C or SIGTERM, and what to undo when it ends.
+//! Every stop also kills the JavaScript data worker (see [`brrrty_node::stop_all`]).
 //!
 //! The work is split so no order of events can leak anything:
 //!
@@ -78,6 +79,7 @@ fn kill_group(_pid: u32) {}
 /// What the signal thread does on Ctrl-C or SIGTERM: mark the process as stopping and kill
 /// the running child's process group.
 pub fn signal(sig: i32) {
+    brrrty_node::stop_all();
     let mut s = lock(&STATE);
     if s.stopping == 0 {
         s.stopping = sig;
@@ -113,6 +115,27 @@ pub fn install_signals() -> io::Result<()> {
     Ok(())
 }
 
+/// For a build: on Ctrl-C or SIGTERM, stop the JavaScript data worker, then end as the
+/// signal would. The worker leads a process group of its own, which a terminal's Ctrl-C
+/// doesn't reach. Does nothing outside Unix.
+pub fn stop_workers_on_signals() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use signal_hook::consts::{SIGINT, SIGTERM};
+        let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM])?;
+        std::thread::Builder::new()
+            .name("brrrty-signals".into())
+            .spawn(move || {
+                if let Some(sig) = signals.forever().next() {
+                    brrrty_node::stop_all();
+                    let _ = signal_hook::low_level::emulate_default_handler(sig);
+                    std::process::exit(128 + sig);
+                }
+            })?;
+    }
+    Ok(())
+}
+
 /// Start `cmd` as the child a signal kills, unless a stop is in progress: then `Ok(None)`,
 /// and nothing is started. Call [`child_done`] once it has ended.
 pub fn spawn(cmd: &mut Command) -> io::Result<Option<Child>> {
@@ -133,6 +156,7 @@ pub fn child_done() {
 /// Kill the child and remove the temporary folders: for the panic handler, which ends the
 /// process before destructors run.
 pub fn run() {
+    brrrty_node::stop_all();
     if let Some(pid) = lock(&STATE).child.take() {
         kill_group(pid);
     }

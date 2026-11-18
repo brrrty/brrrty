@@ -353,3 +353,64 @@ fn data_nested_deeper_than_brrrty_reads_is_refused_not_a_crash() {
         "{whats:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_child_that_keeps_nodes_pipes_never_keeps_brrrty_waiting() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "kids.js",
+        r#"const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+// One in Node's process group, one in a session of its own; both hold
+// Node's stdout and stderr.
+const near = spawn("sleep", ["30"], { stdio: "inherit" });
+near.unref();
+const far = spawn("sleep", ["8"], { stdio: "inherit", detached: true });
+far.unref();
+fs.writeFileSync(path.join(__dirname, "near"), String(near.pid));
+module.exports = { a: 1 };"#,
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    ok(w.load(&t.path().join("kids.js"), true));
+    let near: u32 = fs::read_to_string(t.path().join("near"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let start = std::time::Instant::now();
+    drop(w);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(4),
+        "dropping the worker took {:?}",
+        start.elapsed()
+    );
+    let start = std::time::Instant::now();
+    while alive(near) && start.elapsed() < std::time::Duration::from_secs(3) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(!alive(near), "Node's child {near} outlived the worker");
+}
+
+#[cfg(unix)]
+#[test]
+fn node_exiting_while_a_child_holds_its_pipes_fails_promptly() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "gone.js",
+        r#"require("child_process").spawn("sleep", ["8"], { stdio: "inherit", detached: true }).unref();
+process.exit(3);"#,
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let start = std::time::Instant::now();
+    match w.load(&t.path().join("gone.js"), true) {
+        JsResult::Failed(f) => assert!(f.message.contains("status 3"), "{}", f.message),
+        other => panic!("{other:?}"),
+    }
+    drop(w);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(4),
+        "took {:?}",
+        start.elapsed()
+    );
+}

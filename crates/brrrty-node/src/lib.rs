@@ -10,7 +10,7 @@ pub mod decode;
 mod find;
 pub mod stack;
 
-pub use client::{RunMode, Worker, WorkerError, encode};
+pub use client::{RunMode, Worker, WorkerError, encode, stop_all};
 pub use decode::decode;
 pub use find::{MIN_NODE, NodeInfo, NodeMissing, find_node, parse_version};
 
