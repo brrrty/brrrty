@@ -25,9 +25,28 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // --- Frames, written before anything else can touch stdout. ---
 
 const writeFd = fs.writeSync;
-const framesFd = Number(process.env.BRRRTY_FRAMES_FD) || 1;
+const framesFd = closeOnExec(Number(process.env.BRRRTY_FRAMES_FD) || 1);
 delete process.env.BRRRTY_FRAMES_FD;
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+
+// The replies' pipe comes in without close-on-exec (it had to survive
+// Node's own exec), so every process Node starts would inherit it, and one
+// left running would hold it open. Open it again, as Node opens every file,
+// with close-on-exec, and close the inherited descriptor.
+function closeOnExec(fd) {
+  if (fd <= 2) return fd;
+  for (const dir of ["/proc/self/fd", "/dev/fd"]) {
+    let again;
+    try {
+      again = fs.openSync(`${dir}/${fd}`, fs.constants.O_WRONLY);
+    } catch {
+      continue;
+    }
+    fs.closeSync(fd);
+    return again;
+  }
+  return fd;
+}
 
 function out(text) {
   const bytes = Buffer.from(text, "utf8");

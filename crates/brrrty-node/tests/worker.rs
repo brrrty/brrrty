@@ -509,9 +509,16 @@ module.exports = { pid: kid.pid };"#,
     let kid = fd_links(&pid);
     let node_fds = fd_links(&w.pid().to_string());
     let _ = Command::new("kill").arg(&pid).status();
+    // A pipe of the worker's past the standard three: one Node holds that
+    // this test process didn't have before it started the worker.
     let ours: Vec<&(String, String)> = kid
         .iter()
-        .filter(|(n, l)| !["0", "1", "2"].contains(&n.as_str()) && !before.contains(l))
+        .filter(|(n, l)| {
+            !["0", "1", "2"].contains(&n.as_str())
+                && l.starts_with("pipe:")
+                && !before.contains(l)
+                && node_fds.iter().any(|(_, nl)| nl == l)
+        })
         .collect();
     assert!(
         ours.is_empty(),
