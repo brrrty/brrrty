@@ -587,41 +587,114 @@ pub(crate) fn preloads(words: &[String]) -> Vec<String> {
 /// `ELEVENTY_*` variables (`TZ` changes dates), a `cwd` other than the site's
 /// folder, a `NODE_OPTIONS` preload. As the `\0` tokens `find` reads.
 fn option_tokens(opts: &str) -> Vec<String> {
+    let opts = opts.trim();
     let mut out = Vec::new();
-    if regex::Regex::new(r"\benv\b").expect("valid").is_match(opts) {
-        let only_eleventy = regex::Regex::new(r"\benv\s*:\s*\{([^{}]*)\}")
-            .expect("valid")
-            .captures(opts)
-            .is_some_and(|c| {
-                c[1].split(',')
-                    .map(str::trim)
-                    .filter(|k| !k.is_empty())
-                    .all(|k| {
-                        k == "...process.env"
-                            || k.split(':')
-                                .next()
-                                .is_some_and(|n| n.trim().starts_with("ELEVENTY_"))
-                    })
-            });
-        if !only_eleventy {
-            out.push("\0env set in this file".to_string());
-        }
-        if opts.contains("NODE_OPTIONS") {
-            out.push("\0preload NODE_OPTIONS set in this file".to_string());
-        }
+    if opts.is_empty() {
+        return out;
     }
-    if let Some(c) = regex::Regex::new(r#"\bcwd\s*:\s*(["'`])([^"'`]*)(["'`])"#)
-        .expect("valid")
-        .captures(opts)
-    {
-        let dir = c[2].trim_end_matches('/');
-        if !(dir.is_empty() || dir == ".") {
-            out.push(format!("\0cwd {}", &c[2]));
+    if opts.contains("NODE_OPTIONS") {
+        out.push("\0preload NODE_OPTIONS set in this file".to_string());
+    }
+    // Only an inline object whose keys are all known is read; anything else (a
+    // variable, a spread, an unknown key) could change 11ty's environment or folder.
+    let Some(inner) = opts.strip_prefix('{').and_then(|o| o.strip_suffix('}')) else {
+        out.push(format!("\0opts {}", one_line_short(opts)));
+        return out;
+    };
+    for entry in top_level_split(inner) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
         }
-    } else if regex::Regex::new(r"\bcwd\b").expect("valid").is_match(opts) {
-        out.push("\0cwd set at run time".to_string());
+        let (key, value) = match entry.split_once(':') {
+            Some((k, v)) => (k.trim().trim_matches(['"', '\'']), Some(v.trim())),
+            None => (entry, None),
+        };
+        match (key, value) {
+            ("stdio" | "encoding" | "windowsHide" | "timeout" | "maxBuffer", _) => {}
+            ("shell", Some("false")) => {}
+            ("env", Some(v)) if env_only_eleventy(v) => {}
+            ("env", _) => out.push("\0env set in this file".to_string()),
+            ("cwd", Some(v)) => {
+                let lit = v.len() >= 2
+                    && v.starts_with(['"', '\'', '`'])
+                    && v.ends_with(['"', '\'', '`'])
+                    && !v.contains("${");
+                let dir = v.trim_matches(['"', '\'', '`']).trim_end_matches('/');
+                if !lit {
+                    out.push("\0cwd set at run time".to_string());
+                } else if !(dir.is_empty() || dir == ".") {
+                    out.push(format!("\0cwd {}", v.trim_matches(['"', '\'', '`'])));
+                }
+            }
+            ("cwd", None) => out.push("\0cwd set at run time".to_string()),
+            _ => out.push(format!("\0opts {}", one_line_short(entry))),
+        }
     }
     out
+}
+
+/// Whether an `env:` value is an inline object setting only `ELEVENTY_*`
+/// variables beside `...process.env`.
+fn env_only_eleventy(v: &str) -> bool {
+    let Some(inner) = v.strip_prefix('{').and_then(|o| o.strip_suffix('}')) else {
+        return false;
+    };
+    top_level_split(inner)
+        .iter()
+        .map(|k| k.trim())
+        .filter(|k| !k.is_empty())
+        .all(|k| {
+            k == "...process.env"
+                || k.split(':')
+                    .next()
+                    .is_some_and(|n| n.trim().trim_matches(['"', '\'']).starts_with("ELEVENTY_"))
+        })
+}
+
+/// `s` split at commas outside brackets and quotes.
+fn top_level_split(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut quote, mut start) = (0i32, None::<char>, 0);
+    for (i, c) in s.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' | '`' => quote = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    out.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            },
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
+/// `s` on one line, at most 60 characters, for a message.
+fn one_line_short(s: &str) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > 60 {
+        format!("{}…", flat.chars().take(60).collect::<String>())
+    } else {
+        flat
+    }
+}
+
+/// Whether a file does something to its own process that its children inherit, so
+/// no spawn in it can be read: writes `process.env`, changes folder, or runs node
+/// with its own flags (`fork`, `execArgv`).
+fn changes_children(src: &str) -> bool {
+    regex::Regex::new(
+        r"process\.env\s*(\.\s*[\w$]+|\[[^\]]*\])\s*(=[^=]|\+=|\|\|=|\?\?=)|Object\.assign\s*\(\s*process\.env\b|delete\s+process\.env|process\.chdir\s*\(|\bexecArgv\b|\bfork\s*\(",
+    )
+    .expect("valid")
+    .is_match(src)
 }
 
 /// What `src` does with 11ty.
@@ -780,6 +853,9 @@ pub(crate) fn analyze(src: &str) -> JsUse {
                 .map(tokens),
         );
     }
+    if changes_children(src) {
+        out.spawns.fill(None);
+    }
     out
 }
 
@@ -931,6 +1007,61 @@ mod tests {
         assert_eq!(
             analyze(&TOOLS.replace("const tools", "let tools")).spawns,
             [None]
+        );
+    }
+
+    #[test]
+    fn a_file_that_changes_what_children_inherit_isnt_read() {
+        let spawn = "spawnSync(\"npx\", [\"@11ty/eleventy\", \"--input=src\"]);\n";
+        for pre in [
+            "process.env.TZ = \"Asia/Tokyo\";",
+            "process.env[\"NODE_OPTIONS\"] = \"--require ./p.cjs\";",
+            "Object.assign(process.env, { TZ: \"x\" });",
+            "process.chdir(\"site\");",
+            "const x = { execArgv: [\"-r\", \"./p.cjs\"] };",
+            "fork(\"node_modules/@11ty/eleventy/cmd.cjs\", []);",
+        ] {
+            let src = format!(
+                "import {{ spawnSync, fork }} from \"node:child_process\";\n{pre}\n{spawn}"
+            );
+            assert!(analyze(&src).spawns.iter().all(Option::is_none), "{pre}");
+        }
+        // Reading process.env is fine.
+        let src = format!(
+            "const tz = process.env.TZ ?? \"UTC\";\nif (process.env.CI === \"1\") {{}}\n{spawn}"
+        );
+        assert_eq!(analyze(&src).spawns, [Some(vec!["--input=src".into()])]);
+    }
+
+    #[test]
+    fn only_known_spawn_options_are_trusted() {
+        let with = |opts: &str| {
+            analyze(&format!(
+                "spawnSync(\"npx\", [\"@11ty/eleventy\"], {opts});"
+            ))
+            .spawns
+            .remove(0)
+            .unwrap()
+        };
+        assert_eq!(
+            with("{ stdio: \"inherit\", encoding: \"utf8\", shell: false }"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            with("{ env: { ...process.env, ELEVENTY_ENV: \"prod\" } }"),
+            Vec::<String>::new()
+        );
+        assert_eq!(with("opts"), ["\0opts opts".to_string()]);
+        assert_eq!(
+            with("{ ...base, stdio: \"inherit\" }"),
+            ["\0opts ...base".to_string()]
+        );
+        assert_eq!(with("{ shell: true }"), ["\0opts shell: true".to_string()]);
+        assert_eq!(with("{ env }"), ["\0env set in this file".to_string()]);
+        assert_eq!(with("{ cwd }"), ["\0cwd set at run time".to_string()]);
+        assert_eq!(
+            with("{ cwd: `${dir}` }"),
+            ["\0cwd set at run time".to_string()]
         );
     }
 

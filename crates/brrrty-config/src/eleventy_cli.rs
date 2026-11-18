@@ -112,6 +112,9 @@ impl Cli {
 /// Where a script comes from, as a TODO quotes it: `package.json, scripts.build`, or a
 /// deploy config's own label.
 pub fn place(name: &str) -> String {
+    if name.starts_with(".npmrc") {
+        return name.to_string();
+    }
     if let Some((first, rest)) = name.split_once(" → ") {
         return format!("{} → {rest}", place(first));
     }
@@ -214,6 +217,78 @@ fn ci_tz(root: &Path, label: &str) -> Option<String> {
         }
     }
     found
+}
+
+/// Whether a step is on the short list of commands that can't change what a later
+/// 11ty step in the same script runs with (environment, folder, node options): Brrrty,
+/// a package script (read on its own), a package install, and plain file commands.
+fn harmless(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let w = without_redirections(words(without_comment(step)));
+    let get = |i: usize| w.get(i).map(String::as_str).unwrap_or_default();
+    let mut i = 0;
+    while get(i).contains('=') && !get(i).starts_with('-') {
+        i += 1;
+    }
+    let assigned = i > 0;
+    match get(i) {
+        "" => !assigned,
+        "brrrty" => true,
+        "npx" | "bunx" if get(i + 1) == "brrrty" => true,
+        "rm" | "mkdir" | "cp" | "mv" | "echo" | "printf" | "test" | "true" | "false" | "touch"
+        | "tee" | "exit" | "cat" | "ls" => !assigned,
+        "cd" => !assigned && matches!(get(i + 1), "." | "./") && w.len() == i + 2,
+        "npm" => {
+            !assigned
+                && matches!(
+                    get(i + 1),
+                    "run" | "run-script" | "ci" | "install" | "i" | "test" | "t" | "start"
+                )
+        }
+        "pnpm" | "yarn" | "bun" => {
+            !assigned
+                && (matches!(get(i + 1), "run" | "install" | "i" | "" | "test")
+                    || scripts.contains_key(get(i + 1)))
+        }
+        "npm-run-all" | "run-s" | "run-p" => !assigned,
+        _ => false,
+    }
+}
+
+/// Whether, in the CI job of `label`, an earlier line moves to another folder
+/// (`cd site`, `pushd`), exports a variable, or the job or a step sets
+/// `working-directory:`.
+fn ci_job_moves(root: &Path, label: &str, deploys: &[(String, String, bool)]) -> bool {
+    let job = ci_job(root, label);
+    let line = |l: &str| -> usize {
+        l.split_once(", line ")
+            .and_then(|(_, n)| n.parse().ok())
+            .unwrap_or(0)
+    };
+    let here = line(label);
+    let moved = deploys.iter().any(|(l, cmd, _)| {
+        is_ci(l)
+            && ci_file(l) == ci_file(label)
+            && line(l) < here
+            && ci_job(root, l) == job
+            && steps(cmd).iter().any(|step| {
+                let w = words(step);
+                match w.first().map(String::as_str) {
+                    Some("cd") => !(w.len() == 2 && matches!(w[1].as_str(), "." | "./")),
+                    Some("pushd" | "export" | "source" | ".") => true,
+                    _ => false,
+                }
+            })
+    });
+    if moved {
+        return true;
+    }
+    let text = read_text(&root.join(ci_file(label))).unwrap_or_default();
+    text.lines().enumerate().any(|(i, l)| {
+        let t = l.trim();
+        t.strip_prefix("working-directory:")
+            .is_some_and(|v| !matches!(v.trim().trim_matches(['"', '\'']), "." | "./"))
+            && ci_job(root, &format!("{}, line {}", ci_file(label), i + 1)) == job
+    })
 }
 
 /// Whether a script is a Brrrty command, after any environment settings
@@ -771,6 +846,10 @@ fn classify(step: &str, scripts: &serde_json::Map<String, serde_json::Value>) ->
         // A JavaScript runtime: skip its own flags to the file it runs.
         let mut k = 1;
         while get(k).starts_with('-') {
+            // An environment file can set TZ or NODE_OPTIONS for 11ty.
+            if get(k).starts_with("--env-file") {
+                return unreadable(&w);
+            }
             let takes = matches!(
                 get(k),
                 "-r" | "--require"
@@ -921,6 +1000,7 @@ fn shown(flags: &[(String, Option<String>)]) -> String {
             ("\0env", Some(v)) => v.clone(),
             ("\0preload", Some(v)) => format!("a preload of {v}"),
             ("\0cwd", Some(v)) => format!("cwd {v}"),
+            ("\0opts", Some(v)) => format!("options {v}"),
             (_, Some(v)) => format!("--{n}={v}"),
             (_, None) => n.clone(),
         })
@@ -1066,12 +1146,17 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         let mut found = Vec::new();
         let mut bad = false;
         let mut cd = false;
+        // A step that isn't on the short list of harmless ones (`export`, `cd site`,
+        // `source`, an unknown command) may change what a later 11ty step runs with.
+        let mut unknown = false;
+        let mut local_runs: Vec<(usize, Run)> = Vec::new();
+        let mut local_js: Vec<(String, String, String, String, String)> = Vec::new();
         for step in steps(cmd) {
             match classify(&step, scripts) {
                 Step::Eleventy(args) => found.push(args),
                 Step::Runs(file) if legacy => {
                     if let Some(hash) = uses_api(root, &file) {
-                        js.push((
+                        local_js.push((
                             name.clone(),
                             String::new(),
                             cmd.to_string(),
@@ -1086,7 +1171,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                     };
                     let chain = format!("{name} → {file}");
                     if u.api {
-                        js.push((
+                        local_js.push((
                             name.clone(),
                             chain,
                             cmd.to_string(),
@@ -1094,7 +1179,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                             format!("{} runs {file}, which uses 11ty's JavaScript API (`@11ty/eleventy`); port the input and output folders, config file and other options it gives 11ty, then delete this line", place(name)),
                         ));
                     } else if u.spawns.iter().any(Option::is_none) {
-                        js.push((
+                        local_js.push((
                             name.clone(),
                             chain,
                             cmd.to_string(),
@@ -1103,25 +1188,42 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                         ));
                     } else {
                         for args in u.spawns.into_iter().flatten() {
-                            tiers[tier_of(&args)].push(Run {
-                                name: name.clone(),
-                                chain: chain.clone(),
-                                cmd: cmd.to_string(),
-                                sig: significant(&args),
-                                same_env: false,
-                            });
+                            local_runs.push((
+                                tier_of(&args),
+                                Run {
+                                    name: name.clone(),
+                                    chain: chain.clone(),
+                                    cmd: cmd.to_string(),
+                                    sig: significant(&args),
+                                    same_env: false,
+                                },
+                            ));
                         }
                     }
                 }
                 Step::Cd => cd = true,
                 Step::Unreadable => bad = true,
-                Step::Other => {}
+                Step::Other => unknown |= !harmless(&step, scripts),
             }
         }
-        // Two 11ty runs, or one after a `cd`: which flags count is past reading.
-        if bad || found.len() > 1 || (cd && !found.is_empty()) {
+        let runs_11ty = !found.is_empty() || !local_runs.is_empty() || !local_js.is_empty();
+        // In CI, a `cd`, `pushd` or `export` on an earlier line of the job, or a
+        // `working-directory:`, carries over to the 11ty line.
+        let ci_moved = !legacy && runs_11ty && is_ci(name) && ci_job_moves(root, name, &deploys);
+        // Two 11ty runs, one after a `cd`, or one beside a step that isn't known to be
+        // harmless: which flags count is past reading.
+        if bad
+            || found.len() > 1
+            || (cd && runs_11ty)
+            || (!legacy && unknown && runs_11ty)
+            || ci_moved
+        {
             unreadable.push((name.clone(), cmd.to_string()));
             continue;
+        }
+        js.extend(local_js);
+        for (t, r) in local_runs {
+            tiers[t].push(r);
         }
         let Some(args) = found.pop() else { continue };
         // A deploy config's command builds the site, as `build` does (Netlify's
@@ -1169,6 +1271,31 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         cli.facts.push(fact.clone());
         cli.sources.push(place(chain));
         cli.todo(why.clone(), name, cmd);
+    }
+    // npm runs every script with `.npmrc`'s `node-options`: a preload there runs inside 11ty.
+    let runs_11ty =
+        tiers.iter().any(|t| !t.is_empty()) || !cli.todos.is_empty() || depends_on_11ty(pkg);
+    if !legacy && runs_11ty {
+        for (i, l) in read_text(&root.join(".npmrc"))
+            .unwrap_or_default()
+            .lines()
+            .enumerate()
+        {
+            let t = l.trim();
+            let Some((k, v)) = t.split_once('=') else {
+                continue;
+            };
+            if matches!(k.trim(), "node-options" | "node_options") {
+                let v = v.trim();
+                cli.facts.push(format!("npmrc {v}"));
+                cli.sources.push(format!(".npmrc, line {}", i + 1));
+                cli.todo(
+                    format!("npm runs 11ty with `node-options={v}` from .npmrc, which can preload code inside 11ty and change any page; port what it does, then delete this line"),
+                    &format!(".npmrc, line {}", i + 1),
+                    t,
+                );
+            }
+        }
     }
     let brrrty_build = scripts
         .get("build")
@@ -1343,6 +1470,9 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                 )),
                 "cwd" => Some(format!(
                     "11ty starts in {v}, not the site's folder, so its flags and config are read from there; port them as they apply there, then delete this line"
+                )),
+                "opts" => Some(format!(
+                    "11ty is started with options Brrrty can't check (`{v}`), which can change its environment or folder; port what they do, then delete this line"
                 )),
                 _ => None,
             };
@@ -2539,5 +2669,110 @@ mod tests {
         );
         let c = find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()).unwrap();
         assert!(c.todos.is_empty(), "{:?}", c.todos);
+    }
+
+    #[test]
+    fn only_known_harmless_steps_may_sit_beside_11ty() {
+        let t = site();
+        for build in [
+            "export TZ=Asia/Tokyo; eleventy",
+            "export TZ=Asia/Tokyo && eleventy --input=src",
+            "export NODE_OPTIONS='--require ./p.cjs'; eleventy",
+            "source .env && eleventy",
+            ". ./env.sh && eleventy",
+            "pushd site && eleventy",
+            "set -a && eleventy",
+            "prepare && eleventy",
+            "node --env-file=.env node_modules/@11ty/eleventy/cmd.cjs",
+            "node --env-file-if-exists=.env node_modules/@11ty/eleventy/cmd.cjs",
+            "env -S 'TZ=Asia/Tokyo eleventy'",
+        ] {
+            let c = find(&json!({ "scripts": { "build": build } }), t.path())
+                .unwrap_or_else(|| panic!("{build}: silent"));
+            assert_eq!(c.input, None, "{build}");
+            assert!(
+                whys(&c)
+                    .iter()
+                    .any(|w| w.contains("couldn't read the flags")),
+                "{build}: {:?}",
+                c.todos
+            );
+        }
+        for build in [
+            "rm -rf _site && eleventy --input=src",
+            "npm run css && eleventy --input=src",
+            "mkdir -p _site; eleventy --input=src | tee build.log",
+            "eleventy --input=src || exit 1",
+            "env TZ=Asia/Tokyo eleventy --input=src",
+        ] {
+            let c = find(
+                &json!({ "scripts": { "build": build, "css": "sass a b" } }),
+                t.path(),
+            )
+            .unwrap_or_else(|| panic!("{build}: silent"));
+            assert_eq!(c.input.as_deref(), Some("src"), "{build}: {:?}", c.todos);
+            assert!(c.todos.is_empty(), "{build}: {:?}", c.todos);
+        }
+    }
+
+    #[test]
+    fn a_ci_job_that_moves_or_exports_is_marked() {
+        for (file, body) in [
+            (
+                ".gitlab-ci.yml",
+                "pages:\n  script:\n    - cd site\n    - npx @11ty/eleventy\n",
+            ),
+            (
+                ".gitlab-ci.yml",
+                "pages:\n  before_script:\n    - export TZ=Asia/Tokyo\n  script:\n    - npx @11ty/eleventy\n",
+            ),
+            (
+                ".github/workflows/b.yml",
+                "on: push\njobs:\n  b:\n    steps:\n      - run: npx @11ty/eleventy\n        working-directory: site\n",
+            ),
+            (
+                ".github/workflows/b.yml",
+                "on: push\njobs:\n  b:\n    defaults:\n      run:\n        working-directory: site\n    steps:\n      - run: npx @11ty/eleventy\n",
+            ),
+        ] {
+            let t = site();
+            write(&t, file, body);
+            let c = find(&json!({}), t.path()).unwrap_or_else(|| panic!("{body}: silent"));
+            assert!(
+                whys(&c)
+                    .iter()
+                    .any(|w| w.contains("couldn't read the flags")),
+                "{body}: {:?}",
+                c.todos
+            );
+        }
+        // `cd .` and a job that doesn't run 11ty are fine.
+        let t = site();
+        write(
+            &t,
+            ".gitlab-ci.yml",
+            "a:\n  script:\n    - cd site\n    - npm test\nb:\n  script:\n    - cd .\n    - npx @11ty/eleventy --input=src\n",
+        );
+        let c = find(&json!({}), t.path()).unwrap();
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+    }
+
+    #[test]
+    fn npmrc_node_options_are_marked() {
+        let t = site();
+        write(&t, ".npmrc", "fund=false\nnode-options=--require ./p.cjs\n");
+        let c = find(&json!({ "scripts": { "build": "eleventy" } }), t.path()).unwrap();
+        assert!(
+            whys(&c)[0]
+                .starts_with("npm runs 11ty with `node-options=--require ./p.cjs` from .npmrc"),
+            "{:?}",
+            c.todos
+        );
+        assert_eq!(place(&c.todos[0].script), ".npmrc, line 2");
+        // Without 11ty in the site, nothing to say.
+        assert_eq!(
+            find(&json!({ "scripts": { "build": "vite build" } }), t.path()),
+            None
+        );
     }
 }

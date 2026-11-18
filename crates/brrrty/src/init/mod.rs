@@ -490,7 +490,7 @@ fn is_eleventy_command(cmd: &str) -> bool {
     while words.peek().is_some_and(|w| assignment(w)) {
         words.next();
     }
-    if words.peek() == Some(&"cross-env") {
+    if words.peek() == Some(&"cross-env") || words.peek() == Some(&"env") {
         words.next();
         while words.peek().is_some_and(|w| assignment(w)) {
             words.next();
@@ -511,36 +511,32 @@ fn is_eleventy_command(cmd: &str) -> bool {
     }
 }
 
-/// `cmd` with the environment settings an 11ty command starts with: its leading
-/// `NAME=value` words, and a `cross-env` or `env` with its own
-/// (`TZ=Asia/Tokyo eleventy` gives `TZ=Asia/Tokyo brrrty build`).
+/// `cmd` with the `TZ` an 11ty command sets before it, through `cross-env` when it
+/// does (`TZ=Asia/Tokyo eleventy` gives `TZ=Asia/Tokyo brrrty build`).
 fn with_prefix(eleventy: &str, cmd: &str) -> String {
-    let assignment = |w: &str| {
-        w.split_once('=').is_some_and(|(k, _)| {
-            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
-    };
-    let mut prefix = Vec::new();
+    // Only `TZ` changes what Brrrty writes; the rest (`NODE_OPTIONS`, `NODE_ENV`) is
+    // for Node, which Brrrty isn't.
+    let mut tz = Vec::new();
+    let mut cross_env = false;
     for w in eleventy.split_whitespace() {
-        if assignment(w)
-            || ((w == "cross-env" || w == "env") && prefix.iter().all(|p: &&str| *p != w))
-        {
-            prefix.push(w);
+        if w == "cross-env" {
+            cross_env = true;
+        } else if w == "env" {
+            continue;
+        } else if w.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }) {
+            if w.starts_with("TZ=") {
+                tz.push(w);
+            }
         } else {
             break;
         }
     }
-    // A `cross-env` or `env` with nothing after it is no prefix.
-    while prefix
-        .last()
-        .is_some_and(|w| *w == "cross-env" || *w == "env")
-    {
-        prefix.pop();
-    }
-    if prefix.is_empty() {
-        cmd.to_string()
-    } else {
-        format!("{} {cmd}", prefix.join(" "))
+    match (tz.is_empty(), cross_env) {
+        (true, _) => cmd.to_string(),
+        (false, true) => format!("cross-env {} {cmd}", tz.join(" ")),
+        (false, false) => format!("{} {cmd}", tz.join(" ")),
     }
 }
 
@@ -602,9 +598,22 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                         .map(str::to_string)
                 };
                 let mut append = Vec::new();
+                // The 11ty `build` command's TZ goes to `brrrty serve` too, unless `start`
+                // sets its own: serve writes the output folder as build does.
+                let build_tz = string("build")
+                    .filter(|b| is_eleventy_command(b))
+                    .unwrap_or_default();
+                let tz_from = |name: &str, own: &str| -> String {
+                    if name == "start" && !own.contains("TZ=") {
+                        build_tz.clone()
+                    } else {
+                        own.to_string()
+                    }
+                };
                 for (name, cmd) in wanted {
-                    let quoted = serde_json::to_string(cmd).unwrap_or_default();
                     let Some(member) = scripts.get(name) else {
+                        let cmd = &with_prefix(&tz_from(name, ""), cmd);
+                        let quoted = serde_json::to_string(cmd).unwrap_or_default();
                         append.push((name.to_string(), quoted));
                         set(&mut expect, "scripts", name, cmd);
                         continue;
@@ -625,7 +634,7 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
                             // Rename it to `name:11ty`, with the new script in front, run with
                             // the same environment settings (`TZ=Asia/Tokyo`), which can
                             // change the pages.
-                            let cmd = &with_prefix(&old, cmd);
+                            let cmd = &with_prefix(&tz_from(name, &old), cmd);
                             let quoted = serde_json::to_string(cmd).unwrap_or_default();
                             let i = scripts
                                 .members
