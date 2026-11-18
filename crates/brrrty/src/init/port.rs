@@ -3321,7 +3321,20 @@ impl<'o, 'l> Reader<'o, 'l> {
             },
         };
         let rss_version = self.out.site.rss;
-        let (name, known): (&str, &[(&str, &str)]) = match self.plugin_ref(first) {
+        // A plugin named where it is added, or a value that is one (a loop's).
+        let binding = match self.plugin_ref(first) {
+            Some(b) => Some(b),
+            None => {
+                let mark = self.out.mark();
+                let v = self.eval(scope, first.0, first.1);
+                self.out.drop_touched(mark);
+                match v {
+                    Val::Npm(b) => Some(b),
+                    _ => None,
+                }
+            }
+        };
+        let (name, known): (&str, &[(&str, &str)]) = match binding {
             Some(Binding::Module(m, How::Default | How::Require)) if m == SYNTAX_HIGHLIGHT => (
                 "syntaxhighlight",
                 &[
@@ -4310,6 +4323,18 @@ module.exports = function (eleventyConfig) {
             "{}",
             p.text
         );
+    }
+
+    #[test]
+    fn plugins_from_a_loop_are_ported() {
+        let src = "const hl = require(\"@11ty/eleventy-plugin-syntaxhighlight\");\nconst other = require(\"other-plugin\");\nmodule.exports = function (c) {\n  [hl, other].forEach((p) => c.addPlugin(p));\n};\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_plugin(\"syntaxhighlight\");"),
+            "{}",
+            p.text
+        );
+        assert_eq!(p.todos, 1, "{}", p.text);
     }
 
     #[test]
