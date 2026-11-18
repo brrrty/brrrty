@@ -5,5 +5,5 @@ input = "src"
 tz = "America/Chicago"
 lang = "en_US.UTF-8"
 
-[refused]
-"src/class.njk" = "class/index.html"
+# `class.njk` dumps an object holding a class: JSON leaves the function out,
+# as 11ty's `dump` does, so it builds.

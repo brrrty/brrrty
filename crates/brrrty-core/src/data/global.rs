@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use brrrty_js::Value;
 
-use super::js::{JsLoad, JsSession, first_inexact};
+use super::js::{JsLoad, JsSession, first_unusable};
 use super::rhai;
 use super::{js_object, merged_item, reserved_keys, reserved_problem};
 use crate::discover::{broken_link_warning, loop_warning};
@@ -144,7 +144,7 @@ pub(crate) fn load_global(
                 }
                 match js.load(&file, &shown, true) {
                     JsLoad::Value(d) => {
-                        if let Some((at, what)) = first_inexact(&d) {
+                        if let Some((at, what)) = first_unusable(&d) {
                             out.js_values.push(JsValueRef {
                                 key_path: path.clone(),
                                 file: shown.clone(),

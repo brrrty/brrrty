@@ -126,6 +126,16 @@ pub fn release(id: usize) {
     }
 }
 
+/// The keys `o` was registered as lacking with [`withhold`], if it was.
+pub fn withheld_keys(o: &IndexMap<String, Value>) -> Option<Arc<[String]>> {
+    withheld(o)
+}
+
+/// Whether `o` was registered with [`open`].
+pub fn is_open_object(o: &IndexMap<String, Value>) -> bool {
+    is_open(o)
+}
+
 /// The keys `o` was registered as lacking, if it was.
 fn withheld(o: &IndexMap<String, Value>) -> Option<Arc<[String]>> {
     if WITHHELD_COUNT.load(Ordering::SeqCst) == 0 {

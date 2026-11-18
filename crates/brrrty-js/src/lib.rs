@@ -4,6 +4,7 @@ pub mod clock;
 mod collate;
 mod eleventy;
 mod eleventy_tables;
+pub mod functions;
 mod loader;
 pub mod locale;
 mod number;
@@ -22,4 +23,4 @@ pub use number::{
     is_js_whitespace, js_number_to_string, js_string_to_number, js_to_fixed, js_to_locale_string,
 };
 pub use tz::Tz;
-pub use value::{Value, array_index};
+pub use value::{FnHandle, Value, array_index};

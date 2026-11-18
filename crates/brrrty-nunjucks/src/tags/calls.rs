@@ -11,6 +11,82 @@ use crate::jsops::{self, BinOp};
 use crate::render::{MAX_CALLS, R, RenderErr, Renderer, error, too_many};
 use crate::value::{Func, Global, Obj, Val};
 
+use brrrty_js::Value;
+use brrrty_js::functions::{Settle, This};
+use indexmap::IndexMap;
+use std::sync::Arc;
+
+/// Call a function from JavaScript data, as Nunjucks does: with the object
+/// it was read from as `this` (or Nunjucks's context), the arguments as
+/// they are, and the result not awaited.
+fn call_data_fn(h: brrrty_js::FnHandle, this: Option<&Val>, args: &[Val]) -> R<Val> {
+    let values = args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| data_fn_value(a, &format!("argument {}", i + 1), 0))
+        .collect::<R<Vec<_>>>()?;
+    let this_value = match this {
+        Some(t) => Some(data_fn_value(t, "`this`", 0)?),
+        None => None,
+    };
+    let this = match &this_value {
+        Some(v) => This::Value(v),
+        None => This::Opaque("Nunjucks's render context"),
+    };
+    Ok(Val::V(brrrty_js::functions::call(
+        h,
+        this,
+        &values,
+        Settle::AsIs,
+    )))
+}
+
+/// A render-time value as the JavaScript function gets it, or the error
+/// for one Brrrty can't hand over exactly.
+fn data_fn_value(v: &Val, what: &str, depth: usize) -> R<Value> {
+    if depth > 1000 {
+        return Err(jsops::unsupported(format!(
+            "a function from JavaScript data would get {what} nested more than 1000 levels deep"
+        )));
+    }
+    Ok(match v {
+        Val::V(v) => v.clone(),
+        Val::Arr(a) => Value::Array(Arc::new(
+            a.borrow()
+                .iter()
+                .map(|x| crate::render::grow(|| data_fn_value(x, what, depth + 1)))
+                .collect::<R<Vec<_>>>()?,
+        )),
+        Val::Obj(o) => {
+            let mut map = IndexMap::new();
+            for k in o.keys() {
+                let x = o.get(&k).unwrap_or_else(Val::undef);
+                map.insert(
+                    k,
+                    crate::render::grow(|| data_fn_value(&x, what, depth + 1))?,
+                );
+            }
+            Value::Object(Arc::new(map))
+        }
+        Val::Safe(_) => {
+            return Err(jsops::unsupported(format!(
+                "a function from JavaScript data would get a SafeString (from `safe`, `escape` or a macro) as {what}"
+            ))
+            .with_help("Pass the plain string, and apply `safe` to the function's result instead."));
+        }
+        Val::Func(_) => {
+            return Err(jsops::unsupported(format!(
+                "a function from JavaScript data would get a template function (a macro or a method) as {what}"
+            )));
+        }
+        Val::Re(_) => {
+            return Err(jsops::unsupported(format!(
+                "a function from JavaScript data would get a regular expression as {what}"
+            )));
+        }
+    })
+}
+
 impl Renderer<'_> {
     /// `runtime.callWrap(obj, name, context, args)`.
     pub(crate) fn call_wrap(&mut self, f: &Val, name: &str, args: Vec<Val>) -> R<Val> {
@@ -18,6 +94,10 @@ impl Renderer<'_> {
             return Err(error(format!(
                 "Unable to call `{name}`, which is undefined or falsey"
             )));
+        }
+        if let Val::V(Value::Function(h)) = f {
+            // `obj.apply(context, args)`: `this` is Nunjucks's context.
+            return call_data_fn(*h, None, &args);
         }
         let Val::Func(func) = f else {
             return Err(error(format!(
@@ -64,10 +144,15 @@ impl Renderer<'_> {
             Func::Method { this, name } => {
                 let own = match this {
                     Val::Obj(o) => o.get(name),
+                    Val::V(Value::Object(o)) => o.get(&**name).cloned().map(Val::V),
+                    Val::V(Value::Array(a)) => brrrty_js::array_index(name)
+                        .and_then(|i| a.get(i as usize).cloned())
+                        .map(Val::V),
                     _ => None,
                 };
                 match own {
                     Some(Val::Func(g)) => self.call(&g, Some(this), args),
+                    Some(Val::V(Value::Function(h))) => call_data_fn(h, Some(this), &args),
                     Some(_) => Err(jsops::type_error("obj[val].apply is not a function")),
                     None => jsops::call_method(this, name, &args, self.ops()),
                 }

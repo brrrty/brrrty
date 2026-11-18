@@ -105,6 +105,7 @@ fn kind(v: &Value) -> &'static str {
         Value::Object(_) => "a map",
         Value::Undefined => "undefined",
         Value::Date(_) => "a date",
+        Value::Function(_) => "a function",
     }
 }
 
@@ -246,6 +247,9 @@ pub(crate) struct Locator<'a> {
     /// For a generated page after the first, when no `permalink` places
     /// it: its number, the folder 11ty adds to the default permalink.
     pub subdir: Option<usize>,
+    /// The page's top-level keys Brrrty can't supply, and why: a
+    /// `permalink` function that reads one is refused.
+    pub traps: &'a [(String, String)],
 }
 
 impl Locator<'_> {
@@ -258,7 +262,19 @@ impl Locator<'_> {
         data: &Data,
         undefined: &mut BTreeSet<String>,
     ) -> Result<Located, Problem> {
-        self.locate_inner(data, undefined).map_err(|mut p| {
+        self.locate_in(data, undefined, None)
+    }
+
+    /// [`Locator::locate`], with the page's data kept in the JavaScript
+    /// runtime by its computed data: a `permalink` function is called with
+    /// that object, as 11ty calls it with the page's live data.
+    pub fn locate_in(
+        &self,
+        data: &Data,
+        undefined: &mut BTreeSet<String>,
+        page: Option<&mut crate::data::JsPage<'_>>,
+    ) -> Result<Located, Problem> {
+        self.locate_inner(data, undefined, page).map_err(|mut p| {
             p.path = Some(self.shown.to_path_buf());
             if p.line.is_none() && self.from.is_none() {
                 p.line = self.line;
@@ -271,6 +287,7 @@ impl Locator<'_> {
         &self,
         data: &Data,
         undefined: &mut BTreeSet<String>,
+        page: Option<&mut crate::data::JsPage<'_>>,
     ) -> Result<Located, Problem> {
         if data
             .get("permalinkBypassOutputDir")
@@ -284,7 +301,7 @@ impl Locator<'_> {
         }
         // 11ty reads `permalink ?? eleventyComputed.permalink`.
         let value = match data.get("permalink") {
-            None | Some(Value::Null) => match data.get("eleventyComputed") {
+            None | Some(Value::Null | Value::Undefined) => match data.get("eleventyComputed") {
                 Some(Value::Object(c)) => c.get("permalink"),
                 _ => None,
             },
@@ -321,6 +338,16 @@ impl Locator<'_> {
                 }
                 Some(Value::Object(Arc::new(out)))
             }
+            Some(Value::Function(f)) => {
+                if !render {
+                    return Err(Problem::error(
+                        codes::PERMALINK_UNSUPPORTED,
+                        "`permalink` is a function and `dynamicPermalink` is false, so 11ty uses the function itself as the permalink",
+                    )
+                    .with_help("Remove `dynamicPermalink: false`, or make `permalink` a string."));
+                }
+                self.call(*f, data, page)?
+            }
             other => other.cloned(),
         };
         let permalink = resolve_value(self.rel, rendered.as_ref(), data, self.subdir)?;
@@ -344,6 +371,52 @@ impl Locator<'_> {
             output_path,
             link,
         })
+    }
+
+    /// Call a `permalink` function with the page's data, as 11ty's
+    /// `renderPermalink` does: its result is the permalink, not rendered
+    /// again.
+    fn call(
+        &self,
+        f: brrrty_js::FnHandle,
+        data: &Data,
+        page: Option<&mut crate::data::JsPage<'_>>,
+    ) -> Result<Option<Value>, Problem> {
+        let result = match page {
+            Some(p) => p.call(f, None)?,
+            None => {
+                let calls = crate::data::js_calls().ok_or_else(|| {
+                    Problem::error(
+                        codes::JS_DATA_FUNCTION,
+                        "`permalink` is a function, and JavaScript data isn't running",
+                    )
+                })?;
+                let mut p = calls.page(
+                    &Value::Object(Arc::new(data.clone())),
+                    self.traps,
+                    &[],
+                    self.shown,
+                )?;
+                p.call(f, None)?
+            }
+        };
+        let returned = |what: &str| {
+            Problem::error(
+                codes::PERMALINK_INVALID,
+                format!("the `permalink` function returned {what}"),
+            )
+            .with_help("Return a string, `false` to write nothing, or `undefined` for the default permalink.")
+        };
+        match result {
+            // 11ty's default permalink when the function gives nothing.
+            Value::Undefined => Ok(None),
+            Value::String(s) if s.is_empty() => Err(empty_permalink(
+                "the `permalink` function's result",
+                self.rel,
+            )),
+            v @ (Value::String(_) | Value::Bool(_) | Value::Object(_)) => Ok(Some(v)),
+            other => Err(returned(kind(&other))),
+        }
     }
 
     fn render(

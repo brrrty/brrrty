@@ -5,10 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::Value;
+pub use crate::functions::{Settle, This};
 
-/// A function value that stayed in the runtime, to be called later.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FnHandle(pub u32);
+pub use crate::value::FnHandle;
 
 /// One step of a path inside a data file's value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,8 +61,9 @@ pub fn path_text(path: &[PathPart]) -> String {
     out
 }
 
-/// A value from the runtime. Functions and refused values are
-/// [`Value::Undefined`] in `value`, and listed by path.
+/// A value from the runtime. A function is a [`Value::Function`] in
+/// `value`; a refused value is [`Value::Undefined`]. Both are listed by
+/// path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decoded {
     pub value: Value,
@@ -107,17 +107,45 @@ pub struct RuntimeFailure {
     pub stopped: bool,
 }
 
-/// The outcome of one request: a value, the site's own exception, or a
-/// runtime that stopped.
+/// The outcome of one request: a value, the site's own exception, a value
+/// Brrrty refused to hand on, or a runtime that stopped.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsResult<T> {
     Ok(T),
     Thrown(JsError),
+    /// The request ran, but its outcome can't be used exactly.
+    Refused(Refusal),
     Failed(RuntimeFailure),
 }
 
+/// Why a call's outcome can't be used exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// The reason, naming the function: it reads what Brrrty can't hand
+    /// it, changes its arguments, or returns something that can't cross.
+    pub why: String,
+    /// The function gave different results for the same data: it keeps
+    /// state between calls, so any page's result from it may differ from
+    /// 11ty's.
+    pub impure: bool,
+}
+
+impl Refusal {
+    pub fn new(why: impl Into<String>) -> Refusal {
+        Refusal {
+            why: why.into(),
+            impure: false,
+        }
+    }
+}
+
+/// One page's data, kept in the runtime while its computed values run, as
+/// 11ty keeps one data object per page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PageId(pub u64);
+
 /// A JavaScript runtime that loads data files and calls the functions in
-/// them, one request at a time, in the order a build makes them.
+/// them, one request at a time.
 pub trait JsRuntime: Send {
     /// The data 11ty hands an exported function (`addGlobalData` values and
     /// `eleventy`), sent once before any file loads.
@@ -125,11 +153,36 @@ pub trait JsRuntime: Send {
     /// Import `file` (absolute) as 11ty does; when `call` and the export is
     /// a function, call it with the argument and await it.
     fn load(&mut self, file: &Path, call: bool) -> JsResult<Decoded>;
-    /// Call a function value with `args`, awaiting the result.
-    fn call(&mut self, f: FnHandle, args: &[Value]) -> JsResult<Decoded>;
-    /// The top-level data keys `f` reads, as 11ty's computed data proxy
-    /// finds them.
-    fn vars_used(&mut self, f: FnHandle, data: &Value) -> JsResult<Vec<String>>;
+    /// Call a function value from a template with `this` and `args`.
+    fn call(
+        &mut self,
+        f: FnHandle,
+        this: This<'_>,
+        args: &[Value],
+        settle: Settle,
+    ) -> JsResult<Decoded>;
+    /// Keep `data` as a page's data object. Each of `traps` (a top-level
+    /// key and why) is a key Brrrty can't supply: reading it refuses the
+    /// call. Each of `defaults` (a dotted computed key) that is undefined
+    /// is set to `""`, as 11ty's computed data proxy does.
+    fn page_open(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+    ) -> JsResult<PageId>;
+    /// The keys `f` reads of the page's data, as 11ty's
+    /// `ComputedDataProxy.findVarsUsed` finds them (`keys` are the page's
+    /// computed keys).
+    fn page_vars(&mut self, page: PageId, f: FnHandle, keys: &[String]) -> JsResult<Vec<String>>;
+    /// Call `f` with the page's data, as 11ty calls a computed function or
+    /// a permalink function, awaiting it; with `set`, store the result at
+    /// that dotted key of the page's data.
+    fn page_call(&mut self, page: PageId, f: FnHandle, set: Option<&str>) -> JsResult<Decoded>;
+    /// Set a dotted key of the page's data, as 11ty's `lodash.set` does.
+    fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()>;
+    /// Forget the page's data.
+    fn page_close(&mut self, page: PageId);
     /// Every file the site's code read or loaded so far, absolute.
     fn reads(&mut self) -> JsResult<Vec<PathBuf>>;
 }

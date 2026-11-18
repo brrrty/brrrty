@@ -14,7 +14,7 @@ use brrrty_js::Value;
 use chrono::{DateTime, FixedOffset};
 use rhai::{Array, Dynamic, Map};
 
-use crate::api::JsDate;
+use crate::api::{JsDate, JsFunction};
 use crate::object::{FrozenArray, JsNull, JsObject};
 
 /// How deeply data may nest. Deeper data is refused rather than walked, so
@@ -71,6 +71,9 @@ pub(crate) fn to_value_at(v: &Dynamic, depth: usize) -> Result<Value, String> {
     if v.is::<JsNull>() {
         return Ok(Value::Null);
     }
+    if let Some(f) = v.read_lock::<JsFunction>() {
+        return Ok(Value::Function(f.0));
+    }
     if let Some(d) = v.read_lock::<JsDate>() {
         return date_value(d.0)
             .ok_or_else(|| "an invalid date can't be data in Brrrty yet".to_string());
@@ -100,6 +103,7 @@ pub fn to_dynamic(v: &Value) -> Dynamic {
         Value::Array(a) => Dynamic::from_array(a.iter().map(to_dynamic).collect()),
         Value::Object(o) => Dynamic::from(JsObject::Shared(o.clone())),
         Value::Date(d) => Dynamic::from(JsDate(d.timestamp_millis() as f64)),
+        Value::Function(h) => Dynamic::from(JsFunction(*h)),
     }
 }
 

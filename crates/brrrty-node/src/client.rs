@@ -10,7 +10,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use brrrty_js::Value;
-use brrrty_js::runtime::{Decoded, FnHandle, JsError, JsResult, JsRuntime, RuntimeFailure};
+use brrrty_js::runtime::{
+    Decoded, FnHandle, JsError, JsResult, JsRuntime, PageId, Refusal, RuntimeFailure, Settle, This,
+};
 use serde_json::{Value as Json, json};
 
 use crate::decode::decode;
@@ -245,6 +247,12 @@ impl Worker {
         if let Some(t) = reply.get("thrown") {
             return JsResult::Thrown(js_error(t, &self.root));
         }
+        if let Some(r) = reply.get("refused") {
+            return JsResult::Refused(Refusal {
+                why: r.as_str().unwrap_or("").to_string(),
+                impure: reply.get("impure").and_then(Json::as_bool) == Some(true),
+            });
+        }
         let earlier = self.earlier.take();
         if reply.get("same").is_some() {
             return match earlier {
@@ -344,6 +352,7 @@ impl JsRuntime for Worker {
         ) {
             JsResult::Ok(_) => JsResult::Ok(()),
             JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
             JsResult::Failed(f) => JsResult::Failed(f),
         }
     }
@@ -365,27 +374,98 @@ impl JsRuntime for Worker {
         r
     }
 
-    fn call(&mut self, f: FnHandle, args: &[Value]) -> JsResult<Decoded> {
-        let args: Vec<Json> = args.iter().map(encode).collect();
-        self.request(
-            json!({"op": "call", "handle": f.0, "args": args}),
-            "a data function",
-        )
+    fn call(
+        &mut self,
+        f: FnHandle,
+        this: This<'_>,
+        args: &[Value],
+        settle: Settle,
+    ) -> JsResult<Decoded> {
+        let mut req = json!({"op": "call", "handle": f.0, "await": settle == Settle::Await});
+        let encoded = match this {
+            This::Value(v) => encode_all(std::iter::once(v).chain(args)),
+            This::Opaque(what) => {
+                req["opaque"] = json!(what);
+                encode_all(args.iter())
+            }
+        };
+        let mut encoded = match encoded {
+            Ok(e) => e,
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
+        if let This::Value(_) = this {
+            req["this"] = encoded.remove(0);
+        }
+        req["args"] = Json::Array(encoded);
+        self.request(req, "a data function")
     }
 
-    fn vars_used(&mut self, f: FnHandle, data: &Value) -> JsResult<Vec<String>> {
+    fn page_open(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+    ) -> JsResult<PageId> {
+        let data = match encode_all(std::iter::once(data)) {
+            Ok(mut e) => e.remove(0),
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
         let r = self.request(
-            json!({"op": "varsUsed", "handle": f.0, "data": encode(data)}),
+            json!({"op": "pageOpen", "data": data, "traps": traps, "defaults": defaults}),
+            "a page's data",
+        );
+        match r {
+            JsResult::Ok(d) => match d.value {
+                Value::Number(n) if n >= 1.0 && n.fract() == 0.0 => JsResult::Ok(PageId(n as u64)),
+                other => JsResult::Failed(self.fail(&format!("pageOpen gave {other:?}"))),
+            },
+            JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
+            JsResult::Failed(f) => JsResult::Failed(f),
+        }
+    }
+
+    fn page_vars(&mut self, page: PageId, f: FnHandle, keys: &[String]) -> JsResult<Vec<String>> {
+        let r = self.request(
+            json!({"op": "pageVars", "page": page.0, "handle": f.0, "keys": keys}),
             "a computed data function",
         );
         match r {
             JsResult::Ok(d) => match strings(&d.value) {
                 Some(list) => JsResult::Ok(list),
-                None => JsResult::Failed(self.fail(&format!("varsUsed gave {:?}", d.value))),
+                None => JsResult::Failed(self.fail(&format!("pageVars gave {:?}", d.value))),
             },
             JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
             JsResult::Failed(f) => JsResult::Failed(f),
         }
+    }
+
+    fn page_call(&mut self, page: PageId, f: FnHandle, set: Option<&str>) -> JsResult<Decoded> {
+        self.request(
+            json!({"op": "pageCall", "page": page.0, "handle": f.0, "set": set}),
+            "a computed data function",
+        )
+    }
+
+    fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()> {
+        let value = match encode_all(std::iter::once(value)) {
+            Ok(mut e) => e.remove(0),
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
+        match self.request(
+            json!({"op": "pageSet", "page": page.0, "key": key, "value": value}),
+            "a page's data",
+        ) {
+            JsResult::Ok(_) => JsResult::Ok(()),
+            JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
+            JsResult::Failed(f) => JsResult::Failed(f),
+        }
+    }
+
+    fn page_close(&mut self, page: PageId) {
+        let _ = self.request(json!({"op": "pageClose", "page": page.0}), "a page's data");
     }
 
     fn reads(&mut self) -> JsResult<Vec<PathBuf>> {
@@ -395,6 +475,7 @@ impl JsRuntime for Worker {
                 None => JsResult::Failed(self.fail(&format!("reads gave {:?}", d.value))),
             },
             JsResult::Thrown(e) => JsResult::Thrown(e),
+            JsResult::Refused(r) => JsResult::Refused(r),
             JsResult::Failed(f) => JsResult::Failed(f),
         }
     }
@@ -632,6 +713,124 @@ fn js_error(t: &Json, root: &Path) -> JsError {
     }
 }
 
+/// Values in the worker's wire forms, for a call: an object or array
+/// that appears more than once is sent once (`{"$s": [id, value]}`, then
+/// `{"$r": id}`), so data shared between pages, as 11ty shares it, stays
+/// one object; and a property Brrrty doesn't have the value of (a
+/// collection item's content, a key it withholds) is sent as a trap,
+/// `{"$t": why}`, which refuses the call when the function reads it. `Err`
+/// when a value can't be handed over at all.
+pub fn encode_all<'v>(
+    values: impl Iterator<Item = &'v Value> + Clone,
+) -> Result<Vec<Json>, String> {
+    let mut counts: HashMap<usize, u32> = HashMap::new();
+    for v in values.clone() {
+        count(v, &mut counts);
+    }
+    let mut e = Encoder {
+        counts,
+        ids: HashMap::new(),
+    };
+    values.map(|v| e.encode(v)).collect()
+}
+
+fn ptr_of(v: &Value) -> Option<usize> {
+    match v {
+        Value::Object(o) => Some(Arc::as_ptr(o) as usize),
+        Value::Array(a) => Some(Arc::as_ptr(a) as usize),
+        _ => None,
+    }
+}
+
+fn count(v: &Value, counts: &mut HashMap<usize, u32>) {
+    let mut stack = vec![v];
+    while let Some(v) = stack.pop() {
+        let Some(p) = ptr_of(v) else { continue };
+        let n = counts.entry(p).or_insert(0);
+        *n += 1;
+        if *n > 1 {
+            continue;
+        }
+        match v {
+            Value::Object(o) => stack.extend(o.values()),
+            Value::Array(a) => stack.extend(a.iter()),
+            _ => {}
+        }
+    }
+}
+
+struct Encoder {
+    counts: HashMap<usize, u32>,
+    /// The id of each shared object or array sent so far.
+    ids: HashMap<usize, usize>,
+}
+
+/// Why a property Brrrty marks as unknown can't be handed to a function.
+fn trap_reason(key: &str) -> String {
+    match key {
+        "templateContent" | "content" => format!(
+            "reads `{key}` of a collection item, which 11ty fills in only as it renders pages"
+        ),
+        "template" => {
+            "reads `template` of a collection item, 11ty's internal template object".to_string()
+        }
+        _ => format!("reads `{key}`, which Brrrty doesn't hand to JavaScript functions yet"),
+    }
+}
+
+impl Encoder {
+    fn encode(&mut self, v: &Value) -> Result<Json, String> {
+        let Some(p) = ptr_of(v) else {
+            return Ok(encode(v));
+        };
+        if let Some(id) = self.ids.get(&p) {
+            return Ok(json!({"$r": id}));
+        }
+        let shared = self.counts.get(&p).copied().unwrap_or(0) > 1;
+        let id = self.ids.len();
+        if shared {
+            self.ids.insert(p, id);
+        }
+        let inner = match v {
+            Value::Array(a) => Json::Array(
+                a.iter()
+                    .map(|x| self.encode(x))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Value::Object(o) => {
+                if brrrty_js::traps::is_open_object(o) {
+                    return Err(
+                        "passes the whole `collections` object to a function, which Brrrty doesn't do yet; pass one collection, like `collections.post`".to_string(),
+                    );
+                }
+                let mut entries = Vec::with_capacity(o.len());
+                for (k, x) in o.iter() {
+                    let item = if matches!(x, Value::Undefined)
+                        && brrrty_js::traps::TRAP_KEYS.contains(&k.as_str())
+                    {
+                        json!({"$t": trap_reason(k)})
+                    } else {
+                        self.encode(x)?
+                    };
+                    entries.push(json!([k, item]));
+                }
+                if let Some(keys) = brrrty_js::traps::withheld_keys(o) {
+                    for k in keys.iter().filter(|k| !o.contains_key(k.as_str())) {
+                        entries.push(json!([k, {"$t": format!("reads `{k}` of another page's `data`, which Brrrty can't supply")}]));
+                    }
+                }
+                json!({"$o": entries})
+            }
+            _ => encode(v),
+        };
+        Ok(if shared {
+            json!({"$s": [id, inner]})
+        } else {
+            inner
+        })
+    }
+}
+
 /// A Brrrty value in the worker's wire forms.
 pub fn encode(v: &Value) -> Json {
     match v {
@@ -657,5 +856,6 @@ pub fn encode(v: &Value) -> Json {
             json!({"$o": o.iter().map(|(k, v)| json!([k, encode(v)])).collect::<Vec<_>>()})
         }
         Value::Date(d) => json!({"$d": d.timestamp_millis()}),
+        Value::Function(h) => json!({"$f": h.0}),
     }
 }

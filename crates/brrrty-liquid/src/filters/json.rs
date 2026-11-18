@@ -107,7 +107,8 @@ impl Writer<'_> {
     fn write(&mut self, value: &Value, depth: usize) -> Result<bool, Stop> {
         let indent = self.indent;
         match value {
-            Value::Undefined => return Ok(false),
+            // JSON.stringify leaves functions out, as it does undefined.
+            Value::Undefined | Value::Function(_) => return Ok(false),
             Value::Null => self.out.push_str("null"),
             Value::Bool(b) => self.out.push_str(if *b { "true" } else { "false" }),
             Value::Number(n) if n.is_finite() => self.out.push_str(&js_number_to_string(*n)),

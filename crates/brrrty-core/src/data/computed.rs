@@ -54,21 +54,23 @@ const REFUSED_ROOTS: &[&str] = &[
     "pkg",
 ];
 
-/// The computed entries of a page, in the order to run them.
+/// The computed entries of a page, and the order to run them in.
 #[derive(Debug, Clone)]
 pub(crate) struct Plan {
     /// What renders the values; with no language (`templateEngineOverride`
     /// of `html`, `""` or `false`), they are set as written (probed).
     engine: DataEngine,
-    steps: Vec<Step>,
-}
-
-#[derive(Debug, Clone)]
-struct Step {
-    path: Vec<String>,
-    value: Value,
-    /// An entry 11ty adds itself: it runs the permalink.
-    page: Option<PageEntry>,
+    /// Every entry, in the order 11ty adds them: `page.url`,
+    /// `page.outputPath`, then the keys in JavaScript key order.
+    leaves: Vec<Leaf>,
+    /// What each entry reads, when that is known without running anything:
+    /// a template string's symbols. A function's reads are found per page,
+    /// by running it on 11ty's proxy data.
+    reads: Vec<Option<Vec<String>>>,
+    /// The page's `permalink` is computed.
+    computed_permalink: bool,
+    /// The order, when no entry is a function.
+    order: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -91,7 +93,7 @@ fn unsupported(message: String, help: String) -> Problem {
 impl Plan {
     /// Whether an entry sets `root` at the top level of the data.
     pub fn sets_root(&self, root: &str) -> bool {
-        self.steps
+        self.leaves
             .iter()
             .any(|s| s.page.is_none() && s.path.first().map(String::as_str) == Some(root))
     }
@@ -137,27 +139,18 @@ impl Plan {
             ],
         );
 
-        // Dependency graph, built the way 11ty adds entries.
         let names: Vec<String> = leaves.iter().map(|l| l.path.join(".")).collect();
-        let known: HashMap<&str, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n.as_str(), i))
-            .collect();
-        let mut graph = Graph::default();
+        let mut reads = Vec::with_capacity(leaves.len());
         for (leaf, name) in leaves.iter().zip(&names) {
-            graph.node(name);
             if leaf.page.is_some() {
-                // A computed `permalink` is found by running the permalink
-                // on marker data; a plain one isn't there to find.
-                if computed_permalink {
-                    let to = graph.node("permalink");
-                    let from = graph.node(name);
-                    graph.depend(from, to);
-                }
+                reads.push(Some(Vec::new()));
                 continue;
             }
             let strings: Vec<&str> = match &leaf.value {
+                Value::Function(_) => {
+                    reads.push(None);
+                    continue;
+                }
                 Value::String(s) => vec![s.as_ref()],
                 Value::Array(items) => items
                     .iter()
@@ -172,27 +165,56 @@ impl Plan {
             for s in strings {
                 symbols.extend(symbols_of(engine, s, name)?);
             }
-            let mut used = Vec::new();
-            for symbol in symbols {
-                if symbol.starts_with("collections.") {
-                    return Err(Problem::error(
-                        codes::DATA_UNSUPPORTED,
-                        format!(
-                            "computed value `{name}` reads `collections`, which Brrrty doesn't support in computed data yet"
-                        ),
-                    )
-                    .with_help(
-                        "Read `collections` in the template itself, for example `{% assign posts = collections.post %}`.",
-                    ));
+            check_collections(name, &symbols)?;
+            reads.push(Some(symbols));
+        }
+        let mut plan = Plan {
+            engine,
+            leaves,
+            reads,
+            computed_permalink,
+            order: None,
+        };
+        if plan.reads.iter().all(Option::is_some) {
+            let reads: Vec<Vec<String>> = plan.reads.iter().flatten().cloned().collect();
+            plan.order = Some(plan.order_by(&reads)?);
+        }
+        Ok(Some(plan))
+    }
+
+    /// Whether an entry is a function, run in the page's JavaScript runtime.
+    fn has_functions(&self) -> bool {
+        self.order.is_none()
+    }
+
+    /// The order to run the entries in, from what each reads, as 11ty's
+    /// `dependency-graph` gives it.
+    fn order_by(&self, reads: &[Vec<String>]) -> Result<Vec<usize>, Problem> {
+        let names: Vec<String> = self.leaves.iter().map(|l| l.path.join(".")).collect();
+        let known: HashMap<&str, usize> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.as_str(), i))
+            .collect();
+        let mut graph = Graph::default();
+        for ((leaf, name), read) in self.leaves.iter().zip(&names).zip(reads) {
+            graph.node(name);
+            if leaf.page.is_some() {
+                // A computed `permalink` is found by running the permalink
+                // on marker data; a plain one isn't there to find.
+                if self.computed_permalink {
+                    let to = graph.node("permalink");
+                    let from = graph.node(name);
+                    graph.depend(from, to);
                 }
-                if symbol != *name && known.contains_key(symbol.as_str()) {
-                    used.push(symbol);
-                }
+                continue;
             }
-            for symbol in used {
-                let to = graph.node(&symbol);
-                let from = graph.node(name);
-                graph.depend(from, to);
+            for symbol in read {
+                if symbol != name && known.contains_key(symbol.as_str()) {
+                    let to = graph.node(symbol);
+                    let from = graph.node(name);
+                    graph.depend(from, to);
+                }
             }
         }
         let order = graph.order().map_err(|cycle| {
@@ -206,23 +228,21 @@ impl Plan {
             )
             .with_help("Change one of these values so it doesn't read the next one.")
         })?;
-        let mut leaves: Vec<Option<Leaf>> = leaves.into_iter().map(Some).collect();
-        let steps = order
+        Ok(order
             .into_iter()
             .filter_map(|i| known.get(graph.names[i].as_str()).copied())
-            .filter_map(|i| leaves[i].take())
-            .map(|l| Step {
-                path: l.path,
-                value: l.value,
-                page: l.page,
-            })
-            .collect();
-        Ok(Some(Plan { engine, steps }))
+            .collect())
     }
 
     /// `base` with every computed value set, in order, and the permalink as
     /// the `page.outputPath` entry resolved it. Reads that nothing defines
     /// are added to `undefined`, like any other render.
+    ///
+    /// With function entries, the page's data is kept in the JavaScript
+    /// runtime as 11ty keeps it: every computed key not set yet becomes
+    /// `""` (a side effect of 11ty's proxy pass), each function is first
+    /// run on proxy data to learn what it reads, which gives the order,
+    /// then each runs on the page's data and its result is set there.
     pub fn apply(
         &self,
         langs: &Langs<'_>,
@@ -232,13 +252,59 @@ impl Plan {
         locator: &Locator<'_>,
     ) -> Result<Applied, Problem> {
         let mut data = base.clone();
+        let calls = if self.has_functions() {
+            Some(super::js_calls().ok_or_else(|| {
+                Problem::error(
+                    codes::JS_DATA_FUNCTION,
+                    "this page's computed data has functions, and JavaScript data isn't running",
+                )
+                .with_path(shown)
+            })?)
+        } else {
+            None
+        };
+        let mut page = None;
+        let order = match &calls {
+            None => self.order.clone().unwrap_or_default(),
+            Some(calls) => {
+                let keys: Vec<String> = self.leaves.iter().map(|l| l.path.join(".")).collect();
+                let mut p = calls.page(
+                    &Value::Object(Arc::new(base.clone())),
+                    locator.traps,
+                    &keys,
+                    shown,
+                )?;
+                for leaf in &self.leaves {
+                    if lodash_get(&data, &leaf.path).is_none() {
+                        self.set(&mut data, &leaf.path, Value::String("".into()), shown)?;
+                    }
+                }
+                let mut reads = Vec::with_capacity(self.leaves.len());
+                for ((leaf, read), name) in self.leaves.iter().zip(&self.reads).zip(&keys) {
+                    reads.push(match (read, &leaf.value) {
+                        (Some(r), _) => r.clone(),
+                        (None, Value::Function(f)) => {
+                            let found = p.vars(*f, &keys)?;
+                            check_collections(name, &found).map_err(|e| e.with_path(shown))?;
+                            found
+                        }
+                        (None, _) => Vec::new(),
+                    });
+                }
+                let order = self.order_by(&reads).map_err(|e| e.with_path(shown))?;
+                page = Some(p);
+                order
+            }
+        };
         let mut permalink = None;
-        for step in &self.steps {
+        for &i in &order {
+            let step = &self.leaves[i];
             let key = step.path.join(".");
+            let mut set_by_runtime = false;
             let value = if let Some(entry) = step.page {
                 // 11ty writes the file `page.outputPath` names, so that
                 // run decides where the page goes.
-                let found = locator.locate(&data, undefined)?;
+                let found = locator.locate_in(&data, undefined, page.as_mut())?;
                 match entry {
                     PageEntry::Url => found.url,
                     PageEntry::OutputPath => {
@@ -246,6 +312,12 @@ impl Plan {
                         found.output_path
                     }
                 }
+            } else if let (Value::Function(f), Some(p)) = (&step.value, page.as_mut()) {
+                set_by_runtime = true;
+                p.call(*f, Some(&key)).map_err(|e| Problem {
+                    message: format!("{} (computing `{key}`)", e.message),
+                    ..e
+                })?
             } else {
                 self.render(&step.value, &key, langs, shown, &data, undefined)?
             };
@@ -255,22 +327,20 @@ impl Plan {
                 // 11ty renders an array in place, so the data's own
                 // `eleventyComputed` shows the rendered strings (probed).
                 let _ = set_path(Arc::make_mut(own), &step.path, value.clone());
+                if let Some(p) = page.as_mut() {
+                    p.set(&format!("eleventyComputed.{key}"), &value)?;
+                }
             }
-            set_path(&mut data, &step.path, value).map_err(|why| {
-                unsupported(
-                    format!("computed key `{key}` can't be set: {why}"),
-                    format!(
-                        "Compute the whole `{}` value instead, or set it in front matter.",
-                        step.path[0]
-                    ),
-                )
-                .with_path(shown)
-            })?;
+            if !set_by_runtime && let Some(p) = page.as_mut() {
+                p.set(&key, &value)?;
+            }
+            self.set(&mut data, &step.path, value, shown)?;
         }
+        drop(page);
         // The data is a JavaScript object: index-like keys come first. The
         // base is in that order already, so only the objects a computed
         // value was set in can be out of it; the rest stay shared.
-        for step in &self.steps {
+        for step in &self.leaves {
             reorder_along(&mut data, &step.path);
             if matches!(step.value, Value::Array(_))
                 && let Some(Value::Object(own)) = data.get_mut("eleventyComputed")
@@ -278,9 +348,33 @@ impl Plan {
                 reorder_along(Arc::make_mut(own), &step.path);
             }
         }
-        Ok(Applied {
-            data,
-            permalink: permalink.expect("`page.outputPath` is always an entry"),
+        let permalink = permalink.ok_or_else(|| {
+            Problem::error(
+                codes::COMPUTED_UNSUPPORTED,
+                "this page's computed data never placed the page",
+            )
+            .with_path(shown)
+        })?;
+        Ok(Applied { data, permalink })
+    }
+
+    /// `lodash.set` of a computed result, or the problem when Brrrty can't.
+    fn set(
+        &self,
+        data: &mut Data,
+        path: &[String],
+        value: Value,
+        shown: &Path,
+    ) -> Result<(), Problem> {
+        set_path(data, path, value).map_err(|why| {
+            unsupported(
+                format!("computed key `{}` can't be set: {why}", path.join(".")),
+                format!(
+                    "Compute the whole `{}` value instead, or set it in front matter.",
+                    path[0]
+                ),
+            )
+            .with_path(shown)
         })
     }
 
@@ -342,6 +436,48 @@ impl Plan {
     }
 }
 
+/// A computed value that reads `collections` is refused: 11ty runs it
+/// after the collections are made, which Brrrty doesn't follow yet.
+fn check_collections(name: &str, reads: &[String]) -> Result<(), Problem> {
+    if reads
+        .iter()
+        .any(|r| r == "collections" || r.starts_with("collections."))
+    {
+        return Err(Problem::error(
+            codes::DATA_UNSUPPORTED,
+            format!(
+                "computed value `{name}` reads `collections`, which Brrrty doesn't support in computed data yet"
+            ),
+        )
+        .with_help(
+            "Read `collections` in the template itself, for example `{% assign posts = collections.post %}`.",
+        ));
+    }
+    Ok(())
+}
+
+/// `lodash.get(data, path)`, or `None` where it gives `undefined`.
+fn lodash_get(data: &Data, path: &[String]) -> Option<Value> {
+    let (first, rest) = path.split_first()?;
+    let mut v = data.get(first.as_str())?.clone();
+    for k in rest {
+        v = match &v {
+            Value::Object(o) => o.get(k.as_str())?.clone(),
+            Value::Array(a) => match k.as_str() {
+                "length" => Value::Number(a.len() as f64),
+                k => a.get(brrrty_js::array_index(k)? as usize)?.clone(),
+            },
+            Value::String(s) => match k.as_str() {
+                "length" => Value::Number(s.encode_utf16().count() as f64),
+                _ => return None,
+            },
+            _ => return None,
+        };
+    }
+    (!matches!(v, Value::Undefined)).then_some(v)
+}
+
+#[derive(Debug, Clone)]
 struct Leaf {
     path: Vec<String>,
     value: Value,
@@ -388,6 +524,9 @@ pub(crate) fn set_path(root: &mut Data, path: &[String], value: Value) -> Result
         Some(Value::Object(o)) => set_path(Arc::make_mut(o), rest, value),
         Some(Value::Array(_) | Value::Date(_)) => Err(format!(
             "`{first}` is a list or a date, not an object, so `{next}` can't be set on it"
+        )),
+        Some(Value::Function(_)) => Err(format!(
+            "`{first}` is a function, so `{next}` can't be set on it"
         )),
         _ => {
             if brrrty_js::array_index(next).is_some() {

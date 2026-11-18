@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 use brrrty_js::Value;
-use brrrty_js::runtime::{JsResult, JsRuntime};
+use brrrty_js::runtime::{JsResult, JsRuntime, Settle, This};
 use brrrty_node::{NodeMissing, RunMode, Worker, find_node};
 
 fn node() -> Option<brrrty_node::NodeInfo> {
@@ -74,7 +74,9 @@ fn loads_a_file_and_calls_its_function_with_the_argument() {
     assert_eq!(raw.functions.len(), 1);
     let called = ok(w.call(
         raw.functions[0].1,
+        This::Opaque("nothing"),
         &[Value::from_json(&serde_json::json!({"x": 5}))],
+        Settle::Await,
     ));
     assert_eq!(get(&called.value, "got"), &Value::Number(5.0));
 }
@@ -524,4 +526,153 @@ module.exports = { pid: kid.pid };"#,
         ours.is_empty(),
         "child holds {ours:?}; Node holds {node_fds:?}"
     );
+}
+
+fn handle_at(v: &Value, path: &[&str]) -> brrrty_js::FnHandle {
+    let mut v = v;
+    for k in path {
+        v = get(v, k);
+    }
+    match v {
+        Value::Function(h) => *h,
+        other => panic!("not a function: {other:?}"),
+    }
+}
+
+fn refused<T: std::fmt::Debug>(r: JsResult<T>) -> brrrty_js::runtime::Refusal {
+    match r {
+        JsResult::Refused(why) => why,
+        other => panic!("not refused: {other:?}"),
+    }
+}
+
+fn json(v: serde_json::Value) -> Value {
+    Value::from_json(&v)
+}
+
+#[test]
+fn a_page_keeps_its_data_between_computed_calls() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "c.js",
+        "module.exports = { c: (d) => d.b + '!', b: (d) => d.a + '-b', a: (d) => d.title.toUpperCase(), all: (d) => d.collections.post.length, page: (d) => d.page.url };",
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let c = ok(w.load(&t.path().join("c.js"), true)).value;
+    let keys: Vec<String> = ["page.url", "page.outputPath", "c", "b", "a"]
+        .map(String::from)
+        .to_vec();
+    let data = json(serde_json::json!({"title": "Hi", "page": {"fileSlug": "x"}}));
+    let page = ok(w.page_open(&data, &[], &keys));
+    // 11ty's proxy pass: what each function reads; computed keys not set
+    // yet read as "".
+    assert_eq!(ok(w.page_vars(page, handle_at(&c, &["c"]), &keys)), ["b"]);
+    assert_eq!(ok(w.page_vars(page, handle_at(&c, &["b"]), &keys)), ["a"]);
+    assert_eq!(
+        ok(w.page_vars(page, handle_at(&c, &["a"]), &keys)),
+        ["title"]
+    );
+    assert_eq!(
+        ok(w.page_vars(page, handle_at(&c, &["all"]), &keys)),
+        ["collections", "collections.post"]
+    );
+    assert_eq!(
+        ok(w.page_vars(page, handle_at(&c, &["page"]), &keys)),
+        ["page.url"]
+    );
+    let a = ok(w.page_call(page, handle_at(&c, &["a"]), Some("a")));
+    assert_eq!(a.value, Value::String("HI".into()));
+    let b = ok(w.page_call(page, handle_at(&c, &["b"]), Some("b")));
+    assert_eq!(b.value, Value::String("HI-b".into()));
+    ok(w.page_set(page, "page.url", &Value::String("/x/".into())));
+    let u = ok(w.page_call(page, handle_at(&c, &["page"]), None));
+    assert_eq!(u.value, Value::String("/x/".into()));
+    w.page_close(page);
+}
+
+#[test]
+fn a_method_call_has_its_object_as_this() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "f.js",
+        "module.exports = { label: 'Price', who() { return 'who:' + this.label; }, same: (a, b) => a === b, top() { return typeof this.slugify; } };",
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let f = ok(w.load(&t.path().join("f.js"), true)).value;
+    let who = ok(w.call(handle_at(&f, &["who"]), This::Value(&f), &[], Settle::Await));
+    assert_eq!(who.value, Value::String("who:Price".into()));
+    // An object passed twice is one object, as in 11ty.
+    let shared = json(serde_json::json!({"k": [1, 2]}));
+    let same = ok(w.call(
+        handle_at(&f, &["same"]),
+        This::Opaque("nothing"),
+        &[shared.clone(), shared],
+        Settle::Await,
+    ));
+    assert_eq!(same.value, Value::Bool(true));
+    // `this` Brrrty doesn't model refuses the call, naming the function.
+    let r = refused(w.call(
+        handle_at(&f, &["top"]),
+        This::Opaque("Nunjucks's render context"),
+        &[],
+        Settle::AsIs,
+    ));
+    assert!(r.why.contains("`top`"), "{}", r.why);
+    assert!(r.why.contains("f.js:1:"), "{}", r.why);
+    assert!(r.why.contains("this.slugify"), "{}", r.why);
+    assert!(!r.impure);
+}
+
+#[test]
+fn calls_that_keep_state_or_change_their_arguments_are_refused() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "f.js",
+        "let n = 0; module.exports = { count: () => ++n, poke: (o) => { o.x = 1; return 'ok'; }, later: async () => 'x', peek: (item) => { try { return item.templateContent; } catch { return 'caught'; } } };",
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let f = ok(w.load(&t.path().join("f.js"), true)).value;
+    let r = refused(w.call(
+        handle_at(&f, &["count"]),
+        This::Value(&f),
+        &[],
+        Settle::Await,
+    ));
+    assert!(r.impure, "{r:?}");
+    assert!(r.why.contains("`count`"), "{}", r.why);
+    let r = refused(w.call(
+        handle_at(&f, &["poke"]),
+        This::Value(&f),
+        &[json(serde_json::json!({}))],
+        Settle::Await,
+    ));
+    assert!(r.why.contains("changes the data"), "{}", r.why);
+    // Nunjucks doesn't await: a promise can't cross.
+    let p = ok(w.call(
+        handle_at(&f, &["later"]),
+        This::Value(&f),
+        &[],
+        Settle::AsIs,
+    ));
+    assert_eq!(p.refused.len(), 1, "{p:?}");
+    // Liquid does.
+    let p = ok(w.call(
+        handle_at(&f, &["later"]),
+        This::Value(&f),
+        &[],
+        Settle::Await,
+    ));
+    assert_eq!(p.value, Value::String("x".into()));
+    // A collection item's content isn't there: reading it refuses the
+    // call, even when the function catches the error.
+    let item = json(serde_json::json!({"url": "/a/"}));
+    let Value::Object(mut o) = item else { panic!() };
+    std::sync::Arc::make_mut(&mut o).insert("templateContent".into(), Value::Undefined);
+    let r = refused(w.call(
+        handle_at(&f, &["peek"]),
+        This::Value(&f),
+        &[Value::Object(o)],
+        Settle::Await,
+    ));
+    assert!(r.why.contains("templateContent"), "{}", r.why);
 }

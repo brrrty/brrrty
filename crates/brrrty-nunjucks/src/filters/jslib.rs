@@ -350,7 +350,8 @@ fn json_value(
         return Err(jsops::too_big(ops));
     }
     match v {
-        Val::V(Value::Undefined) | Val::Func(_) => Ok(false),
+        // JSON.stringify leaves functions out, as it does undefined.
+        Val::V(Value::Undefined | Value::Function(_)) | Val::Func(_) => Ok(false),
         // No own enumerable properties: `lastIndex` isn't enumerable.
         Val::Re(_) => {
             out.push_str("{}");

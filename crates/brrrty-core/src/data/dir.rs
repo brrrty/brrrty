@@ -388,6 +388,7 @@ fn settle_js(
             Value::Undefined if !d.refused.is_empty() || !d.functions.is_empty() => {
                 first_inexact(&d).map_or("something else".to_string(), |(_, w)| w)
             }
+            Value::Function(_) => "a function".to_string(),
             other => crate::data::json_text(other),
         };
         return (
@@ -408,6 +409,7 @@ fn settle_js(
     for (path, what) in d.refused.iter().map(|(p, w)| (p, w.clone())).chain(
         d.functions
             .iter()
+            .filter(|(p, _)| !super::js::function_allowed(p))
             .map(|(p, _)| (p, "a function".to_string())),
     ) {
         let Some(brrrty_js::runtime::PathPart::Key(key)) = path.first() else {

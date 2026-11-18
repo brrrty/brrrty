@@ -42,7 +42,12 @@ pub mod codes {
     pub const INPUT_NOT_A_DIRECTORY: &str = "input-not-a-directory";
     /// A JavaScript data file threw, or its promise was rejected.
     pub const JS_DATA_ERROR: &str = "js-data-error";
-    /// A local data function returned different data for two templates.
+    /// A function from JavaScript data a page calls can't be used exactly:
+    /// it reads what Brrrty can't hand it, changes its arguments, or is
+    /// used as a value.
+    pub const JS_DATA_FUNCTION: &str = "js-data-function";
+    /// A local data function returned different data for two templates, or
+    /// a function from data gave different results for the same arguments.
     pub const JS_DATA_IMPURE: &str = "js-data-impure";
     /// JavaScript data is on, and no Node was found.
     pub const JS_DATA_NODE_MISSING: &str = "js-data-node-missing";

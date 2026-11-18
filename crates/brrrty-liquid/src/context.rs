@@ -197,7 +197,8 @@ fn json_str(s: &str) -> String {
 /// value holding a collection item, which can't be read whole.
 pub fn json(v: &Value) -> Option<String> {
     Some(match v {
-        Value::Undefined => return None,
+        // JSON.stringify gives undefined for a function, as for undefined.
+        Value::Undefined | Value::Function(_) => return None,
         Value::Null => "null".into(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) if n.is_finite() => js_number_to_string(*n),
@@ -279,10 +280,21 @@ impl<'a> Context<'a> {
     /// `globals` object, whose `size` is 0.
     pub fn variable(&self, key: &Value) -> Val {
         let k = key.to_js_string();
+        // LiquidJS calls a function it reads, with the scope as `this`.
+        let call = |v: Val| match v {
+            Val::V(Value::Function(h)) => Val::V(crate::ops::call_data_fn(
+                h,
+                brrrty_js::functions::This::Opaque("LiquidJS's variable scope"),
+            )),
+            v => v,
+        };
         for scope in self.scopes.iter().rev() {
             if let Some(v) = scope.get(&k) {
-                return v.clone();
+                return call(v.clone());
             }
+        }
+        if let Some(v @ Value::Function(_)) = self.data_get(&k) {
+            return call(Val::V(v));
         }
         if let Some(v) = self.data_get(&k) {
             // A marker for data Brrrty doesn't have yet counts as undefined.

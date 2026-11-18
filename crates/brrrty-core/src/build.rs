@@ -17,7 +17,7 @@ use serde_json::Value as Json;
 use crate::collections::{self, Entry, Membership, Page};
 use crate::content::{self, ContentPage};
 use crate::data::{
-    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, JsSession, Local, OVERRIDE_PREFIX,
+    BUILD_KEYS, ComputedPlan, DirDataIndex, GlobalData, JsCalls, JsSession, Local, OVERRIDE_PREFIX,
     clean_tags, config_global, frozen_keys, frozen_problem, is_js, js_help, js_object, key_line,
     load_global, merge, page_data, reserved_keys, reserved_problem,
 };
@@ -126,6 +126,9 @@ struct Source {
     layouts: Vec<Arc<LayoutFile>>,
     /// Keys left out of the data because Brrrty can't supply their value.
     withheld: Vec<(String, Withheld)>,
+    /// The same keys, with why, for a function from JavaScript data that
+    /// reads one.
+    traps: Vec<(String, String)>,
     /// A feed `feedPlugin` adds: Brrrty renders its Nunjucks template itself.
     feed: Option<Arc<FeedTemplate>>,
 }
@@ -297,6 +300,24 @@ enum Withheld {
     },
     /// A global data file under it failed to load, and was reported.
     Failed,
+}
+
+impl Withheld {
+    /// Why a function from JavaScript data can't read `key`.
+    fn trap_reason(&self, key: &str) -> String {
+        match self {
+            Withheld::Js(file) => format!(
+                "reads `{key}` from {}, a JavaScript data file that didn't run",
+                file.display()
+            ),
+            Withheld::JsValue { file, at, what } => format!(
+                "reads `{key}` from {}, whose {} is {what}, which can't cross from JavaScript to Brrrty exactly",
+                file.display(),
+                brrrty_js::runtime::path_text(at)
+            ),
+            Withheld::Failed => format!("reads `{key}`, whose data file failed to load"),
+        }
+    }
 }
 
 impl Shared<'_> {
@@ -908,6 +929,10 @@ fn load_page_inner(
             None
         }
     };
+    let traps: Vec<(String, String)> = withheld
+        .iter()
+        .map(|(k, w)| (k.clone(), w.trap_reason(k)))
+        .collect();
     let locator = Locator {
         langs: shared.langs,
         data_engine,
@@ -921,6 +946,7 @@ fn load_page_inner(
             .then(|| key_line(&text, "permalink"))
             .flatten(),
         subdir: None,
+        traps: &traps,
     };
     let source = Arc::new(Source {
         input_path: rel.to_path_buf(),
@@ -931,6 +957,7 @@ fn load_page_inner(
         engines,
         layouts,
         withheld,
+        traps: traps.clone(),
         feed: feed.map(|f| f.template.clone()),
     });
     let computed_membership = plan
@@ -1206,7 +1233,7 @@ impl Place<'_, '_> {
         // 11ty crashes on `permalink: {}` here (`templateRender has not yet
         // initialized`).
         let permalink = match values.get("permalink") {
-            None | Some(Value::Null) => match values.get("eleventyComputed") {
+            None | Some(Value::Null | Value::Undefined) => match values.get("eleventyComputed") {
                 Some(Value::Object(c)) => c.get("permalink"),
                 _ => None,
             },
@@ -1333,6 +1360,7 @@ impl Deferred {
             from: self.permalink_from.clone(),
             line: self.permalink_line,
             subdir: None,
+            traps: &self.source.traps,
         };
         let place = Place {
             shared,
@@ -1535,6 +1563,17 @@ fn missing_data_problem(
     data_dir: &Path,
     state: CollectionsState<'_>,
 ) -> Option<Problem> {
+    // A function from JavaScript data the page couldn't use.
+    if let Some(why) = undefined
+        .iter()
+        .find_map(|n| n.strip_prefix(brrrty_js::functions::FUNCTION_PREFIX))
+    {
+        return Some(
+            Problem::error(codes::JS_DATA_FUNCTION, why.to_string()).with_help(
+                "11ty runs this in its own JavaScript, where Brrrty can't follow it. Call the function with plain values, or move the call into the data file.",
+            ),
+        );
+    }
     if let Some(p) = collections_problem(undefined, state) {
         return Some(p);
     }
@@ -2260,6 +2299,15 @@ fn build_once(
             opts.config.reads.add(p);
         }
     }
+    // The pages call the functions in the data through the runtime, from
+    // every render thread.
+    let js_calls = js.take_calls();
+    let js_hooks = matches!(&opts.js.node, Some(Ok(n)) if n.load_hooks);
+    {
+        let c = js_calls.clone();
+        rayon::broadcast(move |_| JsCalls::install_here(c.clone()));
+    }
+    let _uninstall = UninstallCalls;
     // JavaScript data is on, but there is no Node to run it in.
     if let Some(missing) = js.missing()
         && (!js_keys.is_empty() || dir_data.has_js())
@@ -2297,6 +2345,11 @@ fn build_once(
     };
 
     let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
+    let stop = js_stop(js_calls.as_ref());
+    if !stop.is_empty() {
+        report.problems.extend(stop);
+        return finish(report, strict, start);
+    }
     let mut templates: Vec<Templ> = Vec::new();
     let mut from_layouts = Vec::new();
     let mut from_data = Vec::new();
@@ -2748,6 +2801,20 @@ fn build_once(
             return report;
         }
     }
+    // A function that gave different results for the same data makes any
+    // page's result from it differ from 11ty's: write nothing.
+    let stop = js_stop(js_calls.as_ref());
+    if !stop.is_empty() {
+        report.problems.extend(stop);
+        return finish(report, strict, start);
+    }
+    if let Some(c) = &js_calls {
+        for p in c.reads(js_hooks) {
+            if p.is_relative() {
+                opts.config.reads.add(p);
+            }
+        }
+    }
     // Written on the writer threads: see `io_threads`.
     let results: Vec<Written> = crate::io_threads::install(|| {
         ready
@@ -3080,6 +3147,22 @@ fn collections_gap(
 }
 
 /// Unregisters the open `collections` object when the build ends.
+/// Takes the JavaScript runtime off the render threads when the build
+/// ends, so Node stops with it.
+struct UninstallCalls;
+
+impl Drop for UninstallCalls {
+    fn drop(&mut self) {
+        rayon::broadcast(|_| JsCalls::install_here(None));
+    }
+}
+
+/// The problems that stop the build: the JavaScript runtime stopped, or a
+/// function gave different results for the same data.
+fn js_stop(calls: Option<&Arc<JsCalls>>) -> Vec<Problem> {
+    calls.map(|c| c.stop_problems()).unwrap_or_default()
+}
+
 struct OpenGuard(usize);
 
 impl OpenGuard {

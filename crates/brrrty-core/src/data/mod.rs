@@ -21,7 +21,7 @@ pub(crate) use computed::{Plan as ComputedPlan, set_path};
 pub(crate) use dir::{DirDataIndex, Local, frozen_problem, js_help};
 pub(crate) use global::{GlobalData, load_global};
 pub use js::JsFileState;
-pub(crate) use js::{JsSession, value_problem};
+pub(crate) use js::{JsCalls, JsPage, JsSession, calls as js_calls, value_problem};
 pub(crate) use rhai::{is_js, port_of};
 
 pub(crate) const OVERRIDE_PREFIX: &str = "override:";
@@ -135,7 +135,7 @@ pub(crate) fn json_text(v: &Value) -> String {
     fn to_json(v: &Value) -> serde_json::Value {
         use serde_json::Value as J;
         match v {
-            Value::Undefined | Value::Null => J::Null,
+            Value::Undefined | Value::Null | Value::Function(_) => J::Null,
             Value::Bool(b) => J::Bool(*b),
             Value::Number(n) => serde_json::Number::from_f64(*n).map_or(J::Null, J::Number),
             Value::String(s) => J::String(s.to_string()),

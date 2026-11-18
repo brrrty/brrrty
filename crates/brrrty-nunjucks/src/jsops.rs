@@ -71,6 +71,14 @@ fn to_primitive_in(v: &Val, hint: Hint, ops: Ops, seen: &mut Vec<usize>) -> R<Va
                 Value::String(brrrty_js::tz::date_to_string(ops.tz, ms).into())
             }
         }
+        Val::V(Value::Function(_)) => {
+            return Err(unsupported(
+                "a function from JavaScript data can't be printed or turned into a string or number",
+            )
+            .with_help(
+                "Nunjucks would print the function's JavaScript source; call it with `()` instead",
+            ));
+        }
         Val::V(p) => p.clone(),
         Val::Safe(s) => Value::String(s.0.clone()),
         Val::Arr(a) => {
@@ -707,7 +715,7 @@ pub(crate) fn get_property(obj: &Val, key: &str) -> R<Prop> {
     };
     if let Some(v) = own {
         return Ok(match v {
-            Val::Func(_) => Prop::Function,
+            Val::Func(_) | Val::V(Value::Function(_)) => Prop::Function,
             v => Prop::Value(v),
         });
     }

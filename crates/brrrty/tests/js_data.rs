@@ -714,3 +714,243 @@ fn collections_with_local_javascript_data_are_refused_as_11tys_own_nondeterminis
     assert!(out.contains("11ty orders these pages by file"), "{out}");
     assert!(t.path().join("_site/posts/a/index.html").exists());
 }
+
+/// What the build wrote at `rel` under `_site`, or nothing.
+fn written(t: &tempfile::TempDir, rel: &str) -> Option<String> {
+    fs::read_to_string(t.path().join("_site").join(rel)).ok()
+}
+
+#[test]
+fn a_function_that_keeps_state_writes_nothing_and_names_its_line() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/ids.js",
+            "let n = 0;\nmodule.exports = {\n  next: () => ++n,\n};\n",
+        ),
+        ("src/a.njk", "{{ ids.next() }}"),
+        ("src/b.njk", "plain"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert!(out.contains("`next`"), "{out}");
+    assert!(out.contains("src/_data/ids.js:3:"), "{out}");
+    // Any page may hold a result from it: nothing is written.
+    assert_eq!(written(&t, "b/index.html"), None);
+}
+
+#[test]
+fn a_function_that_remembers_earlier_calls_is_caught_across_pages() {
+    if !has_node() {
+        return;
+    }
+    // Each page sees "new" the first time it asks: the second call of the
+    // same arguments differs.
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/seen.js",
+            "const s = new Set();\nmodule.exports = { mark: (x) => (s.has(x) ? \"again\" : (s.add(x), \"new\")) };\n",
+        ),
+        ("src/a.njk", "{{ seen.mark(\"x\") }}"),
+        ("src/b.njk", "{{ seen.mark(\"x\") }}"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
+    assert_eq!(written(&t, "a/index.html"), None);
+    assert_eq!(written(&t, "b/index.html"), None);
+}
+
+#[test]
+fn computed_functions_refuse_what_brrrty_cannot_hand_them() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/this/this.11tydata.js",
+            "module.exports = { eleventyComputed: { t: function (d) { return typeof this.slugify; } } };",
+        ),
+        ("src/this/page.njk", "{{ t }}"),
+        (
+            "src/coll/coll.11tydata.js",
+            "module.exports = { eleventyComputed: { n: (d) => d.collections.all.length } };",
+        ),
+        ("src/coll/page.njk", "{{ n }}"),
+        (
+            "src/poke/poke.11tydata.js",
+            "module.exports = { eleventyComputed: { n: (d) => { d.extra = 1; return 1; } } };",
+        ),
+        ("src/poke/page.njk", "{{ n }}"),
+        (
+            "src/throw/throw.11tydata.js",
+            "module.exports = {\n  eleventyComputed: {\n    n: (d) => d.missing.deep,\n  },\n};\n",
+        ),
+        ("src/throw/page.njk", "{{ n }}"),
+        ("src/fine.njk", "fine"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("this.slugify"), "{out}");
+    assert!(out.contains("11ty's filters and shortcodes"), "{out}");
+    assert!(out.contains("reads `collections`"), "{out}");
+    assert!(out.contains("changes the data it is given"), "{out}");
+    assert!(out.contains("Cannot read properties of undefined"), "{out}");
+    assert!(out.contains("src/throw/throw.11tydata.js:3:"), "{out}");
+    for page in ["this", "coll", "poke", "throw"] {
+        assert_eq!(
+            written(&t, &format!("{page}/page/index.html")),
+            None,
+            "{page}"
+        );
+    }
+    assert_eq!(written(&t, "fine/index.html").as_deref(), Some("fine"));
+}
+
+#[test]
+fn a_function_that_reads_a_withheld_key_is_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        ("src/_data/odd.js", "module.exports = { m: new Map() };"),
+        (
+            "src/_data/f.js",
+            "module.exports = { size: (d) => { try { return typeof d.odd; } catch { return 'caught'; } } };",
+        ),
+        (
+            "src/p/p.11tydata.js",
+            "module.exports = { eleventyComputed: { s: (d) => require('./helper.js')(d) } };",
+        ),
+        (
+            "src/p/helper.js",
+            "module.exports = (d) => { try { return Object.keys(d.odd).length; } catch { return -1; } };",
+        ),
+        ("src/p/page.njk", "{{ s }}"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("reads `odd`"), "{out}");
+    assert!(out.contains("a Map object"), "{out}");
+    assert_eq!(written(&t, "p/page/index.html"), None);
+}
+
+#[test]
+fn functions_where_11ty_builds_differently_stay_refused() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/l/l.11tydata.js",
+            "module.exports = { layout: () => 'x.njk' };",
+        ),
+        ("src/l/page.njk", "x"),
+        (
+            "src/n/n.11tydata.js",
+            "module.exports = { permalink: () => 5 };",
+        ),
+        ("src/n/page.njk", "x"),
+        (
+            "src/liquid.liquid",
+            "---\npermalink: /liquid/\n---\n{{ helper }}",
+        ),
+        (
+            "src/liquid.11tydata.js",
+            "module.exports = { helper() { return this.title; }, title: 'T' };",
+        ),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("data.layout is a function"), "{out}");
+    assert!(
+        out.contains("`permalink` function returned a number"),
+        "{out}"
+    );
+    assert!(out.contains("LiquidJS's variable scope"), "{out}");
+    assert_eq!(written(&t, "liquid/index.html"), None);
+}
+
+#[test]
+fn builds_with_data_functions_are_the_same_every_time() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/fmt.js".into(),
+            "module.exports = { money: (n) => '$' + n.toFixed(2), slug: (s) => s.toLowerCase().replace(/ +/g, '-') };".into(),
+        ),
+        // Global computed data, so the collection's order stays 11ty's own
+        // (local JavaScript data makes it depend on file-read timing).
+        (
+            "src/_data/eleventyComputed.js".into(),
+            "module.exports = { slug: (d) => d.title ? d.fmt.slug(d.title) : '', heading: async (d) => d.title + ' / ' + d.slug, permalink: (d) => d.title ? `/p/${d.slug}/` : undefined };".into(),
+        ),
+        (
+            "src/posts/posts.11tydata.json".into(),
+            "{ \"tags\": [\"post\"] }".into(),
+        ),
+        (
+            "src/index.njk".into(),
+            "{% for p in collections.post %}{{ p.data.heading }} {{ fmt.money(loop.index) }} {{ p.url }}\n{% endfor %}".into(),
+        ),
+    ];
+    for i in 0..40 {
+        files.push((
+            format!("src/posts/p{i}.njk"),
+            format!(
+                "---\ntitle: Post {i}\ndate: 2026-01-{:02}\n---\nbody {{{{ fmt.money({i}) }}}}",
+                i % 28 + 1
+            ),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&refs);
+    let mut first: Option<Vec<(String, String)>> = None;
+    for _ in 0..5 {
+        let _ = fs::remove_dir_all(t.path().join("_site"));
+        let o = build(t.path(), &[], &[]);
+        assert!(o.status.success(), "{}", text(&o));
+        let mut all = Vec::new();
+        let mut stack = vec![t.path().join("_site")];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    all.push((
+                        p.strip_prefix(t.path()).unwrap().display().to_string(),
+                        fs::read_to_string(&p).unwrap(),
+                    ));
+                }
+            }
+        }
+        all.sort();
+        assert_eq!(all.len(), 41);
+        match &first {
+            None => first = Some(all),
+            Some(f) => assert_eq!(f, &all),
+        }
+    }
+    let index = written(&t, "index.html").unwrap();
+    assert!(index.contains("Post 3 / post-3 $"), "{index}");
+    assert!(index.contains("/p/post-3/"), "{index}");
+}

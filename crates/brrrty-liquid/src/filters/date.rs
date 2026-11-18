@@ -116,7 +116,7 @@ fn parse_date(r: &Renderer<'_>, v: &Value, timezone: &Value) -> R<Option<LiquidD
         Value::String(s) => jsdate::parse(s, tz).unwrap_or(f64::NAN),
         Value::Date(d) => d.timestamp_millis() as f64,
         Value::Bool(b) => f64::from(u8::from(*b)),
-        Value::Array(_) | Value::Object(_) => {
+        Value::Array(_) | Value::Object(_) | Value::Function(_) => {
             jsdate::parse(&crate::ops::to_js_string(v, tz), tz).unwrap_or(f64::NAN)
         }
     };

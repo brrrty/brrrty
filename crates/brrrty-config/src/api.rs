@@ -53,6 +53,11 @@ pub fn start_clock() {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct JsDate(pub f64);
 
+/// A function from JavaScript data, passed through a Rhai script as it is:
+/// Rhai can't call it, and it is the same function when it comes back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JsFunction(pub brrrty_js::FnHandle);
+
 /// A global data value, or the function 11ty calls for it.
 #[derive(Debug, Clone)]
 pub enum Pending {
@@ -246,7 +251,8 @@ pub fn engine_for(
 
     e.register_type_with_name::<Config>("Config")
         .register_type_with_name::<Ignores>("Ignores")
-        .register_type_with_name::<JsDate>("Date");
+        .register_type_with_name::<JsDate>("Date")
+        .register_type_with_name::<JsFunction>("Function");
 
     e.register_fn(
         "add_passthrough_copy",

@@ -218,7 +218,7 @@ fn functions_are_handles() {
             (vec![key("c")], FnHandle(2)),
         ]
     );
-    assert_eq!(get(&d.value, "f"), &Value::Undefined);
+    assert_eq!(get(&d.value, "f"), &Value::Function(FnHandle(0)));
 }
 
 #[test]

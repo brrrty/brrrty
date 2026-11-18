@@ -2,12 +2,15 @@
 //! one runtime per build, started when the first file needs it, sent 11ty's
 //! data argument once, then asked for each file in build order.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use brrrty_js::Value;
+use brrrty_js::functions::{Caller, Settle, This};
 use brrrty_js::runtime::{
-    Decoded, JsError, JsResult, JsRuntime, PathPart, RuntimeFailure, path_text,
+    Decoded, JsError, JsResult, JsRuntime, PageId, PathPart, Refusal, RuntimeFailure, path_text,
 };
+use brrrty_js::{FnHandle, Value};
 
 use crate::options::{JsData, JsNodeMissing, JsOptions, RunMode};
 use crate::problem::{Problem, codes};
@@ -95,10 +98,10 @@ impl<'a> JsSession<'a> {
             match start(self.run_mode) {
                 Ok(mut rt) => match rt.set_argument(&self.argument) {
                     JsResult::Ok(()) => self.runtime = Some(rt),
-                    JsResult::Thrown(e) => {
+                    JsResult::Thrown(JsError { message: why, .. })
+                    | JsResult::Refused(Refusal { why, .. }) => {
                         self.failed = Some(worker_failed(&format!(
-                            "Node refused the data argument: {}",
-                            e.message
+                            "Node refused the data argument: {why}"
                         )));
                         return None;
                     }
@@ -182,6 +185,9 @@ impl<'a> JsSession<'a> {
         match r {
             JsResult::Ok(d) => JsLoad::Value(d),
             JsResult::Thrown(e) => JsLoad::Thrown(thrown_problem(&e, shown, &self.root)),
+            JsResult::Refused(r) => {
+                JsLoad::Thrown(Problem::error(codes::JS_DATA_VALUE, r.why).with_path(shown))
+            }
             JsResult::Failed(f) => {
                 self.failed = Some(worker_failed_with(&f).with_path(shown));
                 self.runtime = None;
@@ -190,17 +196,34 @@ impl<'a> JsSession<'a> {
         }
     }
 
+    /// Hand the runtime over for the pages to call the functions in the
+    /// data: `None` when no file ran.
+    pub fn take_calls(&mut self) -> Option<Arc<JsCalls>> {
+        let runtime = self.runtime.take()?;
+        Some(Arc::new(JsCalls {
+            runtime: Mutex::new(Some(runtime)),
+            root: self.root.clone(),
+            failed: Mutex::new(None),
+            impure: Mutex::new(Vec::new()),
+        }))
+    }
+
     /// Every file the data's code read or loaded, relative to the project
     /// folder where it is inside it.
     pub fn reads(&mut self) -> Vec<PathBuf> {
-        let root = self
-            .root
-            .canonicalize()
-            .unwrap_or_else(|_| self.root.clone());
         let hooks = matches!(&self.options.node, Some(Ok(n)) if n.load_hooks);
+        let root = self.root.clone();
         let Some(rt) = self.runtime.as_mut() else {
             return Vec::new();
         };
+        reads_of(rt.as_mut(), &root, hooks)
+    }
+}
+
+fn reads_of(rt: &mut dyn JsRuntime, root: &Path, hooks: bool) -> Vec<PathBuf> {
+    {
+        let root_dir = root.to_path_buf();
+        let root = root_dir.canonicalize().unwrap_or_else(|_| root_dir.clone());
         let mut out: Vec<PathBuf> = match rt.reads() {
             JsResult::Ok(paths) => paths
                 .into_iter()
@@ -211,9 +234,274 @@ impl<'a> JsSession<'a> {
         // A Node without module load hooks (before 22.15) can't say which ES
         // modules loaded: then `node_modules` and every project script count.
         if !hooks {
-            out.extend(coarse_reads(&self.root));
+            out.extend(coarse_reads(&root_dir));
         }
         out
+    }
+}
+
+/// The runtime once the data files have run: the pages call the functions
+/// in the data through it, from any render thread, one request at a time.
+pub(crate) struct JsCalls {
+    runtime: Mutex<Option<Box<dyn JsRuntime>>>,
+    root: PathBuf,
+    /// The runtime stopped: the build stops with this.
+    failed: Mutex<Option<Problem>>,
+    /// Functions that gave different results for the same data: every
+    /// page's result from them may differ from 11ty's, so nothing is
+    /// written.
+    impure: Mutex<Vec<Problem>>,
+}
+
+thread_local! {
+    static CALLS: RefCell<Option<Arc<JsCalls>>> = const { RefCell::new(None) };
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The runtime the pages on this thread call functions through, if any.
+pub(crate) fn calls() -> Option<Arc<JsCalls>> {
+    CALLS.with(|c| c.borrow().clone())
+}
+
+impl JsCalls {
+    /// Make `calls` the runtime for this thread's pages (and its template
+    /// engines), or none.
+    pub fn install_here(calls: Option<Arc<JsCalls>>) {
+        brrrty_js::functions::set(Some(match &calls {
+            Some(c) => c.clone() as Arc<dyn Caller>,
+            None => Arc::new(NoCalls),
+        }));
+        let before = CALLS.with(|c| std::mem::replace(&mut *c.borrow_mut(), calls));
+        drop(before);
+    }
+
+    /// Why the build must stop: the runtime stopped, or a function kept
+    /// state between calls.
+    pub fn stop_problems(&self) -> Vec<Problem> {
+        let mut out: Vec<Problem> = lock(&self.failed).iter().cloned().collect();
+        out.extend(lock(&self.impure).iter().cloned());
+        out
+    }
+
+    /// Every file the data's code read so far.
+    pub fn reads(&self, hooks: bool) -> Vec<PathBuf> {
+        match lock(&self.runtime).as_mut() {
+            Some(rt) => reads_of(rt.as_mut(), &self.root, hooks),
+            None => Vec::new(),
+        }
+    }
+
+    /// One request, or the problem for a runtime that already stopped.
+    fn with<T>(&self, f: impl FnOnce(&mut dyn JsRuntime) -> JsResult<T>) -> JsResult<T> {
+        let mut rt = lock(&self.runtime);
+        let Some(r) = rt.as_mut() else {
+            return JsResult::Failed(RuntimeFailure {
+                message: "JavaScript data stopped earlier in this build".into(),
+                stderr_tail: Vec::new(),
+                stopped: false,
+            });
+        };
+        let out = f(r.as_mut());
+        if let JsResult::Failed(failure) = &out {
+            *rt = None;
+            let mut failed = lock(&self.failed);
+            if failed.is_none() {
+                *failed = Some(worker_failed_with(failure));
+            }
+        }
+        out
+    }
+
+    fn note_refusal(&self, r: &Refusal) -> Problem {
+        let code = if r.impure {
+            codes::JS_DATA_IMPURE
+        } else {
+            codes::JS_DATA_FUNCTION
+        };
+        let p = Problem::error(code, r.why.clone());
+        if r.impure {
+            let p = p.clone().with_help(IMPURE_HELP);
+            let mut list = lock(&self.impure);
+            if !list.iter().any(|q| q.message == p.message) {
+                list.push(p);
+            }
+        }
+        p
+    }
+
+    fn problem<T>(&self, r: JsResult<T>, shown: &Path) -> Result<T, Problem> {
+        match r {
+            JsResult::Ok(v) => Ok(v),
+            JsResult::Thrown(e) => Err(thrown_problem(&e, shown, &self.root).with_help(format!(
+                "11ty stops the whole build here. Fix the function in your data.{}",
+                stack_help(&e, &self.root)
+            ))),
+            JsResult::Refused(r) => Err(self.note_refusal(&r).with_path(shown)),
+            JsResult::Failed(f) => Err(worker_failed_with(&f).with_path(shown)),
+        }
+    }
+
+    /// Keep `data` in the runtime as the page's data object (see
+    /// [`JsRuntime::page_open`]).
+    pub fn page<'a>(
+        &'a self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+        shown: &'a Path,
+    ) -> Result<JsPage<'a>, Problem> {
+        let id = self.problem(self.with(|rt| rt.page_open(data, traps, defaults)), shown)?;
+        Ok(JsPage {
+            calls: self,
+            id,
+            shown,
+        })
+    }
+}
+
+const IMPURE_HELP: &str = "Brrrty builds pages in a different order than 11ty, so a function whose result depends on earlier calls gives different pages. Nothing was written. Make the function return the same thing for the same arguments: move counters, random values and the current time out of it.";
+
+/// The stack frames of a thrown error worth showing, as a help line.
+fn stack_help(e: &JsError, root: &Path) -> String {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let prefix = format!("{}/", root.display());
+    let url_prefix = format!("file://{prefix}");
+    let frames: Vec<String> = e
+        .stack
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("at ") && !l.contains("node:") && !l.contains("[eval"))
+        .take(5)
+        .map(|l| l.replace(&url_prefix, "").replace(&prefix, ""))
+        .collect();
+    if frames.is_empty() {
+        String::new()
+    } else {
+        format!("\nStack:\n  {}", frames.join("\n  "))
+    }
+}
+
+/// A runtime for threads with no JavaScript data: a call can't happen.
+struct NoCalls;
+
+impl Caller for NoCalls {
+    fn call(&self, _: FnHandle, _: This<'_>, _: &[Value], _: Settle) -> Result<Value, String> {
+        Err("this page calls a function from JavaScript data, which isn't running".into())
+    }
+}
+
+/// What a page's template can't use of a value a function returned.
+fn returned_problem(d: &Decoded) -> Option<String> {
+    let (at, what) = d.refused.first()?;
+    let place = if at.is_empty() {
+        String::new()
+    } else {
+        format!(" at {}", path_text(at).replacen("data", "its result", 1))
+    };
+    let promise = if at.is_empty() && what == "a Promise object" {
+        " (Nunjucks doesn't wait for a promise, so 11ty prints `[object Promise]`)"
+    } else {
+        ""
+    };
+    Some(format!(
+        "a function from JavaScript data returned {what}{place}, which can't cross from JavaScript to Brrrty exactly{promise}"
+    ))
+}
+
+impl Caller for JsCalls {
+    fn call(
+        &self,
+        f: FnHandle,
+        this: This<'_>,
+        args: &[Value],
+        settle: Settle,
+    ) -> Result<Value, String> {
+        match self.with(|rt| rt.call(f, this, args, settle)) {
+            JsResult::Ok(d) => match returned_problem(&d) {
+                Some(why) => Err(why),
+                None => Ok(d.value),
+            },
+            JsResult::Thrown(e) => {
+                let place = match (&e.file, e.line) {
+                    (Some(file), Some(line)) => {
+                        let root = self
+                            .root
+                            .canonicalize()
+                            .unwrap_or_else(|_| self.root.clone());
+                        let file = file.canonicalize().unwrap_or_else(|_| file.clone());
+                        let shown = file.strip_prefix(&root).unwrap_or(&file);
+                        format!(" ({}:{line}:{})", shown.display(), e.column.unwrap_or(1))
+                    }
+                    _ => String::new(),
+                };
+                let head = if e.name.is_empty() {
+                    e.message.clone()
+                } else {
+                    format!("{}: {}", e.name, e.message)
+                };
+                Err(format!(
+                    "a function from JavaScript data threw {head}{place}; 11ty stops the whole build here"
+                ))
+            }
+            JsResult::Refused(r) => {
+                self.note_refusal(&r);
+                Err(r.why)
+            }
+            JsResult::Failed(f) => Err(format!("JavaScript data stopped: {}", f.message)),
+        }
+    }
+}
+
+/// A page's data object in the runtime, while its computed values and
+/// permalink run. Forgotten when dropped.
+pub(crate) struct JsPage<'a> {
+    calls: &'a JsCalls,
+    id: PageId,
+    shown: &'a Path,
+}
+
+impl JsPage<'_> {
+    /// The data keys `f` reads, as 11ty's computed data proxy finds them.
+    pub fn vars(&mut self, f: FnHandle, keys: &[String]) -> Result<Vec<String>, Problem> {
+        let id = self.id;
+        self.calls
+            .problem(self.calls.with(|rt| rt.page_vars(id, f, keys)), self.shown)
+    }
+
+    /// Call `f` with the page's data, storing the result at `set`.
+    pub fn call(&mut self, f: FnHandle, set: Option<&str>) -> Result<Value, Problem> {
+        let id = self.id;
+        let d = self
+            .calls
+            .problem(self.calls.with(|rt| rt.page_call(id, f, set)), self.shown)?;
+        match returned_problem(&d) {
+            Some(why) => Err(Problem::error(codes::JS_DATA_VALUE, why)
+                .with_path(self.shown)
+                .with_help("Return plain values: objects, arrays, strings, numbers, booleans, null or Dates.")),
+            None => Ok(d.value),
+        }
+    }
+
+    /// Set a dotted key of the page's data.
+    pub fn set(&mut self, key: &str, value: &Value) -> Result<(), Problem> {
+        let id = self.id;
+        self.calls.problem(
+            self.calls.with(|rt| rt.page_set(id, key, value)),
+            self.shown,
+        )
+    }
+}
+
+impl Drop for JsPage<'_> {
+    fn drop(&mut self) {
+        let id = self.id;
+        let mut rt = lock(&self.calls.runtime);
+        if let Some(r) = rt.as_mut() {
+            r.page_close(id);
+        }
     }
 }
 
@@ -375,6 +663,39 @@ pub(crate) fn value_problem(keys: &str, file: &Path, at: &[PathPart], what: &str
         ),
     )
     .with_help("Give the data file plain values there: objects, arrays, strings, numbers, booleans, null or Dates. For a luxon DateTime, use .toJSDate() or a formatted string.")
+}
+
+/// The first part of a decoded data file's value a build can't use, and
+/// what it is: a refused value, or a function where 11ty would read it as a
+/// value. Functions are fine elsewhere: under `eleventyComputed`, as
+/// `permalink`, and anywhere outside the keys that change how a page is
+/// built, where templates call them.
+pub(crate) fn first_unusable(d: &Decoded) -> Option<(Vec<PathPart>, String)> {
+    let refused = d.refused.first().cloned();
+    let function = d
+        .functions
+        .iter()
+        .find(|(p, _)| !function_allowed(p))
+        .map(|(p, _)| (p.clone(), "a function".to_string()));
+    match (refused, function) {
+        (Some(r), Some(f)) => Some(if r.0.len() <= f.0.len() { r } else { f }),
+        (r, f) => r.or(f),
+    }
+}
+
+/// Whether a function at `path` of a data file's value is one a build can
+/// call: not at the root, and not inside a key that changes how a page is
+/// built, except a `permalink` function and the functions of
+/// `eleventyComputed`.
+pub(crate) fn function_allowed(path: &[PathPart]) -> bool {
+    let Some(PathPart::Key(first)) = path.first() else {
+        return false;
+    };
+    let key = first.strip_prefix(super::OVERRIDE_PREFIX).unwrap_or(first);
+    if !super::BUILD_KEYS.contains(&key) {
+        return true;
+    }
+    key == "eleventyComputed" || (key == "permalink" && path.len() == 1)
 }
 
 /// The first part of a decoded value that can't cross, and what it is: a

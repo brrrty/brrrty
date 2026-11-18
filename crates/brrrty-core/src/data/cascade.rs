@@ -81,7 +81,7 @@ fn set_key(v: &Value) -> Option<SetKey> {
         Value::Number(n) if n.is_nan() => SetKey::Number(f64::NAN.to_bits()),
         Value::Number(n) => SetKey::Number((n + 0.0).to_bits()),
         Value::String(s) => SetKey::String(s.clone()),
-        Value::Array(_) | Value::Object(_) | Value::Date(_) => return None,
+        Value::Array(_) | Value::Object(_) | Value::Date(_) | Value::Function(_) => return None,
     })
 }
 

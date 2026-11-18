@@ -19,7 +19,16 @@ pub enum Value {
     Array(Arc<Vec<Value>>),
     Object(Arc<IndexMap<String, Value>>),
     Date(DateTime<FixedOffset>),
+    /// A function from JavaScript data, still in the runtime that made it.
+    /// Templates can call it; any other use of it is a trap (see
+    /// [`crate::functions`]).
+    Function(FnHandle),
 }
+
+/// A function value that stayed in the JavaScript runtime, to be called
+/// later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FnHandle(pub u32);
 
 impl Value {
     /// Converts JSON, keeping object key order (relies on `serde_json`'s `preserve_order`).
@@ -52,7 +61,7 @@ impl Value {
             Value::Bool(b) => *b,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
             Value::String(s) => !s.is_empty(),
-            Value::Array(_) | Value::Object(_) | Value::Date(_) => true,
+            Value::Array(_) | Value::Object(_) | Value::Date(_) | Value::Function(_) => true,
         }
     }
 
@@ -83,6 +92,11 @@ impl Value {
                 .join(","),
             Value::Object(_) => "[object Object]".into(),
             Value::Date(d) => crate::tz::date_to_string(tz, d.timestamp_millis() as f64),
+            // JavaScript prints the function's source text.
+            Value::Function(_) => {
+                crate::functions::used_as_value("prints");
+                String::new()
+            }
         }
     }
 
@@ -98,6 +112,10 @@ impl Value {
             Value::String(s) => js_string_to_number(s),
             Value::Array(_) | Value::Object(_) => js_string_to_number(&self.to_js_string()),
             Value::Date(d) => d.timestamp_millis() as f64,
+            Value::Function(_) => {
+                crate::functions::used_as_value("reads a number from");
+                f64::NAN
+            }
         }
     }
 
@@ -140,6 +158,11 @@ impl Value {
             Value::String(s) if key == "length" => Value::Number(s.encode_utf16().count() as f64),
             Value::Array(a) if key == "length" => Value::Number(a.len() as f64),
             Value::Object(o) => o.get(key).cloned().unwrap_or(Value::Undefined),
+            // A function has properties of its own (`length`, `name`).
+            Value::Function(_) => {
+                crate::functions::used_as_value("reads a property of");
+                Value::Undefined
+            }
             _ => Value::Undefined,
         }
     }
@@ -147,7 +170,15 @@ impl Value {
     /// Bracket lookup as LiquidJS does it: negative array indexes count from the end, and
     /// numeric strings index arrays like property names do.
     pub fn index(&self, i: &Value) -> Value {
+        if matches!(i, Value::Function(_)) {
+            crate::functions::used_as_value("uses as a key");
+            return Value::Undefined;
+        }
         match self {
+            Value::Function(_) => {
+                crate::functions::used_as_value("reads a property of");
+                Value::Undefined
+            }
             Value::Array(a) => match i {
                 Value::Number(n) => {
                     let len = a.len() as f64;

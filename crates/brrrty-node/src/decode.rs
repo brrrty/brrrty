@@ -93,7 +93,7 @@ fn value(
                         .and_then(|h| u32::try_from(h).ok())
                         .ok_or_else(|| format!("not a function handle: {h}"))?;
                     d.functions.push((path.clone(), FnHandle(h)));
-                    Value::Undefined
+                    Value::Function(FnHandle(h))
                 }
                 ("$x", Json::String(what)) => {
                     d.refused.push((path.clone(), what.clone()));

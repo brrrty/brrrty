@@ -78,6 +78,7 @@ fn type_of(v: &Value) -> &'static str {
         Value::Bool(_) => "boolean",
         Value::Number(_) => "number",
         Value::String(_) => "string",
+        Value::Function(_) => "function",
     }
 }
 

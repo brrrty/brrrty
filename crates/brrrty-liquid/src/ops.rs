@@ -268,6 +268,11 @@ pub(crate) fn read_property(obj: &Val, key: &Value) -> Val {
     if let Value::Object(o) = v {
         own = brrrty_js::traps::read(o, &name, own);
     }
+    // LiquidJS calls a function it reads, with the object as `this`, and
+    // awaits what it returns.
+    if let Some(Value::Function(h)) = own {
+        return Val::V(call_data_fn(h, brrrty_js::functions::This::Value(v)));
+    }
     let special = matches!(key, Value::String(_));
     Val::V(match name.as_str() {
         "size" if special => own.unwrap_or_else(|| size_of(v)),
@@ -281,6 +286,12 @@ pub(crate) fn read_property(obj: &Val, key: &Value) -> Val {
         },
         _ => own.unwrap_or(Value::Undefined),
     })
+}
+
+/// Call a function from JavaScript data as LiquidJS does when it reads one:
+/// no arguments, the result awaited.
+pub(crate) fn call_data_fn(h: brrrty_js::FnHandle, this: brrrty_js::functions::This<'_>) -> Value {
+    brrrty_js::functions::call(h, this, &[], brrrty_js::functions::Settle::Await)
 }
 
 pub(crate) fn own_property(v: &Value, key: &str) -> Option<Value> {
