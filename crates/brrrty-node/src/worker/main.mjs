@@ -21,7 +21,6 @@ import nodeModule, { createRequire } from "node:module";
 import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 import inspector from "node:inspector";
-import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // --- Frames, written before anything else can touch stdout. ---
@@ -159,32 +158,17 @@ const handleOf = new Map();
 
 // Lists kept between requests, by Brrrty's id, and every object and list
 // inside them.
+// Values (lists and objects) kept between requests, by Brrrty's id.
 let persistent = new Map();
-let persistentObjects = new WeakSet();
-
-function markPersistent(v) {
-  const stack = [v];
-  while (stack.length) {
-    const x = stack.pop();
-    if (x === null || typeof x !== "object" || persistentObjects.has(x)) continue;
-    persistentObjects.add(x);
-    for (const k of Object.keys(x)) {
-      const d = Object.getOwnPropertyDescriptor(x, k);
-      if (d && "value" in d) stack.push(d.value);
-    }
-  }
-}
 
 // --- What a call writes. ---
 //
 // Data handed to a function is wrapped in a membrane: reads give wrapped
 // plain objects and lists, and any write through it is noted, so a call
 // that changes its data is caught without walking the data before and
-// after. A write to a list pages share is noted apart: other pages may
-// have read it already.
+// after.
 
 let wrote = false;
-let wroteShared = false;
 const membraneOf = new WeakMap();
 const targetOf = new WeakMap();
 let touchedDates = [];
@@ -194,9 +178,8 @@ function unwrapProxy(v) {
 }
 unwrapHook = unwrapProxy;
 
-function noteWrite(t) {
+function noteWrite() {
   wrote = true;
-  if (persistentObjects.has(t)) wroteShared = true;
 }
 
 const membrane = {
@@ -212,32 +195,32 @@ const membrane = {
     return d;
   },
   set(t, k, v) {
-    noteWrite(t);
+    noteWrite();
     return Reflect.set(t, k, unwrapProxy(v));
   },
   defineProperty(t, k, d) {
-    noteWrite(t);
+    noteWrite();
     if ("value" in d) d = { ...d, value: unwrapProxy(d.value) };
     return Reflect.defineProperty(t, k, d);
   },
   deleteProperty(t, k) {
-    noteWrite(t);
+    noteWrite();
     return Reflect.deleteProperty(t, k);
   },
   setPrototypeOf(t, p) {
-    noteWrite(t);
+    noteWrite();
     return Reflect.setPrototypeOf(t, p);
   },
   preventExtensions(t) {
-    noteWrite(t);
+    noteWrite();
     return Reflect.preventExtensions(t);
   },
 };
 
 function watch(v) {
   if (v === null || typeof v !== "object" || targetOf.has(v) || utilTypes.isProxy(v)) return v;
-  if (v instanceof Date) {
-    touchedDates.push([v, Date.prototype.getTime.call(v)]);
+  if (v instanceof OriginalDate) {
+    touchedDates.push([v, OriginalDate.prototype.getTime.call(v)]);
     return v;
   }
   if (!Array.isArray(v) && !isPlainObject11ty(v)) return v;
@@ -250,24 +233,67 @@ function watch(v) {
   return p;
 }
 
-// After a call: whether it wrote to its data, and to data pages share.
-function writes() {
+// After a call: whether it wrote to its data.
+function takeWrote() {
   for (const [d, t] of touchedDates) {
-    if (Date.prototype.getTime.call(d) !== t && !Number.isNaN(t)) noteWrite(d);
+    if (OriginalDate.prototype.getTime.call(d) !== t && !Number.isNaN(t)) noteWrite();
   }
   touchedDates = [];
-  const out = { wrote, shared: wroteShared };
+  const out = wrote;
   wrote = false;
-  wroteShared = false;
   return out;
 }
 
-// Forget the kept lists: one was changed. Brrrty sends them again.
+// Forget the kept values: one was changed. Brrrty sends them again.
 function dropPersistent() {
   persistent = new Map();
-  persistentObjects = new WeakSet();
-  canonicalKept = new WeakMap();
 }
+
+// --- The clock and random numbers. ---
+//
+// While data files load, `Date.now()`, `new Date()`, `Date()` and
+// `Math.random()` give what they always give, and each value is recorded,
+// so a second worker checking the build (see `replay` in the client) can be
+// handed the same ones. During a call from a page they mark the call: its
+// result would be the moment or the luck of that call, so it is refused,
+// every time, rather than only when two runs happen to differ.
+
+const OriginalDate = Date;
+const originalNow = Date.now;
+const originalRandom = Math.random;
+let clockPhase = "load"; // "load" | "calls"
+const clockRecord = [];
+let clockFeed = null;
+let clockInCall = null;
+
+function clockValue(kind, real) {
+  if (clockPhase === "calls") {
+    if (clockInCall === null) clockInCall = kind;
+    return real();
+  }
+  if (clockFeed !== null && clockFeed.length) return clockFeed.shift();
+  const v = real();
+  clockRecord.push(v);
+  return v;
+}
+
+function PatchedDate(...args) {
+  const now = () => clockValue("the current time", () => originalNow.call(OriginalDate));
+  if (!new.target) return new OriginalDate(now()).toString();
+  return Reflect.construct(OriginalDate, args.length ? args : [now()], new.target);
+}
+Object.setPrototypeOf(PatchedDate, OriginalDate);
+Object.defineProperty(PatchedDate, "prototype", { value: OriginalDate.prototype, writable: false });
+Object.defineProperty(PatchedDate, "name", { value: "Date" });
+Object.defineProperty(PatchedDate, "length", { value: 7 });
+PatchedDate.now = function now() {
+  return clockValue("the current time", () => originalNow.call(OriginalDate));
+};
+Object.defineProperty(OriginalDate.prototype, "constructor", { value: PatchedDate, writable: true, configurable: true, enumerable: false });
+globalThis.Date = PatchedDate;
+Math.random = function random() {
+  return clockValue("a random number", () => originalRandom.call(Math));
+};
 
 function register(fn) {
   const at = handleOf.get(fn);
@@ -302,12 +328,11 @@ function fromWire(w, shared = new Map()) {
     return o;
   }
   if ("$S" in w) {
-    // A list Brrrty sends once and refers to in later requests: data pages
-    // share, as 11ty shares lists between pages.
+    // A value Brrrty sends once and refers to in later requests: data
+    // pages share.
     const [id, inner] = w.$S;
     if (persistent.has(id)) return persistent.get(id);
     const v = fromWire(inner, shared);
-    markPersistent(v);
     persistent.set(id, v);
     return v;
   }
@@ -570,139 +595,12 @@ function describeFn(fn) {
   return text;
 }
 
-// One inspector session for `fnKey`, kept open: it uses only the Runtime
-// domain, which costs nothing while nothing asks.
-let keySession = null;
-const fnKeys = new WeakMap();
-
-// A function's identity as code: where it was defined (script, line and
-// column), so two closures made by the same code at different calls are
-// the same function, and two functions with the same text elsewhere are
-// not. Its text where the inspector can't say.
-function fnKey(fn) {
-  const known = fnKeys.get(fn);
-  if (known !== undefined) return known;
-  let key;
-  try {
-    if (!keySession) {
-      keySession = new inspector.Session();
-      keySession.connect();
-    }
-    globalThis.__brrrtyFunction = fn;
-    let objectId;
-    keySession.post("Runtime.evaluate", { expression: "globalThis.__brrrtyFunction", objectGroup: "brrrty" }, (e, r) => {
-      objectId = r && r.result && r.result.objectId;
-    });
-    if (objectId) {
-      keySession.post("Runtime.getProperties", { objectId, ownProperties: true }, (e, r) => {
-        const p = r && r.internalProperties && r.internalProperties.find((x) => x.name === "[[FunctionLocation]]");
-        const loc = p && p.value && p.value.value;
-        if (loc) key = `@${loc.scriptId}:${loc.lineNumber}:${loc.columnNumber}`;
-      });
-    }
-    keySession.post("Runtime.releaseObjectGroup", { objectGroup: "brrrty" });
-  } catch {
-    key = undefined;
-  } finally {
-    delete globalThis.__brrrtyFunction;
-  }
-  if (key === undefined) {
-    try {
-      key = `#${Function.prototype.toString.call(fn)}`;
-    } catch {
-      key = `h${register(fn)}`;
-    }
-  }
-  fnKeys.set(fn, key);
-  return key;
-}
-
-// A value as code would see it, to compare two results or two calls'
-// arguments: functions by `fnKey`, accessors as such.
-function canonical(v) {
-  return fingerprint(v, (f) => `f${fnKey(f)}`, false, true);
-}
-
-// The canonical text of each kept list, which can't change: a write to one
-// stops the build.
-let canonicalKept = new WeakMap();
-
-// A value's state, to tell whether a call changed it: every own property
-// (getters by identity, never called), in order, objects seen again by
-// their first place. `fnToken` names a function; `accessors` says whether
-// a getter's own identity counts.
-function fingerprint(v, fnToken = (f) => `f${register(f)}`, accessors = true, cacheKept = false) {
-  const seen = new Map();
-  const parts = [];
-  const walk = (x) => {
-    x = unwrapProxy(x);
-    if (cacheKept && x !== null && typeof x === "object" && persistentObjects.has(x) && !seen.has(x)) {
-      let text = canonicalKept.get(x);
-      if (text === undefined) {
-        text = fingerprint(x, fnToken, accessors, false);
-        canonicalKept.set(x, text);
-      }
-      seen.set(x, seen.size);
-      parts.push(text);
-      return;
-    }
-    switch (typeof x) {
-      case "undefined":
-        parts.push("u");
-        return;
-      case "string":
-        parts.push(JSON.stringify(x));
-        return;
-      case "number":
-        parts.push(Object.is(x, -0) ? "-0" : String(x));
-        return;
-      case "boolean":
-      case "bigint":
-        parts.push(`${typeof x}:${String(x)}`);
-        return;
-      case "symbol":
-        parts.push("sym");
-        return;
-      case "function":
-        parts.push(fnToken(x));
-        return;
-    }
-    if (x === null) {
-      parts.push("null");
-      return;
-    }
-    if (seen.has(x)) {
-      parts.push(`#${seen.get(x)}`);
-      return;
-    }
-    seen.set(x, seen.size);
-    if (utilTypes.isProxy(x)) {
-      parts.push("proxy");
-      return;
-    }
-    if (x instanceof Date) parts.push(`d${Date.prototype.getTime.call(x)}`);
-    parts.push(Array.isArray(x) ? "[" : "{");
-    for (const k of Reflect.ownKeys(x)) {
-      const d = Object.getOwnPropertyDescriptor(x, k);
-      parts.push(typeof k === "symbol" ? "sym" : JSON.stringify(k));
-      if (d.get || d.set) {
-        parts.push(accessors ? `acc${d.get ? register(d.get) : ""}/${d.set ? register(d.set) : ""}` : "acc");
-      } else {
-        walk(d.value);
-      }
-    }
-    parts.push("}");
-  };
-  walk(v);
-  return parts.join(",");
-}
-
-// Run one call; the reply's `refused` when it can't be used exactly.
-async function runCall(fn, makeArgs, settle) {
-  const { thisArg, args } = makeArgs();
+// Run one call, once, as 11ty does. The reply's `refused` when it can't
+// be used exactly.
+async function runOnce(fn, thisArg, args, settle) {
   refusedInCall = null;
-  // A write since the last call, through data a call kept, counts too.
-  if (writes().shared) return { shared: true };
+  clockInCall = null;
+  takeWrote();
   let value;
   try {
     value = fn.apply(watch(thisArg), args.map(watch));
@@ -713,76 +611,43 @@ async function runCall(fn, makeArgs, settle) {
       value.catch(() => {});
     }
   } catch (e) {
-    const w = writes();
-    if (w.shared) return { shared: true };
-    if (refusedInCall !== null) return { refused: refusedInCall };
+    const failed = callRefusal(fn);
+    if (failed) return failed;
     throw e;
   }
-  const w = writes();
-  if (w.shared) return { shared: true };
-  if (refusedInCall !== null) return { refused: refusedInCall };
-  if (w.wrote) return { changed: true };
-  return { value: unwrapProxy(value) };
-}
-
-// Each call's result by the call: a later call with the same function and
-// arguments must give the same result, or the function keeps state and
-// its results follow the order Brrrty builds pages in.
-const memo = new Map();
-
-function digest(text) {
-  return createHash("sha1").update(text).digest("base64");
-}
-
-function impure(fn) {
-  return {
-    refused: `${describeFn(fn)} returns something different when called again with the same data, so its results depend on the order pages are built in, which differs between 11ty and Brrrty`,
-    impure: true,
-  };
-}
-
-// Call twice, compare, and check against earlier calls. `memoKey` is the
-// call's arguments as text, or null to skip that check.
-function sharedWrite(fn) {
-  dropPersistent();
-  return {
-    refused: `${describeFn(fn)} changes a list that pages share (11ty hands every page the same list), so what later pages see depends on the order pages are built in, which differs between 11ty and Brrrty`,
-    impure: true,
-    dropShared: true,
-  };
-}
-
-async function callTwice(fn, makeArgs, settle, memoKey) {
-  const first = await runCall(fn, makeArgs, settle);
-  if (first.shared) return sharedWrite(fn);
-  if (first.refused !== undefined) return { refused: `${describeFn(fn)} ${first.refused}` };
-  if (first.changed) {
-    return { refused: `${describeFn(fn)} changes the data it is given, which 11ty keeps for later pages and templates; Brrrty can't follow that, so return a new value instead` };
-  }
+  const failed = callRefusal(fn);
+  if (failed) return failed;
   let text;
   try {
-    text = JSON.stringify(encodeValue(first.value, register));
+    text = JSON.stringify(encodeValue(unwrapProxy(value), register));
   } catch (e) {
     if (e && e.brrrtyRefusal) return { refused: `${describeFn(fn)} returns something that ${e.brrrtyRefusal}` };
     throw e;
   }
-  const promise = settle !== "await" && first.value instanceof Promise;
-  if (promise) return { okText: text, value: first.value };
-  const result = canonical(first.value);
-  // A second call, with the same data, must give the same result.
-  const second = await runCall(fn, makeArgs, settle);
-  if (second.shared) return sharedWrite(fn);
-  if (second.refused !== undefined || second.changed || canonical(second.value) !== result) {
-    return impure(fn);
+  return { okText: text, value: unwrapProxy(value) };
+}
+
+// Why a call that just ran can't be used, if it can't.
+function callRefusal(fn) {
+  const wroteData = takeWrote();
+  const clock = clockInCall;
+  clockInCall = null;
+  if (refusedInCall !== null) return { refused: `${describeFn(fn)} ${refusedInCall}` };
+  if (clock !== null) {
+    return {
+      refused: `${describeFn(fn)} reads ${clock}, so its result is the moment (or the luck) of the call, and depends on when pages are built`,
+      impure: true,
+    };
   }
-  if (memoKey !== null) {
-    const key = digest(`${fnKey(fn)}\0${settle}\0${memoKey}`);
-    const got = digest(result);
-    const earlier = memo.get(key);
-    if (earlier === undefined) memo.set(key, got);
-    else if (earlier !== got) return impure(fn);
+  if (wroteData) {
+    // Kept values may be what it changed: Brrrty sends them again.
+    dropPersistent();
+    return {
+      refused: `${describeFn(fn)} changes the data it is given, which 11ty keeps for later pages and templates; Brrrty can't follow that, so return a new value instead`,
+      dropShared: true,
+    };
   }
-  return { okText: text, value: first.value };
+  return null;
 }
 
 const pages = new Map();
@@ -850,20 +715,24 @@ async function handle(req) {
     }
     case "call": {
       const fn = getHandle(req.handle);
-      const settle = req.await ? "await" : "asIs";
-      // Fresh copies for each run: a call can't see what an earlier run did
-      // to its arguments.
-      const makeArgs = () => {
-        const shared = new Map();
-        const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this, shared);
-        const args = (req.args || []).map((a) => fromWire(a, shared));
-        return { thisArg, args };
-      };
-      const { thisArg, args } = makeArgs();
-      const memoKey = canonical([req.opaque !== undefined ? `opaque:${req.opaque}` : thisArg, args]);
-      const r = await callTwice(fn, makeArgs, settle, memoKey);
+      const shared = new Map();
+      const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this, shared);
+      const args = (req.args || []).map((a) => fromWire(a, shared));
+      const r = await runOnce(fn, thisArg, args, req.await ? "await" : "asIs");
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       return { okText: r.okText };
+    }
+    case "callsBegin": {
+      // The data files are loaded: from here on the clock marks a call.
+      clockPhase = "calls";
+      clockFeed = null;
+      return { ok: { clock: clockRecord, handles: handles.length } };
+    }
+    case "describe":
+      return { ok: describeFn(getHandle(req.handle)) };
+    case "feedClock": {
+      clockFeed = (req.values || []).slice();
+      return { ok: null };
     }
     case "pageOpen": {
       const data = fromWire(req.data);
@@ -884,20 +753,23 @@ async function handle(req) {
       const proxy = new ComputedDataProxy(req.keys);
       const thisArg = opaqueThis(FILTERS_THIS);
       refusedInCall = null;
+      clockInCall = null;
       let vars;
       try {
         vars = await proxy.findVarsUsed((d) => fn.call(thisArg, d), p.data);
       } catch (e) {
-        if (refusedInCall === null) throw e;
+        const failed = callRefusal(fn);
+        if (failed) return failed;
+        throw e;
       }
-      if (refusedInCall !== null) return { refused: `${describeFn(fn)} ${refusedInCall}` };
+      const failed = callRefusal(fn);
+      if (failed) return failed;
       return { ok: vars.map((v) => toWellFormed(String(v))) };
     }
     case "pageCall": {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
-      const makeArgs = () => ({ thisArg: opaqueThis(FILTERS_THIS), args: [p.data] });
-      const r = await callTwice(fn, makeArgs, "await", null);
+      const r = await runOnce(fn, opaqueThis(FILTERS_THIS), [p.data], "await");
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       if (typeof req.set === "string") {
         if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };

@@ -36,6 +36,7 @@ use crate::problem::{Problem, Severity, codes};
 use crate::render::{DataEngine, Engines, Job, Pipeline, body_line, engines_for};
 use crate::survey::{Log, Mode};
 use crate::templates::Langs;
+use brrrty_js::functions::UnitGuard;
 use brrrty_js::traps::{self, Outcome};
 
 /// What a build did.
@@ -1271,6 +1272,8 @@ impl Place<'_, '_> {
         let first: Vec<Result<First, Problem>> = (0..paging.len())
             .into_par_iter()
             .map(|n| {
+                let _unit =
+                    UnitGuard::enter(format!("2 place {} {n}", self.source.shown.display()));
                 let data = paging.page_data(&base, n, None).map_err(on_page(n))?;
                 let locator = Locator {
                     subdir: (n > 0 && !has_permalink).then_some(n),
@@ -1300,6 +1303,7 @@ impl Place<'_, '_> {
             .into_par_iter()
             .enumerate()
             .map(|(n, (found, _))| {
+                let _unit = UnitGuard::enter(format!("3 page {} {n}", self.source.shown.display()));
                 let data = paging
                     .page_data(&base, n, Some(&links))
                     .map_err(on_page(n))?;
@@ -2344,7 +2348,13 @@ fn build_once(
         items_withheld: Mutex::new(ItemsWithheld::default()),
     };
 
-    let loaded: Vec<Loaded> = loadable.par_iter().map(|rel| load(&shared, rel)).collect();
+    let loaded: Vec<Loaded> = loadable
+        .par_iter()
+        .map(|rel| {
+            let _unit = UnitGuard::enter(format!("1 load {}", rel.display()));
+            load(&shared, rel)
+        })
+        .collect();
     let stop = js_stop(js_calls.as_ref());
     if !stop.is_empty() {
         report.problems.extend(stop);
@@ -2724,6 +2734,7 @@ fn build_once(
         .filter(|&i| writes(&prepared[i]))
         .map(|i| -> Ready<'_> {
             let p = &prepared[i];
+            let _unit = UnitGuard::enter(format!("6 layout {}", p.label()));
             if let Some(problem) = unsupported_layout(p) {
                 // A survey also records what the page's content would have been refused for.
                 if let Some(log) = log {
@@ -2801,8 +2812,11 @@ fn build_once(
             return report;
         }
     }
-    // A function that gave different results for the same data makes any
+    // A function whose results depended on the order of calls makes any
     // page's result from it differ from 11ty's: write nothing.
+    if let Some(c) = &js_calls {
+        c.verify();
+    }
     let stop = js_stop(js_calls.as_ref());
     if !stop.is_empty() {
         report.problems.extend(stop);

@@ -732,7 +732,8 @@ fn a_function_that_keeps_state_writes_nothing_and_names_its_line() {
             "let n = 0;\nmodule.exports = {\n  next: () => ++n,\n};\n",
         ),
         ("src/a.njk", "{{ ids.next() }}"),
-        ("src/b.njk", "plain"),
+        ("src/b.njk", "{{ ids.next() }}"),
+        ("src/c.njk", "plain"),
     ]);
     let o = build(t.path(), &[], &[]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
@@ -741,7 +742,7 @@ fn a_function_that_keeps_state_writes_nothing_and_names_its_line() {
     assert!(out.contains("`next`"), "{out}");
     assert!(out.contains("src/_data/ids.js:3:"), "{out}");
     // Any page may hold a result from it: nothing is written.
-    assert_eq!(written(&t, "b/index.html"), None);
+    assert_eq!(written(&t, "c/index.html"), None);
 }
 
 #[test]
@@ -956,7 +957,7 @@ fn builds_with_data_functions_are_the_same_every_time() {
 }
 
 #[test]
-fn a_function_that_changes_a_shared_list_writes_nothing() {
+fn a_function_that_changes_a_shared_list_is_refused() {
     if !has_node() {
         return;
     }
@@ -976,9 +977,11 @@ fn a_function_that_changes_a_shared_list_writes_nothing() {
     let o = build(t.path(), &[], &[]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     let out = text(&o);
-    assert!(out.contains("changes a list that pages share"), "{out}");
-    assert!(out.contains("js-data-impure"), "{out}");
+    // The change is refused where it happens, and the list is sent again,
+    // unchanged, for the pages after.
+    assert!(out.contains("changes the data it is given"), "{out}");
     assert_eq!(written(&t, "a/index.html"), None);
+    assert_eq!(written(&t, "b/index.html"), None);
 }
 
 #[test]
@@ -1016,4 +1019,154 @@ fn a_long_list_passed_to_functions_on_many_pages_stays_one_list() {
             Some("50 same")
         );
     }
+}
+
+/// A build's exit code and the pages it wrote.
+type Outcome = (Option<i32>, Vec<(String, String)>);
+
+/// Build `files` `runs` times; each gives the same exit code and the same
+/// pages (none when refused).
+fn same_every_run(files: &[(&str, &str)], runs: usize) -> (Output, tempfile::TempDir) {
+    let t = site(files);
+    let mut first: Option<Outcome> = None;
+    let mut last = None;
+    for _ in 0..runs {
+        let _ = fs::remove_dir_all(t.path().join("_site"));
+        let o = build(t.path(), &[], &[]);
+        let mut pages = Vec::new();
+        if let Ok(entries) = fs::read_dir(t.path().join("_site")) {
+            for e in entries.flatten() {
+                let p = e.path().join("index.html");
+                pages.push((
+                    e.file_name().to_string_lossy().into_owned(),
+                    fs::read_to_string(p).unwrap_or_default(),
+                ));
+            }
+        }
+        pages.sort();
+        let now = (o.status.code(), pages);
+        match &first {
+            None => first = Some(now),
+            Some(f) => assert_eq!(f, &now, "{}", text(&o)),
+        }
+        last = Some(o);
+    }
+    (last.expect("ran"), t)
+}
+
+#[test]
+fn a_registry_shared_between_calls_is_refused_every_time() {
+    if !has_node() {
+        return;
+    }
+    // 11ty 3.1.8 prints p1:1, p2:2, p3:3, p4:4, in its own page order.
+    let reg = "const seen = [];\nmodule.exports = {\n  add(x) { seen.push(x); return \"\"; },\n  total(label) { return label + \":\" + seen.length; },\n};\n";
+    let pages: Vec<(String, String)> = (1..=4)
+        .map(|i| {
+            (
+                format!("src/p{i}.njk"),
+                format!("{{{{ reg.add(\"p{i}\") }}}}{{{{ reg.total(\"p{i}\") }}}}"),
+            )
+        })
+        .collect();
+    let mut files: Vec<(&str, &str)> = vec![("brrrty.config.rhai", ON), ("src/_data/reg.js", reg)];
+    files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
+    let (o, t) = same_every_run(&files, 10);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
+    assert_eq!(written(&t, "p1/index.html"), None);
+}
+
+#[test]
+fn a_flag_one_page_sets_and_another_reads_is_refused_every_time() {
+    if !has_node() {
+        return;
+    }
+    let (o, _t) = same_every_run(
+        &[
+            ("brrrty.config.rhai", ON),
+            (
+                "src/_data/flag.js",
+                "let on = false;\nmodule.exports = { set() { on = true; return \"\"; }, get() { return String(on); } };\n",
+            ),
+            ("src/a.njk", "{{ flag.set() }}"),
+            ("src/b.njk", "{{ flag.get() }}"),
+            ("src/c.liquid", "{{ flag.get }}"),
+        ],
+        10,
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
+}
+
+#[test]
+fn caches_closures_and_bound_functions_build() {
+    if !has_node() {
+        return;
+    }
+    let mut files = vec![
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/i18n.js",
+            "const strings = { en: { home: \"Home\" }, fr: { home: \"Accueil\" } };\nconst make = (lang) => ({ t: (key) => strings[lang][key] });\nfunction tr(lang, key) { return lang + \"/\" + key; }\nconst cache = new Map();\nfunction slow(x) { if (!cache.has(x)) cache.set(x, x.toUpperCase()); return cache.get(x); }\nmodule.exports = { en: make(\"en\"), fr: make(\"fr\"), ben: tr.bind(null, \"en\"), bfr: tr.bind(null, \"fr\"), slow };\n",
+        ),
+    ];
+    let pages: Vec<(String, String)> = (0..12)
+        .map(|i| {
+            (
+                format!("src/p{i}.njk"),
+                format!("{{{{ i18n.en.t(\"home\") }}}} {{{{ i18n.fr.t(\"home\") }}}} {{{{ i18n.ben(\"x\") }}}} {{{{ i18n.bfr(\"x\") }}}} {{{{ i18n.slow(\"k{}\") }}}}", i % 3),
+            )
+        })
+        .collect();
+    files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
+    let (o, t) = same_every_run(&files, 5);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        written(&t, "p4/index.html").as_deref(),
+        Some("Home Accueil en/x fr/x K1")
+    );
+}
+
+#[test]
+fn a_computed_value_from_the_clock_is_refused_every_time() {
+    if !has_node() {
+        return;
+    }
+    let mut files = vec![
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/eleventyComputed.js",
+            "module.exports = { built: () => new Date(), lucky: () => Math.random() < 2 };",
+        ),
+    ];
+    let pages: Vec<(String, String)> = (0..40)
+        .map(|i| (format!("src/p{i}.njk"), "{{ built }}".to_string()))
+        .collect();
+    files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
+    let (o, _t) = same_every_run(&files, 8);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let out = text(&o);
+    assert!(out.contains("reads the current time"), "{out}");
+}
+
+#[test]
+fn the_time_a_data_file_read_as_it_loaded_is_fine() {
+    if !has_node() {
+        return;
+    }
+    // The replay check loads the data again: it is handed the same clock.
+    let (o, _t) = same_every_run(
+        &[
+            ("brrrty.config.rhai", ON),
+            (
+                "src/_data/age.js",
+                "const now = Date.now();\nconst salt = Math.random();\nmodule.exports = { stamp: (x) => x + \":\" + now + salt };\n",
+            ),
+            ("src/a.njk", "{{ age.stamp(\"a\") | length }}"),
+            ("src/b.njk", "{{ age.stamp(\"b\") | length }}"),
+        ],
+        1,
+    );
+    assert!(o.status.success(), "{}", text(&o));
 }

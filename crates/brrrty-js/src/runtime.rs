@@ -185,6 +185,14 @@ pub trait JsRuntime: Send {
     fn page_close(&mut self, page: PageId);
     /// Every file the site's code read or loaded so far, absolute.
     fn reads(&mut self) -> JsResult<Vec<PathBuf>>;
+    /// The data files are loaded; what follows are the pages' calls. From
+    /// here a call that reads the clock or a random number is refused.
+    fn begin_calls(&mut self) -> JsResult<()>;
+    /// Check that no call's result depended on the calls made before it:
+    /// run the same calls again, in fresh runtimes, in other orders, and
+    /// compare every result. `Refused` (marked impure) names the first
+    /// difference.
+    fn verify(&mut self) -> JsResult<()>;
 }
 
 #[cfg(test)]

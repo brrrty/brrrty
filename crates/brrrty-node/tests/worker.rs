@@ -624,7 +624,7 @@ fn a_method_call_has_its_object_as_this() {
 }
 
 #[test]
-fn calls_that_keep_state_or_change_their_arguments_are_refused() {
+fn calls_run_once_and_changing_their_arguments_is_refused() {
     let Some(node) = node() else { return };
     let t = site(&[(
         "f.js",
@@ -632,14 +632,18 @@ fn calls_that_keep_state_or_change_their_arguments_are_refused() {
     )]);
     let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
     let f = ok(w.load(&t.path().join("f.js"), true)).value;
-    let r = refused(w.call(
-        handle_at(&f, &["count"]),
-        This::Value(&f),
-        &[],
-        Settle::Await,
-    ));
-    assert!(r.impure, "{r:?}");
-    assert!(r.why.contains("`count`"), "{}", r.why);
+    ok(w.begin_calls());
+    // A call runs once, as in 11ty; whether state mattered is the replay
+    // check's to say.
+    for want in [1.0, 2.0] {
+        let n = ok(w.call(
+            handle_at(&f, &["count"]),
+            This::Value(&f),
+            &[],
+            Settle::Await,
+        ));
+        assert_eq!(n.value, Value::Number(want));
+    }
     let r = refused(w.call(
         handle_at(&f, &["poke"]),
         This::Value(&f),

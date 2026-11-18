@@ -54,6 +54,35 @@ pub trait Caller: Send + Sync {
 
 thread_local! {
     static CALLER: RefCell<Option<Arc<dyn Caller>>> = const { RefCell::new(None) };
+    static UNIT: RefCell<Option<(u64, Arc<str>)>> = const { RefCell::new(None) };
+}
+
+static NEXT_UNIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The render the calls on this thread belong to (a page's content, its
+/// layouts, the placing of a template's pages): its id, and a name that
+/// orders it among the build's renders the same way every build.
+pub fn unit() -> Option<(u64, Arc<str>)> {
+    UNIT.with(|u| u.borrow().clone())
+}
+
+/// Marks the calls made on this thread, until it drops, as one render
+/// named `label`.
+pub struct UnitGuard(Option<(u64, Arc<str>)>);
+
+impl UnitGuard {
+    pub fn enter(label: impl Into<Arc<str>>) -> UnitGuard {
+        let id = NEXT_UNIT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let before = UNIT.with(|u| u.borrow_mut().replace((id, label.into())));
+        UnitGuard(before)
+    }
+}
+
+impl Drop for UnitGuard {
+    fn drop(&mut self) {
+        let before = self.0.take();
+        UNIT.with(|u| *u.borrow_mut() = before);
+    }
 }
 
 /// Make `caller` this thread's caller from now on (none with `None`).

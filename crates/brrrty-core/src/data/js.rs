@@ -199,7 +199,19 @@ impl<'a> JsSession<'a> {
     /// Hand the runtime over for the pages to call the functions in the
     /// data: `None` when no file ran.
     pub fn take_calls(&mut self) -> Option<Arc<JsCalls>> {
-        let runtime = self.runtime.take()?;
+        let mut runtime = self.runtime.take()?;
+        match runtime.begin_calls() {
+            JsResult::Ok(()) => {}
+            JsResult::Failed(f) => {
+                self.failed = Some(worker_failed_with(&f));
+                return None;
+            }
+            JsResult::Thrown(JsError { message: why, .. })
+            | JsResult::Refused(Refusal { why, .. }) => {
+                self.failed = Some(worker_failed(&why));
+                return None;
+            }
+        }
         Some(Arc::new(JsCalls {
             runtime: Mutex::new(Some(runtime)),
             root: self.root.clone(),
@@ -284,6 +296,16 @@ impl JsCalls {
         let mut out: Vec<Problem> = lock(&self.failed).iter().cloned().collect();
         out.extend(lock(&self.impure).iter().cloned());
         out
+    }
+
+    /// Run the replay check (see [`JsRuntime::verify`]): when a call's
+    /// result depended on the calls before it, the build stops.
+    pub fn verify(&self) {
+        let r = self.with(|rt| rt.verify());
+        if let JsResult::Refused(r) = r {
+            let r = Refusal { impure: true, ..r };
+            self.note_refusal(&r);
+        }
     }
 
     /// Every file the data's code read so far.

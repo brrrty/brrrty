@@ -78,11 +78,27 @@ impl std::fmt::Display for WorkerError {
 /// [`REPLY_STACK`]), or why there is none.
 type Reply = Result<Frame, String>;
 
-struct Frame {
+pub(crate) struct Frame {
     /// The reply without its value.
-    head: Json,
+    pub head: Json,
     /// The decoded `ok` value, when the reply has one.
     ok: Option<Result<Decoded, String>>,
+    /// The `ok` value as sent, kept when the worker records its requests
+    /// for the replay check (see `JsRuntime::verify`).
+    pub raw: Option<Json>,
+}
+
+/// One request made after the data files loaded, with its reply, for the
+/// replay check.
+#[derive(Clone)]
+pub(crate) struct Record {
+    /// The render that made it ([`brrrty_js::functions::unit`]); a request
+    /// made outside one is a unit of its own.
+    pub unit: u64,
+    pub label: Arc<str>,
+    pub req: Json,
+    pub head: Json,
+    pub raw: Option<Json>,
 }
 
 /// A running worker. Dropping it closes Node's stdin, waits up to 2 s for
@@ -101,9 +117,24 @@ pub struct Worker {
     last_loaded: HashMap<(bool, PathBuf), Decoded>,
     /// The value a `same` reply to the request in flight stands for.
     earlier: Option<Decoded>,
-    /// Lists sent to the worker and kept there, by their data's address
+    /// Values sent to the worker and kept there, by their data's address
     /// (the value is held, so the address can't be reused).
     kept: Kept,
+    /// What the worker was started with, for the replay check.
+    node: NodeInfo,
+    run_mode: RunMode,
+    /// Keep each reply's value as sent, as well as decoded.
+    pub(crate) keep_raw: Arc<std::sync::atomic::AtomicBool>,
+    /// The requests that loaded the data, in order.
+    load_log: Vec<Json>,
+    /// The requests made since, with their replies.
+    call_log: Vec<Record>,
+    /// Set once the data files loaded: see [`JsRuntime::begin_calls`].
+    calls_begun: bool,
+    /// The clock and random values the data files read as they loaded.
+    clock: Json,
+    /// How many function handles the data files' values made.
+    load_handles: u64,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
@@ -127,13 +158,15 @@ impl Worker {
         let (mut child, frames, stderr) = spawn(cmd).map_err(cannot)?;
         live(child.id(), true);
         let (tx, replies) = mpsc::channel();
+        let keep_raw = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let keep = keep_raw.clone();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
         // recurses once per level: a roomy stack, not serde's 128 limit.
         std::thread::Builder::new()
             .name("brrrty-node-replies".into())
             .stack_size(REPLY_STACK)
-            .spawn(move || read_frames(frames, tx))
+            .spawn(move || read_frames(frames, tx, keep))
             .map_err(|e| {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -154,6 +187,14 @@ impl Worker {
             last_loaded: HashMap::new(),
             earlier: None,
             kept: Kept::default(),
+            node: node.clone(),
+            run_mode,
+            keep_raw,
+            load_log: Vec::new(),
+            call_log: Vec::new(),
+            calls_begun: false,
+            clock: Json::Array(Vec::new()),
+            load_handles: 0,
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -183,9 +224,40 @@ impl Worker {
 
     /// Send one request and wait for its reply. `what` names it in the
     /// notes about a slow reply.
-    fn request(&mut self, mut req: Json, what: &str) -> JsResult<Decoded> {
+    fn request(&mut self, req: Json, what: &str) -> JsResult<Decoded> {
+        let op = req
+            .get("op")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string();
+        let logged = !matches!(op.as_str(), "reads" | "info" | "callsBegin" | "feedClock");
+        if logged && !self.calls_begun {
+            self.load_log.push(req.clone());
+        }
+        let frame = match self.exchange(req.clone(), what) {
+            Ok(f) => f,
+            Err(f) => return JsResult::Failed(f),
+        };
+        if logged && self.calls_begun {
+            let (unit, label) = match brrrty_js::functions::unit() {
+                Some(u) => u,
+                None => (u64::MAX - self.call_log.len() as u64, Arc::from("")),
+            };
+            self.call_log.push(Record {
+                unit,
+                label,
+                req,
+                head: frame.head.clone(),
+                raw: frame.raw.clone(),
+            });
+        }
+        self.interpret(frame, what)
+    }
+
+    /// Send one request and wait for its reply frame.
+    pub(crate) fn exchange(&mut self, mut req: Json, what: &str) -> Result<Frame, RuntimeFailure> {
         if let Some(f) = &self.failed {
-            return JsResult::Failed(f.clone());
+            return Err(f.clone());
         }
         self.next_id += 1;
         let id = self.next_id;
@@ -197,7 +269,7 @@ impl Worker {
             .as_mut()
             .map(|s| s.write_all(line.as_bytes()).and_then(|_| s.flush()));
         if !matches!(sent, Some(Ok(()))) {
-            return JsResult::Failed(self.fail("Node stopped reading requests"));
+            return Err(self.fail("Node stopped reading requests"));
         }
         let start = Instant::now();
         let mut next_note = start + self.note_times.0;
@@ -233,13 +305,22 @@ impl Worker {
                 }
             }
         };
-        let Frame { head: reply, ok } = match reply {
+        let frame = match reply {
             Ok(r) => r,
-            Err(why) => return JsResult::Failed(self.fail(&why)),
+            Err(why) => return Err(self.fail(&why)),
         };
-        if reply.get("id") != Some(&json!(id)) {
-            return JsResult::Failed(self.fail(&format!("a reply out of order: {reply}")));
+        if frame.head.get("id") != Some(&json!(id)) {
+            let head = frame.head.clone();
+            return Err(self.fail(&format!("a reply out of order: {head}")));
         }
+        Ok(frame)
+    }
+
+    /// What a reply means.
+    fn interpret(&mut self, frame: Frame, what: &str) -> JsResult<Decoded> {
+        let Frame {
+            head: reply, ok, ..
+        } = frame;
         if reply.get("changedArgument").is_some() {
             return JsResult::Failed(self.fail(&format!(
                 "{what} changes the data 11ty hands it (the config's global data and `eleventy`), which 11ty then merges into every page's data; Brrrty can't follow that, so return the data instead"
@@ -252,7 +333,8 @@ impl Worker {
             return JsResult::Thrown(js_error(t, &self.root));
         }
         if reply.get("dropShared").is_some() {
-            self.kept = Kept::default();
+            // The worker forgot them; ids go on rising, so none is reused.
+            self.kept.lists.clear();
         }
         if let Some(r) = reply.get("refused") {
             return JsResult::Refused(Refusal {
@@ -475,6 +557,50 @@ impl JsRuntime for Worker {
         let _ = self.request(json!({"op": "pageClose", "page": page.0}), "a page's data");
     }
 
+    fn begin_calls(&mut self) -> JsResult<()> {
+        self.keep_raw
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let frame = match self.exchange(json!({"op": "callsBegin"}), "the data files") {
+            Ok(f) => f,
+            Err(f) => return JsResult::Failed(f),
+        };
+        let raw = frame.raw.unwrap_or(Json::Null);
+        self.clock = raw.get("clock").cloned().unwrap_or(Json::Array(Vec::new()));
+        self.load_handles = raw.get("handles").and_then(Json::as_u64).unwrap_or(0);
+        self.calls_begun = true;
+        JsResult::Ok(())
+    }
+
+    fn verify(&mut self) -> JsResult<()> {
+        let log = crate::replay::Log {
+            node: &self.node,
+            root: &self.root,
+            run_mode: self.run_mode,
+            loads: &self.load_log,
+            clock: &self.clock,
+            load_handles: self.load_handles,
+            calls: &self.call_log,
+        };
+        match log.check() {
+            Ok(()) => JsResult::Ok(()),
+            Err(crate::replay::Failure::Differs(why, handle)) => {
+                let named = handle
+                    .and_then(|h| {
+                        self.exchange(json!({"op": "describe", "handle": h}), "a function's name")
+                            .ok()
+                    })
+                    .and_then(|f| f.raw)
+                    .and_then(|r| r.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "a function from JavaScript data".to_string());
+                JsResult::Refused(Refusal {
+                    why: why.replace("{fn}", &named),
+                    impure: true,
+                })
+            }
+            Err(crate::replay::Failure::Runtime(f)) => JsResult::Failed(f),
+        }
+    }
+
     fn reads(&mut self) -> JsResult<Vec<PathBuf>> {
         match self.request(json!({"op": "reads"}), "the list of files read") {
             JsResult::Ok(d) => match strings(&d.value) {
@@ -612,7 +738,11 @@ fn signal_of(_: &std::process::ExitStatus) -> Option<i32> {
 
 /// Read `\x1eBRRRTY <len>\n<json>` frames until Node closes stdout.
 /// Anything else is a protocol error, sent once.
-fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>) {
+fn read_frames(
+    stdout: impl Read,
+    tx: mpsc::Sender<Reply>,
+    keep_raw: Arc<std::sync::atomic::AtomicBool>,
+) {
     let mut r = BufReader::new(stdout);
     loop {
         let mut header = Vec::new();
@@ -642,12 +772,12 @@ fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>) {
             let _ = tx.send(Err(format!("a cut-off reply: {e}")));
             return;
         }
+        let keep = keep_raw.load(std::sync::atomic::Ordering::SeqCst);
         let parsed = parse_reply(&body).map(|mut head| {
-            let ok = head
-                .as_object_mut()
-                .and_then(|o| o.remove("ok"))
-                .map(|v| decode(&v));
-            Frame { head, ok }
+            let value = head.as_object_mut().and_then(|o| o.remove("ok"));
+            let ok = value.as_ref().map(decode);
+            let raw = if keep { value } else { None };
+            Frame { head, ok, raw }
         });
         if tx.send(parsed).is_err() {
             return;

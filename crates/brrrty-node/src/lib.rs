@@ -8,6 +8,7 @@
 mod client;
 pub mod decode;
 mod find;
+mod replay;
 pub mod stack;
 
 pub use client::{RunMode, Worker, WorkerError, encode, stop_all};
