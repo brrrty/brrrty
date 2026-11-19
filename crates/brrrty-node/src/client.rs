@@ -96,6 +96,9 @@ pub(crate) struct Frame {
 /// What a reply's reader keeps besides the decoded value.
 pub(crate) const KEEP_RAW: u8 = 1;
 pub(crate) const KEEP_TEXT: u8 = 2;
+/// Keep the value as sent and don't decode it: the replay check only
+/// compares replies.
+pub(crate) const KEEP_RAW_ONLY: u8 = 3;
 
 impl Record {
     /// The request, parsed.
@@ -360,6 +363,15 @@ impl Worker {
     /// Send one request and wait for its reply frame.
     pub(crate) fn exchange(&mut self, req: Json, what: &str) -> Result<Frame, RuntimeFailure> {
         self.exchange_with(&req.to_string(), what, &mut |name: &str, _: &[Value]| {
+            Err(format!(
+                "calls `this.{name}` where Brrrty has no filters to run it"
+            ))
+        })
+    }
+
+    /// [`Worker::exchange`] of a request already written as JSON text.
+    pub(crate) fn exchange_text(&mut self, req: &str, what: &str) -> Result<Frame, RuntimeFailure> {
+        self.exchange_with(req, what, &mut |name: &str, _: &[Value]| {
             Err(format!(
                 "calls `this.{name}` where Brrrty has no filters to run it"
             ))
@@ -940,6 +952,7 @@ impl JsRuntime for Worker {
             global_end: self.global_end,
             load_handles: self.load_handles,
             calls: &self.call_log,
+            kept_defs: &self.kept.defs,
             slowest: self.slowest,
         };
         match log.check() {
@@ -1155,8 +1168,16 @@ fn read_frames(
         let keep = keep_raw.load(std::sync::atomic::Ordering::SeqCst);
         let parsed = parse_reply(&body).map(|mut head| {
             let value = head.as_object_mut().and_then(|o| o.remove("ok"));
-            let ok = value.as_ref().map(decode);
-            let raw = if keep == KEEP_RAW { value } else { None };
+            let ok = if keep == KEEP_RAW_ONLY {
+                None
+            } else {
+                value.as_ref().map(decode)
+            };
+            let raw = if keep == KEEP_RAW || keep == KEEP_RAW_ONLY {
+                value
+            } else {
+                None
+            };
             let text = (keep == KEEP_TEXT)
                 .then(|| String::from_utf8_lossy(&body).into_owned().into_boxed_str());
             Frame {
@@ -1262,6 +1283,7 @@ pub fn encode_all<'v>(
     let out = values
         .map(|v| {
             let mut buf = Vec::new();
+            e.spans.clear();
             e.encode(v, &mut buf).map(|()| text(buf))
         })
         .collect();
@@ -1275,6 +1297,7 @@ fn encode_page(data: &Value, kept: &mut Kept) -> Result<String, String> {
     count(data, &mut counts, Some(kept));
     let mut e = Encoder::new(counts, Some(kept), ptr_of(data), false);
     let mut buf = Vec::new();
+    e.spans.clear();
     let r = e.encode(data, &mut buf).map(|()| text(buf));
     e.finish(r)
 }
@@ -1301,6 +1324,7 @@ fn encode_render(
         let first = match first {
             Some(f) => {
                 let mut fb = Vec::new();
+                e.spans.clear();
                 e.encode(f, &mut fb)?;
                 Some(text(fb))
             }
@@ -1362,6 +1386,10 @@ fn worth_keeping(v: &Value) -> bool {
 pub struct Kept {
     lists: HashMap<usize, (Value, u64)>,
     next: u64,
+    /// Every value kept so far, as sent (`{"$S": [id, value]}`), in the
+    /// order sent, kept when the worker forgets them too: the replay
+    /// check's workers are given them all first.
+    defs: Vec<Box<str>>,
 }
 
 fn ptr_of(v: &Value) -> Option<usize> {
@@ -1396,9 +1424,14 @@ struct Encoder<'k> {
     /// The id of each shared object or array sent so far.
     ids: HashMap<usize, usize>,
     kept: Option<&'k mut Kept>,
-    /// The first id this request keeps: a request that can't be sent
-    /// forgets what it would have kept.
+    /// The first id this request keeps, and how many values were kept
+    /// before it: a request that can't be sent forgets what it would have
+    /// kept.
     kept_from: u64,
+    defs_from: usize,
+    /// Where each kept value sent in this request is in its text, and its
+    /// id, innermost first: a value's definition refers to those inside it.
+    spans: Vec<(usize, usize, u64)>,
     /// The one object or list not to keep.
     no_keep: Option<usize>,
     /// How many kept values the encoder is inside.
@@ -1483,11 +1516,14 @@ impl<'k> Encoder<'k> {
         guard: bool,
     ) -> Encoder<'k> {
         let kept_from = kept.as_deref().map_or(0, |k| k.next);
+        let defs_from = kept.as_deref().map_or(0, |k| k.defs.len());
         Encoder {
             counts,
             ids: HashMap::new(),
             kept,
             kept_from,
+            defs_from,
+            spans: Vec::new(),
             no_keep,
             in_kept: 0,
             guard,
@@ -1502,8 +1538,32 @@ impl<'k> Encoder<'k> {
         {
             let from = self.kept_from;
             kept.lists.retain(|_, (_, id)| *id < from);
+            kept.defs.truncate(self.defs_from);
         }
         r
+    }
+
+    /// Record the definition of the kept value `id`, written at `start..`
+    /// in `out`, with each kept value inside it as a reference.
+    fn define(&mut self, id: u64, start: usize, out: &[u8]) {
+        let end = out.len();
+        let at = self.spans.partition_point(|(s, _, _)| *s < start);
+        let inner: Vec<(usize, usize, u64)> = self.spans.drain(at..).collect();
+        let mut def = Vec::with_capacity(end - start);
+        let mut from = start;
+        for (s, e, inner_id) in inner {
+            if s < from {
+                continue;
+            }
+            def.extend_from_slice(&out[from..s]);
+            def.extend_from_slice(format!(r#"{{"$R":{inner_id}}}"#).as_bytes());
+            from = e;
+        }
+        def.extend_from_slice(&out[from..end]);
+        self.spans.push((start, end, id));
+        if let Some(kept) = self.kept.as_deref_mut() {
+            kept.defs.push(text(def).into_boxed_str());
+        }
     }
 
     fn encode(&mut self, v: &Value, out: &mut Vec<u8>) -> Result<(), String> {
@@ -1528,6 +1588,7 @@ impl<'k> Encoder<'k> {
             // A kept value stands on its own: it may be sent again, by
             // itself, in another request (the replay check does), so what
             // is inside it never refers to this request's shared values.
+            let start = out.len();
             out.extend_from_slice(br#"{"$S":["#);
             out.extend_from_slice(id.to_string().as_bytes());
             out.push(b',');
@@ -1536,6 +1597,7 @@ impl<'k> Encoder<'k> {
             self.in_kept -= 1;
             inner?;
             out.extend_from_slice(b"]}");
+            self.define(id, start, out);
             return Ok(());
         }
         if self.in_kept > 0 {
@@ -1759,6 +1821,34 @@ mod tests {
         // they are sent in full.
         let again = encode_all([&big].into_iter(), Some(&mut kept)).unwrap();
         assert!(again[0].starts_with(r#"{"$S":"#), "{}", again[0]);
+    }
+
+    #[test]
+    fn each_kept_value_is_recorded_once_with_the_kept_values_inside_as_references() {
+        let mut kept = Kept::default();
+        let inner = object(KEPT_LEN);
+        let outer = Value::Array(Arc::new(vec![inner.clone(), Value::Number(1.0)]));
+        let both = Value::Array(Arc::new(vec![outer.clone(), inner.clone()]));
+        let e = encode_all([&both].into_iter(), Some(&mut kept)).unwrap();
+        // Sent inline the first time, by reference after.
+        assert!(
+            e[0].starts_with(r#"{"$S":[0,[{"$S":[1,[{"$S":[2,"#),
+            "{}",
+            e[0]
+        );
+        assert!(e[0].ends_with(r#"{"$R":2}]]}"#), "{}", e[0]);
+        assert_eq!(kept.defs.len(), 3);
+        assert!(
+            kept.defs[0].starts_with(r#"{"$S":[2,{"$o":"#),
+            "{}",
+            kept.defs[0]
+        );
+        assert_eq!(&*kept.defs[1], r#"{"$S":[1,[{"$R":2},1.0]]}"#);
+        assert_eq!(&*kept.defs[2], r#"{"$S":[0,[{"$R":1},{"$R":2}]]}"#);
+        // Every definition is valid JSON on its own.
+        for d in &kept.defs {
+            serde_json::from_str::<Json>(d).unwrap();
+        }
     }
 
     #[test]

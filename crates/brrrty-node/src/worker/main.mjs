@@ -2090,9 +2090,10 @@ function handle(req) {
           lodashSet(data, key, "");
         }
       }
-      nextPage += 1;
-      pages.set(nextPage, { data });
-      return { ok: nextPage };
+      // The replay check opens a page under the first run's number.
+      const id = typeof req.as === "number" ? req.as : (nextPage += 1);
+      pages.set(id, { data });
+      return { ok: id };
     }
     case "pageVars":
       return (async () => {
@@ -2120,6 +2121,11 @@ function handle(req) {
       if (throughList(p.data, req.key)) return { refused: `computed key \`${req.key}\` would be set inside a list, which Brrrty doesn't do` };
       ownPath(p.data, req.key);
       lodashSet(p.data, req.key, fromWire(req.value));
+      return { ok: null };
+    }
+    case "defineKept": {
+      // The replay check: every value the first run kept, before its calls.
+      for (const def of req.defs || []) fromWire(def);
       return { ok: null };
     }
     case "pageClose": {
@@ -2187,7 +2193,7 @@ function turnMs() {
 }
 
 // Ops that run none of the site's code.
-const QUIET_OPS = new Set(["pageOpen", "pageSet", "pageClose", "info", "reads", "feedCalls", "feedClock"]);
+const QUIET_OPS = new Set(["pageOpen", "pageSet", "pageClose", "defineKept", "info", "reads", "feedCalls", "feedClock"]);
 
 // The reply for an error a request's handling threw.
 function replyFor(e) {
