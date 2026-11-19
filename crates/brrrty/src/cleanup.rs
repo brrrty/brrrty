@@ -1,5 +1,7 @@
 //! Stopping `brrrty doctor --verify` on Ctrl-C or SIGTERM, and what to undo when it ends.
-//! Every stop also kills the JavaScript data worker (see [`brrrty_node::stop_all`]).
+//! Every stop also kills the JavaScript data worker (see [`brrrty_node::stop_all`]) and
+//! removes the folder a build's pages wait in during the order check (see
+//! [`brrrty_core::remove_stages`]).
 //!
 //! The work is split so no order of events can leak anything:
 //!
@@ -80,6 +82,7 @@ fn kill_group(_pid: u32) {}
 /// the running child's process group.
 pub fn signal(sig: i32) {
     brrrty_node::stop_all();
+    brrrty_core::remove_stages();
     let mut s = lock(&STATE);
     if s.stopping == 0 {
         s.stopping = sig;
@@ -152,6 +155,9 @@ fn stop_workers_on(signals: &[i32]) -> io::Result<()> {
         .spawn(move || {
             if let Some(sig) = signals.forever().next() {
                 brrrty_node::stop_all();
+                // Pages waiting for the order check were never approved: none stays in
+                // the output folder (the process ends here, without its destructors).
+                brrrty_core::remove_stages();
                 let _ = signal_hook::low_level::emulate_default_handler(sig);
                 std::process::exit(128 + sig);
             }
@@ -190,6 +196,7 @@ pub fn child_done() {
 /// process before destructors run.
 pub fn run() {
     brrrty_node::stop_all();
+    brrrty_core::remove_stages();
     if let Some(pid) = lock(&STATE).child.take() {
         kill_group(pid);
     }

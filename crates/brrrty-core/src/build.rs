@@ -2363,6 +2363,11 @@ fn build_once(
     {
         report.problems.push(p);
     }
+    // Staging folders that builds which were killed left in the output folder go, whoever
+    // builds into it next.
+    if !mode.dry_run {
+        crate::stage::sweep(&out);
+    }
     // Pages are tracked relative to the input folder; problems report them relative to the
     // root, through the input folder as spelled (11ty finds path dates in that spelling too).
     let input_rel = match opts.input_rel() {
@@ -3388,15 +3393,15 @@ fn build_once(
     // folder of its own inside the output folder, under a number, and
     // moved to its place once the check passes. If it doesn't, the
     // folder goes and nothing was written.
+    // (A build that is refused leaves no trace: see `stage`.)
     let stage = (js_calls.is_some() && !mode.dry_run)
-        .then(|| out.join(format!(".brrrty-stage-{}", std::process::id())));
+        .then(|| crate::stage::Stage::new(&out))
+        .flatten();
     let staged: Vec<Option<u64>> = std::thread::scope(|s| {
         let staging = stage.as_ref().map(|stage| {
             let ready = &ready;
+            let stage = stage.path();
             s.spawn(move || -> Vec<Option<u64>> {
-                if fs::create_dir_all(stage).is_err() {
-                    return Vec::new();
-                }
                 crate::io_threads::install(|| {
                     ready
                         .par_iter()
@@ -3415,16 +3420,6 @@ fn build_once(
         }
         staging.and_then(|t| t.join().ok()).unwrap_or_default()
     });
-    // Whatever is left of the folder goes when this does.
-    struct Staged(Option<PathBuf>);
-    impl Drop for Staged {
-        fn drop(&mut self) {
-            if let Some(stage) = &self.0 {
-                let _ = fs::remove_dir_all(stage);
-            }
-        }
-    }
-    let stage = Staged(stage);
     let stop = js_stop(js_calls.as_ref());
     if !stop.is_empty() {
         report.problems.extend(stop);
@@ -3471,8 +3466,8 @@ fn build_once(
                 }
                 // Written already, while the check ran: it moves to its
                 // place. (Should the move fail, it is written here.)
-                if let (Some(stage), Some(Some(hash))) = (&stage.0, staged.get(n))
-                    && fs::rename(stage.join(n.to_string()), &dest).is_ok()
+                if let (Some(stage), Some(Some(hash))) = (&stage, staged.get(n))
+                    && fs::rename(stage.path().join(n.to_string()), &dest).is_ok()
                 {
                     return Ok((i, *hash));
                 }

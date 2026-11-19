@@ -2068,3 +2068,190 @@ fn the_order_check_can_be_skipped_and_doctor_still_runs_it() {
         assert!(!out.contains(skipped), "{out}");
     }
 }
+
+/// A site whose order check takes seconds though its build takes none:
+/// the function is quick the first time anything calls it (it leaves a
+/// file to say so) and sleeps three seconds every time after, which is in
+/// the replays.
+#[cfg(unix)]
+fn slow_to_check() -> tempfile::TempDir {
+    site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "const fs = require(\"fs\");\nconst mark = require(\"path\").join(__dirname, \"..\", \"..\", \"called\");\nmodule.exports = { f() {\n  if (fs.existsSync(mark)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);\n  else fs.writeFileSync(mark, \"\");\n  return \"v\";\n} };\n",
+        ),
+        ("src/index.njk", "{{ h.f() }}"),
+        ("src/about.md", "About\n"),
+    ])
+}
+
+/// The staging folders directly inside `out`.
+#[cfg(unix)]
+fn stages(out: &Path) -> Vec<String> {
+    let mut found: Vec<String> = fs::read_dir(out)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(".brrrty-stage-"))
+        .collect();
+    found.sort();
+    found
+}
+
+/// The pages wait in a folder inside the output folder while the check
+/// runs, and a signal ends the process without its destructors: the
+/// signal's own path removes the folder, and the output folder this
+/// build made for it.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_during_the_order_check_leaves_no_staged_pages() {
+    if !has_node() {
+        return;
+    }
+    for signal in ["-INT", "-TERM"] {
+        let t = slow_to_check();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+            .current_dir(t.path())
+            .args(["build", "--input", "src"])
+            .env_remove("BRRRTY_NODE")
+            .env("BRRRTY_JS_BUILD_NODES", "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let out = t.path().join("_site");
+        let staged = out.join(format!(".brrrty-stage-{}", child.id()));
+        let start = Instant::now();
+        // Both pages are there: the check is all that is left.
+        while !(staged.join("0").exists() && staged.join("1").exists())
+            && start.elapsed() < Duration::from_secs(30)
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(staged.join("1").exists(), "the pages were never staged");
+        Command::new("kill")
+            .args([signal, &child.id().to_string()])
+            .status()
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert!(!status.success(), "{signal}: {status:?}");
+        assert_eq!(stages(&out), Vec::<String>::new(), "{signal}");
+        assert!(!out.exists(), "{signal}: an empty output folder was left");
+    }
+}
+
+/// A build that was killed outright (nothing can tidy up after SIGKILL)
+/// leaves its staging folder: the next build into that output folder
+/// removes it, and one that belongs to a process still running stays.
+#[cfg(unix)]
+#[test]
+fn a_build_removes_the_staging_folders_killed_builds_left() {
+    if !has_node() {
+        return;
+    }
+    let t = slow_to_check();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+        .current_dir(t.path())
+        .args(["build", "--input", "src"])
+        .env_remove("BRRRTY_NODE")
+        .env("BRRRTY_JS_BUILD_NODES", "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let out = t.path().join("_site");
+    let staged = out.join(format!(".brrrty-stage-{}", child.id()));
+    let start = Instant::now();
+    while !staged.join("1").exists() && start.elapsed() < Duration::from_secs(30) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Command::new("kill")
+        .args(["-KILL", &child.id().to_string()])
+        .status()
+        .unwrap();
+    let _ = child.wait();
+    assert_eq!(stages(&out).len(), 1, "SIGKILL leaves the folder");
+    // The folder of a process that is alive (this one) is some build's.
+    let live = out.join(format!(".brrrty-stage-{}", std::process::id()));
+    fs::create_dir_all(&live).unwrap();
+    // Without JavaScript data, and with: every build sweeps.
+    for with_js in [false, true] {
+        if with_js {
+            fs::remove_file(t.path().join("called")).unwrap();
+            fs::create_dir_all(&staged).unwrap();
+            fs::write(staged.join("0"), "stale").unwrap();
+        }
+        let o = build(
+            t.path(),
+            if with_js { &[] } else { &["--no-order-check"] },
+            &[
+                ("BRRRTY_JS_BUILD_NODES", "1"),
+                ("BRRRTY_JS_REPLAY_FLOOR_MS", "20000"),
+            ],
+        );
+        assert!(o.status.success(), "{}", text(&o));
+        assert_eq!(
+            stages(&out),
+            [live.file_name().unwrap().to_string_lossy().into_owned()],
+            "with_js {with_js}"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("index.html")).unwrap(),
+            "v",
+            "with_js {with_js}"
+        );
+    }
+}
+
+/// "Nothing was written" holds for the output folder itself: a first
+/// build that is refused leaves none, and one that was there is left as
+/// it was.
+#[test]
+fn a_refused_build_leaves_no_output_folder_behind() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/c.js",
+            "let n = 0;\nmodule.exports = { next() { return ++n; } };\n",
+        ),
+        ("src/a.njk", "{{ c.next() }}"),
+        ("src/b.njk", "{{ c.next() }}"),
+    ];
+    for nodes in ["1", "2"] {
+        let t = site(&files);
+        let env = [
+            ("BRRRTY_JS_BUILD_NODES", nodes),
+            ("BRRRTY_JS_BUILD_WAIT", "1"),
+        ];
+        let o = build(t.path(), &[], &env);
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+        assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
+        assert!(
+            !t.path().join("_site").exists(),
+            "{nodes} Nodes: _site was left"
+        );
+        // Into a nested output folder: none of what the build made stays.
+        let o = build(t.path(), &["--output", "dist/site"], &env);
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+        assert!(
+            !t.path().join("dist").exists(),
+            "{nodes} Nodes: dist was left"
+        );
+        // An output folder that was there stays, with what it held.
+        fs::create_dir_all(t.path().join("_site")).unwrap();
+        fs::write(t.path().join("_site/old.html"), "old").unwrap();
+        let o = build(t.path(), &[], &env);
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+        let left: Vec<_> = fs::read_dir(t.path().join("_site"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, ["old.html"], "{nodes} Nodes");
+    }
+}

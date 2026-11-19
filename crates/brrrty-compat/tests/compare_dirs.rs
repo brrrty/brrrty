@@ -142,3 +142,30 @@ fn markup_diff_is_line_based_and_pre_normalization() {
         "{diff}"
     );
 }
+
+#[test]
+fn a_staging_folder_a_killed_build_left_is_no_part_of_either_site() {
+    let (r, a) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    both(&r, &a, "index.html", b"<p>x</p>", b"<p>x</p>");
+    for root in [r.path(), a.path()] {
+        let stage = root.join(format!(
+            ".brrrty-stage-{}",
+            if root == r.path() { 7 } else { 8 }
+        ));
+        fs::create_dir_all(&stage).unwrap();
+        put(&stage, "0", b"<p>never approved</p>");
+    }
+    // The same name deeper down is a site's own folder.
+    fs::create_dir_all(a.path().join("docs/.brrrty-stage-1")).unwrap();
+    put(&a.path().join("docs/.brrrty-stage-1"), "0", b"x");
+
+    let report = compare_dirs(r.path(), a.path(), &AllowList::empty()).unwrap();
+    let paths: Vec<_> = report.results.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(
+        paths,
+        [
+            Path::new("docs/.brrrty-stage-1/0").to_path_buf(),
+            Path::new("index.html").to_path_buf()
+        ]
+    );
+}

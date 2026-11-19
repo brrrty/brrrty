@@ -36,9 +36,22 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> CompatError + '_ {
     }
 }
 
+/// As `brrrty_core::STAGE_PREFIX`.
+const STAGE_PREFIX: &str = ".brrrty-stage-";
+
 fn walk(root: &Path, dir: &Path, out: &mut BTreeSet<PathBuf>) -> Result<(), CompatError> {
     for entry in fs::read_dir(dir).map_err(io_err(dir))? {
         let path = entry.map_err(io_err(dir))?.path();
+        // A folder a Brrrty build that was killed left its unchecked pages in
+        // (`<output>/.brrrty-stage-<pid>`) is no part of a site.
+        if dir == root
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(STAGE_PREFIX))
+        {
+            continue;
+        }
         if path.is_dir() {
             walk(root, &path, out)?;
         } else if let Ok(rel) = path.strip_prefix(root) {

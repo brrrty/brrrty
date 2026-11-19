@@ -29,8 +29,9 @@ serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 saphyr-parser = "0.3.4"
 url = "2.5.8"
 
-# File creation times through statx; see src/birth.rs.
-[target.'cfg(target_os = "linux")'.dependencies]
+# File creation times through statx on Linux (see src/birth.rs), and
+# whether a process is alive (see src/stage.rs).
+[target.'cfg(unix)'.dependencies]
 libc = "0.2.191"
 
 [target.'cfg(target_os = "macos")'.dependencies]
