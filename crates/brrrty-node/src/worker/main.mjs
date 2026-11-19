@@ -1443,7 +1443,32 @@ if (!walkOnly) {
       if (target === globalThis && (whole || rest[0] === "eval")) {
         redo(`the site's code looks at how \`eval\` is defined (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
       }
+    }, (target, rest, r) => {
+      // By whatever route (a Proxy around `Error`, say): the worker's own
+      // getter or setter in the answer means the site's code now holds
+      // what it needs to take the property away and put it back unseen.
+      if (!isObject(r)) return;
+      if (holdsStackHook(r)) {
+        redo(`the site's code looks at how \`Error.prepareStackTrace\` is defined (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
+      } else if (name === "getOwnPropertyDescriptors") {
+        const d = ownDescriptor(r, "prepareStackTrace");
+        if (d && isObject(d.value) && holdsStackHook(d.value)) redo("the site's code looks at how `Error.prepareStackTrace` is defined (`Object.getOwnPropertyDescriptors`)");
+      }
     });
+  }
+  for (const name of ["__lookupGetter__", "__lookupSetter__"]) {
+    const original = Object.prototype[name];
+    if (typeof original !== "function") continue;
+    const standIn = {
+      [name](key) {
+        const r = original.call(this, key);
+        if (typeof r === "function" && (r === stackGetter || r === stackSetter)) {
+          redo(`the site's code looks at how \`Error.prepareStackTrace\` is defined (\`${name}\`)`);
+        }
+        return r;
+      },
+    }[name];
+    setFn(Object.prototype, name, disguise(standIn, original));
   }
   for (const [obj, name] of [
     [Object, "defineProperty"],
@@ -1498,6 +1523,16 @@ if (!walkOnly) {
 // (`checkStackHook`).
 const nodePrepare = Error.prepareStackTrace;
 let stackGetter = null;
+let stackSetter = null;
+
+// Whether a property descriptor carries the worker's getter or setter
+// for `Error.prepareStackTrace`.
+function holdsStackHook(d) {
+  if (stackGetter === null && stackSetter === null) return false;
+  const get = ownDescriptor(d, "get");
+  const set = ownDescriptor(d, "set");
+  return (get !== undefined && typeof get.value === "function" && (get.value === stackGetter || get.value === stackSetter)) || (set !== undefined && typeof set.value === "function" && (set.value === stackGetter || set.value === stackSetter));
+}
 // The worker's own file, as a frame names it.
 let ownFile = null;
 
@@ -1590,18 +1625,19 @@ if (!walkOnly) {
     stackGetter = function () {
       return current;
     };
+    stackSetter = function (v) {
+      if (v === standIn || v === nodePrepare) {
+        current = standIn;
+        return;
+      }
+      // The site's own formatter gets the frames themselves; anything
+      // that isn't a function leaves Node's own, with V8's columns.
+      sawStrict("the site's code formats stack traces itself (`Error.prepareStackTrace`)");
+      current = v;
+    };
     defineProperty(Error, "prepareStackTrace", {
       get: stackGetter,
-      set(v) {
-        if (v === standIn || v === nodePrepare) {
-          current = standIn;
-          return;
-        }
-        // The site's own formatter gets the frames themselves; anything
-        // that isn't a function leaves Node's own, with V8's columns.
-        sawStrict("the site's code formats stack traces itself (`Error.prepareStackTrace`)");
-        current = v;
-      },
+      set: stackSetter,
       configurable: true,
       enumerable: d ? d.enumerable : true,
     });
@@ -1627,8 +1663,9 @@ if (!walkOnly) {
 function checkStackHook() {
   if (stackGetter === null) return;
   const d = reflectOwnDescriptor(Error, "prepareStackTrace");
-  if (!d || d.get !== stackGetter) {
+  if (!d || d.get !== stackGetter || d.set !== stackSetter) {
     stackGetter = null;
+    stackSetter = null;
     redo("the site's code defines `Error.prepareStackTrace` itself");
   }
 }
