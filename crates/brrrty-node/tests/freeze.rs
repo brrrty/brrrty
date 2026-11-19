@@ -638,6 +638,15 @@ fn a_stack_formatter_of_the_sites_own_sends_a_strictified_build_back() {
         // functions don't see as `Error`.
         "var P = new Proxy(Error, {}); var d = Reflect.getOwnPropertyDescriptor(P, 'prepareStackTrace'); delete Error.prepareStackTrace; Error.prepareStackTrace = function (e, cs) { return cs; }; saved = undefined; RESTORE = function () { delete Error.prepareStackTrace; Reflect.defineProperty(P, 'prepareStackTrace', d); };",
         "var P = new Proxy(Error, {}); var d = Object.getOwnPropertyDescriptors(P).prepareStackTrace; delete Error.prepareStackTrace; Error.prepareStackTrace = function (e, cs) { return cs; }; saved = undefined; RESTORE = function () { delete Error.prepareStackTrace; Object.defineProperty(P, 'prepareStackTrace', d); };",
+        // Node asks `globalThis.Error` for the formatter, whatever is
+        // there: an object of the site's own, with the real one put back
+        // after.
+        "globalThis.Error = { prepareStackTrace: function (e, cs) { return cs; } }; RESTORE = function () { globalThis.Error = E; };",
+        "delete globalThis.Error; globalThis.Error = { prepareStackTrace: function (e, cs) { return cs; } }; RESTORE = function () { globalThis.Error = E; };",
+        "Object.defineProperty(globalThis, 'Error', { value: { prepareStackTrace: function (e, cs) { return cs; } }, writable: true, configurable: true }); RESTORE = function () { globalThis.Error = E; };",
+        "var G = new Proxy(globalThis, {}); var d = Reflect.getOwnPropertyDescriptor(G, 'Error'); delete globalThis.Error; globalThis.Error = { prepareStackTrace: function (e, cs) { return cs; } }; RESTORE = function () { delete globalThis.Error; Reflect.defineProperty(G, 'Error', d); };",
+        // The frames of an object that isn't an error.
+        "Error.prepareStackTrace = function (e, cs) { return cs; }; var o = {}; Error.captureStackTrace(o); cs = o.stack;",
     ];
     for way in ways {
         // Both files are sloppy as written, and loaded as strict.
@@ -649,7 +658,7 @@ fn a_stack_formatter_of_the_sites_own_sends_a_strictified_build_back() {
             (
                 "who.js",
                 &format!(
-                    "module.exports = function who() {{\n  var saved = Error.prepareStackTrace, RESTORE = null;\n  {way}\n  var cs = new Error().stack;\n  if (RESTORE) RESTORE(); else Error.prepareStackTrace = saved;\n  var f = cs[1].getFunction();\n  return f ? 'fn ' + f.name : 'hidden';\n}};"
+                    "module.exports = function who() {{\n  var E = Error, saved = Error.prepareStackTrace, RESTORE = null, cs = null;\n  {way}\n  if (!cs) cs = new E().stack;\n  if (RESTORE) RESTORE(); else Error.prepareStackTrace = saved;\n  var f = cs[1].getFunction();\n  return f ? 'fn ' + f.name : 'hidden';\n}};"
                 ),
             ),
         ]);

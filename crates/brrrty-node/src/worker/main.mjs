@@ -1460,8 +1460,8 @@ if (!walkOnly) {
         redo(`the site's code looks at how \`Error.prepareStackTrace\` is defined (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
       }
       // So is `eval`, a property with a getter here.
-      if (target === globalThis && (whole || rest[0] === "eval")) {
-        redo(`the site's code looks at how \`eval\` is defined (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
+      if (target === globalThis && (whole || rest[0] === "eval" || rest[0] === "Error")) {
+        redo(`the site's code looks at how \`${rest[0] === "Error" ? "Error" : "eval"}\` is defined (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
       }
     }, (target, rest, r) => {
       // By whatever route (a Proxy around `Error`, say): the worker's own
@@ -1482,7 +1482,7 @@ if (!walkOnly) {
     const standIn = {
       [name](key) {
         const r = original.call(this, key);
-        if (typeof r === "function" && (r === stackGetter || r === stackSetter)) {
+        if (typeof r === "function" && stackHooks.has(r)) {
           redo(`the site's code looks at how \`Error.prepareStackTrace\` is defined (\`${name}\`)`);
         }
         return r;
@@ -1497,6 +1497,11 @@ if (!walkOnly) {
     [Reflect, "deleteProperty"],
   ]) {
     wrapFirst(obj, name, (target, rest) => {
+      if (target === globalThis) {
+        const named = name === "defineProperties" ? isObject(rest[0]) && Reflect.ownKeys(rest[0]).includes("Error") : rest[0] === "Error";
+        if (named) redo(`the site's code defines the global \`Error\` itself (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
+        return;
+      }
       if (target !== Error) return;
       const named = name === "defineProperties" ? isObject(rest[0]) && Reflect.ownKeys(rest[0]).includes("prepareStackTrace") : rest[0] === "prepareStackTrace";
       if (named) redo(`the site's code defines \`Error.prepareStackTrace\` itself (\`${obj === Object ? "Object" : "Reflect"}.${name}\`)`);
@@ -1548,11 +1553,22 @@ let stackSetter = null;
 // Whether a property descriptor carries the worker's getter or setter
 // for `Error.prepareStackTrace`.
 function holdsStackHook(d) {
-  if (stackGetter === null && stackSetter === null) return false;
+  if (stackHooks.size === 0) return false;
   const get = ownDescriptor(d, "get");
   const set = ownDescriptor(d, "set");
-  return (get !== undefined && typeof get.value === "function" && (get.value === stackGetter || get.value === stackSetter)) || (set !== undefined && typeof set.value === "function" && (set.value === stackGetter || set.value === stackSetter));
+  return (get !== undefined && stackHooks.has(get.value)) || (set !== undefined && stackHooks.has(set.value));
 }
+// Node formats a stack trace with `globalThis.Error.prepareStackTrace`,
+// whatever `globalThis.Error` is by then: an object of the site's own put
+// in its place, with a formatter on it, gets the frames without touching
+// the property above. So `Error` on the global object is the worker's
+// property too, guarded the same way: setting it to anything else is a
+// `sawStrict`, and its getter and setter are watched for as the other
+// two are.
+let errorGetter = null;
+let errorSetter = null;
+// The four of them: the site's code must never come to hold one.
+const stackHooks = new Set();
 // The worker's own file, as a frame names it.
 let ownFile = null;
 
@@ -1661,6 +1677,23 @@ if (!walkOnly) {
       configurable: true,
       enumerable: d ? d.enumerable : true,
     });
+    const realError = Error;
+    let currentError = realError;
+    const g = ownDescriptor(globalThis, "Error");
+    errorGetter = function () {
+      return currentError;
+    };
+    errorSetter = function (v) {
+      if (v !== realError) sawStrict("the site's code puts an `Error` of its own in place of the global one");
+      currentError = v;
+    };
+    defineProperty(globalThis, "Error", {
+      get: errorGetter,
+      set: errorSetter,
+      configurable: true,
+      enumerable: g ? g.enumerable : false,
+    });
+    for (const f of [stackGetter, stackSetter, errorGetter, errorSetter]) stackHooks.add(f);
   }
   // Call sites as objects, with V8's columns.
   for (const name of ["getCallSites", "getCallSite"]) {
@@ -1683,10 +1716,11 @@ if (!walkOnly) {
 function checkStackHook() {
   if (stackGetter === null) return;
   const d = reflectOwnDescriptor(Error, "prepareStackTrace");
-  if (!d || d.get !== stackGetter || d.set !== stackSetter) {
+  const g = reflectOwnDescriptor(globalThis, "Error");
+  if (!d || d.get !== stackGetter || d.set !== stackSetter || !g || g.get !== errorGetter || g.set !== errorSetter) {
     stackGetter = null;
     stackSetter = null;
-    redo("the site's code defines `Error.prepareStackTrace` itself");
+    redo("the site's code defines `Error.prepareStackTrace`, or the global `Error`, itself");
   }
 }
 // A write that answers `false` instead of throwing.
@@ -2287,8 +2321,18 @@ process.on("exit", stopWatcher);
 function checkWatcher() {
   if (watcher === null) return;
   const { flags } = watcher;
-  if (PAUSE_LIMIT > 0 && Atomics.load(flags, 3) > PAUSE_LIMIT) {
+  const stops = Atomics.load(flags, 3);
+  if (PAUSE_LIMIT > 0 && stops > PAUSE_LIMIT) {
     redo(`the site's code throws more than ${PAUSE_LIMIT} errors, and watching each one costs more than walking the data`);
+    return;
+  }
+  // A site that throws in every call will pass the limit: it is sent
+  // back as soon as that shows, before most of the build is done for
+  // nothing. (A burst of errors in a few calls is not that.)
+  watcher.streak = stops !== watcher.stops ? (watcher.streak || 0) + 1 : 0;
+  watcher.stops = stops;
+  if (PAUSE_LIMIT > 0 && watcher.streak >= 100) {
+    redo("the site's code throws an error in each of 100 requests in a row, and watching each one costs more than walking the data");
     return;
   }
   const n = Atomics.load(flags, 0);
