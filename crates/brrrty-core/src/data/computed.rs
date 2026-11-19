@@ -268,10 +268,22 @@ impl Plan {
             None => self.order.clone().unwrap_or_default(),
             Some(calls) => {
                 let keys: Vec<String> = self.leaves.iter().map(|l| l.path.join(".")).collect();
-                let mut p = calls.page(
+                // The page's data and what each function reads of it, in
+                // one round trip.
+                let functions: Vec<brrrty_js::FnHandle> = self
+                    .leaves
+                    .iter()
+                    .zip(&self.reads)
+                    .filter_map(|(leaf, read)| match (read, &leaf.value) {
+                        (None, Value::Function(f)) => Some(*f),
+                        _ => None,
+                    })
+                    .collect();
+                let (p, found) = calls.page_with_vars(
                     &Value::Object(Arc::new(base.clone())),
                     locator.traps,
                     &keys,
+                    &functions,
                     shown,
                 )?;
                 for leaf in &self.leaves {
@@ -279,12 +291,13 @@ impl Plan {
                         self.set(&mut data, &leaf.path, Value::String("".into()), shown)?;
                     }
                 }
+                let mut found = found.into_iter();
                 let mut reads = Vec::with_capacity(self.leaves.len());
                 for ((leaf, read), name) in self.leaves.iter().zip(&self.reads).zip(&keys) {
                     reads.push(match (read, &leaf.value) {
                         (Some(r), _) => r.clone(),
-                        (None, Value::Function(f)) => {
-                            let found = p.vars(*f, &keys)?;
+                        (None, Value::Function(_)) => {
+                            let found = found.next().unwrap_or_default();
                             check_collections(name, &found).map_err(|e| e.with_path(shown))?;
                             found
                         }
@@ -297,10 +310,43 @@ impl Plan {
             }
         };
         let mut permalink = None;
-        for &i in &order {
-            let step = &self.leaves[i];
+        let mut at = 0;
+        while at < order.len() {
+            let step = &self.leaves[order[at]];
             let key = step.path.join(".");
-            let mut set_by_runtime = false;
+            if step.page.is_none()
+                && matches!(step.value, Value::Function(_))
+                && let Some(p) = page.as_mut()
+            {
+                // This function and the ones right after it, in one round
+                // trip: each runs on the page's data in the runtime, and
+                // its result is set there for the next.
+                let mut run: Vec<(usize, String, brrrty_js::FnHandle)> = Vec::new();
+                while let Some(&i) = order.get(at) {
+                    let next = &self.leaves[i];
+                    let (Value::Function(f), None) = (&next.value, next.page) else {
+                        break;
+                    };
+                    run.push((i, next.path.join("."), *f));
+                    at += 1;
+                }
+                let calls: Vec<(brrrty_js::FnHandle, Option<&str>)> = run
+                    .iter()
+                    .map(|(_, key, f)| (*f, Some(key.as_str())))
+                    .collect();
+                let values = p.run(&calls).map_err(|(which, e)| match which {
+                    Some(n) => Problem {
+                        message: format!("{} (computing `{}`)", e.message, run[n].1),
+                        ..e
+                    },
+                    None => e,
+                })?;
+                for ((i, _, _), value) in run.iter().zip(values) {
+                    self.set(&mut data, &self.leaves[*i].path, value, shown)?;
+                }
+                continue;
+            }
+            at += 1;
             let value = if let Some(entry) = step.page {
                 // 11ty writes the file `page.outputPath` names, so that
                 // run decides where the page goes.
@@ -312,12 +358,6 @@ impl Plan {
                         found.output_path
                     }
                 }
-            } else if let (Value::Function(f), Some(p)) = (&step.value, page.as_mut()) {
-                set_by_runtime = true;
-                p.call(*f, Some(&key)).map_err(|e| Problem {
-                    message: format!("{} (computing `{key}`)", e.message),
-                    ..e
-                })?
             } else {
                 self.render(&step.value, &key, langs, shown, &data, undefined)?
             };
@@ -328,15 +368,17 @@ impl Plan {
                 // `eleventyComputed` shows the rendered strings (probed).
                 let _ = set_path(Arc::make_mut(own), &step.path, value.clone());
                 if let Some(p) = page.as_mut() {
-                    p.set(&format!("eleventyComputed.{key}"), &value)?;
+                    p.set(&format!("eleventyComputed.{key}"), &value);
                 }
             }
             self.set(&mut data, &step.path, value.clone(), shown)?;
-            if !set_by_runtime && let Some(p) = page.as_mut() {
-                p.set(&key, &value)?;
+            if let Some(p) = page.as_mut() {
+                p.set(&key, &value);
             }
         }
-        drop(page);
+        if let Some(p) = page {
+            p.finish()?;
+        }
         // The data is a JavaScript object: index-like keys come first. The
         // base is in that order already, so only the objects a computed
         // value was set in can be out of it; the rest stay shared.

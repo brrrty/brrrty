@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use brrrty_js::Value;
 use brrrty_js::runtime::{
     Decoded, FilterCall, Filters, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId,
-    PathPart, Refusal, RuntimeFailure, Settle, TemplateId, This,
+    PageStep, PathPart, Refusal, RuntimeFailure, Settle, TemplateId, This,
 };
 use serde_json::{Value as Json, json};
 
@@ -44,6 +44,13 @@ const STDERR_TAIL: usize = 20;
 /// How long a stopped worker's stderr may take to reach its end: past this,
 /// a process Node started still holds it, and Brrrty stops reading.
 const STDERR_GRACE: Duration = Duration::from_millis(200);
+
+/// How many bytes of requests may be written behind one Node hasn't
+/// answered: less than any pipe holds.
+const PIPE_SAFE: usize = 4000;
+
+/// How long a wait for a reply looks for it before sleeping.
+const SPIN: Duration = Duration::from_micros(60);
 
 /// How often a wait for a reply checks that Node still runs.
 const POLL: Duration = Duration::from_millis(100);
@@ -154,6 +161,11 @@ pub(crate) struct Record {
     /// The questions the request asked Brrrty, with the answers it got,
     /// both as sent.
     pub answers: Vec<(Box<str>, Box<str>)>,
+    /// Nothing came back from it, and nothing will.
+    pub one_way: bool,
+    /// It ran after a call sent with it changed a value the worker kept:
+    /// what it gave isn't used, and a replay's won't be the same.
+    pub unchecked: bool,
 }
 
 /// A running worker. Dropping it closes Node's stdin, waits up to 2 s for
@@ -253,6 +265,8 @@ struct Request<'a> {
     handle: Option<u32>,
     /// The file it loads.
     path: Option<&'a Path>,
+    /// Nothing comes back from it (`pageClose`).
+    one_way: bool,
 }
 
 impl<'a> Request<'a> {
@@ -263,6 +277,7 @@ impl<'a> Request<'a> {
             added: Added::default(),
             handle: None,
             path: None,
+            one_way: false,
         }
     }
 }
@@ -280,6 +295,16 @@ impl Worker {
     /// Start Node with the worker, in `root` (the project folder), with
     /// 11ty's environment variables added to Brrrty's own.
     pub fn start(node: &NodeInfo, root: &Path, run_mode: RunMode) -> Result<Worker, WorkerError> {
+        Worker::start_as(node, root, run_mode, false)
+    }
+
+    /// [`Worker::start`]; `replay` for one of the replay check's workers.
+    pub(crate) fn start_as(
+        node: &NodeInfo,
+        root: &Path,
+        run_mode: RunMode,
+        replay: bool,
+    ) -> Result<Worker, WorkerError> {
         let mut cmd = Command::new(&node.path);
         cmd.args(["--input-type=module", "--eval", WORKER_SOURCE])
             .current_dir(root)
@@ -290,6 +315,9 @@ impl Worker {
             .stdin(Stdio::piped());
         if walk_roots().contains(root) {
             cmd.env("BRRRTY_JS_EXPORTS", "walk");
+        }
+        if replay {
+            cmd.env("BRRRTY_ROLE", "replay");
         }
         let cannot =
             |e: std::io::Error| WorkerError(format!("cannot start {}: {e}", node.path.display()));
@@ -352,6 +380,52 @@ impl Worker {
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
+    }
+
+    /// The request that opens a page with `data`, and the page's number.
+    fn open_request(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+    ) -> Result<(PageId, Request<'static>), String> {
+        self.next_page += 1;
+        let page = self.next_page;
+        let mut added = Added::default();
+        let mut text = String::with_capacity(1024);
+        let _ = write!(text, "{{\"op\":\"pageOpen\",\"page\":{page},\"data\":");
+        self.table.page_data(data, false, &mut text, &mut added)?;
+        text.push_str(",\"traps\":");
+        pairs(&mut text, traps);
+        text.push_str(",\"defaults\":");
+        crate::wire::strings(&mut text, defaults);
+        text.push('}');
+        Ok((
+            PageId(page),
+            Request {
+                added,
+                ..Request::new("pageOpen", text)
+            },
+        ))
+    }
+
+    /// Requests of a page's computed data, sent together, answered with
+    /// the worker's own filters.
+    fn run(&mut self, reqs: Vec<Request<'_>>) -> Vec<JsResult<Decoded>> {
+        if reqs.is_empty() {
+            return Vec::new();
+        }
+        let filters = self.filters.clone();
+        self.requests(
+            reqs,
+            "a computed data function",
+            &mut |name: &str, args: &[Value]| match &filters {
+                Some(f) => f(name, args),
+                None => Err(format!(
+                    "calls `this.{name}` where Brrrty has no filters to run it"
+                )),
+            },
+        )
     }
 
     /// Send slow-request notes to `notes` instead of stderr, the first
@@ -425,75 +499,212 @@ impl Worker {
         what: &str,
         filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded> {
-        let logged = !matches!(
-            req.op,
-            "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
-        );
-        if logged && self.calls_begun && self.replays.is_none() {
+        self.requests(vec![req], what, filters)
+            .pop()
+            .unwrap_or_else(|| JsResult::Failed(self.fail("a request with no reply")))
+    }
+
+    /// Several requests sent together, and their replies in order: Node
+    /// runs them one after another without Brrrty in between, so they cost
+    /// one round trip. The list ends with the first reply that isn't a
+    /// value; the requests after it still ran.
+    fn requests(
+        &mut self,
+        reqs: Vec<Request<'_>>,
+        what: &str,
+        filters: &mut FilterCall<'_>,
+    ) -> Vec<JsResult<Decoded>> {
+        let logged = |op: &str| {
+            !matches!(
+                op,
+                "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
+            )
+        };
+        if self.calls_begun && self.replays.is_none() && reqs.iter().any(|r| logged(r.op)) {
             self.start_replays();
         }
-        // The values the request refers to for the first time, each in a
+        // The values the requests refer to for the first time, each in a
         // line of its own, to this worker and to the replay check's.
-        for (line, dynamic) in &req.added.lines {
-            self.stats.definitions += 1;
-            self.stats.defined += line.len() as u64;
-            if let Err(f) = self.write_line(line) {
-                return JsResult::Failed(f);
-            }
-            if !dynamic && let Some(replays) = &self.replays {
-                for r in replays {
-                    r.line(line.clone());
+        for req in &reqs {
+            for (line, dynamic) in &req.added.lines {
+                self.stats.definitions += 1;
+                self.stats.defined += line.len() as u64;
+                if let Err(f) = self.write_line(line) {
+                    return vec![JsResult::Failed(f)];
+                }
+                if !dynamic && let Some(replays) = &self.replays {
+                    for r in replays {
+                        r.line(line.clone());
+                    }
                 }
             }
         }
-        self.asked.clear();
-        let frame = match self.exchange_with(&req.text, None, what, filters) {
-            Ok(f) => f,
-            Err(f) => return JsResult::Failed(f),
+        let mut out = Vec::with_capacity(reqs.len());
+        // A call in the group changed a value the worker kept: the ones
+        // after it ran on what it left, which a replay doesn't have.
+        let mut unchecked = false;
+        let mut reqs = reqs.into_iter().peekable();
+        while reqs.peek().is_some() {
+            // As many as can go in one write. Node may stop reading while
+            // it waits for an answer to a question of its own, so what is
+            // written past the first request must fit in the pipe.
+            let mut group: Vec<(Request<'_>, u64)> = Vec::new();
+            let mut lines = String::new();
+            let mut ahead = 0;
+            while let Some(next) = reqs.peek() {
+                if !group.is_empty() && ahead + next.text.len() + 32 > PIPE_SAFE {
+                    break;
+                }
+                let Some(req) = reqs.next() else { break };
+                let (id, line) = self.line_for(&req.text, None);
+                if !group.is_empty() {
+                    ahead += line.len() + 1;
+                }
+                lines.push_str(&line);
+                lines.push('\n');
+                group.push((req, id));
+            }
+            if let Err(f) = self.write_lines(&lines) {
+                out.push(JsResult::Failed(f));
+                return out;
+            }
+            for (req, id) in group {
+                self.asked.clear();
+                let mut frame = if req.one_way {
+                    None
+                } else {
+                    match self.reply(id, req.text.len(), what, filters) {
+                        Ok(f) => Some(f),
+                        Err(f) => {
+                            out.push(JsResult::Failed(f));
+                            return out;
+                        }
+                    }
+                };
+                if req.op == "templateLoad" {
+                    self.last_template = frame
+                        .as_ref()
+                        .and_then(|f| f.head.get("template"))
+                        .and_then(Json::as_u64);
+                }
+                let body = frame
+                    .as_mut()
+                    .map(|f| std::mem::take(&mut f.body))
+                    .unwrap_or_default();
+                let clock = frame.as_mut().and_then(|f| f.clock.take());
+                if logged(req.op) && !self.calls_begun {
+                    self.load_log.push(LoadRecord {
+                        text: req.text.into_boxed_str(),
+                        kind: match req.op {
+                            "load" => LoadKind::Data,
+                            "templateLoad" => LoadKind::Template,
+                            _ => LoadKind::Other,
+                        },
+                        path: req
+                            .path
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        body,
+                        clock,
+                    });
+                } else if logged(req.op) {
+                    let (unit, label) = match brrrty_js::functions::unit() {
+                        Some(u) => u,
+                        None => (u64::MAX - self.call_log.len() as u64, Arc::from("")),
+                    };
+                    let dropped = frame
+                        .as_ref()
+                        .is_some_and(|f| f.head.get("dropShared").is_some());
+                    self.dropped |= dropped;
+                    self.call_log.push(Record {
+                        unit,
+                        label,
+                        op: req.op,
+                        handle: req.handle,
+                        text: req.text.into_boxed_str(),
+                        body,
+                        clock,
+                        made: frame.as_ref().is_some_and(|f| f.made),
+                        names_made: req.added.made
+                            || req.handle.is_some_and(|h| self.table.made_by_call(h)),
+                        dynamic: req.added.dynamic,
+                        answers: std::mem::take(&mut self.asked),
+                        one_way: req.one_way,
+                        unchecked,
+                    });
+                    unchecked |= dropped;
+                }
+                let Some(frame) = frame else {
+                    // Nothing comes back from a one-way request.
+                    out.push(JsResult::Ok(Decoded {
+                        value: Value::Undefined,
+                        functions: Vec::new(),
+                        refused: Vec::new(),
+                    }));
+                    continue;
+                };
+                let r = self.interpret(frame, what);
+                if matches!(r, JsResult::Failed(_)) {
+                    out.push(r);
+                    return out;
+                }
+                out.push(r);
+            }
+        }
+        // The list ends with the first reply that isn't a value.
+        if let Some(bad) = out.iter().position(|r| !matches!(r, JsResult::Ok(_))) {
+            out.truncate(bad + 1);
+        }
+        out
+    }
+
+    /// Write whole lines (each ending in a newline) to Node's stdin.
+    fn write_lines(&mut self, lines: &str) -> Result<(), RuntimeFailure> {
+        if let Some(f) = &self.failed {
+            return Err(f.clone());
+        }
+        let sent = self
+            .stdin
+            .as_mut()
+            .map(|s| s.write_all(lines.as_bytes()).and_then(|_| s.flush()));
+        if !matches!(sent, Some(Ok(()))) {
+            return Err(self.fail("Node stopped reading requests"));
+        }
+        Ok(())
+    }
+
+    /// Wait for the reply to request `id`, answering the worker's filter
+    /// questions with `filters` meanwhile.
+    fn reply(
+        &mut self,
+        id: u64,
+        sent: usize,
+        what: &str,
+        filters: &mut FilterCall<'_>,
+    ) -> Result<Frame, RuntimeFailure> {
+        let mut wait = self.wait();
+        let frame = loop {
+            match self.next_frame(what, &mut wait) {
+                Ok(f) if f.question => {
+                    if let Err(why) = self.answer(&f, filters) {
+                        return Err(self.fail(&why));
+                    }
+                }
+                Ok(f) => break f,
+                Err(f) => return Err(f),
+            }
         };
-        if req.op == "templateLoad" {
-            self.last_template = frame.head.get("template").and_then(Json::as_u64);
+        let took = wait.start.elapsed();
+        self.slowest = self.slowest.max(took);
+        self.stats.requests += 1;
+        self.stats.sent += sent as u64;
+        self.stats.received += frame.body.len() as u64;
+        self.stats.waited += took;
+        if frame.id != id {
+            let head = frame.head.clone();
+            return Err(self.fail(&format!("a reply out of order: {head}")));
         }
-        let mut frame = frame;
-        let body = std::mem::take(&mut frame.body);
-        let clock = frame.clock.take();
-        if logged && !self.calls_begun {
-            self.load_log.push(LoadRecord {
-                text: req.text.into_boxed_str(),
-                kind: match req.op {
-                    "load" => LoadKind::Data,
-                    "templateLoad" => LoadKind::Template,
-                    _ => LoadKind::Other,
-                },
-                path: req
-                    .path
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                body,
-                clock,
-            });
-        } else if logged {
-            let (unit, label) = match brrrty_js::functions::unit() {
-                Some(u) => u,
-                None => (u64::MAX - self.call_log.len() as u64, Arc::from("")),
-            };
-            self.dropped |= frame.head.get("dropShared").is_some();
-            self.call_log.push(Record {
-                unit,
-                label,
-                op: req.op,
-                handle: req.handle,
-                text: req.text.into_boxed_str(),
-                body,
-                clock,
-                made: frame.made,
-                names_made: req.added.made
-                    || req.handle.is_some_and(|h| self.table.made_by_call(h)),
-                dynamic: req.added.dynamic,
-                answers: std::mem::take(&mut self.asked),
-            });
-        }
-        self.interpret(frame, what)
+        Ok(frame)
     }
 
     /// Write one line to Node's stdin.
@@ -501,11 +712,13 @@ impl Worker {
         if let Some(f) = &self.failed {
             return Err(f.clone());
         }
-        let sent = self.stdin.as_mut().map(|s| {
-            s.write_all(line.as_bytes())
-                .and_then(|_| s.write_all(b"\n"))
-                .and_then(|_| s.flush())
-        });
+        let mut bytes = Vec::with_capacity(line.len() + 1);
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+        let sent = self
+            .stdin
+            .as_mut()
+            .map(|s| s.write_all(&bytes).and_then(|_| s.flush()));
         if !matches!(sent, Some(Ok(()))) {
             return Err(self.fail("Node stopped reading requests"));
         }
@@ -611,29 +824,7 @@ impl Worker {
     ) -> Result<Frame, RuntimeFailure> {
         let (id, line) = self.line_for(text, feed);
         self.write_line(&line)?;
-        let mut wait = self.wait();
-        let frame = loop {
-            match self.next_frame(what, &mut wait) {
-                Ok(f) if f.question => {
-                    if let Err(why) = self.answer(&f, filters) {
-                        return Err(self.fail(&why));
-                    }
-                }
-                Ok(f) => break f,
-                Err(f) => return Err(f),
-            }
-        };
-        let took = wait.start.elapsed();
-        self.slowest = self.slowest.max(took);
-        self.stats.requests += 1;
-        self.stats.sent += line.len() as u64;
-        self.stats.received += frame.body.len() as u64;
-        self.stats.waited += took;
-        if frame.id != id {
-            let head = frame.head.clone();
-            return Err(self.fail(&format!("a reply out of order: {head}")));
-        }
-        Ok(frame)
+        self.reply(id, line.len(), what, filters)
     }
 
     /// Start waiting for a frame.
@@ -654,6 +845,20 @@ impl Worker {
     ) -> Result<Frame, RuntimeFailure> {
         if let Some(f) = &self.failed {
             return Err(f.clone());
+        }
+        // Most replies come within microseconds: look for one a few times
+        // before sleeping, which costs more than the wait.
+        let spun = Instant::now();
+        let early = loop {
+            match self.replies.try_recv() {
+                Ok(r) => break Some(r),
+                Err(mpsc::TryRecvError::Disconnected) => break None,
+                Err(mpsc::TryRecvError::Empty) if spun.elapsed() < SPIN => std::hint::spin_loop(),
+                Err(mpsc::TryRecvError::Empty) => break None,
+            }
+        };
+        if let Some(reply) = early {
+            return reply.map_err(|why| self.fail(&why));
         }
         let reply = loop {
             match self.replies.recv_timeout(POLL) {
@@ -873,6 +1078,50 @@ impl Worker {
     }
 }
 
+/// The filters for requests that run computed data: the worker's own.
+fn no_filters() -> impl FnMut(&str, &[Value]) -> Result<Value, String> {
+    |name: &str, _: &[Value]| {
+        Err(format!(
+            "calls `this.{name}` where Brrrty has no filters to run it"
+        ))
+    }
+}
+
+fn close_request(page: PageId) -> Request<'static> {
+    let text = op_text("pageClose", |t| {
+        let _ = write!(t, ",\"page\":{}", page.0);
+    });
+    Request {
+        one_way: true,
+        ..Request::new("pageClose", text)
+    }
+}
+
+fn call_request(page: PageId, f: FnHandle, set: Option<&str>) -> Request<'static> {
+    let text = op_text("pageCall", |t| {
+        let _ = write!(t, ",\"page\":{},\"handle\":{},\"set\":", page.0, f.0);
+        match set {
+            Some(key) => crate::wire::string(t, key),
+            None => t.push_str("null"),
+        }
+    });
+    Request {
+        handle: Some(f.0),
+        ..Request::new("pageCall", text)
+    }
+}
+
+fn vars_request(page: PageId, f: FnHandle, keys: &[String]) -> Request<'static> {
+    let text = op_text("pageVars", |t| {
+        let _ = write!(t, ",\"page\":{},\"handle\":{},\"keys\":", page.0, f.0);
+        crate::wire::strings(t, keys);
+    });
+    Request {
+        handle: Some(f.0),
+        ..Request::new("pageVars", text)
+    }
+}
+
 /// `{"op":"<op>"` and the fields `rest` writes, closed.
 fn op_text(op: &str, rest: impl FnOnce(&mut String)) -> String {
     let mut t = String::with_capacity(96);
@@ -995,28 +1244,12 @@ impl JsRuntime for Worker {
         traps: &[(String, String)],
         defaults: &[String],
     ) -> JsResult<PageId> {
-        self.next_page += 1;
-        let page = self.next_page;
-        let mut added = Added::default();
-        let mut text = String::with_capacity(1024);
-        let _ = write!(text, "{{\"op\":\"pageOpen\",\"page\":{page},\"data\":");
-        if let Err(why) = self.table.page_data(data, false, &mut text, &mut added) {
-            return JsResult::Refused(Refusal::new(why));
-        }
-        text.push_str(",\"traps\":");
-        pairs(&mut text, traps);
-        text.push_str(",\"defaults\":");
-        crate::wire::strings(&mut text, defaults);
-        text.push('}');
-        let r = self.request(
-            Request {
-                added,
-                ..Request::new("pageOpen", text)
-            },
-            "a page's data",
-        );
-        match r {
-            JsResult::Ok(_) => JsResult::Ok(PageId(page)),
+        let (page, open) = match self.open_request(data, traps, defaults) {
+            Ok(r) => r,
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
+        match self.request(open, "a page's data") {
+            JsResult::Ok(_) => JsResult::Ok(PageId(page.0)),
             JsResult::Thrown(e) => JsResult::Thrown(e),
             JsResult::Refused(r) => JsResult::Refused(r),
             JsResult::Failed(f) => JsResult::Failed(f),
@@ -1024,17 +1257,7 @@ impl JsRuntime for Worker {
     }
 
     fn page_vars(&mut self, page: PageId, f: FnHandle, keys: &[String]) -> JsResult<Vec<String>> {
-        let text = op_text("pageVars", |t| {
-            let _ = write!(t, ",\"page\":{},\"handle\":{},\"keys\":", page.0, f.0);
-            crate::wire::strings(t, keys);
-        });
-        let r = self.request(
-            Request {
-                handle: Some(f.0),
-                ..Request::new("pageVars", text)
-            },
-            "a computed data function",
-        );
+        let r = self.request(vars_request(page, f, keys), "a computed data function");
         match r {
             JsResult::Ok(d) => match strings(&d.value) {
                 Some(list) => JsResult::Ok(list),
@@ -1047,20 +1270,7 @@ impl JsRuntime for Worker {
     }
 
     fn page_call(&mut self, page: PageId, f: FnHandle, set: Option<&str>) -> JsResult<Decoded> {
-        let text = op_text("pageCall", |t| {
-            let _ = write!(t, ",\"page\":{},\"handle\":{},\"set\":", page.0, f.0);
-            match set {
-                Some(key) => crate::wire::string(t, key),
-                None => t.push_str("null"),
-            }
-        });
-        self.request(
-            Request {
-                handle: Some(f.0),
-                ..Request::new("pageCall", text)
-            },
-            "a computed data function",
-        )
+        self.request(call_request(page, f, set), "a computed data function")
     }
 
     fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()> {
@@ -1083,10 +1293,116 @@ impl JsRuntime for Worker {
     }
 
     fn page_close(&mut self, page: PageId) {
-        let text = op_text("pageClose", |t| {
-            let _ = write!(t, ",\"page\":{}", page.0);
-        });
-        let _ = self.request(Request::new("pageClose", text), "a page's data");
+        let _ = self.request(close_request(page), "a page's data");
+    }
+
+    fn page_once(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+        f: FnHandle,
+    ) -> JsResult<Decoded> {
+        let (page, open) = match self.open_request(data, traps, defaults) {
+            Ok(r) => r,
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
+        let reqs = vec![open, call_request(page, f, None), close_request(page)];
+        let mut out = self.requests(reqs, "a permalink function", &mut no_filters());
+        match out.len() {
+            // Opened, called, closed.
+            3 => out.swap_remove(1),
+            // The call, or the open, gave no value.
+            _ => out
+                .pop()
+                .unwrap_or_else(|| JsResult::Failed(self.fail("a request with no reply"))),
+        }
+    }
+
+    fn page_open_with_vars(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+        functions: &[FnHandle],
+        keys: &[String],
+    ) -> JsResult<(PageId, Vec<Vec<String>>)> {
+        let (page, open) = match self.open_request(data, traps, defaults) {
+            Ok(r) => r,
+            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        };
+        let mut reqs = vec![open];
+        reqs.extend(functions.iter().map(|f| vars_request(page, *f, keys)));
+        let filters = self.filters.clone();
+        let out = self.requests(
+            reqs,
+            "a computed data function",
+            &mut |name: &str, args: &[Value]| match &filters {
+                Some(f) => f(name, args),
+                None => Err(format!(
+                    "calls `this.{name}` where Brrrty has no filters to run it"
+                )),
+            },
+        );
+        let opened = out.first().is_some_and(|r| matches!(r, JsResult::Ok(_)));
+        let mut found = Vec::with_capacity(functions.len());
+        let mut bad = None;
+        for r in out.into_iter().skip(usize::from(opened)) {
+            match r {
+                JsResult::Ok(d) => match strings(&d.value) {
+                    Some(list) => found.push(list),
+                    None => {
+                        bad = Some(JsResult::Failed(
+                            self.fail(&format!("pageVars gave {:?}", d.value)),
+                        ));
+                        break;
+                    }
+                },
+                JsResult::Thrown(e) => bad = Some(JsResult::Thrown(e)),
+                JsResult::Refused(r) => bad = Some(JsResult::Refused(r)),
+                JsResult::Failed(f) => bad = Some(JsResult::Failed(f)),
+            }
+        }
+        match bad {
+            None if opened => JsResult::Ok((page, found)),
+            None => JsResult::Failed(self.fail("pageOpen gave no reply")),
+            Some(bad) => {
+                if opened {
+                    self.page_close(page);
+                }
+                bad
+            }
+        }
+    }
+
+    fn page_run(&mut self, page: PageId, steps: &[PageStep<'_>]) -> Vec<JsResult<Decoded>> {
+        let mut reqs = Vec::with_capacity(steps.len());
+        for step in steps {
+            match step {
+                PageStep::Call(f, set) => reqs.push(call_request(page, *f, *set)),
+                PageStep::Set(key, value) => {
+                    let mut added = Added::default();
+                    let mut text = String::with_capacity(128);
+                    let _ = write!(text, "{{\"op\":\"pageSet\",\"page\":{},\"key\":", page.0);
+                    crate::wire::string(&mut text, key);
+                    text.push_str(",\"value\":");
+                    if let Err(why) = self.table.argument(value, false, &mut text, &mut added) {
+                        // What comes before it still runs; the list ends here.
+                        let mut out = self.run(reqs);
+                        if out.iter().all(|r| matches!(r, JsResult::Ok(_))) {
+                            out.push(JsResult::Refused(Refusal::new(why)));
+                        }
+                        return out;
+                    }
+                    text.push('}');
+                    reqs.push(Request {
+                        added,
+                        ..Request::new("pageSet", text)
+                    });
+                }
+            }
+        }
+        self.run(reqs)
     }
 
     fn loads_changed(&mut self) -> JsResult<Vec<(PathBuf, Decoded)>> {

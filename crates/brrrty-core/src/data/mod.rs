@@ -140,15 +140,85 @@ pub(crate) fn js_object(o: &Data) -> Data {
     reordered_object(o).unwrap_or_else(|| o.clone())
 }
 
+/// Lists and objects found in JavaScript key order all the way down, by
+/// address. Every template's data holds the global data, and looking
+/// through all of it again for each template costs what the data weighs,
+/// per template; a value found in order once is in order for as long as it
+/// lives, since values don't change. The weak reference keeps the address
+/// from being used again while it is listed.
+enum Ordered {
+    Object(std::sync::Weak<Data>),
+    Array(std::sync::Weak<Vec<Value>>),
+}
+
+static ORDERED: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<usize, Ordered>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// How many values a look through one must cover for it to be remembered.
+const WORTH_REMEMBERING: usize = 64;
+
+fn known_ordered(v: &Value) -> bool {
+    let Ok(known) = ORDERED.read() else {
+        return false;
+    };
+    match v {
+        Value::Object(o) => matches!(
+            known.get(&(Arc::as_ptr(o) as usize)),
+            Some(Ordered::Object(w)) if w.strong_count() > 0
+        ),
+        Value::Array(a) => matches!(
+            known.get(&(Arc::as_ptr(a) as usize)),
+            Some(Ordered::Array(w)) if w.strong_count() > 0
+        ),
+        _ => false,
+    }
+}
+
+fn remember_ordered(v: &Value) {
+    let Ok(mut known) = ORDERED.write() else {
+        return;
+    };
+    // Values that are gone leave only their entry: drop those now and then.
+    if known.len() >= 4096 && known.len().is_power_of_two() {
+        known.retain(|_, w| match w {
+            Ordered::Object(w) => w.strong_count() > 0,
+            Ordered::Array(w) => w.strong_count() > 0,
+        });
+    }
+    match v {
+        Value::Object(o) => {
+            known.insert(Arc::as_ptr(o) as usize, Ordered::Object(Arc::downgrade(o)));
+        }
+        Value::Array(a) => {
+            known.insert(Arc::as_ptr(a) as usize, Ordered::Array(Arc::downgrade(a)));
+        }
+        _ => {}
+    }
+}
+
 /// `v` in JavaScript key order, or `None` when it already is, so data that
 /// pages share (a global data list) stays one shared value.
 fn reordered(v: &Value) -> Option<Value> {
-    match v {
-        Value::Object(o) => reordered_object(o).map(|d| Value::Object(Arc::new(d))),
+    reordered_counting(v, &mut 0)
+}
+
+/// [`reordered`], adding the values it looks at to `seen`.
+fn reordered_counting(v: &Value, seen: &mut usize) -> Option<Value> {
+    if !matches!(v, Value::Object(_) | Value::Array(_)) {
+        return None;
+    }
+    if known_ordered(v) {
+        return None;
+    }
+    let mut inside = 1;
+    let out = match v {
+        Value::Object(o) => {
+            reordered_object_counting(o, &mut inside).map(|d| Value::Object(Arc::new(d)))
+        }
         Value::Array(a) => {
             let mut out: Option<Vec<Value>> = None;
             for (i, x) in a.iter().enumerate() {
-                match (reordered(x), &mut out) {
+                match (reordered_counting(x, &mut inside), &mut out) {
                     (Some(y), None) => {
                         let mut list = a[..i].to_vec();
                         list.push(y);
@@ -159,15 +229,26 @@ fn reordered(v: &Value) -> Option<Value> {
                     (None, None) => {}
                 }
             }
+            inside += a.len();
             out.map(|list| Value::Array(Arc::new(list)))
         }
         _ => None,
+    };
+    if out.is_none() && inside >= WORTH_REMEMBERING {
+        remember_ordered(v);
     }
+    *seen += inside;
+    out
 }
 
 fn reordered_object(o: &Data) -> Option<Data> {
+    reordered_object_counting(o, &mut 0)
+}
+
+fn reordered_object_counting(o: &Data, seen: &mut usize) -> Option<Data> {
     let has_index = o.keys().any(|k| brrrty_js::array_index(k).is_some());
-    let inner: Vec<Option<Value>> = o.values().map(reordered).collect();
+    let inner: Vec<Option<Value>> = o.values().map(|v| reordered_counting(v, seen)).collect();
+    *seen += o.len();
     if !has_index && inner.iter().all(Option::is_none) {
         return None;
     }

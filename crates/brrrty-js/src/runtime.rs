@@ -165,6 +165,16 @@ pub struct LoadedTemplate {
     pub data: Decoded,
 }
 
+/// One step of a page's computed data, for [`JsRuntime::page_run`].
+#[derive(Debug, Clone, Copy)]
+pub enum PageStep<'a> {
+    /// Call the function with the page's data, and set its result at the
+    /// dotted key.
+    Call(FnHandle, Option<&'a str>),
+    /// Set the dotted key to the value.
+    Set(&'a str, &'a Value),
+}
+
 /// One page's data, kept in the runtime while its computed values run, as
 /// 11ty keeps one data object per page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,6 +219,88 @@ pub trait JsRuntime: Send {
     fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()>;
     /// Forget the page's data.
     fn page_close(&mut self, page: PageId);
+    /// [`JsRuntime::page_open`], one [`JsRuntime::page_call`] of `f` with
+    /// nothing set, and [`JsRuntime::page_close`]: a permalink function
+    /// called for a page with no computed data open.
+    fn page_once(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+        f: FnHandle,
+    ) -> JsResult<Decoded> {
+        let page = match self.page_open(data, traps, defaults) {
+            JsResult::Ok(p) => p,
+            JsResult::Thrown(e) => return JsResult::Thrown(e),
+            JsResult::Refused(r) => return JsResult::Refused(r),
+            JsResult::Failed(f) => return JsResult::Failed(f),
+        };
+        let r = self.page_call(page, f, None);
+        self.page_close(page);
+        r
+    }
+    /// [`JsRuntime::page_open`], then [`JsRuntime::page_vars`] of each of
+    /// `functions` in order: the page, and what each reads. When one of
+    /// them gives no list, the page is closed and that is the result.
+    fn page_open_with_vars(
+        &mut self,
+        data: &Value,
+        traps: &[(String, String)],
+        defaults: &[String],
+        functions: &[FnHandle],
+        keys: &[String],
+    ) -> JsResult<(PageId, Vec<Vec<String>>)> {
+        let page = match self.page_open(data, traps, defaults) {
+            JsResult::Ok(p) => p,
+            JsResult::Thrown(e) => return JsResult::Thrown(e),
+            JsResult::Refused(r) => return JsResult::Refused(r),
+            JsResult::Failed(f) => return JsResult::Failed(f),
+        };
+        let mut found = Vec::with_capacity(functions.len());
+        for f in functions {
+            match self.page_vars(page, *f, keys) {
+                JsResult::Ok(list) => found.push(list),
+                other => {
+                    self.page_close(page);
+                    return match other {
+                        JsResult::Thrown(e) => JsResult::Thrown(e),
+                        JsResult::Refused(r) => JsResult::Refused(r),
+                        JsResult::Failed(f) => JsResult::Failed(f),
+                        JsResult::Ok(_) => unreachable!("handled above"),
+                    };
+                }
+            }
+        }
+        JsResult::Ok((page, found))
+    }
+    /// The `steps` in order, each as [`JsRuntime::page_call`] or
+    /// [`JsRuntime::page_set`] would run it. The list ends with the first
+    /// result that isn't a value (a runtime may have run the steps after
+    /// it all the same: nothing is made of them).
+    fn page_run(&mut self, page: PageId, steps: &[PageStep<'_>]) -> Vec<JsResult<Decoded>> {
+        let mut out = Vec::with_capacity(steps.len());
+        for step in steps {
+            let r = match step {
+                PageStep::Call(f, set) => self.page_call(page, *f, *set),
+                PageStep::Set(key, value) => match self.page_set(page, key, value) {
+                    JsResult::Ok(()) => JsResult::Ok(Decoded {
+                        value: Value::Undefined,
+                        functions: Vec::new(),
+                        refused: Vec::new(),
+                    }),
+                    JsResult::Thrown(e) => JsResult::Thrown(e),
+                    JsResult::Refused(r) => JsResult::Refused(r),
+                    JsResult::Failed(f) => JsResult::Failed(f),
+                },
+            };
+            let stop = !matches!(r, JsResult::Ok(_));
+            out.push(r);
+            if stop {
+                break;
+            }
+        }
+        out
+    }
     /// Every file the site's code read or loaded so far, absolute.
     fn reads(&mut self) -> JsResult<Vec<PathBuf>>;
     /// The global data files are loaded: each of their values that a later

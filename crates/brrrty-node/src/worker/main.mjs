@@ -55,7 +55,23 @@ function closeOnExec(fd, flags = fs.constants.O_WRONLY) {
   return fd;
 }
 
-function out(text) {
+// Replies wait here while more requests of the same read are still to
+// run, and go out in one write: Brrrty sends the requests of a page
+// together and reads their replies together.
+let held = [];
+let heldSince = 0;
+
+function out(text, hold = false) {
+  // Not for long: Brrrty takes a slow reply for a stuck worker.
+  if (hold && (held.length === 0 || Date.now() - heldSince < 50)) {
+    if (held.length === 0) heldSince = Date.now();
+    held.push(text);
+    return;
+  }
+  if (held.length) {
+    text = held.join("") + text;
+    held = [];
+  }
   const bytes = Buffer.from(text, "utf8");
   let done = 0;
   while (done < bytes.length) {
@@ -87,7 +103,11 @@ function frame(kind, id, obj, clock) {
     json = JSON.stringify(obj);
   }
   const clockText = clock && clock.length ? JSON.stringify(clock) : "";
-  out(`\x1eBRRRTY ${kind} ${id === null ? 0 : id} ${Buffer.byteLength(clockText, "utf8")} ${Buffer.byteLength(json, "utf8")}\n${clockText}${json}`);
+  // A question goes at once: the worker waits for its answer.
+  out(
+    `\x1eBRRRTY ${kind} ${id === null ? 0 : id} ${Buffer.byteLength(clockText, "utf8")} ${Buffer.byteLength(json, "utf8")}\n${clockText}${json}`,
+    kind !== "q" && queued > 0,
+  );
 }
 
 process.stdout.write = process.stderr.write.bind(process.stderr);
@@ -850,31 +870,45 @@ const startProtos = protosRecord();
 
 // The same check, quickly, for a call that defined no property through
 // `Object.defineProperty` and its kin (those are wrapped, and send the
-// call to `protosRecord`): each prototype's own keys in their order, its
-// data properties' values, and how many keys are enumerable. A key that
-// was deleted and set again comes back enumerable, or in another place.
-const ACCESSOR = Symbol("accessor");
-const quickProtos = BUILTIN_PROTOS.map((p) => {
-  const keys = Reflect.ownKeys(p);
-  const vals = keys.map((k) => {
+// call to `protosRecord`). Without them a call can only assign to a
+// property or delete one. So: each prototype's own prototype; each data
+// property's value (an assignment changes it, a delete leaves
+// `undefined`); each accessor still there (deleted and set again it would
+// be a data property, and enumerable); and how many keys are enumerable
+// (none of JavaScript's own are; any key an assignment adds, or adds
+// again, is).
+const protoQuick = BUILTIN_PROTOS.map((p) => {
+  const keys = [];
+  const vals = [];
+  const accessors = [];
+  for (const k of Reflect.ownKeys(p)) {
     const d = reflectOwnDescriptor(p, k);
-    return "value" in d ? d.value : ACCESSOR;
-  });
-  return [p, keys, vals, Object.getPrototypeOf(p), Object.keys(p).length];
+    if ("value" in d && d.value !== undefined) {
+      keys.push(k);
+      vals.push(d.value);
+    } else {
+      accessors.push(k);
+    }
+  }
+  return [p, keys, vals, accessors, Object.getPrototypeOf(p), Object.keys(p).length];
 });
+const hasOwn = Object.prototype.hasOwnProperty;
 
 function protosSame() {
-  for (let n = 0; n < quickProtos.length; n++) {
-    const [p, keys, vals, proto, enumerable] = quickProtos[n];
-    if (Object.getPrototypeOf(p) !== proto) return false;
-    const now = Reflect.ownKeys(p);
-    if (now.length !== keys.length) return false;
+  for (let n = 0; n < protoQuick.length; n++) {
+    const q = protoQuick[n];
+    const p = q[0];
+    if (Object.getPrototypeOf(p) !== q[4]) return false;
+    const keys = q[1];
+    const vals = q[2];
     for (let i = 0; i < keys.length; i++) {
-      if (now[i] !== keys[i]) return false;
-      const was = vals[i];
-      if (was !== ACCESSOR && p[keys[i]] !== was) return false;
+      if (p[keys[i]] !== vals[i]) return false;
     }
-    if (Object.keys(p).length !== enumerable) return false;
+    const accessors = q[3];
+    for (let i = 0; i < accessors.length; i++) {
+      if (!hasOwn.call(p, accessors[i])) return false;
+    }
+    if (Object.keys(p).length !== q[5]) return false;
   }
   return true;
 }
@@ -1141,6 +1175,9 @@ session.on("Debugger.paused", (m) => {
   }
 });
 parentPort.on("message", (m) => {
+  if (m === "on") {
+    session.post("Debugger.setPauseOnExceptions", { state: "all" }, (e) => parentPort.postMessage(e ? "failed" : "on"));
+  }
   if (m === "bye") {
     try {
       session.disconnect();
@@ -1151,36 +1188,52 @@ parentPort.on("message", (m) => {
   }
 });
 setInterval(() => {}, 1 << 30);
-session.post("Debugger.enable", () => {
-  session.post("Debugger.setPauseOnExceptions", { state: "all" }, (e) => parentPort.postMessage(e ? "failed" : "ready"));
-});
+session.post("Debugger.enable", (e) => parentPort.postMessage(e ? "failed" : "ready"));
 `;
 
 let watcher = null;
 
-// Start the watcher and try it: each kind of write a frozen object
-// refuses must be counted, on this Node. False when it can't be relied on.
-async function startWatcher() {
-  let thread;
+// The thread, started while the data files load (the build's own worker
+// only: a replay's compares replies), so it is there when the calls begin.
+function launchWatcher() {
   try {
     const flags = new Int32Array(new SharedArrayBuffer(8));
     // It takes none of this process's own flags (`--eval` among them).
-    thread = new Thread(WATCHER, { eval: true, workerData: flags, stdout: true, stderr: true, execArgv: [], argv: [] });
-    const ready = await new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(false), 3000);
-      const done = (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      };
-      thread.once("message", (m) => done(m === "ready"));
-      thread.once("error", () => done(false));
-      thread.once("exit", () => done(false));
+    const thread = new Thread(WATCHER, { eval: true, workerData: flags, stdout: true, stderr: true, execArgv: [], argv: [] });
+    thread.unref();
+    const ready = new Promise((resolve) => {
+      thread.once("message", (m) => resolve(m === "ready"));
+      thread.once("error", () => resolve(false));
+      thread.once("exit", () => resolve(false));
     });
-    if (!ready) {
+    return { thread, flags, ready };
+  } catch {
+    return null;
+  }
+}
+const launched = process.env.BRRRTY_ROLE !== "replay" && unprovable === null ? launchWatcher() : null;
+delete process.env.BRRRTY_ROLE;
+
+// Turn the watcher on and try it: each kind of write a frozen object
+// refuses must be counted, on this Node. False when it can't be relied on.
+async function startWatcher() {
+  if (launched === null) return false;
+  const { thread, flags } = launched;
+  try {
+    const timeout = new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 3000);
+      timer.unref();
+    });
+    if (!(await Promise.race([launched.ready, timeout]))) {
       thread.terminate();
       return false;
     }
-    thread.unref();
+    const on = new Promise((resolve) => thread.once("message", (m) => resolve(m === "on")));
+    thread.postMessage("on");
+    if (!(await Promise.race([on, timeout]))) {
+      thread.terminate();
+      return false;
+    }
     watcher = { thread, flags, seen: 0 };
     const o = objectFreeze({ a: 1, list: objectFreeze([2, 1]) });
     const tries = [
@@ -1230,7 +1283,7 @@ async function startWatcher() {
     watcher.seen = Atomics.load(flags, 0);
     return true;
   } catch {
-    if (thread) thread.terminate();
+    thread.terminate();
     watcher = null;
     return false;
   }
@@ -1239,8 +1292,10 @@ async function startWatcher() {
 // Let go of the inspector before Node exits, or Node says it is waiting
 // for a debugger.
 function stopWatcher() {
-  if (watcher === null) return;
-  const { thread, flags } = watcher;
+  const live = watcher || launched;
+  if (!live || live.stopped) return;
+  live.stopped = true;
+  const { thread, flags } = live;
   watcher = null;
   try {
     thread.postMessage("bye");
@@ -2156,10 +2211,6 @@ async function handle(req) {
       lodashSet(p.data, req.key, fromWire(req.value));
       return { ok: null };
     }
-    case "pageClose": {
-      pages.delete(req.page);
-      return { ok: null };
-    }
     case "templateSetup": {
       filterNames = (req.filters || []).map(String);
       return { ok: null };
@@ -2220,9 +2271,24 @@ async function handle(req) {
 }
 
 let queue = Promise.resolve();
+// How many requests have been read and not yet run.
+let queued = 0;
 
 function handleLine(line) {
+  queued += 1;
   queue = queue.then(async () => {
+    queued -= 1;
+    try {
+      await handleRequest(line);
+    } finally {
+      // Whatever this request left unsent (it had no reply, or threw).
+      if (queued === 0 && held.length) out("");
+    }
+  });
+}
+
+async function handleRequest(line) {
+  {
     let req;
     try {
       req = JSON.parse(line);
@@ -2233,6 +2299,11 @@ function handleLine(line) {
     if (req.op === "bye") process.exit(0);
     if (req.op === "def") {
       define(req);
+      return;
+    }
+    if (req.op === "pageClose") {
+      // Nothing to say: Brrrty doesn't wait for it.
+      pages.delete(req.page);
       return;
     }
     if (again !== null) {
@@ -2291,7 +2362,7 @@ function handleLine(line) {
     if (calling && req.op === "render") {
       checkAfterCall(() => (templates[req.template] ? describeRender(templates[req.template].inst) : "a JavaScript template"));
     }
-  });
+  }
 }
 
 // Requests are lines of JSON on stdin. A definition can be many megabytes

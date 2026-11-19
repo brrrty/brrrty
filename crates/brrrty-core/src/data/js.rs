@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use brrrty_js::functions::{Caller, Settle, This};
 use brrrty_js::runtime::{
-    Decoded, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PathPart, Refusal,
+    Decoded, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PageStep, PathPart, Refusal,
     RuntimeFailure, TemplateId, path_text,
 };
 use brrrty_js::{FnHandle, Value};
@@ -374,6 +374,17 @@ pub(crate) struct JsCalls {
     again: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// A runtime winding down (see [`JsCalls::close`]); dropping it waits.
+pub(crate) struct Closing(Option<std::thread::JoinHandle<()>>);
+
+impl Drop for Closing {
+    fn drop(&mut self) {
+        if let Some(t) = self.0.take() {
+            let _ = t.join();
+        }
+    }
+}
+
 /// Runs one of Brrrty's filters for a JavaScript template: `(name,
 /// arguments)`, the first argument the filter's input. `Err` is why the
 /// render is refused.
@@ -430,9 +441,54 @@ impl JsCalls {
         }
     }
 
+    /// Stop the runtime, on a thread of its own: nothing more is asked of
+    /// it, and the build goes on (writing the pages) while it winds down.
+    /// The guard waits for it.
+    pub fn close(&self) -> Closing {
+        let rt = lock(&self.runtime).take();
+        Closing(rt.and_then(|rt| {
+            std::thread::Builder::new()
+                .name("brrrty-js-close".into())
+                .spawn(move || drop(rt))
+                .ok()
+        }))
+    }
+
+    /// The runtime, for one request. A request takes tens of microseconds
+    /// and the render threads queue for it, so one of them looks for its
+    /// turn a little while before it sleeps: waking a sleeping thread
+    /// costs more than most requests take.
+    fn take_turn(&self) -> MutexGuard<'_, Option<Box<dyn JsRuntime>>> {
+        static LOOKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        use std::sync::atomic::Ordering;
+        if let Ok(rt) = self.runtime.try_lock() {
+            return rt;
+        }
+        if LOOKING
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            let start = std::time::Instant::now();
+            let found = loop {
+                if let Ok(rt) = self.runtime.try_lock() {
+                    break Some(rt);
+                }
+                if start.elapsed() > std::time::Duration::from_micros(200) {
+                    break None;
+                }
+                std::hint::spin_loop();
+            };
+            LOOKING.store(false, Ordering::Release);
+            if let Some(rt) = found {
+                return rt;
+            }
+        }
+        lock(&self.runtime)
+    }
+
     /// One request, or the problem for a runtime that already stopped.
     fn with<T>(&self, f: impl FnOnce(&mut dyn JsRuntime) -> JsResult<T>) -> JsResult<T> {
-        let mut rt = lock(&self.runtime);
+        let mut rt = self.take_turn();
         let Some(r) = rt.as_mut() else {
             return JsResult::Failed(RuntimeFailure {
                 message: "JavaScript data stopped earlier in this build".into(),
@@ -484,21 +540,80 @@ impl JsCalls {
         }
     }
 
-    /// Keep `data` in the runtime as the page's data object (see
-    /// [`JsRuntime::page_open`]).
-    pub fn page<'a>(
+    /// Keep `data` in the runtime as the page's data object, and ask what
+    /// each of `functions` reads of it, as 11ty's computed data proxy
+    /// finds it (see [`JsRuntime::page_open_with_vars`]).
+    pub fn page_with_vars<'a>(
         &'a self,
         data: &Value,
         traps: &[(String, String)],
         defaults: &[String],
+        functions: &[FnHandle],
         shown: &'a Path,
-    ) -> Result<JsPage<'a>, Problem> {
-        let id = self.problem(self.with(|rt| rt.page_open(data, traps, defaults)), shown)?;
-        Ok(JsPage {
-            calls: self,
-            id,
+    ) -> Result<(JsPage<'a>, Vec<Vec<String>>), Problem> {
+        let (id, found) = self.problem(
+            self.with(|rt| rt.page_open_with_vars(data, traps, defaults, functions, defaults)),
             shown,
-        })
+        )?;
+        Ok((
+            JsPage {
+                calls: self,
+                id,
+                shown,
+                pending: Vec::new(),
+            },
+            found,
+        ))
+    }
+
+    /// Call the permalink function `f` with `data` as a page's data (see
+    /// [`JsRuntime::page_once`]).
+    pub fn page_once(
+        &self,
+        data: &Value,
+        traps: &[(String, String)],
+        f: FnHandle,
+        shown: &Path,
+    ) -> Result<Value, Problem> {
+        let d = self.problem(self.with(|rt| rt.page_once(data, traps, &[], f)), shown)?;
+        returned_value(d, shown)
+    }
+
+    /// Several requests of one page, or the problem for a runtime that
+    /// already stopped.
+    fn with_list<T>(
+        &self,
+        f: impl FnOnce(&mut dyn JsRuntime) -> Vec<JsResult<T>>,
+    ) -> Vec<JsResult<T>> {
+        let mut out = Vec::new();
+        let _ = self.with(|rt| {
+            out = f(rt);
+            match out.last() {
+                Some(JsResult::Failed(failure)) => JsResult::Failed::<()>(failure.clone()),
+                _ => JsResult::Ok(()),
+            }
+        });
+        if out.is_empty() {
+            out.push(JsResult::Failed(RuntimeFailure {
+                message: "JavaScript data stopped earlier in this build".into(),
+                stderr_tail: Vec::new(),
+                stopped: false,
+                again: false,
+            }));
+        }
+        out
+    }
+}
+
+/// A function's result as a page can use it, or the problem with it.
+fn returned_value(d: Decoded, shown: &Path) -> Result<Value, Problem> {
+    match returned_problem(&d) {
+        Some(why) => Err(Problem::error(codes::JS_DATA_VALUE, why)
+            .with_path(shown)
+            .with_help(
+                "Return plain values: objects, arrays, strings, numbers, booleans, null or Dates.",
+            )),
+        None => Ok(d.value),
     }
 }
 
@@ -677,37 +792,70 @@ pub(crate) struct JsPage<'a> {
     calls: &'a JsCalls,
     id: PageId,
     shown: &'a Path,
+    /// Keys set in Brrrty, not yet in the runtime.
+    pending: Vec<(String, Value)>,
 }
 
 impl JsPage<'_> {
-    /// The data keys `f` reads, as 11ty's computed data proxy finds them.
-    pub fn vars(&mut self, f: FnHandle, keys: &[String]) -> Result<Vec<String>, Problem> {
-        let id = self.id;
-        self.calls
-            .problem(self.calls.with(|rt| rt.page_vars(id, f, keys)), self.shown)
-    }
-
     /// Call `f` with the page's data, storing the result at `set`.
     pub fn call(&mut self, f: FnHandle, set: Option<&str>) -> Result<Value, Problem> {
-        let id = self.id;
-        let d = self
-            .calls
-            .problem(self.calls.with(|rt| rt.page_call(id, f, set)), self.shown)?;
-        match returned_problem(&d) {
-            Some(why) => Err(Problem::error(codes::JS_DATA_VALUE, why)
-                .with_path(self.shown)
-                .with_help("Return plain values: objects, arrays, strings, numbers, booleans, null or Dates.")),
-            None => Ok(d.value),
-        }
+        self.run(&[(f, set)])
+            .map_err(|(_, problem)| problem)?
+            .pop()
+            .ok_or_else(|| worker_failed("a call gave no result").with_path(self.shown))
     }
 
-    /// Set a dotted key of the page's data.
-    pub fn set(&mut self, key: &str, value: &Value) -> Result<(), Problem> {
+    /// Call each function with the page's data, in order, storing each
+    /// result at its key before the next runs: one round trip for them
+    /// all, and for the keys [`JsPage::set`] is holding. `Err` is the
+    /// first problem, and which call it came from (none: a key that
+    /// couldn't be set).
+    pub fn run(
+        &mut self,
+        calls: &[(FnHandle, Option<&str>)],
+    ) -> Result<Vec<Value>, (Option<usize>, Problem)> {
         let id = self.id;
-        self.calls.problem(
-            self.calls.with(|rt| rt.page_set(id, key, value)),
-            self.shown,
-        )
+        let pending = std::mem::take(&mut self.pending);
+        let mut steps: Vec<PageStep<'_>> = pending
+            .iter()
+            .map(|(key, value)| PageStep::Set(key, value))
+            .collect();
+        steps.extend(calls.iter().map(|(f, set)| PageStep::Call(*f, *set)));
+        if steps.is_empty() {
+            return Ok(Vec::new());
+        }
+        let results = self.calls.with_list(|rt| rt.page_run(id, &steps));
+        let mut values = Vec::with_capacity(calls.len());
+        let answered = results.len();
+        for (n, r) in results.into_iter().enumerate() {
+            let which = n.checked_sub(pending.len());
+            let d = self
+                .calls
+                .problem(r, self.shown)
+                .map_err(|problem| (which, problem))?;
+            if which.is_some() {
+                values.push(returned_value(d, self.shown).map_err(|problem| (which, problem))?);
+            }
+        }
+        if answered < steps.len() {
+            return Err((
+                None,
+                worker_failed("a page's calls gave fewer results than calls").with_path(self.shown),
+            ));
+        }
+        Ok(values)
+    }
+
+    /// Set a dotted key of the page's data. It goes with the next call,
+    /// or with [`JsPage::finish`]: that is where a key that can't be set
+    /// shows.
+    pub fn set(&mut self, key: &str, value: &Value) {
+        self.pending.push((key.to_string(), value.clone()));
+    }
+
+    /// Set what [`JsPage::set`] is holding, and close the page.
+    pub fn finish(mut self) -> Result<(), Problem> {
+        self.run(&[]).map(|_| ()).map_err(|(_, problem)| problem)
     }
 }
 

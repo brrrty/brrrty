@@ -3396,6 +3396,9 @@ fn build_once(
             }
         }
     }
+    // Nothing more is asked of the JavaScript runtime: it winds down while
+    // the pages are written.
+    let _closing = js_calls.as_ref().map(|c| c.close());
     // Which pages 11ty writes differently on every build.
     let mut ready = ready;
     let mut layout_drawn: Vec<Option<LayoutDrawn>> = (0..prepared.len()).map(|_| None).collect();

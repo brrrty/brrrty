@@ -201,12 +201,14 @@ fn work(
     if cancelled.load(Ordering::SeqCst) {
         return Ok(());
     }
-    let mut w = Worker::start(&loads.node, &loads.root, loads.run_mode)
+    let mut w = Worker::start_as(&loads.node, &loads.root, loads.run_mode, true)
         .map_err(|e| runtime(format!("the replay check couldn't start Node: {e}")))?;
     *live.lock().unwrap_or_else(|e| e.into_inner()) = Some(w.pid());
     let out = work_with(&mut w, loads, reverse, rx, cancelled);
     // Its process id is no longer this worker's once it is dropped.
     *live.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // Nothing of it is needed any more: no waiting for Node to wind down.
+    w.stop();
     out
 }
 
@@ -548,7 +550,9 @@ fn ahead(w: &mut Worker, calls: &Calls, sequence: &[usize]) -> Result<(), Failur
                 while sent < sequence.len() && sent - done < AHEAD {
                     let r = &calls.records[sequence[sent]];
                     let (id, line) = w.line_for(&r.text, r.clock.as_deref());
-                    ids.push_back(id);
+                    if !r.one_way {
+                        ids.push_back(id);
+                    }
                     if tx.send(line).is_err() {
                         break 'all Err(runtime(
                             "the replay check's Node stopped reading requests",
@@ -557,6 +561,9 @@ fn ahead(w: &mut Worker, calls: &Calls, sequence: &[usize]) -> Result<(), Failur
                     sent += 1;
                 }
                 let r = &calls.records[i];
+                if r.one_way {
+                    continue;
+                }
                 // The filters a JavaScript template asked for, answered as
                 // the first time.
                 w.answers_feed = Some(r.answers.iter().cloned().collect());
@@ -719,13 +726,21 @@ impl State<'_> {
         } else {
             &r.text
         };
+        if r.one_way {
+            let (_, line) = w.line_for(text, None);
+            return w.write_line(&line).map_err(Failure::Runtime);
+        }
         w.answers_feed = Some(r.answers.iter().cloned().collect());
         let got = send(w, text, r.clock.as_deref());
         w.answers_feed = None;
         let got = got?;
         // A function made by a call is matched up with the first run's as
         // it first appears.
-        let same = if r.made || got.made {
+        let same = if r.unchecked {
+            // It ran on what a call sent with it had changed: the first
+            // run made nothing of its reply.
+            true
+        } else if r.made || got.made {
             self.same(&parse(&r.body), &parse(&got.body))
         } else {
             got.body == r.body
