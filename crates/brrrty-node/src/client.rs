@@ -2156,6 +2156,17 @@ impl JsRuntime for Worker {
         self.walks = head.get("walks").and_then(Json::as_str).map(str::to_string);
         self.table.load_handles = Some(u32::try_from(self.load_handles).unwrap_or(u32::MAX));
         self.calls_begun = true;
+        // More Nodes pay where Node does the pages' work: a site with
+        // JavaScript templates. Without any, the pages are rendered here
+        // and call small functions, and the other Nodes (and a third
+        // replay) only take cores from that: measured on 2,000 Nunjucks
+        // pages, they made the build 0.3 s slower. They loaded alongside
+        // this one, which cost nothing; they stop here.
+        if self.nodes > 1 && self.last_template.is_none() {
+            self.nodes = 1;
+            self.solo = true;
+            self.helpers.clear();
+        }
         for h in &self.helpers {
             h.begin(self.load_handles, self.frozen);
         }

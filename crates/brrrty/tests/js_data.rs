@@ -1916,6 +1916,8 @@ fn a_reset_and_count_helper_is_refused_from_several_nodes() {
             "src/_data/h.js".into(),
             "let n = 0;\nmodule.exports = { reset() { n = 0; return ''; }, count() { return ++n; }, plain(x) { return x; } };".into(),
         ),
+        // Several Nodes are for sites with JavaScript templates.
+        ("src/t.11ty.js".into(), "module.exports = () => 't';".into()),
         ("src/a.njk".into(), "{{ h.reset() }}{{ h.count() }}{{ h.count() }}".into()),
         ("src/z.njk".into(), "{{ h.reset() }}{{ h.count() }}{{ h.count() }}".into()),
     ];
@@ -1960,6 +1962,7 @@ fn several_nodes_build_what_one_node_builds() {
             "module.exports = {\n  adder(n) { return function add(x) { return x + n; }; },\n  poke(o) { o.k = 2; return ''; },\n  count(l) { return l.length; },\n  key(o) { return o.k; },\n};".into(),
         ),
         ("src/poke.njk".into(), "{{ h.poke(site.o) }}".into()),
+        ("src/t.11ty.js".into(), "module.exports = () => 't';".into()),
     ];
     for i in 0..12 {
         files.push((
