@@ -2956,12 +2956,15 @@ function refuse(why) {
 }
 
 function trapKey(o, k, why) {
-  Object.defineProperty(o, k, {
+  // (`defineProperty` is the one the worker kept: the global one is a
+  // stand-in that looks at every call, and this runs for every item of
+  // every collection.)
+  defineProperty(o, k, {
     get() {
       throw refuse(why);
     },
     set(v) {
-      Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
+      defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
     },
     enumerable: true,
     configurable: true,
