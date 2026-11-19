@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.27 - 2026-11-19
 
 - The Linux musl builds (the ones npm installs on Linux) use mimalloc instead of musl's own allocator, which is slow under threads. A 1,070-page site with JavaScript templates builds in 3.03 s instead of 3.26 s; the pages are the same. The glibc and macOS builds are unchanged.
 
