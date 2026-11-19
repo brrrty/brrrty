@@ -96,6 +96,24 @@ pub(crate) fn merged_item(target: Option<Value>, source: &Value) -> Value {
     }
 }
 
+/// A copy of `data` in which every list and object is a new one. 11ty
+/// reads a JSON data file again for each template that uses it, so two
+/// templates never hold the same list from one; a JavaScript function
+/// can tell (`a.data.list === b.data.list`).
+pub(crate) fn fresh_copy(data: &Data) -> Data {
+    data.iter()
+        .map(|(k, v)| (k.clone(), fresh_value(v)))
+        .collect()
+}
+
+fn fresh_value(v: &Value) -> Value {
+    match v {
+        Value::Array(a) => Value::Array(Arc::new(a.iter().map(fresh_value).collect())),
+        Value::Object(o) => Value::Object(Arc::new(fresh_copy(o))),
+        other => other.clone(),
+    }
+}
+
 /// Whether an object, or one inside it (not through a list), has an
 /// `override:` key that a merge would clean.
 fn has_override_keys(o: &Data) -> bool {

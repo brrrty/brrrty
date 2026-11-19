@@ -732,8 +732,13 @@ function noteWrite() {
 const membrane = {
   get(t, k, r) {
     const v = Reflect.get(t, k, r);
+    if (v === null || typeof v !== "object") return v;
     const d = reflectOwnDescriptor(t, k);
     if (d && !d.configurable && "value" in d && !d.writable) return v;
+    // A collection item's `data` is that page's data, and its `page` the
+    // page's one `page` object.
+    if (k === "data" && isItem(t)) return dataOfItem(v);
+    if (k === "page") return pageObject(v);
     return watch(v);
   },
   getOwnPropertyDescriptor(t, k) {
@@ -780,6 +785,180 @@ function watch(v) {
   return p;
 }
 
+// --- Which object is which. ---
+//
+// 11ty merges the data files into each page's data (`Merge` in
+// @11ty/eleventy-utils): every page gets its own copy of each plain
+// object, down to the first list or other value, which pages share. So
+// `site.author` is one object within a page and another in the next,
+// while `site.posts` and what is in it are the same everywhere. Brrrty
+// keeps one of each value, so a page's data is read through a view: a
+// plain object reached from the page's data through plain objects only
+// is that page's own (one view for each place), and anything else is one
+// for everybody (`watch`).
+//
+// A paginated page's data is 11ty's `ProxyWrap` of the pagination's values
+// over the template's data: reading a plain object that the template's
+// data has gives a new wrapper every time, so `data.site !== data.site`
+// there. `page`, the frozen `eleventy` and `pkg`, the alias, and computed
+// values the template's data didn't have are the values themselves.
+
+const SHARED_AT_ROOT = new Set(["page", "eleventy", "pkg", "collections"]);
+const SAME_WHEN_PAGED = new Set(["page", "eleventy", "pkg"]);
+// The live `page` objects by what they say, and the data of the pages
+// being read, so that one page has one of each however it is reached.
+const pageObjects = new Map();
+const rootOfData = new WeakMap();
+let liveRoot = null;
+
+function pageKeyOf(page) {
+  if (page === null || typeof page !== "object") return null;
+  const d = ownDescriptor(page, "inputPath");
+  if (!d || typeof d.value !== "string") return null;
+  const text = (name) => {
+    const x = ownDescriptor(page, name);
+    return x && "value" in x ? `${typeof x.value}:${String(x.value)}` : "";
+  };
+  return `${d.value}\0${text("url")}\0${text("outputPath")}`;
+}
+
+function pageObject(v) {
+  if (targetOf.has(v) || utilTypes.isProxy(v)) return v;
+  const key = Array.isArray(v) ? null : pageKeyOf(v);
+  if (key === null) return watch(v);
+  let p = pageObjects.get(key);
+  if (!p) {
+    p = watch(v);
+    pageObjects.set(key, p);
+  }
+  return p;
+}
+
+function isItem(t) {
+  return hasOwn.call(t, "inputPath") && hasOwn.call(t, "url") && hasOwn.call(t, "page");
+}
+
+// What identifies a page's data: its `page`, and which of a pagination's
+// pages it is.
+function dataKeyOf(data) {
+  const page = ownDescriptor(data, "page");
+  const key = page && "value" in page ? pageKeyOf(unwrapProxy(page.value)) : null;
+  if (key === null) return null;
+  const pg = ownDescriptor(data, "pagination");
+  const at = pg && pg.value !== null && typeof pg.value === "object" ? unwrapProxy(pg.value).pageNumber : undefined;
+  return `${key}\0${typeof at === "number" ? at : ""}`;
+}
+
+// A collection item's `data`: the data of the page being built when it
+// is that page's, and one view of it otherwise.
+function dataOfItem(v) {
+  if (targetOf.has(v) || utilTypes.isProxy(v) || Array.isArray(v) || !isPlainObject11ty(v)) return watch(v);
+  if (liveRoot !== null && liveRoot.key !== null && liveRoot.key === dataKeyOf(v)) return liveRoot.view;
+  let p = rootOfData.get(v);
+  if (p) return p;
+  p = rootView(v, null);
+  rootOfData.set(v, p);
+  return p;
+}
+
+const ownHandler = {
+  __proto__: null,
+  get(t, k, r) {
+    const v = Reflect.get(t, k, r);
+    if (v === null || typeof v !== "object") return v;
+    const d = reflectOwnDescriptor(t, k);
+    if (d && !d.configurable && "value" in d && !d.writable) return v;
+    return this.child(k, v);
+  },
+  getOwnPropertyDescriptor(t, k) {
+    const d = reflectOwnDescriptor(t, k);
+    if (d && "value" in d && d.configurable && d.value !== null && typeof d.value === "object") d.value = this.child(k, d.value);
+    return d;
+  },
+  set: membrane.set,
+  defineProperty: membrane.defineProperty,
+  deleteProperty: membrane.deleteProperty,
+  setPrototypeOf: membrane.setPrototypeOf,
+  preventExtensions: membrane.preventExtensions,
+  // The view of the value at `k`.
+  child(k, v) {
+    if (targetOf.has(v) || utilTypes.isProxy(v)) {
+      // An open `collections` is a wrapper already; a paginated page
+      // reads a new one each time.
+      if (this.paged && k === "collections" && typeof k === "string") return freshView(v, false);
+      return v;
+    }
+    if (typeof k !== "string" || Array.isArray(v) || !isPlainObject11ty(v)) return watch(v);
+    if (this.root) {
+      if (k === "page") return pageObject(v);
+      if (k === "eleventy" || k === "pkg") iceReserved(v);
+      if (this.paged) {
+        if (SAME_WHEN_PAGED.has(k) || this.same.has(k)) return watch(v);
+        return freshView(v, k !== "pagination");
+      }
+      if (SHARED_AT_ROOT.has(k)) return watch(v);
+    } else if (this.fresh) {
+      return freshView(v, true);
+    }
+    const kids = (this.kids ??= new Map());
+    const have = kids.get(k);
+    if (have !== undefined && have.t === v) return have.p;
+    const p = view(v, { __proto__: ownHandler, root: false, paged: false, fresh: false, same: null, kids: null });
+    kids.set(k, { t: v, p });
+    return p;
+  },
+};
+
+// 11ty freezes `eleventy` and `pkg`, and what is in them.
+const iced = new WeakSet();
+function iceReserved(v) {
+  if (v === null || typeof v !== "object" || iced.has(v) || utilTypes.isProxy(v)) return;
+  iced.add(v);
+  if (!Array.isArray(v) && !isPlainObject11ty(v)) return;
+  for (const k of Object.keys(v)) {
+    const d = ownDescriptor(v, k);
+    if (d && "value" in d) iceReserved(d.value);
+  }
+  objectFreeze(v);
+}
+
+function view(v, handler) {
+  const p = new Proxy(v, handler);
+  targetOf.set(p, unwrapProxy(v));
+  return p;
+}
+
+// A wrapper nothing else has: with `deep`, what is read through it is
+// new each time as well; without, it is the values themselves.
+function freshView(v, deep) {
+  if (!deep) return view(v, membrane);
+  return view(v, { __proto__: ownHandler, root: false, paged: false, fresh: true, same: null, kids: null });
+}
+
+// A page's data as its functions and templates see it. `same` names the
+// keys of a paginated page's data that are the values themselves, when
+// known (see `pageOpen`).
+function rootView(data, same) {
+  if (data === null || typeof data !== "object" || targetOf.has(data) || utilTypes.isProxy(data)) return watch(data);
+  if (Array.isArray(data) || !isPlainObject11ty(data)) return watch(data);
+  const pg = ownDescriptor(data, "pagination");
+  const pgv = pg && "value" in pg ? unwrapProxy(pg.value) : null;
+  const paged = pgv !== null && typeof pgv === "object" && Array.isArray(pgv.items) && typeof pgv.pageNumber === "number";
+  let keys = null;
+  if (paged) {
+    keys = new Set(same || []);
+    if (typeof pgv.alias === "string") keys.add(pgv.alias.split(".")[0]);
+    if (same === null) {
+      // Not known: a computed value is taken to be one the template's
+      // data didn't have.
+      const computed = ownDescriptor(data, "eleventyComputed");
+      const cv = computed && "value" in computed ? unwrapProxy(computed.value) : null;
+      if (cv !== null && typeof cv === "object") for (const k of Object.keys(cv)) keys.add(k);
+    }
+  }
+  return view(data, { __proto__: ownHandler, root: true, paged, fresh: false, same: keys, kids: null });
+}
+
 // After a call: whether it wrote to its data.
 function takeWrote() {
   for (const [d, t] of touchedDates) {
@@ -796,6 +975,7 @@ function takeWrote() {
 function dropPersistent() {
   objects = [];
   keptObjects = new WeakSet();
+  pageObjects.clear();
 }
 
 // --- The clock, timers and random numbers. ---
@@ -2163,7 +2343,9 @@ async function renderTemplate(t, data, first) {
   refusedInCall = null;
   takeWrote();
   const inst = t.inst;
-  const wdata = watch(data);
+  const wdata = rootView(data, null);
+  const before = liveRoot;
+  liveRoot = { key: dataKeyOf(data), view: wdata };
   let value;
   try {
     if (t.layout) {
@@ -2172,7 +2354,7 @@ async function renderTemplate(t, data, first) {
         if (!inst.page) trapKey(inst, "page", LAYOUT_PAGE);
       }
     } else if (!inst.page) {
-      const page = first !== undefined ? watch(first) : wdata.page;
+      const page = first !== undefined && first !== null && typeof first === "object" ? pageObject(first) : wdata.page;
       if (page) inst.page = page;
     }
     if (!inst.eleventy) {
@@ -2189,10 +2371,12 @@ async function renderTemplate(t, data, first) {
       }
     }
   } catch (e) {
+    liveRoot = before;
     const failed = renderRefusal(inst);
     if (failed) return failed;
     throw e;
   }
+  liveRoot = before;
   const failed = renderRefusal(inst);
   if (failed) return failed;
   let text;
@@ -2377,12 +2561,14 @@ function describeFn(fn) {
 
 // Run one call, once, as 11ty does. The reply's `refused` when it can't
 // be used exactly.
-async function runOnce(fn, thisArg, args, settle) {
+async function runOnce(fn, thisArg, args, settle, page = null) {
   refusedInCall = null;
   takeWrote();
   let value;
+  const before = liveRoot;
+  if (page !== null) liveRoot = { key: dataKeyOf(page.data), view: page.view };
   try {
-    value = fn.apply(watch(thisArg), args.map(watch));
+    value = fn.apply(watch(thisArg), page !== null ? [page.view] : args.map(watch));
     if (settle === "await") {
       value = await value;
     } else if (value && typeof value.then === "function" && typeof value.catch === "function") {
@@ -2390,10 +2576,12 @@ async function runOnce(fn, thisArg, args, settle) {
       value.catch(() => {});
     }
   } catch (e) {
+    liveRoot = before;
     const failed = callRefusal(fn);
     if (failed) return failed;
     throw e;
   }
+  liveRoot = before;
   const failed = callRefusal(fn);
   if (failed) return failed;
   let text;
@@ -2611,6 +2799,13 @@ async function handle(req) {
     case "pageOpen": {
       const data = fromWire(req.data);
       for (const [k, why] of req.traps || []) trapKey(data, k, why);
+      // The computed names the template's data doesn't have: on a
+      // paginated page their values are the values themselves.
+      const same = [];
+      for (const key of req.defaults || []) {
+        const top = key.split(".")[0];
+        if (!hasOwn.call(data, top)) same.push(top);
+      }
       for (const key of req.defaults || []) {
         if (lodashGet(data, key, UNDEFINED_VALUE) === UNDEFINED_VALUE) {
           if (throughList(data, key)) return { refused: `computed key \`${key}\` would be set inside a list, which Brrrty doesn't do` };
@@ -2619,7 +2814,7 @@ async function handle(req) {
         }
       }
       // Brrrty numbers the pages, so a replay's are the first run's.
-      pages.set(req.page, { data });
+      pages.set(req.page, { data, view: rootView(data, (req.defaults || []).length ? same : null) });
       return { ok: null };
     }
     case "pageVars": {
@@ -2644,7 +2839,7 @@ async function handle(req) {
       const p = getPage(req.page);
       const fn = getHandle(req.handle);
       // A computed value is set where it goes; a plain permalink isn't.
-      const r = await runOnce(fn, filtersThis(typeof req.set === "string"), [p.data], "await");
+      const r = await runOnce(fn, filtersThis(typeof req.set === "string"), [p.data], "await", p);
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       if (typeof req.set === "string") {
         if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };
