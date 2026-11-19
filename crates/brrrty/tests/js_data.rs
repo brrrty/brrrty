@@ -1546,3 +1546,173 @@ fn a_key_order_changed_and_restored_between_pages_is_refused() {
     assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
     assert_eq!(written(&t, "b/index.html"), None);
 }
+
+/// How many calls the worker ran fast (`BRRRTY_JS_FAST=verify` prints it).
+fn fast_calls(out: &str) -> usize {
+    out.lines()
+        .filter_map(|l| l.strip_prefix("brrrty-js-fast: "))
+        .filter_map(|l| l.strip_suffix(" fast"))
+        .filter_map(|n| n.parse::<usize>().ok())
+        .sum()
+}
+
+#[test]
+fn every_kind_of_change_is_refused_when_calls_run_fast() {
+    if !has_node() {
+        return;
+    }
+    // The calls that change nothing run in V8's side-effect-free mode,
+    // without the walk; the one that changes something can't, and is
+    // walked. `verify` walks after the fast ones too: none may have
+    // changed anything.
+    let pure = "pure(x) { return String(x).toUpperCase(); }";
+    for (data, page) in [
+        (
+            format!(
+                "const list = [1,2]; module.exports = {{ list, {pure}, f() {{ list.label = \"L\"; return \"\"; }} }};"
+            ),
+            "{{ h.pure(1) }}{{ h.f() }}{{ h.pure(2) }}[{{ h.list.label }}]",
+        ),
+        (
+            format!(
+                "const list = [1,2]; module.exports = {{ list, {pure}, f() {{ Object.defineProperty(list, \"label\", {{ value: \"L\", enumerable: false }}); return \"\"; }} }};"
+            ),
+            "{{ h.pure(1) }}{{ h.f() }}{{ h.pure(2) }}[{{ h.list.label }}]",
+        ),
+        (
+            format!(
+                "module.exports = {{ l: [1], {pure}, f() {{ Array.prototype.extra = \"E\"; return \"\"; }} }};"
+            ),
+            "{{ h.pure(1) }}{{ h.f() }}{{ h.pure(2) }}[{{ h.l.extra }}]",
+        ),
+        (
+            format!(
+                "const d = new Date(Date.UTC(2020,0,1)); module.exports = {{ d, {pure}, f() {{ d.setUTCFullYear(2021); return \"\"; }} }};"
+            ),
+            "{{ h.pure(1) }}{{ h.f() }}{{ h.pure(2) }}[{{ h.d.getUTCFullYear() }}]",
+        ),
+        (
+            format!(
+                "const o = {{ a: {{ b: [ {{ c: 1 }} ] }} }}; module.exports = {{ o, {pure}, f() {{ o.a.b[0].c = 2; return \"\"; }} }};"
+            ),
+            "{{ h.pure(1) }}{{ h.f() }}{{ h.pure(2) }}[{{ h.o.a.b[0].c }}]",
+        ),
+        (
+            format!(
+                "const o = {{ a: 1 }}; module.exports = {{ o, {pure}, f() {{ Object.setPrototypeOf(o, {{ inh: \"I\" }}); return \"\"; }} }};"
+            ),
+            "{{ h.pure(1) }}{{ h.f() }}{{ h.pure(2) }}[{{ h.o.inh }}]",
+        ),
+        // Changed and changed back by two calls, with fast calls between.
+        (
+            format!(
+                "const list = [{{ on: false }}]; module.exports = {{ list, {pure}, on() {{ list[0].on = true; return \"\"; }}, off() {{ list[0].on = false; return \"\"; }} }};"
+            ),
+            "{{ h.pure(0) }}{{ h.on() }}{{ h.pure(1) }}[{{ h.list[0].on }}]{{ h.pure(2) }}{{ h.off() }}",
+        ),
+        // A closure's counter: not the data's own value, but the replay
+        // check sees it.
+        (
+            format!("let n = 0; module.exports = {{ {pure}, next() {{ n += 1; return n; }} }};"),
+            "{{ h.pure(1) }}{{ h.next() }}{{ h.pure(2) }}",
+        ),
+    ] {
+        let mut files = vec![
+            ("brrrty.config.rhai", ON),
+            ("src/_data/h.js", data.as_str()),
+            ("src/a.njk", page),
+        ];
+        let extra = [("src/b.njk", page), ("src/c.njk", page)];
+        files.extend(extra);
+        let t = site(&files);
+        let o = build(t.path(), &[], &[("BRRRTY_JS_FAST", "verify")]);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "{data}\n{out}");
+        assert!(out.contains("js-data-impure"), "{data}\n{out}");
+        assert!(!out.contains("fast path missed"), "{data}\n{out}");
+        assert!(fast_calls(&out) > 0, "{data}\n{out}");
+        assert_eq!(written(&t, "a/index.html"), None);
+    }
+}
+
+#[test]
+fn pure_calls_run_fast_and_build_the_same_pages() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/site.js".into(),
+            "const strings = {}; for (let i = 0; i < 50; i++) strings[\"k\" + i] = \"v\" + i;\nconst posts = Array.from({ length: 40 }, (_, i) => ({ t: \"p\" + i, tags: [\"a\"] }));\nmodule.exports = { strings, posts, t(k) { return this.strings[k]; }, up(s) { return String(s).toUpperCase(); }, pick(i) { return posts[i]; }, list() { return [1, { a: [2] }]; } };".into(),
+        ),
+        (
+            "src/_data/eleventyComputed.js".into(),
+            "module.exports = { shout: (d) => String(d.title).toUpperCase() + \"!\" };".into(),
+        ),
+    ];
+    for i in 0..12 {
+        files.push((
+            format!("src/p{i}.njk"),
+            format!("---\ntitle: post {i}\n---\n{{{{ site.t(\"k{i}\") }}}} {{{{ site.up(title) }}}} {{{{ site.pick({i}).t }}}} {{{{ site.list() | dump }}}} {{{{ shout }}}}"),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let mut pages = Vec::new();
+    for mode in ["off", "verify"] {
+        let t = site(&refs);
+        let o = build(t.path(), &[], &[("BRRRTY_JS_FAST", mode)]);
+        let out = text(&o);
+        assert!(o.status.success(), "{mode}\n{out}");
+        assert!(!out.contains("fast path missed"), "{out}");
+        if mode == "verify" {
+            // Most of each page's four calls and its computed value.
+            assert!(fast_calls(&out) >= 30, "{out}");
+        }
+        pages.push(
+            (0..12)
+                .map(|i| written(&t, &format!("p{i}/index.html")).unwrap())
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert_eq!(pages[0], pages[1]);
+    assert_eq!(pages[1][3], "v3 POST 3 p3 [1,{&quot;a&quot;:[2]}] POST 3!");
+}
+
+#[test]
+fn a_change_a_timer_makes_while_calls_run_fast_is_refused() {
+    if !has_node() {
+        return;
+    }
+    // The timer fires after its call, between other pages' calls, which
+    // run fast: the event loop still turns as the build goes, and the
+    // walk after it sees the change.
+    let mut files = vec![
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "const list = [1];\nmodule.exports = { list, later() { setTimeout(() => list.push(2), 0); return \"\"; }, pure(x) { return x; } };\n",
+        ),
+        ("src/a.njk", "{{ h.later() }}"),
+    ];
+    let pages: Vec<(String, String)> = (0..40)
+        .map(|i| {
+            (
+                format!("src/p{i}.njk"),
+                "{{ h.pure(1) }}{{ h.pure(2) }}[{{ h.list | length }}]".to_string(),
+            )
+        })
+        .collect();
+    files.extend(pages.iter().map(|(a, b)| (a.as_str(), b.as_str())));
+    for mode in ["verify", "auto"] {
+        let t = site(&files);
+        let o = build(t.path(), &[], &[("BRRRTY_JS_FAST", mode)]);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "{mode}\n{out}");
+        assert!(out.contains("js-data-impure"), "{mode}\n{out}");
+        assert!(!out.contains("fast path missed"), "{out}");
+    }
+}

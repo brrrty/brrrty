@@ -2,7 +2,10 @@
 // it records. Runs as `node --input-type=module --eval <encode.mjs + this>`
 // with the project folder as its working directory.
 //
-// Requests are JSON lines on stdin, one at a time. Replies go as frames,
+// Requests are JSON lines, one at a time: on Unix on a pipe of their own
+// (BRRRTY_ANSWERS_FD, which also carries the answers to the worker's own
+// questions), read blocking (see the request loop at the end); elsewhere
+// on stdin. Replies go as frames,
 // "\x1eBRRRTY <byte length>\n<json>", to their own descriptor, which Brrrty
 // names in BRRRTY_FRAMES_FD: a pipe of their own on Unix, where stdout joins stderr so a
 // child process writing to fd 1 is only noise. Where the frames share
@@ -24,6 +27,13 @@ import inspector from "node:inspector";
 import { AsyncLocalStorage } from "node:async_hooks";
 import nodeCrypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// The worker's own defineProperty: the one site code calls is wrapped
+// below, to see a property defined on the data files' values.
+const defineOwn = Object.defineProperty;
+// The clock the worker times its own work by, read before the site's
+// reads of it are recorded.
+const rawPerfNow = performance.now.bind(performance);
 
 // --- Frames, written before anything else can touch stdout. ---
 
@@ -268,15 +278,20 @@ function noteWrite() {
   wrote = true;
 }
 
+// The traps read an own data property's value from its descriptor (what
+// `Reflect.get` would give) and use `Reflect.get` only for the rest: V8
+// can run the first in its side-effect-free mode (see `fastCall`).
 const membrane = {
   get(t, k, r) {
-    const v = Reflect.get(t, k, r);
-    const d = Reflect.getOwnPropertyDescriptor(t, k);
-    if (d && !d.configurable && "value" in d && !d.writable) return v;
-    return watch(v);
+    const d = Object.getOwnPropertyDescriptor(t, k);
+    if (d && "value" in d) {
+      if (!d.configurable && !d.writable) return d.value;
+      return watch(d.value);
+    }
+    return watch(Reflect.get(t, k, r));
   },
   getOwnPropertyDescriptor(t, k) {
-    const d = Reflect.getOwnPropertyDescriptor(t, k);
+    const d = Object.getOwnPropertyDescriptor(t, k);
     if (d && "value" in d && d.configurable) d.value = watch(d.value);
     return d;
   },
@@ -303,10 +318,18 @@ const membrane = {
   },
 };
 
+// `util.types.isProxy`, read through a local name: V8's side-effect-free
+// mode refuses any function that reads an imported binding.
+const isProxy = utilTypes.isProxy;
+
 function watch(v) {
-  if (v === null || typeof v !== "object" || targetOf.has(v) || utilTypes.isProxy(v)) return v;
+  if (v === null || typeof v !== "object") return v;
+  const made = membraneOf.get(v);
+  if (made !== undefined) return made;
+  if (targetOf.has(v) || isProxy(v)) return v;
   if (v instanceof OriginalDate) {
-    touchedDates.push([v, OriginalDate.prototype.getTime.call(v)]);
+    // A call that runs in V8's side-effect-free mode can't change a Date.
+    if (!fastActive) touchedDates.push([v, OriginalDate.prototype.getTime.call(v)]);
     return v;
   }
   if (!Array.isArray(v) && !isPlainObject11ty(v)) return v;
@@ -759,6 +782,16 @@ function relFile(file) {
 // Run once the call's reply is sent, before the next request.
 function checkAfterCall(labelOf) {
   if (quickRecords === null || exportChange !== null) return;
+  const start = rawPerfNow();
+  try {
+    walkAfterCall(labelOf);
+  } finally {
+    const ms = rawPerfNow() - start;
+    walkMs = walkMs === 0 ? ms : walkMs * 0.9 + ms * 0.1;
+  }
+}
+
+function walkAfterCall(labelOf) {
   const complete = definedOnWatched;
   definedOnWatched = false;
   if (!sameList(protosRecord(), startProtos)) {
@@ -819,7 +852,7 @@ function fromWire(w, shared = new Map()) {
         trapKey(o, k, v.$t);
       } else {
         // A key named `__proto__` is an own property, as in parsed JSON.
-        Object.defineProperty(o, k, { value: fromWire(v, shared), writable: true, enumerable: true, configurable: true });
+        defineOwn(o, k, { value: fromWire(v, shared), writable: true, enumerable: true, configurable: true });
       }
     }
     return w.$c ? guarded(o, w.$c) : o;
@@ -1111,17 +1144,26 @@ async function makeTemplate(filePath) {
   return { inst, data };
 }
 
-// One line from Brrrty's answers pipe, waiting for it.
-const answerBuf = Buffer.alloc(65536);
-let answerPending = Buffer.alloc(0);
+// One line from Brrrty's answers pipe (an answer, or on Unix the next
+// request), waiting for it. The line's pieces are kept as read and joined
+// once, so a long request costs its length, not its length squared.
+const answerBuf = Buffer.alloc(1 << 20);
+let answerChunks = [];
+let answerRest = null;
 
 function readAnswer() {
   for (;;) {
-    const nl = answerPending.indexOf(10);
-    if (nl !== -1) {
-      const line = answerPending.subarray(0, nl).toString("utf8");
-      answerPending = answerPending.subarray(nl + 1);
-      return line;
+    if (answerRest !== null) {
+      const nl = answerRest.indexOf(10);
+      if (nl !== -1) {
+        answerChunks.push(answerRest.subarray(0, nl));
+        answerRest = nl + 1 < answerRest.length ? answerRest.subarray(nl + 1) : null;
+        const line = answerChunks.length === 1 ? answerChunks[0].toString("utf8") : Buffer.concat(answerChunks).toString("utf8");
+        answerChunks = [];
+        return line;
+      }
+      answerChunks.push(answerRest);
+      answerRest = null;
     }
     let n;
     try {
@@ -1134,7 +1176,7 @@ function readAnswer() {
       throw e;
     }
     if (n === 0) throw new Error("Brrrty closed its answers");
-    answerPending = Buffer.concat([answerPending, answerBuf.subarray(0, n)]);
+    answerRest = Buffer.from(answerBuf.subarray(0, n));
   }
 }
 
@@ -1189,31 +1231,39 @@ function filterFunctions() {
 const LAYOUT_PAGE =
   "reads `this.page` in a JavaScript layout, which 11ty sets from whichever page renders the layout first, and its pages render at the same time";
 
+// A render's setup: what 11ty puts on the template's instance before it
+// calls `render`. The data, watched, to call it with.
+function renderSetup(t, data, first) {
+  refusedInCall = null;
+  takeWrote();
+  const inst = t.inst;
+  const wdata = watch(data);
+  if (t.layout) {
+    if (!t.pageSet) {
+      t.pageSet = true;
+      if (!inst.page) trapKey(inst, "page", LAYOUT_PAGE);
+    }
+  } else if (!inst.page) {
+    const page = first !== undefined ? watch(first) : wdata.page;
+    if (page) inst.page = page;
+  }
+  if (!inst.eleventy) {
+    const eleventy = wdata.eleventy;
+    if (eleventy) inst.eleventy = eleventy;
+  }
+  Object.assign(inst, filterFunctions());
+  return wdata;
+}
+
 // One render, as the function `JavaScript.compile()` returns: `page` and
 // `eleventy` added to the instance unless it has them (so `this.page` is
 // the first page's: Brrrty sends page 0's page as `first`), the filters
 // assigned, then `render` called and awaited.
 async function renderTemplate(t, data, first) {
-  refusedInCall = null;
-  takeWrote();
   const inst = t.inst;
-  const wdata = watch(data);
   let value;
   try {
-    if (t.layout) {
-      if (!t.pageSet) {
-        t.pageSet = true;
-        if (!inst.page) trapKey(inst, "page", LAYOUT_PAGE);
-      }
-    } else if (!inst.page) {
-      const page = first !== undefined ? watch(first) : wdata.page;
-      if (page) inst.page = page;
-    }
-    if (!inst.eleventy) {
-      const eleventy = wdata.eleventy;
-      if (eleventy) inst.eleventy = eleventy;
-    }
-    Object.assign(inst, filterFunctions());
+    const wdata = renderSetup(t, data, first);
     value = inst.render.call(inst, wdata);
     if (Buffer.isBuffer(value)) value = value.toString();
     if (value && typeof value.then === "function") {
@@ -1303,12 +1353,12 @@ function refuse(why) {
 }
 
 function trapKey(o, k, why) {
-  Object.defineProperty(o, k, {
+  defineOwn(o, k, {
     get() {
       throw refuse(why);
     },
     set(v) {
-      Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
+      defineOwn(o, k, { value: v, writable: true, enumerable: true, configurable: true });
     },
     enumerable: true,
     configurable: true,
@@ -1482,9 +1532,429 @@ function filtersThis(computed) {
   return out;
 }
 
+// --- The fast path: a call proven to change nothing needs no walk. ---
+//
+// After a call, `checkAfterCall` walks every value the data files gave,
+// which costs as much as the data is large, once per call. A call V8 runs
+// in its side-effect-free mode (the inspector's `throwOnSideEffect`, which
+// DevTools' eager evaluation relies on) can change no object that existed
+// before it: V8 stops it, before the write, at anything it can't prove
+// changes only objects the call made itself (a property set, `push`, a
+// closure's variable, a native function it doesn't know), and the site's
+// code can't catch that stop. So when the values were as they loaded just
+// before such a call, they still are after it, and its walk would find
+// nothing. A call V8 stops, or that throws, runs again the usual way (the
+// stopped run changed nothing), and is walked.
+//
+// "As they loaded just before": a walk passed, and no site code has run
+// since outside such calls. The site's code runs in requests that aren't
+// fast, which set `siteDirty`; and, between requests, in timers and
+// promises it left behind, which can't run here: requests are read
+// blocking, so the event loop turns only while a request that isn't fast
+// waits (see `serve`). A fast call after anything else walks first.
+//
+// The data's code also runs in what the worker does with a fast call's
+// result: a getter read as it is encoded, a property on the way to where a
+// computed value is set. So a fast result must encode without one (see
+// `encodesQuietly`), and a call whose data or `this` could run code where
+// the worker reads it isn't made fast. Values with getters, or Proxies,
+// among the data files' values turn the fast path off: the walk itself
+// would run their code.
+
+const FAST = process.env.BRRRTY_JS_FAST || "auto"; // "auto" | "always" | "verify" | "off"
+// A walk this short costs less than a fast call.
+const FAST_MIN_WALK_MS = 0.15;
+const NOT_FAST = Symbol("not fast");
+let fastSession = null;
+let fastOk = false;
+let fastThunk = null;
+let fastActive = false;
+let fastTaken = NOT_FAST;
+let fastCount = 0;
+// Set when the site's code may have run since the last walk.
+let siteDirty = true;
+// Set when the request just handled was fast: no walk after it.
+let fastHandled = false;
+let walkMs = 0;
+const fastStats = new WeakMap();
+const prewatched = new WeakSet();
+
+function fastRun() {
+  return fastThunk();
+}
+defineOwn(fastRun, "take", { value: (v) => { fastTaken = v; } });
+
+// Turn the fast path on at the start of the pages' calls, when it can be.
+function fastStart() {
+  if (FAST === "off" || answersFd === null || quickRecords === null || !plainValues()) return;
+  try {
+    fastSession = new inspector.Session();
+    fastSession.connect();
+    defineOwn(globalThis, "__brrrtyFast", { value: fastRun, writable: false, enumerable: false, configurable: false });
+  } catch {
+    fastSession = null;
+    return;
+  }
+  fastOk = true;
+}
+
+// Whether the data files' values hold no getter (of any key) and no Proxy:
+// walking them runs none of the site's code.
+function plainValues() {
+  const seen = new Set();
+  const stack = [...loadedRoots.keys()];
+  while (stack.length) {
+    const x = stack.pop();
+    if (x === null || typeof x !== "object" || seen.has(x)) continue;
+    seen.add(x);
+    if (utilTypes.isProxy(x)) return false;
+    for (const k of Reflect.ownKeys(x)) {
+      const d = Object.getOwnPropertyDescriptor(x, k);
+      if (!("value" in d)) return false;
+      stack.push(d.value);
+    }
+  }
+  return true;
+}
+
+// Whether to try `key` (a function or template) fast.
+function fastWorth(key) {
+  if (!fastOk || exportChange !== null) return false;
+  if (FAST === "auto" && walkMs < FAST_MIN_WALK_MS) return false;
+  const st = fastStats.get(key);
+  return st === undefined || !st.off;
+}
+
+function fastNote(key, ok, ms) {
+  let st = fastStats.get(key);
+  if (st === undefined) {
+    st = { ok: 0, failed: 0, slow: 0, off: false };
+    fastStats.set(key, st);
+  }
+  if (FAST !== "auto") return;
+  if (ok) {
+    st.ok += 1;
+    st.failed = 0;
+    st.slow = ms > walkMs * 2 ? st.slow + 1 : 0;
+  } else {
+    st.failed += 1;
+  }
+  // One V8 stops every time, or that runs slower than a walk: not worth it.
+  if ((st.failed >= 3 && st.ok === 0) || st.failed >= 8 || st.slow >= 4) st.off = true;
+}
+
+// Before a fast call: the walk, if the site's code may have run since the
+// last. False when it found a change.
+function fastReady(labelOf) {
+  if (siteDirty) {
+    checkAfterCall(labelOf);
+    siteDirty = false;
+  }
+  return exportChange === null;
+}
+
+// Make, now, the membranes a call's reads would make (so it needn't, in
+// V8's side-effect-free mode, where it can't): of every plain object and
+// list `root` holds.
+function prewatch(root) {
+  const stack = [root];
+  while (stack.length) {
+    const v = stack.pop();
+    if (v === null || typeof v !== "object" || prewatched.has(v)) continue;
+    prewatched.add(v);
+    const target = targetOf.get(v);
+    if (target !== undefined) {
+      stack.push(target);
+      continue;
+    }
+    if (utilTypes.isProxy(v) || (!Array.isArray(v) && !isPlainObject11ty(v))) continue;
+    watch(v);
+    for (const k of Reflect.ownKeys(v)) {
+      const d = Object.getOwnPropertyDescriptor(v, k);
+      if (d && "value" in d) stack.push(d.value);
+    }
+  }
+}
+
+// Run `thunk` in V8's side-effect-free mode, for at most `ms`: what it
+// returns, or NOT_FAST when V8 stopped it, it threw, or it ran too long.
+function fastEval(thunk, ms) {
+  let msg = null;
+  fastThunk = thunk;
+  fastActive = true;
+  try {
+    fastSession.post("Runtime.evaluate", { expression: "[__brrrtyFast()]", throwOnSideEffect: true, objectGroup: "brrrty", timeout: ms, silent: true }, (e, r) => {
+      msg = e ? null : r;
+    });
+  } catch {
+    msg = null;
+  } finally {
+    fastActive = false;
+    fastThunk = null;
+  }
+  if (msg === null || msg.exceptionDetails || !msg.result || typeof msg.result.objectId !== "string") return NOT_FAST;
+  // The value itself, not the inspector's copy of it.
+  fastTaken = NOT_FAST;
+  fastSession.post("Runtime.callFunctionOn", { objectId: msg.result.objectId, functionDeclaration: "function () { __brrrtyFast.take(this[0]); }", silent: true }, () => {});
+  if (++fastCount % 64 === 0) fastSession.post("Runtime.releaseObjectGroup", { objectGroup: "brrrty" }, () => {});
+  return fastTaken;
+}
+
+function fastBudget() {
+  if (FAST !== "auto") return 10000;
+  return Math.min(1000, Math.max(5, Math.ceil(walkMs * 4)));
+}
+
+// Whether the worker encodes `root` (see `encodeValue`) without reading a
+// getter: every plain object's and list's values are data properties, and
+// the constructor (and its name) of anything else, which a refusal names,
+// is plain data too. Run in V8's side-effect-free mode, so a Proxy's traps
+// are run there; `encodeValue` refuses a Proxy without reading it.
+function encodesQuietly(root) {
+  const seen = new Set();
+  const stack = [root, 0];
+  while (stack.length) {
+    const depth = stack.pop();
+    let v = stack.pop();
+    if (v === null || typeof v !== "object" || depth > MAX_DEPTH) continue;
+    const target = targetOf.get(v);
+    if (target !== undefined) v = target;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    const proto = Object.getPrototypeOf(v);
+    if (proto === OriginalDate.prototype) continue;
+    let keys = null;
+    if (Array.isArray(v) && proto === Array.prototype) {
+      keys = [];
+      for (let i = 0; i < v.length; i++) keys.push(i);
+    } else if (proto === Object.prototype || proto === null) {
+      keys = Object.keys(v);
+    }
+    if (keys !== null) {
+      for (const k of keys) {
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if (d === undefined) continue;
+        if (!("value" in d)) return false;
+        stack.push(d.value, depth + 1);
+      }
+      continue;
+    }
+    const c = Object.getOwnPropertyDescriptor(proto, "constructor");
+    if (c === undefined) continue;
+    if (!("value" in c)) return false;
+    if (typeof c.value === "function" && !plainData(c.value, "name")) return false;
+  }
+  return true;
+}
+
+// Whether reading `k` of `o` reads a data property (or nothing): no getter
+// on `o` or its prototypes.
+function plainData(o, k) {
+  for (let x = o; x !== null; x = Object.getPrototypeOf(x)) {
+    const d = Object.getOwnPropertyDescriptor(x, k);
+    if (d !== undefined) return "value" in d;
+  }
+  return true;
+}
+
+// What a call gives, checked in V8's side-effect-free mode: NOT_FAST for a
+// promise (it is awaited the usual way) or a value that would run code as
+// it is encoded.
+function fastResult(v) {
+  if (v !== null && (typeof v === "object" || typeof v === "function")) {
+    if (typeof v.then === "function") return NOT_FAST;
+    if (!encodesQuietly(v)) return NOT_FAST;
+  }
+  return v;
+}
+
+// Try `run` (the call, its membranes made) fast for `key`, after the walk
+// it may need: its result, or NOT_FAST.
+function fastTry(key, roots, run, labelOf) {
+  if (!fastWorth(key) || !fastReady(labelOf)) return NOT_FAST;
+  for (const r of roots) prewatch(r);
+  refusedInCall = null;
+  takeWrote();
+  const start = rawPerfNow();
+  const v = fastEval(() => fastResult(run()), fastBudget());
+  const ok = v !== NOT_FAST && !wrote && refusedInCall === null;
+  fastNote(key, ok, rawPerfNow() - start);
+  return ok ? v : NOT_FAST;
+}
+
+// After a fast call in `verify` mode (tests): the walk, which must find
+// nothing.
+function fastVerify(labelOf) {
+  if (FAST !== "verify") return;
+  checkAfterCall(labelOf);
+  if (exportChange !== null) exportChange = `Brrrty's fast path missed a change: ${exportChange}`;
+}
+
+function handleCall(req) {
+  const fn = getHandle(req.handle);
+  const shared = new Map();
+  const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this, shared);
+  const args = (req.args || []).map((a) => fromWire(a, shared));
+  const settle = req.await ? "await" : "asIs";
+  const label = () => describeFn(fn);
+  if (fastWorth(fn)) {
+    const wthis = watch(thisArg);
+    const wargs = args.map(watch);
+    const v = fastTry(fn, [thisArg, ...args], () => fn.apply(wthis, wargs), label);
+    if (v !== NOT_FAST) {
+      const text = fastText(v);
+      if (text !== null) {
+        fastHandled = true;
+        fastVerify(label);
+        return { okText: text };
+      }
+    }
+  }
+  return runOnce(fn, thisArg, args, settle).then((r) => (r.refused !== undefined ? { refused: r.refused, impure: r.impure, dropShared: r.dropShared } : { okText: r.okText }));
+}
+
+// A fast result as JSON text, or null when it can't cross (a refusal
+// names the function, which reads it: that goes the usual way).
+function fastText(v) {
+  try {
+    return JSON.stringify(encodeValue(unwrapProxy(v), register));
+  } catch (e) {
+    if (e && e.brrrtyRefusal) return null;
+    throw e;
+  }
+}
+
+function handlePageCall(req) {
+  const p = getPage(req.page);
+  const fn = getHandle(req.handle);
+  const set = typeof req.set === "string" ? req.set : null;
+  const label = () => describeFn(fn);
+  // A dotted key is set through what the page's data holds on the way: only
+  // the worker's own objects, unless an earlier call put one of its own there.
+  if (fastWorth(fn) && (set === null || !set.includes(".") || !p.siteObjects)) {
+    const thisArg = filtersThis(set !== null);
+    const wthis = watch(thisArg);
+    const wdata = watch(p.data);
+    const v = fastTry(fn, [p.data], () => fn.apply(wthis, [wdata]), label);
+    if (v !== NOT_FAST) {
+      const text = fastText(v);
+      if (text !== null) {
+        fastHandled = true;
+        if (set !== null) {
+          if (throughList(p.data, set)) return { refused: `computed key \`${set}\` would be set inside a list, which Brrrty doesn't do` };
+          const value = unwrapProxy(v);
+          if (value !== null && typeof value === "object") p.siteObjects = true;
+          ownPath(p.data, set);
+          lodashSet(p.data, set, value);
+        }
+        fastVerify(label);
+        return { okText: text };
+      }
+    }
+  }
+  return (async () => {
+    // A computed value is set where it goes; a plain permalink isn't.
+    const r = await runOnce(fn, filtersThis(set !== null), [p.data], "await");
+    if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
+    if (set !== null) {
+      if (throughList(p.data, set)) return { refused: `computed key \`${set}\` would be set inside a list, which Brrrty doesn't do` };
+      if (r.value !== null && typeof r.value === "object") p.siteObjects = true;
+      ownPath(p.data, set);
+      lodashSet(p.data, set, r.value);
+    }
+    return { okText: r.okText };
+  })();
+}
+
+// Whether a render's setup (its `page`, `eleventy` and filters put on the
+// template's instance, its `render` read) runs none of the template's
+// code: data properties all the way.
+function renderQuiet(inst) {
+  if (inst === null || typeof inst !== "object" || utilTypes.isProxy(inst) || !Object.isExtensible(inst)) return false;
+  for (const k of ["page", "eleventy", "render", ...filterNames]) if (!plainData(inst, k)) return false;
+  const r = inst.render;
+  return typeof r === "function" && !utilTypes.isProxy(r) && plainData(r, "call");
+}
+
+function handleRender(req) {
+  const t = templates[req.template];
+  if (!t) throw new Error(`no template ${req.template}`);
+  const shared = new Map();
+  const data = fromWire(req.data, shared);
+  for (const [k, why] of req.traps || []) trapKey(data, k, why);
+  const first = req.first === undefined ? undefined : fromWire(req.first, shared);
+  if (fastWorth(t) && renderQuiet(t.inst)) {
+    const label = () => describeRender(t.inst);
+    const inst = t.inst;
+    let wdata;
+    try {
+      wdata = renderSetup(t, data, first);
+    } catch {
+      return renderTemplate(t, data, first);
+    }
+    const v = fastTry(t, [data, ...(first === undefined ? [] : [first])], () => {
+      const out = inst.render.call(inst, wdata);
+      // A string: anything else goes the usual way.
+      return typeof out === "string" ? out : NOT_FAST;
+    }, label);
+    if (v !== NOT_FAST) {
+      fastHandled = true;
+      fastVerify(label);
+      return { okText: JSON.stringify(encodeValue(v, register)) };
+    }
+  }
+  return renderTemplate(t, data, first);
+}
+
+async function handleLoad(req) {
+  const state = { changed: false };
+  let value;
+  try {
+    value = await getDataValue(req.path, req.call, state);
+  } catch (e) {
+    throw placeSyntaxError(e, req.path);
+  }
+  if (state.changed) {
+    return { changedArgument: true };
+  }
+  const root = rootValue(value);
+  if (root !== null && typeof root === "object" && !loadedRoots.has(root)) {
+    loadedRoots.set(root, req.path);
+    loadRecords.set(root, completeRecord(root, false));
+  }
+  // A file loaded per template often gives the same data each time:
+  // say so instead of sending it again.
+  const text = JSON.stringify(encodeValue(root, register));
+  const key = `${req.call ? "call" : "raw"}:${req.path}`;
+  if (lastSent.get(key) === text) return { same: true };
+  lastSent.set(key, text);
+  return { okText: text };
+}
+
+// The complete walk at the end of the build, and what else it reports.
+function exportsFinal() {
+  if (strayFilter !== null) return { refused: strayFilter, impure: true };
+  if (exportChange !== null) return { refused: exportChange, impure: true };
+  if (quickRecords === null) return { ok: null };
+  for (const [v, file] of loadedRoots) {
+    if (!sameList(completeRecord(v, false), loadRecords.get(v))) {
+      return {
+        refused: `a function from the data changes the data ${relFile(file)} gives (a property it defines, or one with a symbol key), which 11ty's templates then show changed; Brrrty's templates show the data as it loaded, so the pages would differ`,
+        impure: true,
+      };
+    }
+  }
+  if (!sameList(protosRecord(), startProtos)) {
+    return { refused: "a function from the data changes one of JavaScript's built-in prototypes (`Array.prototype` and the like), which 11ty's templates use and Brrrty's don't", impure: true };
+  }
+  return { ok: null };
+}
+
 // --- The request loop. ---
 
-async function handle(req) {
+// Handle one request: its reply, or a promise of it when it waits on
+// something.
+function handle(req) {
   switch (req.op) {
     case "setArg": {
       const arg = fromWire(req.value);
@@ -1493,39 +1963,10 @@ async function handle(req) {
       argumentText = undefined;
       return { ok: null };
     }
-    case "load": {
-      const state = { changed: false };
-      let value;
-      try {
-        value = await getDataValue(req.path, req.call, state);
-      } catch (e) {
-        throw placeSyntaxError(e, req.path);
-      }
-      if (state.changed) {
-        return { changedArgument: true };
-      }
-      const root = rootValue(value);
-      if (root !== null && typeof root === "object" && !loadedRoots.has(root)) {
-        loadedRoots.set(root, req.path);
-        loadRecords.set(root, completeRecord(root, false));
-      }
-      // A file loaded per template often gives the same data each time:
-      // say so instead of sending it again.
-      const text = JSON.stringify(encodeValue(root, register));
-      const key = `${req.call ? "call" : "raw"}:${req.path}`;
-      if (lastSent.get(key) === text) return { same: true };
-      lastSent.set(key, text);
-      return { okText: text };
-    }
-    case "call": {
-      const fn = getHandle(req.handle);
-      const shared = new Map();
-      const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this, shared);
-      const args = (req.args || []).map((a) => fromWire(a, shared));
-      const r = await runOnce(fn, thisArg, args, req.await ? "await" : "asIs");
-      if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
-      return { okText: r.okText };
-    }
+    case "load":
+      return handleLoad(req);
+    case "call":
+      return handleCall(req);
     case "callsBegin": {
       // The data files are loaded: from here on the clock marks a call.
       clockPhase = "calls";
@@ -1541,6 +1982,7 @@ async function handle(req) {
           loadRecords.set(v, completeRecord(v, true));
         }
         quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v)]));
+        fastStart();
       }
       return { ok: { clock: clockRecord, handles: handles.length, changed, protos } };
     }
@@ -1557,23 +1999,14 @@ async function handle(req) {
       }
       return { okText: JSON.stringify(encodeValue(out, register)) };
     }
-    case "exportsFinal": {
-      if (strayFilter !== null) return { refused: strayFilter, impure: true };
-      if (exportChange !== null) return { refused: exportChange, impure: true };
-      if (quickRecords === null) return { ok: null };
-      for (const [v, file] of loadedRoots) {
-        if (!sameList(completeRecord(v, false), loadRecords.get(v))) {
-          return {
-            refused: `a function from the data changes the data ${relFile(file)} gives (a property it defines, or one with a symbol key), which 11ty's templates then show changed; Brrrty's templates show the data as it loaded, so the pages would differ`,
-            impure: true,
-          };
-        }
-      }
-      if (!sameList(protosRecord(), startProtos)) {
-        return { refused: "a function from the data changes one of JavaScript's built-in prototypes (`Array.prototype` and the like), which 11ty's templates use and Brrrty's don't", impure: true };
-      }
-      return { ok: null };
-    }
+    case "exportsFinal":
+      return (async () => {
+        // What the site left running gets its turns first, as it would
+        // have between requests.
+        for (let i = 0; i < 3; i++) await nextTurn();
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return exportsFinal();
+      })();
     case "describe":
       return { ok: describeFn(getHandle(req.handle)) };
     case "feedCalls": {
@@ -1601,37 +2034,27 @@ async function handle(req) {
       pages.set(nextPage, { data });
       return { ok: nextPage };
     }
-    case "pageVars": {
-      const p = getPage(req.page);
-      const fn = getHandle(req.handle);
-      const proxy = new ComputedDataProxy(req.keys);
-      const thisArg = filtersThis(true);
-      refusedInCall = null;
-      let vars;
-      try {
-        vars = await proxy.findVarsUsed((d) => fn.call(thisArg, d), p.data);
-      } catch (e) {
+    case "pageVars":
+      return (async () => {
+        const p = getPage(req.page);
+        const fn = getHandle(req.handle);
+        const proxy = new ComputedDataProxy(req.keys);
+        const thisArg = filtersThis(true);
+        refusedInCall = null;
+        let vars;
+        try {
+          vars = await proxy.findVarsUsed((d) => fn.call(thisArg, d), p.data);
+        } catch (e) {
+          const failed = callRefusal(fn);
+          if (failed) return failed;
+          throw e;
+        }
         const failed = callRefusal(fn);
         if (failed) return failed;
-        throw e;
-      }
-      const failed = callRefusal(fn);
-      if (failed) return failed;
-      return { ok: vars.map((v) => toWellFormed(String(v))) };
-    }
-    case "pageCall": {
-      const p = getPage(req.page);
-      const fn = getHandle(req.handle);
-      // A computed value is set where it goes; a plain permalink isn't.
-      const r = await runOnce(fn, filtersThis(typeof req.set === "string"), [p.data], "await");
-      if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
-      if (typeof req.set === "string") {
-        if (throughList(p.data, req.set)) return { refused: `computed key \`${req.set}\` would be set inside a list, which Brrrty doesn't do` };
-        ownPath(p.data, req.set);
-        lodashSet(p.data, req.set, r.value);
-      }
-      return { okText: r.okText };
-    }
+        return { ok: vars.map((v) => toWellFormed(String(v))) };
+      })();
+    case "pageCall":
+      return handlePageCall(req);
     case "pageSet": {
       const p = getPage(req.page);
       if (throughList(p.data, req.key)) return { refused: `computed key \`${req.key}\` would be set inside a list, which Brrrty doesn't do` };
@@ -1649,46 +2072,40 @@ async function handle(req) {
     }
     case "templateLoad":
       return loadTemplate(req);
-    case "preload": {
-      // The replay check: run the module code of these templates and data
-      // files now, in this order (each handed the clock and random values
-      // it read the first time), as 11ty runs each when its file finishes
-      // loading. Their loads then take what this made.
-      const consumed = [];
-      for (const item of req.items || []) {
-        const saved = clockFeed;
-        clockFeed = Array.isArray(item.feed) ? item.feed.slice() : [];
-        const before = clockFeed.length;
-        try {
-          if (item.kind === "template") {
-            try {
-              preloaded.set(item.path, { made: await makeTemplate(item.path) });
-            } catch (e) {
-              preloaded.set(item.path, { error: e });
+    case "preload":
+      return (async () => {
+        // The replay check: run the module code of these templates and data
+        // files now, in this order (each handed the clock and random values
+        // it read the first time), as 11ty runs each when its file finishes
+        // loading. Their loads then take what this made.
+        const consumed = [];
+        for (const item of req.items || []) {
+          const saved = clockFeed;
+          clockFeed = Array.isArray(item.feed) ? item.feed.slice() : [];
+          const before = clockFeed.length;
+          try {
+            if (item.kind === "template") {
+              try {
+                preloaded.set(item.path, { made: await makeTemplate(item.path) });
+              } catch (e) {
+                preloaded.set(item.path, { error: e });
+              }
+            } else if (fs.existsSync(item.path)) {
+              try {
+                await dynamicImportAbsolutePath(item.path, dataType(item.path));
+              } catch {
+                // Its load reports it.
+              }
             }
-          } else if (fs.existsSync(item.path)) {
-            try {
-              await dynamicImportAbsolutePath(item.path, dataType(item.path));
-            } catch {
-              // Its load reports it.
-            }
+          } finally {
+            consumed.push(before - clockFeed.length);
+            clockFeed = saved;
           }
-        } finally {
-          consumed.push(before - clockFeed.length);
-          clockFeed = saved;
         }
-      }
-      return { ok: consumed };
-    }
-    case "render": {
-      const t = templates[req.template];
-      if (!t) throw new Error(`no template ${req.template}`);
-      const shared = new Map();
-      const data = fromWire(req.data, shared);
-      for (const [k, why] of req.traps || []) trapKey(data, k, why);
-      const first = req.first === undefined ? undefined : fromWire(req.first, shared);
-      return renderTemplate(t, data, first);
-    }
+        return { ok: consumed };
+      })();
+    case "render":
+      return handleRender(req);
     case "reads":
       return { ok: allReads() };
     case "info":
@@ -1698,40 +2115,44 @@ async function handle(req) {
   }
 }
 
-let queue = Promise.resolve();
-const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on("line", (line) => {
-  queue = queue.then(async () => {
-    let req;
-    try {
-      req = JSON.parse(line);
-    } catch {
-      frame({ id: null, protocol: "a request that isn't JSON" });
-      return;
-    }
-    if (req.op === "bye") process.exit(0);
-    let reply;
-    // A call's clock and random reads, recorded, or handed back on a replay.
-    const calling = clockPhase === "calls";
-    if (calling) {
-      callClock = [];
-      clockFeed = Array.isArray(req.feed) ? req.feed.slice() : null;
-    }
-    // A load's own reads, recorded with its reply, and handed back to it
-    // alone when the replay check sends them.
-    const loadStart = clockRecord.length;
-    const savedFeed = clockFeed;
-    if (!calling && Array.isArray(req.feed)) clockFeed = req.feed.slice();
-    try {
-      activeRequest = req.id;
-      reply = await requestContext.run({ id: req.id, template: req.template }, () => handle(req));
-    } catch (e) {
-      reply = e && e.brrrtyRefusal
-        ? { refused: `a function ${e.brrrtyRefusal}` }
-        : e && e.brrrtyInvalid
-          ? { invalid: toWellFormed(String(e.message)) }
-          : { thrown: thrown(e) };
-    }
+// One turn of the event loop: timers due and I/O ready run.
+function nextTurn() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// How often, in ms, the event loop turns between requests: often, unless
+// fast calls are saving walks, as a turn costs a fast call a walk.
+function turnMs() {
+  return fastOk ? Math.max(2, walkMs * 10) : 2;
+}
+
+// Ops that run none of the site's code.
+const QUIET_OPS = new Set(["pageOpen", "pageSet", "pageClose", "info", "reads", "feedCalls", "feedClock"]);
+
+// The reply for an error a request's handling threw.
+function replyFor(e) {
+  return e && e.brrrtyRefusal
+    ? { refused: `a function ${e.brrrtyRefusal}` }
+    : e && e.brrrtyInvalid
+      ? { invalid: toWellFormed(String(e.message)) }
+      : { thrown: thrown(e) };
+}
+
+// Handle one request and send its reply: at once, or (a promise) when the
+// request waits on something.
+function serveRequest(req) {
+  // A call's clock and random reads, recorded, or handed back on a replay.
+  const calling = clockPhase === "calls";
+  if (calling) {
+    callClock = [];
+    clockFeed = Array.isArray(req.feed) ? req.feed.slice() : null;
+  }
+  // A load's own reads, recorded with its reply, and handed back to it
+  // alone when the replay check sends them.
+  const loadStart = clockRecord.length;
+  const savedFeed = clockFeed;
+  if (!calling && Array.isArray(req.feed)) clockFeed = req.feed.slice();
+  const done = (reply) => {
     if (calling) {
       clockFeed = null;
       if (callClock.length) reply = { ...reply, clock: callClock };
@@ -1744,6 +2165,10 @@ lines.on("line", (line) => {
     }
     activeRequest = null;
     frame({ id: req.id, ...reply });
+    const fast = fastHandled;
+    fastHandled = false;
+    if (fast) return undefined;
+    if (!QUIET_OPS.has(req.op)) siteDirty = true;
     // What the call changed, checked once its reply is on its way.
     if (calling && (req.op === "call" || req.op === "pageCall" || req.op === "pageVars")) {
       checkAfterCall(() =>
@@ -1753,6 +2178,78 @@ lines.on("line", (line) => {
     if (calling && req.op === "render") {
       checkAfterCall(() => (templates[req.template] ? describeRender(templates[req.template].inst) : "a JavaScript template"));
     }
+    return undefined;
+  };
+  fastHandled = false;
+  activeRequest = req.id;
+  let reply;
+  try {
+    reply = requestContext.run({ id: req.id, template: req.template }, () => handle(req));
+  } catch (e) {
+    fastHandled = false;
+    return done(replyFor(e));
+  }
+  if (reply !== null && typeof reply === "object" && typeof reply.then === "function") {
+    return reply.then(done, (e) => {
+      fastHandled = false;
+      return done(replyFor(e));
+    });
+  }
+  return done(reply);
+}
+
+// One request line: undefined once it is answered, or a promise.
+function serveLine(line) {
+  let req;
+  try {
+    req = JSON.parse(line);
+  } catch {
+    frame({ id: null, protocol: "a request that isn't JSON" });
+    return undefined;
+  }
+  if (req.op === "bye") {
+    // Tests check the fast path ran.
+    if (FAST === "verify" && quickRecords !== null) process.stderr.write(`brrrty-js-fast: ${fastCount} fast\n`);
+    process.exit(0);
+  }
+  return serveRequest(req);
+}
+
+if (answersFd !== null) {
+  // Requests come on the answers pipe, read blocking: between requests the
+  // event loop doesn't turn, so code the site left running (a timer, a
+  // promise) runs only while a request waits on something, never between
+  // a fast call and the walk before it (see `fastTry`). A timer that never
+  // fires keeps Node running while a request waits on a promise that never
+  // settles (as stdin's stream would): the request's deadline ends it.
+  setInterval(() => {}, 2 ** 30);
+  (async () => {
+    let lastTurn = rawPerfNow();
+    for (;;) {
+      let line;
+      try {
+        line = readAnswer();
+      } catch {
+        process.exit(0);
+      }
+      const p = serveLine(line);
+      if (p !== undefined) await p;
+      // The event loop turns between requests at least every `turnMs()`,
+      // so what the site left running (a timer, a fetch it didn't wait
+      // for) still runs as the build goes, as it would between requests;
+      // a fast call after a turn walks first.
+      if (rawPerfNow() - lastTurn >= turnMs()) {
+        await nextTurn();
+        lastTurn = rawPerfNow();
+        siteDirty = true;
+      }
+    }
+  })();
+} else {
+  let queue = Promise.resolve();
+  const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  lines.on("line", (line) => {
+    queue = queue.then(() => serveLine(line));
   });
-});
-lines.on("close", () => process.exit(0));
+  lines.on("close", () => process.exit(0));
+}
