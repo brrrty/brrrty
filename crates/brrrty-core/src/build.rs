@@ -3382,9 +3382,49 @@ fn build_once(
     }
     // A function whose results depended on the order of calls makes any
     // page's result from it differ from 11ty's: write nothing.
-    if let Some(c) = &js_calls {
-        c.verify();
+    //
+    // The check takes a while (it runs every call again, in other
+    // orders), and the pages are ready: meanwhile each is written to a
+    // folder of its own inside the output folder, under a number, and
+    // moved to its place once the check passes. If it doesn't, the
+    // folder goes and nothing was written.
+    let stage = (js_calls.is_some() && !mode.dry_run)
+        .then(|| out.join(format!(".brrrty-stage-{}", std::process::id())));
+    let staged: Vec<Option<u64>> = std::thread::scope(|s| {
+        let staging = stage.as_ref().map(|stage| {
+            let ready = &ready;
+            s.spawn(move || -> Vec<Option<u64>> {
+                if fs::create_dir_all(stage).is_err() {
+                    return Vec::new();
+                }
+                crate::io_threads::install(|| {
+                    ready
+                        .par_iter()
+                        .enumerate()
+                        .map(|(n, r)| {
+                            let (_, _, html, _, _) = r.as_ref().ok()?;
+                            fs::write(stage.join(n.to_string()), html).ok()?;
+                            Some(content_hash(html.as_bytes()))
+                        })
+                        .collect()
+                })
+            })
+        });
+        if let Some(c) = &js_calls {
+            c.verify();
+        }
+        staging.and_then(|t| t.join().ok()).unwrap_or_default()
+    });
+    // Whatever is left of the folder goes when this does.
+    struct Staged(Option<PathBuf>);
+    impl Drop for Staged {
+        fn drop(&mut self) {
+            if let Some(stage) = &self.0 {
+                let _ = fs::remove_dir_all(stage);
+            }
+        }
     }
+    let stage = Staged(stage);
     let stop = js_stop(js_calls.as_ref());
     if !stop.is_empty() {
         report.problems.extend(stop);
@@ -3411,7 +3451,8 @@ fn build_once(
     let results: Vec<Written> = crate::io_threads::install(|| {
         ready
             .into_par_iter()
-            .map(|r| -> Written {
+            .enumerate()
+            .map(|(n, r)| -> Written {
                 let (i, dest, html, shown, _) = r?;
                 if mode.dry_run {
                     return Ok((i, content_hash(html.as_bytes())));
@@ -3427,6 +3468,13 @@ fn build_once(
                             None,
                         )
                     })?;
+                }
+                // Written already, while the check ran: it moves to its
+                // place. (Should the move fail, it is written here.)
+                if let (Some(stage), Some(Some(hash))) = (&stage.0, staged.get(n))
+                    && fs::rename(stage.join(n.to_string()), &dest).is_ok()
+                {
+                    return Ok((i, *hash));
                 }
                 let hash = content_hash(html.as_bytes());
                 fs::write(&dest, html).map_err(|e| {

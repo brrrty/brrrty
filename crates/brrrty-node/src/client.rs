@@ -527,7 +527,28 @@ pub struct Worker {
     load_handles: u64,
     /// The replay check's two workers, started as soon as there is
     /// something for them to check.
-    replays: Option<[crate::replay::Handle; 2]>,
+    replays: Option<Vec<crate::replay::Handle>>,
+    /// The other Nodes the build's calls run in (see [`Worker::node_for`]),
+    /// and how many Nodes there are to be in all.
+    helpers: Vec<crate::replay::Helper>,
+    nodes: usize,
+    /// Which Node each render's calls go to (0 is this worker's own), and
+    /// each open page's.
+    unit_node: HashMap<u64, usize>,
+    page_node: HashMap<u64, usize>,
+    next_node: usize,
+    /// The Node the request being sent goes to, and the one every part
+    /// of a request sent in parts goes to.
+    target: usize,
+    group_target: usize,
+    /// A render's calls went to another Node.
+    spread: bool,
+    /// Where this worker's own Node's lines go once its calls begin in a
+    /// build of several Nodes: a thread writes them, so that a Node busy
+    /// with a long call doesn't hold up what Brrrty sends the others.
+    writer: Option<mpsc::Sender<Arc<str>>>,
+    /// The calls stay in this worker's own Node from here on.
+    solo: bool,
     /// The longest a request took.
     slowest: Duration,
     /// How long a request may take before the worker is given up on (the
@@ -670,6 +691,12 @@ impl Worker {
         let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
         let tail = stderr_tail.clone();
         let stderr_thread = std::thread::spawn(move || drain_stderr(stderr, tail));
+        // The other Nodes of the build start now, and load as this one does.
+        let nodes = if replay.is_some() {
+            1
+        } else {
+            build_nodes(root)
+        };
         Ok(Worker {
             mux,
             pid,
@@ -699,6 +726,18 @@ impl Worker {
             calls_begun: false,
             load_handles: 0,
             replays: None,
+            helpers: (1..nodes)
+                .map(|_| crate::replay::Helper::start(node, root, run_mode, walk.clone()))
+                .collect(),
+            nodes,
+            unit_node: HashMap::new(),
+            page_node: HashMap::new(),
+            next_node: 0,
+            target: 0,
+            group_target: 0,
+            spread: false,
+            writer: None,
+            solo: false,
             slowest: Duration::ZERO,
             deadline: None,
             last_template: None,
@@ -828,6 +867,7 @@ impl Worker {
     ) -> Vec<JsResult<Decoded>> {
         let mut out = Vec::with_capacity(reqs.len());
         let mut reqs = reqs.into_iter().peekable();
+        let target = std::mem::take(&mut self.group_target);
         while reqs.peek().is_some() {
             // As many as can go in one write. Node may stop reading while
             // it waits for an answer to a question of its own, so what is
@@ -843,6 +883,7 @@ impl Worker {
                 }
                 group.extend(reqs.next());
             }
+            self.target = target;
             let ticket = match self.send(group, what, Shape::List, None) {
                 Ok(t) => t,
                 Err(f) => {
@@ -905,6 +946,12 @@ impl Worker {
                 self.stats.definitions += 1;
                 self.stats.defined += line.len() as u64;
                 self.write_line(line)?;
+                if !handed && self.helpers.iter().any(|h| !h.useless) {
+                    let own: Arc<str> = format!("{line}\n").into();
+                    for h in self.helpers.iter().filter(|h| !h.useless) {
+                        h.line(own.clone());
+                    }
+                }
                 if !dynamic
                     && !handed
                     && let Some(replays) = &self.replays
@@ -922,8 +969,17 @@ impl Worker {
         let ticket = self.next_ticket;
         let mut lines = String::new();
         let mut sent = Vec::with_capacity(reqs.len());
+        // The Node these go to: this worker's own, or one of the others.
+        let target = std::mem::take(&mut self.target);
+        let mux = match target {
+            0 => self.mux.clone(),
+            n => match self.helpers.get(n - 1).and_then(|h| h.mux.clone()) {
+                Some(mux) => mux,
+                None => return Err(self.fail("a Node of the build's is gone")),
+            },
+        };
         {
-            let mut routes = locked(&self.mux.routes);
+            let mut routes = locked(&mux.routes);
             for req in reqs {
                 self.next_id += 1;
                 let id = self.next_id;
@@ -946,14 +1002,22 @@ impl Worker {
             }
         }
         self.stats.sent += lines.len() as u64;
-        let written = locked(&self.mux.stdin)
-            .as_mut()
-            .map(|s| s.write_all(lines.as_bytes()).and_then(|_| s.flush()));
-        if !matches!(written, Some(Ok(()))) {
-            return Err(self.fail("Node stopped reading requests"));
+        if target == 0
+            && let Some(writer) = &self.writer
+        {
+            let _ = writer.send(lines.into());
+        } else if target == 0 {
+            let written = locked(&self.mux.stdin)
+                .as_mut()
+                .map(|s| s.write_all(lines.as_bytes()).and_then(|_| s.flush()));
+            if !matches!(written, Some(Ok(()))) {
+                return Err(self.fail("Node stopped reading requests"));
+            }
+        } else {
+            self.helpers[target - 1].line(lines.into());
         }
         Ok(Ticket {
-            mux: self.mux.clone(),
+            mux,
             rx,
             sent,
             what: what.to_string(),
@@ -1038,6 +1102,9 @@ impl Worker {
                 .unwrap_or_default();
             let clock = frame.as_mut().and_then(|f| f.clock.take());
             if logged(req.op) && !self.calls_begun {
+                for h in self.helpers.iter().filter(|h| !h.useless) {
+                    h.load(&req.text, clock.as_deref(), &body);
+                }
                 self.load_log.push(LoadRecord {
                     text: req.text.into_boxed_str(),
                     kind: match req.op {
@@ -1058,6 +1125,16 @@ impl Worker {
                     .as_ref()
                     .is_some_and(|f| f.head.get("dropShared").is_some());
                 self.dropped |= dropped;
+                if (req.made
+                    || frame.as_ref().is_some_and(|f| f.made)
+                    || req.handle.is_some_and(|h| self.table.made_by_call(h)))
+                    && let Some(f) = self.lone("a call made a function")
+                {
+                    return Finished::Results {
+                        results: vec![JsResult::Failed(f)],
+                        page: None,
+                    };
+                }
                 let at = match &frame {
                     Some(f) => {
                         self.last_seq = self.last_seq.max(f.seq);
@@ -1327,6 +1404,10 @@ impl Worker {
         if let Some(f) = &self.failed {
             return Err(f.clone());
         }
+        if let Some(writer) = &self.writer {
+            let _ = writer.send(format!("{line}\n").into());
+            return Ok(());
+        }
         let mut bytes = Vec::with_capacity(line.len() + 1);
         bytes.extend_from_slice(line.as_bytes());
         bytes.push(b'\n');
@@ -1337,6 +1418,11 @@ impl Worker {
             return Err(self.fail("Node stopped reading requests"));
         }
         Ok(())
+    }
+
+    /// Where this worker's Node's frames go.
+    pub(crate) fn mux(&self) -> Arc<Mux> {
+        self.mux.clone()
     }
 
     /// Node's stdin, for a thread that writes requests ahead of their
@@ -1517,6 +1603,68 @@ impl Worker {
     /// Start the replay check's two workers: they load the data again, in
     /// their own orders, while this one goes on, and are sent every value
     /// this one defines as it defines it.
+    /// The Node the calls of the render on this thread go to.
+    ///
+    /// One Node runs one call at a time, and on a site with many pages it
+    /// is what the build waits on. So once the pages' calls begin, more
+    /// Nodes load the data as this one did (see `Helper`), and each
+    /// render's calls, all of them, go to one Node: the renders are dealt
+    /// between the Nodes that are ready. A site whose results don't
+    /// depend on the order of its calls gives the same results however
+    /// its renders are dealt, and whether it is such a site is what the
+    /// replay check finds out, each replay in one Node, as before.
+    ///
+    /// What needs every call in one Node keeps to it: see [`Worker::lone`].
+    fn node_for(&mut self) -> usize {
+        let Some((unit, _)) = brrrty_js::functions::unit() else {
+            return 0;
+        };
+        if let Some(&n) = self.unit_node.get(&unit) {
+            return n;
+        }
+        let mut ready = vec![0];
+        if !self.solo {
+            let wait = build_waits();
+            for (i, h) in self.helpers.iter_mut().enumerate() {
+                if h.usable(wait) {
+                    ready.push(i + 1);
+                }
+            }
+        }
+        let n = ready[self.next_node % ready.len()];
+        self.next_node += 1;
+        self.unit_node.insert(unit, n);
+        if n != 0 {
+            self.spread = true;
+        }
+        n
+    }
+
+    /// Something only one Node can do right has come up: a call made a
+    /// function (which lives in the Node that made it), or a template or
+    /// data file loads after the calls began. If every call so far ran in
+    /// this worker's own Node, the rest do too. Otherwise the build runs
+    /// again in one Node; `Some` is that request to run again.
+    fn lone(&mut self, why: &str) -> Option<RuntimeFailure> {
+        if self.nodes <= 1 {
+            return None;
+        }
+        self.solo = true;
+        for h in &mut self.helpers {
+            h.give_up();
+        }
+        if !self.spread {
+            return None;
+        }
+        solo_roots().insert(self.root.clone());
+        let mut f = self.fail(&format!(
+            "the JavaScript worker has to run every call in one Node ({why})"
+        ));
+        f.again = true;
+        self.failed = Some(f.clone());
+        Some(f)
+    }
+
     fn start_replays(&mut self) {
         let loads = Arc::new(crate::replay::Loads {
             node: self.node.clone(),
@@ -1529,11 +1677,23 @@ impl Worker {
             // The replays load every file again, several in one request:
             // none of it should take longer than all of it did here.
             took: self.stats.started.map(|t| t.elapsed()).unwrap_or_default(),
+            frozen: self.frozen,
         });
-        let replays = [
-            crate::replay::Handle::start(loads.clone(), true),
-            crate::replay::Handle::start(loads, false),
+        use crate::replay::Order;
+        let mut replays = vec![
+            crate::replay::Handle::start(loads.clone(), Order::Interleaved),
+            crate::replay::Handle::start(loads.clone(), Order::Named),
         ];
+        if self.nodes > 1 {
+            // In several Nodes the build's renders have no order between
+            // them for the check to differ from, so a third replay runs
+            // them whole in the reverse of name order: with the named one,
+            // every two renders are seen both ways round.
+            replays.push(crate::replay::Handle::start(
+                loads.clone(),
+                Order::NamedReversed,
+            ));
+        }
         for (line, dynamic) in &self.table.lines {
             if !dynamic {
                 for r in &replays {
@@ -1547,6 +1707,7 @@ impl Worker {
     /// The worker can't go on: say why, with Node's exit status when it
     /// exited, and the last lines of its stderr.
     pub(crate) fn fail(&mut self, why: &str) -> RuntimeFailure {
+        self.writer = None;
         drop(locked(&self.mux.stdin).take());
         let deadline = Instant::now() + Duration::from_secs(2);
         let status = loop {
@@ -1729,6 +1890,11 @@ impl JsRuntime for Worker {
     }
 
     fn load(&mut self, file: &Path, call: bool) -> JsResult<Decoded> {
+        if self.calls_begun
+            && let Some(f) = self.lone("a data file loads after the pages' calls began")
+        {
+            return JsResult::Failed(f);
+        }
         let what = self.shown(file);
         let key = (call, file.to_path_buf());
         // The worker says `same` when the value is the one it sent last
@@ -1781,6 +1947,10 @@ impl JsRuntime for Worker {
     }
 
     fn begin(&mut self, op: Op<'_>, filters: &mut FilterCall<'_>) -> Begun {
+        let target = match &op {
+            Op::PageRun { page, .. } => self.page_node.get(&page.0).copied().unwrap_or(0),
+            _ => self.node_for(),
+        };
         let (reqs, shape, page, what) = match self.op_requests(op) {
             Ok(r) => r,
             Err(why) => {
@@ -1790,6 +1960,13 @@ impl JsRuntime for Worker {
                 });
             }
         };
+        if let Some(page) = page
+            && target != 0
+        {
+            self.page_node.insert(page.0, target);
+        }
+        self.group_target = target;
+        self.target = target;
         if !Worker::fits(&reqs) {
             // Too much to send ahead of the first reply: one part at a
             // time, here.
@@ -1882,6 +2059,7 @@ impl JsRuntime for Worker {
     }
 
     fn page_close(&mut self, page: PageId) {
+        self.group_target = self.page_node.remove(&page.0).unwrap_or(0);
         // Nothing comes back from it.
         let _ = self.requests(
             vec![close_request(page)],
@@ -1979,6 +2157,30 @@ impl JsRuntime for Worker {
         self.walks = head.get("walks").and_then(Json::as_str).map(str::to_string);
         self.table.load_handles = Some(u32::try_from(self.load_handles).unwrap_or(u32::MAX));
         self.calls_begun = true;
+        for h in &self.helpers {
+            h.begin(self.load_handles, self.frozen);
+        }
+        if !self.helpers.is_empty()
+            && let Some(mut stdin) = locked(&self.mux.stdin).take()
+        {
+            let (tx, rx) = mpsc::channel::<Arc<str>>();
+            let spawned = std::thread::Builder::new()
+                .name("brrrty-node-write".into())
+                .spawn(move || {
+                    for line in rx {
+                        if stdin
+                            .write_all(line.as_bytes())
+                            .and_then(|_| stdin.flush())
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            if spawned.is_ok() {
+                self.writer = Some(tx);
+            }
+        }
         if trace() {
             self.trace("the data files loaded");
             match self.exports_frozen() {
@@ -2025,6 +2227,11 @@ impl JsRuntime for Worker {
     }
 
     fn template_setup(&mut self, filters: &[String]) -> JsResult<()> {
+        if self.calls_begun
+            && let Some(f) = self.lone("the templates are set up after the pages' calls began")
+        {
+            return JsResult::Failed(f);
+        }
         let text = op_text("templateSetup", |t| {
             t.push_str(",\"filters\":");
             crate::wire::strings(t, filters);
@@ -2036,6 +2243,11 @@ impl JsRuntime for Worker {
     }
 
     fn load_template(&mut self, file: &Path, layout: bool) -> JsResult<LoadedTemplate> {
+        if self.calls_begun
+            && let Some(f) = self.lone("a template loads after the pages' calls began")
+        {
+            return JsResult::Failed(f);
+        }
         let what = self.shown(file);
         let text = op_text("templateLoad", |t| {
             t.push_str(",\"path\":");
@@ -2100,6 +2312,28 @@ impl JsRuntime for Worker {
         }
         // Nothing to check: no page called a function, and no template or
         // template or directory data file loaded.
+        // The same of every other Node that ran calls.
+        for i in 0..self.helpers.len() {
+            if self.helpers[i].mux.is_none() {
+                continue;
+            }
+            self.group_target = i + 1;
+            let results = self.requests(
+                vec![Request::new(
+                    "exportsFinal",
+                    op_text("exportsFinal", |_| {}),
+                )],
+                "the data files' values",
+                &mut no_filters(),
+            );
+            match results.into_iter().next() {
+                Some(JsResult::Ok(_)) => {}
+                Some(JsResult::Refused(r)) => return JsResult::Refused(r),
+                Some(JsResult::Thrown(e)) => return JsResult::Thrown(e),
+                Some(JsResult::Failed(f)) => return JsResult::Failed(f),
+                None => return JsResult::Failed(self.fail("a Node of the build's gave no reply")),
+            }
+        }
         if self.frozen {
             walk_roots().froze(&self.root);
         }
@@ -2120,22 +2354,36 @@ impl JsRuntime for Worker {
             dynamic: std::mem::take(&mut self.table.dynamic),
             lines: self.table.lines.clone(),
             dropped: self.dropped,
+            by_name: self.nodes > 1,
         });
         if trace() {
             self.trace("the pages' calls ended");
+            if self.nodes > 1 {
+                let mut each = vec![0usize; self.nodes];
+                for n in self.unit_node.values() {
+                    each[*n] += 1;
+                }
+                eprintln!(
+                    "note: the build's renders ran in {} Nodes: {each:?}",
+                    self.nodes
+                );
+            }
         }
         let checking = Instant::now();
-        let [a, b] = replays;
-        a.run(calls.clone());
-        b.run(calls);
-        let (a, b) = (a.finish(), b.finish());
+        for r in &replays {
+            r.run(calls.clone());
+        }
+        drop(calls);
+        // The first that failed, in the replays' own order.
+        let checked: Vec<_> = replays.into_iter().map(|r| r.finish()).collect();
+        let checked = checked.into_iter().find(|r| r.is_err()).unwrap_or(Ok(()));
         if trace() {
             eprintln!(
                 "note: the replay check took {:.3} s after the build's own calls",
                 checking.elapsed().as_secs_f64()
             );
         }
-        match a.and(b) {
+        match checked {
             Ok(()) => JsResult::Ok(()),
             Err(crate::replay::Failure::Differs(why, handle)) => {
                 let named = handle
@@ -2186,6 +2434,9 @@ impl JsRuntime for Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.send("{\"op\":\"bye\"}\n".into());
+        }
         if let Some(mut stdin) = locked(&self.mux.stdin).take() {
             let _ = stdin.write_all(b"{\"op\":\"bye\"}\n");
         }
@@ -2213,6 +2464,42 @@ impl Drop for Worker {
 /// The project folders whose builds found they must walk the data files'
 /// values after each call rather than freeze them (see the worker's
 /// "Freezing"): a build there starts that way.
+/// The folders whose builds run every call in one Node: a build there
+/// was sent back for it (see [`Worker::lone`]).
+fn solo_roots() -> MutexGuard<'static, std::collections::HashSet<PathBuf>> {
+    static ROOTS: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> =
+        std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+    ROOTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// How many Nodes a build's calls run in: half the cores, at most 4, and
+/// one where there are only two cores (the replay check's Nodes want
+/// them). `BRRRTY_JS_BUILD_NODES` says another number.
+fn build_nodes(root: &Path) -> usize {
+    static ASKED: std::sync::LazyLock<Option<usize>> = std::sync::LazyLock::new(|| {
+        std::env::var("BRRRTY_JS_BUILD_NODES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    });
+    if solo_roots().contains(root) {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    ASKED
+        .unwrap_or(cores / 2)
+        .clamp(1, 8)
+        .min(if ASKED.is_some() { 8 } else { 4 })
+}
+
+/// Whether a render waits for the other Nodes to be ready before its
+/// first call (`BRRRTY_JS_BUILD_WAIT`, for the tests: a small site is
+/// built before another Node has loaded its data).
+fn build_waits() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("BRRRTY_JS_BUILD_WAIT").is_some());
+    *ON
+}
+
 fn walk_roots() -> MutexGuard<'static, WalkMemo> {
     static ROOTS: std::sync::LazyLock<Mutex<WalkMemo>> =
         std::sync::LazyLock::new(|| Mutex::new(WalkMemo::default()));

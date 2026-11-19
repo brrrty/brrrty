@@ -56,6 +56,19 @@ pub(crate) struct Loads {
     pub walk: Option<String>,
     /// How long the first run's loads took, all of them.
     pub took: Duration,
+    /// The build's own worker froze the data files' values.
+    pub frozen: bool,
+}
+
+/// Which order a replay runs the calls in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Order {
+    /// One request from each render in turn, the renders in reverse.
+    Interleaved,
+    /// Each render whole, the renders in name order.
+    Named,
+    /// Each render whole, in the reverse of name order.
+    NamedReversed,
 }
 
 /// The requests the first run made once the data had loaded.
@@ -70,6 +83,9 @@ pub(crate) struct Calls {
     pub lines: Vec<(Arc<str>, bool)>,
     /// A call changed a value the worker kept.
     pub dropped: bool,
+    /// The build ran its calls in several Nodes, so its renders have no
+    /// one order: they are numbered by name, not as they came.
+    pub by_name: bool,
 }
 
 pub(crate) enum Failure {
@@ -122,7 +138,7 @@ impl Handle {
     /// Start a worker that loads the data again with the template and
     /// directory data modules in the reverse of the build's order
     /// (`reverse`) or rotated by one, then waits for the calls.
-    pub fn start(loads: Arc<Loads>, reverse: bool) -> Handle {
+    pub fn start(loads: Arc<Loads>, order: Order) -> Handle {
         let (tx, rx) = mpsc::channel();
         let (done, result) = mpsc::channel();
         let live = Arc::new(Mutex::new(None));
@@ -136,7 +152,7 @@ impl Handle {
                 let done = done.clone();
                 let (live, cancelled) = (live.clone(), cancelled.clone());
                 move || {
-                    let _ = done.send(work(&loads, reverse, rx, &live, &cancelled));
+                    let _ = done.send(work(&loads, order, rx, &live, &cancelled));
                 }
             });
         if let Err(e) = spawned {
@@ -223,7 +239,7 @@ fn floor() -> Duration {
 
 fn work(
     loads: &Loads,
-    reverse: bool,
+    order: Order,
     rx: Receiver<Msg>,
     live: &Mutex<Option<u32>>,
     cancelled: &AtomicBool,
@@ -234,7 +250,7 @@ fn work(
     let mut w = Worker::start_as(&loads.node, &loads.root, loads.run_mode, Some(loads))
         .map_err(|e| runtime(format!("the replay check couldn't start Node: {e}")))?;
     *live.lock().unwrap_or_else(|e| e.into_inner()) = Some(w.pid());
-    let out = work_with(&mut w, loads, reverse, rx, cancelled);
+    let out = work_with(&mut w, loads, order, rx, cancelled);
     // Its process id is no longer this worker's once it is dropped.
     *live.lock().unwrap_or_else(|e| e.into_inner()) = None;
     // Nothing of it is needed any more: no waiting for Node to wind down.
@@ -245,10 +261,13 @@ fn work(
 fn work_with(
     w: &mut Worker,
     loads: &Loads,
-    reverse: bool,
+    order: Order,
     rx: Receiver<Msg>,
     cancelled: &AtomicBool,
 ) -> Result<(), Failure> {
+    // The modules load in the reverse of the build's order in the first
+    // replay and rotated by one in the others.
+    let reverse = order == Order::Interleaved;
     if cancelled.load(Ordering::SeqCst) {
         return Ok(());
     }
@@ -283,7 +302,7 @@ fn work_with(
             }
             Ok(Msg::Run(calls)) => {
                 early?;
-                return replay(w, &calls, reverse);
+                return replay(w, &calls, order);
             }
             // The build ended without the check.
             Err(_) => return Ok(()),
@@ -506,7 +525,8 @@ impl Calls {
     }
 }
 
-fn replay(w: &mut Worker, calls: &Calls, interleave: bool) -> Result<(), Failure> {
+fn replay(w: &mut Worker, calls: &Calls, how: Order) -> Result<(), Failure> {
+    let interleave = how == Order::Interleaved;
     w.deadline = Some(deadline(calls.slowest));
     // The clock and random values the first run's calls read, by kind,
     // in the order it read them.
@@ -532,12 +552,19 @@ fn replay(w: &mut Worker, calls: &Calls, interleave: bool) -> Result<(), Failure
     )?;
     let plain = calls.plain();
     let units = calls.units(!plain);
-    let order: Vec<usize> = if interleave {
-        (0..units.len()).rev().collect()
-    } else {
+    let named = || {
         let mut named: Vec<usize> = (0..units.len()).collect();
         named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
         named
+    };
+    let order: Vec<usize> = match how {
+        // A build in one Node ran its renders in an order of its own:
+        // the reverse of that. A build in several has none, so the
+        // reverse of name order, which the named replay then mirrors.
+        Order::Interleaved if calls.by_name => named().into_iter().rev().collect(),
+        Order::Interleaved => (0..units.len()).rev().collect(),
+        Order::Named => named(),
+        Order::NamedReversed => named().into_iter().rev().collect(),
     };
     if plain {
         let mut sequence = Vec::with_capacity(calls.records.len());
@@ -896,4 +923,204 @@ fn where_(label: &str) -> Option<String> {
         "6" => format!("in the layouts of {}", rest.strip_prefix("layout ")?),
         _ => return None,
     })
+}
+
+/// Another Node for the build's own calls (see `Worker::node_for` in the
+/// client). It starts when the build's first Node does and loads what
+/// that one loads, each file as soon as the first Node has, in the same
+/// order and with the clock and random values the first Node read, so
+/// that it holds the same data. Then it takes the lines Brrrty writes it.
+/// All of that happens on a thread of its own, so a Node busy with a long
+/// call holds nobody else up.
+pub(crate) struct Helper {
+    tx: Sender<Step>,
+    ready: Receiver<Option<Arc<crate::client::Mux>>>,
+    /// Where its replies come, once it has loaded the data and caught up.
+    pub mux: Option<Arc<crate::client::Mux>>,
+    /// It couldn't be used (its loads gave something else): the build
+    /// goes on without it.
+    pub useless: bool,
+    live: Arc<Mutex<Option<u32>>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+enum Step {
+    /// A load the first Node made: the request, the clock it read, and
+    /// its reply.
+    Load(Box<str>, Option<Box<str>>, Box<str>),
+    /// The first Node's calls began: how many functions its data gave,
+    /// and whether it froze the data.
+    Begin(u64, bool),
+    /// A line to write (a definition, or requests), newline and all.
+    Line(Arc<str>),
+}
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(pid) = *live {
+            crate::client::stop_pid(pid);
+        }
+    }
+}
+
+impl Helper {
+    pub fn start(node: &NodeInfo, root: &Path, run_mode: RunMode, walk: Option<String>) -> Helper {
+        let (tx, rx) = mpsc::channel::<Step>();
+        let (ready_tx, ready) = mpsc::channel();
+        let live = Arc::new(Mutex::new(None));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        // What `Worker::start_as` reads of the first run.
+        let like = Loads {
+            node: node.clone(),
+            root: root.to_path_buf(),
+            run_mode,
+            loads: Vec::new(),
+            global_end: 0,
+            load_handles: 0,
+            walk,
+            took: Duration::ZERO,
+            frozen: false,
+        };
+        let spawned = std::thread::Builder::new()
+            .name("brrrty-node-build".into())
+            .stack_size(crate::client::REPLY_STACK)
+            .spawn({
+                let (live, cancelled) = (live.clone(), cancelled.clone());
+                move || help(&like, rx, ready_tx, &live, &cancelled)
+            });
+        Helper {
+            tx,
+            ready,
+            mux: None,
+            useless: spawned.is_err(),
+            live,
+            cancelled,
+        }
+    }
+
+    pub fn load(&self, text: &str, clock: Option<&str>, body: &str) {
+        let _ = self
+            .tx
+            .send(Step::Load(text.into(), clock.map(Into::into), body.into()));
+    }
+
+    pub fn begin(&self, handles: u64, frozen: bool) {
+        let _ = self.tx.send(Step::Begin(handles, frozen));
+    }
+
+    pub fn line(&self, line: Arc<str>) {
+        let _ = self.tx.send(Step::Line(line));
+    }
+
+    /// Whether it can take requests now; with `wait`, once it has said.
+    pub fn usable(&mut self, wait: bool) -> bool {
+        if self.mux.is_none() && !self.useless {
+            let said = if wait {
+                self.ready.recv().ok()
+            } else {
+                match self.ready.try_recv() {
+                    Ok(said) => Some(said),
+                    Err(mpsc::TryRecvError::Empty) => return false,
+                    Err(mpsc::TryRecvError::Disconnected) => None,
+                }
+            };
+            match said.flatten() {
+                Some(mux) => self.mux = Some(mux),
+                None => self.useless = true,
+            }
+        }
+        self.mux.is_some()
+    }
+
+    /// Stop taking it into account.
+    pub fn give_up(&mut self) {
+        self.useless = true;
+        self.mux = None;
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+}
+
+fn help(
+    like: &Loads,
+    rx: Receiver<Step>,
+    ready: Sender<Option<Arc<crate::client::Mux>>>,
+    live: &Mutex<Option<u32>>,
+    cancelled: &AtomicBool,
+) {
+    if cancelled.load(Ordering::SeqCst) {
+        return;
+    }
+    let Ok(mut w) = Worker::start_as(&like.node, &like.root, like.run_mode, Some(like)) else {
+        let _ = ready.send(None);
+        return;
+    };
+    *live.lock().unwrap_or_else(|e| e.into_inner()) = Some(w.pid());
+    // The loads, as the first Node makes them, until its calls begin.
+    let mut held: Vec<Arc<str>> = Vec::new();
+    let loaded = loop {
+        if cancelled.load(Ordering::SeqCst) {
+            break false;
+        }
+        match rx.recv() {
+            Ok(Step::Load(text, clock, body)) => {
+                match w.exchange(&text, Some(clock.as_deref().unwrap_or("[]")), "a load") {
+                    // The same data as the first Node has, or it is no help.
+                    Ok(f) if f.body == body && f.head.get("again").is_none() => {}
+                    _ => break false,
+                }
+            }
+            Ok(Step::Begin(handles, frozen)) => {
+                let Ok(begun) = w.exchange(r#"{"op":"callsBegin"}"#, None, "the data files") else {
+                    break false;
+                };
+                let head = &begun.head;
+                break head.get("handles").and_then(Json::as_u64) == Some(handles)
+                    && (head.get("exports").and_then(Json::as_str) == Some("frozen")) == frozen
+                    && head.get("again").is_none()
+                    && head
+                        .get("changed")
+                        .and_then(Json::as_array)
+                        .is_none_or(|a| a.is_empty())
+                    && head.get("protos").and_then(Json::as_bool) != Some(true);
+            }
+            // A value defined while the data loads: after the loads.
+            Ok(Step::Line(line)) => held.push(line),
+            Err(_) => break false,
+        }
+    };
+    let stdin = if loaded { w.take_stdin() } else { None };
+    if let Some(mut stdin) = stdin {
+        let mut write = |line: &str| stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush());
+        let mut alive = held.iter().all(|line| write(line).is_ok());
+        // Caught up with the definitions made while it loaded, it says so
+        // (once: the first time nothing is waiting).
+        let mut said = false;
+        while alive {
+            let step = match rx.try_recv() {
+                Ok(step) => step,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => {
+                    if !said {
+                        said = true;
+                        if ready.send(Some(w.mux())).is_err() {
+                            break;
+                        }
+                    }
+                    match rx.recv() {
+                        Ok(step) => step,
+                        Err(_) => break,
+                    }
+                }
+            };
+            if let Step::Line(line) = step {
+                alive = write(&line).is_ok();
+            }
+        }
+    } else {
+        let _ = ready.send(None);
+    }
+    *live.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    w.stop();
 }
