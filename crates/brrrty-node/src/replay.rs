@@ -61,11 +61,12 @@ pub(crate) struct Loads {
 /// Which order a replay runs the calls in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Order {
-    /// One request from each render in turn, the renders in reverse.
+    /// One request from each render in turn, the renders in the reverse
+    /// of 11ty's order (see [`like_11ty`]).
     Interleaved,
-    /// Each render whole, the renders in name order.
+    /// Each render whole, the renders in 11ty's order.
     Named,
-    /// Each render whole, in the reverse of name order.
+    /// Each render whole, in the reverse of 11ty's order.
     NamedReversed,
 }
 
@@ -81,9 +82,6 @@ pub(crate) struct Calls {
     pub lines: Vec<(Arc<str>, bool)>,
     /// A call changed a value the worker kept.
     pub dropped: bool,
-    /// The build ran its calls in several Nodes, so its renders have no
-    /// one order: they are numbered by name, not as they came.
-    pub by_name: bool,
 }
 
 pub(crate) enum Failure {
@@ -523,6 +521,77 @@ impl Calls {
     }
 }
 
+/// The order 11ty runs the build's renders in, as near as their names
+/// say it: computed data and permalinks before any content, content
+/// before any layout, and within the content the template languages in
+/// the order 11ty 3.1.8 reaches their first call (Liquid, Nunjucks, HTML,
+/// Markdown, then JavaScript templates), each in input order (a folder's
+/// files before its folders, by name; a template's pages by number).
+///
+/// 11ty's true order has more to it (a page with a layout waits on the
+/// layout file being read, a page that reads another's content renders
+/// twice), so this is the nearest fixed order, not a promise of 11ty's.
+/// The check needs no more of it than that it is the same every build.
+fn like_11ty(a: &str, b: &str) -> std::cmp::Ordering {
+    /// (stage, language, file, page number) of a render's name.
+    fn key(label: &str) -> (&str, u8, &str, u64) {
+        let (stage, rest) = label.split_once(' ').unwrap_or((label, ""));
+        let rest = rest.split_once(' ').map_or(rest, |(_, r)| r);
+        let (file, n) = match rest.rsplit_once(" (pagination page ") {
+            Some((file, n)) => (file, n.trim_end_matches(')').parse().ok()),
+            None => match rest.rsplit_once(' ') {
+                Some((file, n)) => (file, n.parse().ok()),
+                None => (rest, None),
+            },
+        };
+        let (file, n) = match n {
+            Some(n) => (file, n),
+            None => (rest, 0),
+        };
+        let language = if stage != "5" {
+            0
+        } else if file.ends_with(".liquid") {
+            1
+        } else if file.ends_with(".njk") {
+            2
+        } else if file.ends_with(".html") {
+            3
+        } else if file.ends_with(".md") {
+            4
+        } else {
+            5
+        };
+        (stage, language, file, n)
+    }
+    /// A folder's files before its folders, each by name.
+    fn files_first(a: &str, b: &str) -> std::cmp::Ordering {
+        let (mut a, mut b) = (a.split('/').peekable(), b.split('/').peekable());
+        loop {
+            match (a.next(), b.next()) {
+                (Some(x), Some(y)) => {
+                    let order = match (a.peek().is_some(), b.peek().is_some()) {
+                        (false, true) => std::cmp::Ordering::Less,
+                        (true, false) => std::cmp::Ordering::Greater,
+                        _ => x.cmp(y),
+                    };
+                    if order.is_ne() {
+                        return order;
+                    }
+                }
+                (None, None) => return std::cmp::Ordering::Equal,
+                (None, Some(_)) => return std::cmp::Ordering::Less,
+                (Some(_), None) => return std::cmp::Ordering::Greater,
+            }
+        }
+    }
+    let (ka, kb) = (key(a), key(b));
+    ka.0.cmp(kb.0)
+        .then(ka.1.cmp(&kb.1))
+        .then_with(|| files_first(ka.2, kb.2))
+        .then(ka.3.cmp(&kb.3))
+        .then_with(|| a.cmp(b))
+}
+
 fn replay(w: &mut Worker, calls: &Calls, how: Order) -> Result<(), Failure> {
     let interleave = how == Order::Interleaved;
     w.deadline = Some(deadline(calls.slowest));
@@ -552,15 +621,15 @@ fn replay(w: &mut Worker, calls: &Calls, how: Order) -> Result<(), Failure> {
     let units = calls.units(!plain);
     let named = || {
         let mut named: Vec<usize> = (0..units.len()).collect();
-        named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
+        named.sort_by(|a, b| like_11ty(&units[*a].label, &units[*b].label).then(a.cmp(b)));
         named
     };
     let order: Vec<usize> = match how {
-        // A build in one Node ran its renders in an order of its own:
-        // the reverse of that. A build in several has none, so the
-        // reverse of name order, which the named replay then mirrors.
-        Order::Interleaved if calls.by_name => named().into_iter().rev().collect(),
-        Order::Interleaved => (0..units.len()).rev().collect(),
+        // Never the order the build's own threads happened to run them
+        // in: every build of a site is checked in the same orders, and
+        // one of them is as near 11ty's as Brrrty can say, so a result
+        // that 11ty's order alone gives is seen on every build.
+        Order::Interleaved => named().into_iter().rev().collect(),
         Order::Named => named(),
         Order::NamedReversed => named().into_iter().rev().collect(),
     };
@@ -1142,4 +1211,69 @@ fn help(
     }
     *live.lock().unwrap_or_else(|e| e.into_inner()) = None;
     w.stop();
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::like_11ty;
+
+    /// The order 11ty 3.1.8 made its first call from each of these in
+    /// (a probe site, the pages without layouts, in a `node:22`
+    /// container), from names given in name order.
+    #[test]
+    fn renders_sort_in_the_order_11ty_reaches_them() {
+        let mut names = vec![
+            "6 layout src/a1.njk",
+            "5 content src/a1.11ty.js",
+            "5 content src/b1.md",
+            "5 content src/c1.html",
+            "5 content src/d1.njk",
+            "5 content src/e1.liquid",
+            "5 content src/sub/m1.njk",
+            "5 content src/sub/m2.liquid",
+            "5 content src/sub/m3.md",
+            "5 content src/v1.11ty.js",
+            "5 content src/w1.md",
+            "5 content src/x1.html",
+            "5 content src/y1.njk",
+            "5 content src/z1.liquid",
+            "5 content src/p.njk (pagination page 10)",
+            "5 content src/p.njk (pagination page 2)",
+            "3 page src/z1.liquid 0",
+            "3 page src/a1.11ty.js 10",
+            "3 page src/a1.11ty.js 9",
+            "2 place src/z1.liquid 0",
+            "1 load src/z1.liquid",
+            "",
+        ];
+        names.sort();
+        names.sort_by(|a, b| like_11ty(a, b));
+        assert_eq!(
+            names,
+            [
+                "",
+                "1 load src/z1.liquid",
+                "2 place src/z1.liquid 0",
+                "3 page src/a1.11ty.js 9",
+                "3 page src/a1.11ty.js 10",
+                "3 page src/z1.liquid 0",
+                "5 content src/e1.liquid",
+                "5 content src/z1.liquid",
+                "5 content src/sub/m2.liquid",
+                "5 content src/d1.njk",
+                "5 content src/p.njk (pagination page 2)",
+                "5 content src/p.njk (pagination page 10)",
+                "5 content src/y1.njk",
+                "5 content src/sub/m1.njk",
+                "5 content src/c1.html",
+                "5 content src/x1.html",
+                "5 content src/b1.md",
+                "5 content src/w1.md",
+                "5 content src/sub/m3.md",
+                "5 content src/a1.11ty.js",
+                "5 content src/v1.11ty.js",
+                "6 layout src/a1.njk",
+            ]
+        );
+    }
 }

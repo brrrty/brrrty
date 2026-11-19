@@ -2255,3 +2255,108 @@ fn a_refused_build_leaves_no_output_folder_behind() {
         assert_eq!(left, ["old.html"], "{nodes} Nodes");
     }
 }
+
+/// 11ty renders Nunjucks pages before JavaScript templates: on this site
+/// it calls `f` from a, c, b, and only that order gives `c` an `X`. The
+/// check runs its replays in 11ty's order of template languages and in
+/// the reverse, whatever order the build's own threads took, so a result
+/// that depends on 11ty's order is refused on every build rather than
+/// written wrong on most.
+#[test]
+fn a_result_only_11tys_order_of_languages_gives_is_refused_every_time() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "\"use strict\";\nconst seen = [];\nmodule.exports = {\n  f(name) { const before = seen.join(\"\"); seen.push(name); return name === \"c\" && before === \"a\" ? \"X\" : \"-\"; },\n};\n",
+        ),
+        ("src/a.njk", "{{ h.f(\"a\") }}"),
+        (
+            "src/b.11ty.js",
+            "module.exports = class { render(data) { return data.h.f(\"b\"); } };",
+        ),
+        ("src/c.njk", "{{ h.f(\"c\") }}"),
+    ];
+    for env in [&NODES[..], &[TRACE, ONE_NODE][..]] {
+        for run in 0..6 {
+            let t = site(&files);
+            let o = build(t.path(), &[], env);
+            let out = text(&o);
+            assert_eq!(o.status.code(), Some(1), "run {run}, {env:?}: {out}");
+            assert!(out.contains("js-data-impure"), "{out}");
+            assert_eq!(written(&t, "c/index.html"), None);
+        }
+    }
+}
+
+/// Each of a build's Nodes used to number its own answers, and the
+/// numbers of two Nodes say nothing about which came first: sorted by
+/// them, the clock values the replays are fed came out of the order time
+/// passed in. The calls are numbered as their answers arrive instead.
+///
+/// Here every page reads the clock six times, one call each, and each
+/// layout asks whether six more readings run forwards (the first to ask,
+/// in each Node, takes them). One Node makes its first six readings at
+/// once and the other only after that (the first to call leaves a file
+/// to say so, and another when it has read six). A replay whose first
+/// layout isn't one that took readings in the build is fed the build's
+/// first six instead: mixed between the Nodes, they ran backwards, and
+/// the build was run again in one Node for nothing.
+#[test]
+fn several_nodes_clock_reads_are_replayed_in_the_order_time_passed() {
+    if !has_node() {
+        return;
+    }
+    let page = format!(
+        "---\nlayout: l.njk\n---\n{}x{}\n",
+        "{% if h.stamp() == \"\" %}".repeat(6),
+        "{% endif %}".repeat(6)
+    );
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/h.js".into(),
+            "const fs = require(\"fs\");\nconst file = (n) => require(\"path\").join(__dirname, \"..\", \"..\", n);\nlet began = false;\nlet stamps = 0;\nlet checked;\nmodule.exports = {\n  stamp() {\n    if (!began) {\n      began = true;\n      try { fs.closeSync(fs.openSync(file(\"first\"), \"wx\")); } catch { for (let i = 0; i < 2e6 && !fs.existsSync(file(\"done\")); i++); }\n    }\n    Date.now();\n    if (++stamps === 6) fs.writeFileSync(file(\"done\"), \"\");\n    return \"\";\n  },\n  check() {\n    checked ??= [0, 1, 2, 3, 4, 5].map(() => Date.now());\n    return checked.every((t, i) => i === 0 || t >= checked[i - 1]) ? \"ok\" : \"back\";\n  },\n};\n".into(),
+        ),
+        (
+            "src/_includes/l.njk".into(),
+            "{{ h.check() }}{{ content | safe }}".into(),
+        ),
+        // Several Nodes are for sites with JavaScript templates.
+        ("src/t.11ty.js".into(), "module.exports = () => 't';".into()),
+    ];
+    for i in 1..=6 {
+        files.push((format!("src/q{i}.njk"), page.clone()));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    for run in 0..3 {
+        let t = site(&files);
+        let o = build(
+            t.path(),
+            &[],
+            &[
+                ("BRRRTY_JS_BUILD_NODES", "2"),
+                ("BRRRTY_JS_BUILD_WAIT", "1"),
+                TRACE,
+            ],
+        );
+        let out = text(&o);
+        assert!(o.status.success(), "run {run}: {out}");
+        assert!(
+            out.contains("the build's renders ran in 2 Nodes"),
+            "run {run}: {out}"
+        );
+        assert_eq!(
+            out.matches("the replay check took").count(),
+            1,
+            "run {run}: the build was run again: {out}"
+        );
+        assert_eq!(written(&t, "q1/index.html").as_deref(), Some("okx\n"));
+    }
+}

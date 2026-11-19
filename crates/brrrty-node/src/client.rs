@@ -137,8 +137,12 @@ pub(crate) struct Frame {
     pub clock: Option<Box<str>>,
     /// The reply mentions a function a call made.
     pub made: bool,
-    /// Its place among the frames Node sent. Node runs one request at a
-    /// time and answers each as it ends, so this is the order it ran them.
+    /// Its place among the frames the process's Nodes sent, as they
+    /// arrived. A Node runs one request at a time and answers each as it
+    /// ends, so among one Node's frames this is the order it ran them;
+    /// between the Nodes of a build it is the order they finished them,
+    /// near enough, which keeps the clock values the replays are fed in
+    /// the order time passed.
     pub seq: u64,
 }
 
@@ -2387,9 +2391,9 @@ impl JsRuntime for Worker {
         };
         let calls = Arc::new(crate::replay::Calls {
             records: {
-                // The order Node ran them in, not the order the render
-                // threads took their replies: the replay check's orders are
-                // made from this one, and must differ from it.
+                // The order the Nodes ran them in, not the order the
+                // render threads took their replies: the clock values
+                // the replays are fed come in this order.
                 let mut records = std::mem::take(&mut self.call_log);
                 records.sort_by_key(|r| r.at);
                 records
@@ -2399,7 +2403,6 @@ impl JsRuntime for Worker {
             dynamic: std::mem::take(&mut self.table.dynamic),
             lines: self.table.lines.clone(),
             dropped: self.dropped,
-            by_name: self.nodes > 1,
         });
         if trace() {
             self.trace("the pages' calls ended");
@@ -2435,7 +2438,12 @@ impl JsRuntime for Worker {
             // `built ??= new Date()`). Whether the site depends on the
             // order of its calls, a build in one Node says: this one is
             // run again that way, and its check decides.
-            Err(crate::replay::Failure::Differs(..)) if self.spread => {
+            Err(crate::replay::Failure::Differs(ref why, _)) if self.spread => {
+                if trace() {
+                    eprintln!(
+                        "note: the check found a difference with the calls in several Nodes: {why}"
+                    );
+                }
                 match self.lone("the check found a difference with the calls in several Nodes") {
                     Some(f) => JsResult::Failed(f),
                     None => JsResult::Failed(self.fail("the replay check found a difference")),
@@ -2774,9 +2782,11 @@ fn read_frames_to(
     mux: &Mux,
 ) {
     let mut r = BufReader::with_capacity(1 << 16, stdout);
-    let mut seq = 0u64;
+    // One count for every Node of the process, taken as a frame arrives:
+    // a build's Nodes each answer in the order they ran their requests,
+    // and between Nodes the count follows the time the answers came.
+    static ARRIVED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     loop {
-        seq += 1;
         let mut header = Vec::new();
         match r.read_until(b'\n', &mut header) {
             Ok(0) => return,
@@ -2786,6 +2796,7 @@ fn read_frames_to(
                 return;
             }
         }
+        let seq = ARRIVED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let fields = header
             .strip_prefix(b"\x1eBRRRTY ")
             .and_then(|h| h.strip_suffix(b"\n"))
