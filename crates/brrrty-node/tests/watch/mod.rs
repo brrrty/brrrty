@@ -1,33 +1,41 @@
-//! A watchdog for tests that start Node: a test that runs far longer than
-//! any should is named on stderr, with the processes still alive, and the
-//! test binary stops. Without it a stuck test is a silent hang until
-//! whatever runs the tests gives up, with nothing to say which test.
+//! A watchdog for tests that start a process: a test that runs far longer
+//! than any should is named on stderr, with the processes still alive,
+//! and the test binary stops. Without it a stuck test is a silent hang
+//! until whatever runs the tests gives up, with nothing to say which
+//! test.
 //!
 //! A test is watched from its first call to [`started`] until its thread
 //! ends.
+//!
+//! The watchdog shares nothing with the code under test: no `Mutex`, no
+//! allocation once it is running, and it writes with a bare `write(2)`
+//! rather than through Rust's stderr and its lock. Before it writes it
+//! sets an alarm, so if even that write can't get through (nothing is
+//! reading the tests' output any more), the alarm ends the process
+//! instead of the hang going on.
 
-use std::collections::HashMap;
-use std::io::Write;
-use std::sync::{Mutex, Once};
-use std::thread::ThreadId;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Longer than the slowest test by a wide margin (the slowest builds a
 /// site 200 times).
 const LIMIT: Duration = Duration::from_secs(240);
 
-static RUNNING: Mutex<Option<HashMap<ThreadId, (String, Instant)>>> = Mutex::new(None);
-static WATCHING: Once = Once::new();
+/// One per test that registered: when it started, in milliseconds since
+/// the first did (0 once its thread has ended), and its name.
+const SLOTS: usize = 512;
+static STARTED: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+static NAMES: [OnceLock<String>; SLOTS] = [const { OnceLock::new() }; SLOTS];
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+static EPOCH: OnceLock<Instant> = OnceLock::new();
+static WATCHING: OnceLock<()> = OnceLock::new();
 
-struct Running(ThreadId);
+struct Running(usize);
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if let Ok(mut running) = RUNNING.lock()
-            && let Some(running) = running.as_mut()
-        {
-            running.remove(&self.0);
-        }
+        STARTED[self.0].store(0, Ordering::SeqCst);
     }
 }
 
@@ -35,142 +43,153 @@ thread_local! {
     static THIS: std::cell::RefCell<Option<Running>> = const { std::cell::RefCell::new(None) };
 }
 
+fn now() -> u64 {
+    // Never 0: that means "ended".
+    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1
+}
+
 /// The test on this thread is running from now.
 pub fn started() {
-    let me = std::thread::current();
-    let name = me.name().unwrap_or("a test").to_string();
-    RUNNING
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_with(HashMap::new)
-        .entry(me.id())
-        .or_insert((name, Instant::now()));
     THIS.with(|t| {
-        t.borrow_mut().get_or_insert(Running(me.id()));
+        let mut t = t.borrow_mut();
+        if t.is_some() {
+            return;
+        }
+        let slot = NEXT.fetch_add(1, Ordering::SeqCst);
+        if slot >= SLOTS {
+            return;
+        }
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("a test")
+            .to_string();
+        let _ = NAMES[slot].set(name);
+        STARTED[slot].store(now(), Ordering::SeqCst);
+        *t = Some(Running(slot));
     });
-    WATCHING.call_once(|| {
-        std::thread::spawn(|| {
-            let mut rounds = 0u32;
+    WATCHING.get_or_init(|| {
+        // Everything it will say is put together in this, which never
+        // grows.
+        let mut text = String::with_capacity(16 * 1024);
+        std::thread::spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_secs(5));
-                rounds += 1;
-                if rounds.is_multiple_of(6) {
-                    left_behind();
-                }
-                let stuck: Vec<(String, Duration)> = RUNNING
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .iter()
-                    .flatten()
-                    .map(|(_, (name, since))| (name.clone(), since.elapsed()))
-                    .filter(|(_, d)| *d > LIMIT)
-                    .collect();
-                if stuck.is_empty() {
-                    continue;
-                }
-                // Straight to stderr: the test harness keeps what a test
-                // prints, and this process is about to stop.
-                let mut err = std::io::stderr();
-                for (name, d) in &stuck {
-                    let _ = writeln!(
-                        err,
-                        "\nWATCHDOG: test `{name}` has run for {} s",
-                        d.as_secs()
-                    );
-                }
-                let ps = std::process::Command::new("ps")
-                    .args(["-eo", "pid,ppid,pgid,stat,etime,args"])
-                    .output();
-                if let Ok(ps) = ps {
-                    let _ = writeln!(
-                        err,
-                        "WATCHDOG: this process is {}; processes:",
-                        std::process::id()
-                    );
-                    for line in String::from_utf8_lossy(&ps.stdout).lines() {
-                        if line.contains("node") || line.contains("brrrty") || line.contains("PID")
+                let at = now();
+                let mut stuck = false;
+                // `BRRRTY_TEST_LIMIT_SECS` shortens it, to see the
+                // watchdog work.
+                let limit = std::env::var("BRRRTY_TEST_LIMIT_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map_or(LIMIT.as_millis() as u64, |s| s * 1000);
+                for slot in 0..NEXT.load(Ordering::SeqCst).min(SLOTS) {
+                    let since = STARTED[slot].load(Ordering::SeqCst);
+                    if since != 0 && at.saturating_sub(since) > limit {
+                        stuck = true;
+                        if let Some(name) = NAMES[slot].get()
+                            && text.len() + name.len() + 80 < text.capacity()
                         {
-                            let short: String = line.chars().take(170).collect();
-                            let _ = writeln!(err, "  {short}");
-                            if let Some(pid) = line.split_whitespace().next()
-                                && let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd"))
-                            {
-                                let _ = writeln!(err, "    in {}", cwd.display());
-                            }
+                            use std::fmt::Write;
+                            let _ = writeln!(
+                                text,
+                                "\nWATCHDOG: test `{name}` has run for {} s",
+                                (at - since) / 1000
+                            );
                         }
                     }
                 }
-                let _ = err.flush();
-                std::process::abort();
+                if stuck {
+                    say_and_stop(&text);
+                }
             }
         });
     });
 }
 
-/// On CI, a worker Node that has been alive for five minutes was left
-/// behind by some test (no test runs that long): it holds the pipes the
-/// tests' output goes to, so whatever waits for them to close waits for
-/// good, long after every test has passed. Say which, and stop.
-fn left_behind() {
-    if std::env::var_os("CI").is_none() {
-        return;
+#[cfg(unix)]
+fn say_and_stop(text: &str) -> ! {
+    // SAFETY: plain system calls on this process's own descriptor, with a
+    // buffer that outlives them.
+    unsafe {
+        // Whatever happens below, the process ends within a minute.
+        libc::alarm(60);
+        libc::write(2, text.as_ptr().cast(), text.len());
     }
-    let Ok(ps) = std::process::Command::new("ps")
-        .args(["-eo", "pid,ppid,etimes,args"])
-        .output()
-    else {
-        return;
-    };
-    let text = String::from_utf8_lossy(&ps.stdout).into_owned();
-    let old: Vec<&str> = text
-        .lines()
-        .filter(|l| l.contains("--input-type=module"))
-        .filter(|l| {
-            l.split_whitespace()
-                .nth(2)
-                .and_then(|t| t.parse::<u64>().ok())
-                .is_some_and(|t| t > 300)
-        })
-        .collect();
-    if old.is_empty() {
-        return;
+    // What every thread of this process is doing: its name, its state,
+    // and the system call it is in with its arguments (the first is
+    // usually a descriptor), then what each descriptor is.
+    let mut out = String::from("WATCHDOG: threads (name, state, syscall and arguments):\n");
+    if let Ok(tasks) = std::fs::read_dir("/proc/self/task") {
+        for task in tasks.flatten() {
+            let dir = task.path();
+            let read = |what: &str| {
+                std::fs::read_to_string(dir.join(what))
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            };
+            let stat = read("stat");
+            let state = stat
+                .rsplit(')')
+                .next()
+                .and_then(|rest| rest.split_whitespace().next())
+                .unwrap_or("?")
+                .to_string();
+            out.push_str(&format!(
+                "  {} {:<16} {state} {}\n",
+                task.file_name().to_string_lossy(),
+                read("comm"),
+                read("syscall")
+            ));
+        }
     }
-    let mut err = std::io::stderr();
-    let running: Vec<String> = RUNNING
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .flatten()
-        .map(|(_, (name, _))| name.clone())
-        .collect();
-    let _ = writeln!(
-        err,
-        "\nWATCHDOG: a worker Node was left behind (this process is {}, running {running:?}):",
-        std::process::id()
-    );
-    for line in old {
-        let short: String = line.chars().take(120).collect();
-        let _ = writeln!(err, "  {short}");
-        if let Some(pid) = line.split_whitespace().next() {
-            for what in ["cwd", "fd/0", "fd/1", "fd/2"] {
-                let link = std::fs::read_link(format!("/proc/{pid}/{what}"));
-                let _ = writeln!(err, "    {what}: {link:?}");
-            }
-            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
-            for l in status.lines().filter(|l| {
-                l.starts_with("State") || l.starts_with("PPid") || l.starts_with("Threads")
-            }) {
-                let _ = writeln!(err, "    {l}");
+    out.push_str("WATCHDOG: descriptors:\n");
+    if let Ok(fds) = std::fs::read_dir("/proc/self/fd") {
+        for fd in fds.flatten().take(400) {
+            if let Ok(to) = std::fs::read_link(fd.path()) {
+                out.push_str(&format!(
+                    "  {} -> {}\n",
+                    fd.file_name().to_string_lossy(),
+                    to.display()
+                ));
             }
         }
     }
-    for line in text
-        .lines()
-        .filter(|l| l.contains("brrrty") || l.contains("PID"))
-    {
-        let short: String = line.chars().take(150).collect();
-        let _ = writeln!(err, "  {short}");
+    // SAFETY: as above.
+    unsafe {
+        libc::write(2, out.as_ptr().cast(), out.len());
     }
-    let _ = err.flush();
+    // The processes, which may take locks and memory: last, and under the
+    // alarm.
+    if let Ok(ps) = std::process::Command::new("ps")
+        .args(["-eo", "pid,ppid,pgid,stat,etime,args"])
+        .output()
+    {
+        let mut out = format!(
+            "WATCHDOG: this process is {}; processes:\n",
+            std::process::id()
+        );
+        for line in String::from_utf8_lossy(&ps.stdout).lines() {
+            if line.contains("node") || line.contains("brrrty") || line.contains("PID") {
+                out.extend(line.chars().take(170));
+                out.push('\n');
+                if let Some(pid) = line.split_whitespace().next()
+                    && let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd"))
+                {
+                    out.push_str(&format!("    in {}\n", cwd.display()));
+                }
+            }
+        }
+        // SAFETY: as above.
+        unsafe {
+            libc::write(2, out.as_ptr().cast(), out.len());
+        }
+    }
+    std::process::abort();
+}
+
+#[cfg(not(unix))]
+fn say_and_stop(text: &str) -> ! {
+    eprintln!("{text}");
     std::process::abort();
 }
