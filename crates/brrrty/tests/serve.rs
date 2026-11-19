@@ -349,13 +349,17 @@ fn a_burst_of_twenty_edits_inside_the_debounce_makes_one_build() {
         live.settle();
         let mut last = Instant::now();
         let mut widest = Duration::ZERO;
+        // How many saves came half a window or more after the one before.
+        let mut wide = 0;
         for i in 1..=20 {
             write(
                 live.root,
                 "src/index.md",
                 &format!("---\nlayout: base.liquid\n---\nv{i}\n"),
             );
-            widest = widest.max(last.elapsed());
+            let gap = last.elapsed();
+            widest = widest.max(gap);
+            wide += usize::from(gap >= window / 2);
             last = Instant::now();
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -370,15 +374,11 @@ fn a_burst_of_twenty_edits_inside_the_debounce_makes_one_build() {
         let builds = seen.len();
         // Every save landed well inside the window, so the burst is one build. Only a
         // machine so loaded that two saves were half a second apart may split it, and
-        // then into no more than two.
-        if widest < window / 2 {
-            assert_eq!(builds, 1, "widest gap {widest:?}, changed: {seen:?}");
-        } else {
-            assert!(
-                (1..=2).contains(&builds),
-                "{builds} builds, widest gap {widest:?}, changed: {seen:?}"
-            );
-        }
+        // then into one more build for each such gap.
+        assert!(
+            (1..=1 + wide).contains(&builds),
+            "{builds} builds, {wide} wide gaps, the widest {widest:?}, changed: {seen:?}"
+        );
         assert_eq!(live.page(), "<main><p>v20</p>\n</main>");
     });
 }
