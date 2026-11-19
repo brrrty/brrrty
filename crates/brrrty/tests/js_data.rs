@@ -520,7 +520,7 @@ fn a_local_data_function_runs_once_for_each_template_it_applies_to() {
         ("src/posts/c.njk", "c {{ section }}"),
         ("src/top.njk", "[{{ section }}]"),
     ]);
-    let o = build(t.path(), &[], &[]);
+    let o = build(t.path(), &[], &[ONE_NODE]);
     assert!(o.status.success(), "{}", text(&o));
     // Once per template, and once more in each of the two checks that load
     // the data again in another order.
@@ -1557,6 +1557,9 @@ fn node_freezes() -> bool {
 }
 
 const TRACE: (&str, &str) = ("BRRRTY_JS_TRACE", "1");
+/// The build's calls in one Node, where a test counts what each Node does
+/// (how often a data file loads, how many errors a Node sees).
+const ONE_NODE: (&str, &str) = ("BRRRTY_JS_BUILD_NODES", "1");
 const FROZEN: &str = "the data files' values are frozen";
 const WALKED: &str = "the data files' values are walked after every call";
 
@@ -1599,7 +1602,7 @@ fn a_site_that_changes_nothing_is_frozen_and_built_once() {
                 "{{ site.up('a') }} {{ site.count() }} {{ site.list | length }}",
             ),
         ]);
-        let o = build(t.path(), &[], &[TRACE]);
+        let o = build(t.path(), &[], &[TRACE, ONE_NODE]);
         let out = text(&o);
         assert!(o.status.success(), "{out}");
         assert!(out.contains(FROZEN), "{file}\n{out}");
@@ -1768,7 +1771,7 @@ fn a_site_that_throws_a_lot_is_walked_instead_of_watched() {
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
     let t = site(&files);
-    let o = build(t.path(), &[], &[TRACE]);
+    let o = build(t.path(), &[], &[TRACE, ONE_NODE]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert!(out.contains(FROZEN), "{out}");
@@ -1796,7 +1799,7 @@ fn a_site_that_throws_a_lot_is_walked_instead_of_watched() {
     }
     let each: Vec<(&str, &str)> = each.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
     let t = site(&each);
-    let o = build(t.path(), &[], &[TRACE]);
+    let o = build(t.path(), &[], &[TRACE, ONE_NODE]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert!(
@@ -1807,7 +1810,7 @@ fn a_site_that_throws_a_lot_is_walked_instead_of_watched() {
 
     // A few errors are watched, and the build stays frozen.
     let t = site(&files[..4]);
-    let o = build(t.path(), &[], &[TRACE]);
+    let o = build(t.path(), &[], &[TRACE, ONE_NODE]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert!(out.contains(FROZEN) && !out.contains(WALKED), "{out}");
@@ -1887,4 +1890,104 @@ fn a_counter_is_refused_every_time_however_the_threads_race() {
         passed.len(),
         passed[0]
     );
+}
+
+/// The build's calls in four Nodes, each ready before the first call.
+const NODES: [(&str, &str); 3] = [
+    ("BRRRTY_JS_BUILD_NODES", "4"),
+    ("BRRRTY_JS_BUILD_WAIT", "1"),
+    TRACE,
+];
+
+/// A helper that resets on a page's first call and counts on its later
+/// ones gives every page the same counts when pages are built one at a
+/// time, and when two pages' calls run in different Nodes. The replay
+/// check still runs every call in one Node, one request from each render
+/// in turn, where the counts mix: the build is refused, as it is from one
+/// Node. Here an early and a late page use the helper, and nothing else.
+#[test]
+fn a_reset_and_count_helper_is_refused_from_several_nodes() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/h.js".into(),
+            "let n = 0;\nmodule.exports = { reset() { n = 0; return ''; }, count() { return ++n; }, plain(x) { return x; } };".into(),
+        ),
+        ("src/a.njk".into(), "{{ h.reset() }}{{ h.count() }}{{ h.count() }}".into()),
+        ("src/z.njk".into(), "{{ h.reset() }}{{ h.count() }}{{ h.count() }}".into()),
+    ];
+    for i in 0..9 {
+        files.push((format!("src/m{i}.njk"), format!("{{{{ h.plain({i}) }}}}")));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    for env in [&NODES[..], &[TRACE, ONE_NODE][..]] {
+        let t = site(&files);
+        let o = build(t.path(), &[], env);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "{out}");
+        assert!(out.contains("js-data-impure"), "{out}");
+        assert!(out.contains("`count`"), "{out}");
+        assert_eq!(written(&t, "a/index.html"), None);
+        assert_eq!(
+            out.contains("the build's renders ran in 4 Nodes"),
+            env.len() == 3,
+            "{out}"
+        );
+    }
+}
+
+/// What only one Node can do right is done in one: a function a call
+/// makes lives in the Node that made it, and a call that changes shared
+/// data makes that Node forget what it kept. Built from four Nodes, the
+/// pages are what one Node gives, and nothing is refused that one Node
+/// builds.
+#[test]
+fn several_nodes_build_what_one_node_builds() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        ("src/_data/site.json".into(), r#"{"list":[{"n":1},{"n":2}],"o":{"k":1}}"#.into()),
+        (
+            "src/_data/h.js".into(),
+            "module.exports = {\n  adder(n) { return function add(x) { return x + n; }; },\n  poke(o) { o.k = 2; return ''; },\n  count(l) { return l.length; },\n  key(o) { return o.k; },\n};".into(),
+        ),
+        ("src/poke.njk".into(), "{{ h.poke(site.o) }}".into()),
+    ];
+    for i in 0..12 {
+        files.push((
+            format!("src/p{i}.njk"),
+            format!("{{% set add = h.adder({i}) %}}{{{{ add(10) }}}}/{{{{ h.count(site.list) }}}}/{{{{ h.key(site.o) }}}}"),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let pages = |env: &[(&str, &str)]| {
+        let t = site(&files);
+        let o = build(t.path(), &[], env);
+        let out = text(&o);
+        let pages: Vec<Option<String>> = (0..12)
+            .map(|i| written(&t, &format!("p{i}/index.html")))
+            .collect();
+        (o.status.code(), out, pages)
+    };
+    let (one_code, one_out, one) = pages(&[TRACE, ("BRRRTY_JS_BUILD_NODES", "1")]);
+    let (code, out, several) = pages(&NODES);
+    assert_eq!(code, one_code, "{out}\n---\n{one_out}");
+    assert_eq!(several, one, "{out}\n---\n{one_out}");
+    assert_eq!(one[3].as_deref(), Some("13/2/1"), "{one_out}");
+    // Only the page that changes its data is refused, either way.
+    for o in [&out, &one_out] {
+        assert!(o.contains("src/poke.njk"), "{o}");
+        assert!(!o.contains("different result"), "{o}");
+    }
 }

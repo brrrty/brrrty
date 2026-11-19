@@ -56,8 +56,6 @@ pub(crate) struct Loads {
     pub walk: Option<String>,
     /// How long the first run's loads took, all of them.
     pub took: Duration,
-    /// The build's own worker froze the data files' values.
-    pub frozen: bool,
 }
 
 /// Which order a replay runs the calls in.
@@ -981,7 +979,6 @@ impl Helper {
             load_handles: 0,
             walk,
             took: Duration::ZERO,
-            frozen: false,
         };
         let spawned = std::thread::Builder::new()
             .name("brrrty-node-build".into())
@@ -1018,7 +1015,8 @@ impl Helper {
     pub fn usable(&mut self, wait: bool) -> bool {
         if self.mux.is_none() && !self.useless {
             let said = if wait {
-                self.ready.recv().ok()
+                // Not for ever: a data file may never finish a second time.
+                self.ready.recv_timeout(Duration::from_secs(5)).ok()
             } else {
                 match self.ready.try_recv() {
                     Ok(said) => Some(said),

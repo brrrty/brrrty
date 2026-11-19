@@ -946,7 +946,7 @@ impl Worker {
                 self.stats.definitions += 1;
                 self.stats.defined += line.len() as u64;
                 self.write_line(line)?;
-                if !handed && self.helpers.iter().any(|h| !h.useless) {
+                if self.helpers.iter().any(|h| !h.useless) {
                     let own: Arc<str> = format!("{line}\n").into();
                     for h in self.helpers.iter().filter(|h| !h.useless) {
                         h.line(own.clone());
@@ -1677,7 +1677,6 @@ impl Worker {
             // The replays load every file again, several in one request:
             // none of it should take longer than all of it did here.
             took: self.stats.started.map(|t| t.elapsed()).unwrap_or_default(),
-            frozen: self.frozen,
         });
         use crate::replay::Order;
         let mut replays = vec![
@@ -2385,6 +2384,17 @@ impl JsRuntime for Worker {
         }
         match checked {
             Ok(()) => JsResult::Ok(()),
+            // Dealt between several Nodes, a site may show what one Node
+            // wouldn't (a value each Node saves from its own first call:
+            // `built ??= new Date()`). Whether the site depends on the
+            // order of its calls, a build in one Node says: this one is
+            // run again that way, and its check decides.
+            Err(crate::replay::Failure::Differs(..)) if self.spread => {
+                match self.lone("the check found a difference with the calls in several Nodes") {
+                    Some(f) => JsResult::Failed(f),
+                    None => JsResult::Failed(self.fail("the replay check found a difference")),
+                }
+            }
             Err(crate::replay::Failure::Differs(why, handle)) => {
                 let named = handle
                     .and_then(|h| {

@@ -43,8 +43,17 @@ fn built(mode: Option<&str>) -> String {
         .args(["build", "--input", "src", "--js-data=node"])
         .env_remove("BRRRTY_NODE")
         .env_remove("BRRRTY_JS_EXPORTS");
-    if let Some(mode) = mode {
-        c.env("BRRRTY_JS_EXPORTS", mode);
+    match mode {
+        // The build's calls dealt between four Nodes, each ready before
+        // the first call.
+        Some("nodes") => {
+            c.env("BRRRTY_JS_BUILD_NODES", "4")
+                .env("BRRRTY_JS_BUILD_WAIT", "1");
+        }
+        Some(mode) => {
+            c.env("BRRRTY_JS_EXPORTS", mode);
+        }
+        None => {}
     }
     let o = c.output().expect("run brrrty");
     assert_eq!(
@@ -88,4 +97,14 @@ fn and_the_same_when_the_exports_are_walked() {
         return;
     }
     assert_eq!(built(Some("walk")), expected());
+}
+
+/// And the same when the pages' calls run in four Nodes: each has the
+/// same values under the same ids, and a page's calls keep to one.
+#[test]
+fn and_the_same_when_the_calls_run_in_several_nodes() {
+    if !has_node() {
+        return;
+    }
+    assert_eq!(built(Some("nodes")), expected());
 }
