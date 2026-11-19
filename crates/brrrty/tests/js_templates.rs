@@ -1061,8 +1061,9 @@ fn computed_functions_after_one_that_throws_do_not_run() {
 }
 
 /// What Brrrty sends together comes back right: a page's data too large
-/// for one write of the pipe, a function that waits behind a quick one
-/// (its reply held, then sent by the timer), and a page whose function
+/// for one write of the pipe (whose render also asks Brrrty for a filter),
+/// a function that waits behind a quick one (its reply held, then sent by
+/// the timer), and a page whose function
 /// changes its data, after which the workers are sent the shared values
 /// again and the replay check steps through the calls one at a time.
 #[test]
@@ -1072,7 +1073,7 @@ fn requests_sent_together_come_back_in_order() {
     }
     let big = "x".repeat(300_000);
     let page = format!(
-        "exports.data = {{ big: '{big}', eleventyComputed: {{\n  a: (d) => d.big.length,\n  b: async (d) => {{ await new Promise((r) => setTimeout(r, 150)); return d.a + 1; }},\n  c: (d) => d.b + 1,\n}} }};\nexports.render = (d) => [d.a, d.b, d.c].join();\n"
+        "exports.data = {{ big: '{big}', eleventyComputed: {{\n  a: (d) => d.big.length,\n  b: async (d) => {{ await new Promise((r) => setTimeout(r, 150)); return d.a + 1; }},\n  c: (d) => d.b + 1,\n}} }};\nexports.render = function (d) {{ return [d.a, d.b, d.c].join() + '/' + this.slugify('A b'); }};\n"
     );
     let mut files: Vec<(String, String)> = vec![
         ("brrrty.config.rhai".into(), ON.into()),
@@ -1102,7 +1103,7 @@ fn requests_sent_together_come_back_in_order() {
     assert!(out.contains("src/poke.njk"), "{out}");
     assert!(out.contains("changes the data it is given"), "{out}");
     assert!(!out.contains("different result"), "{out}");
-    assert_eq!(read(t.path(), "big/index.html"), "300000,300001,300002");
+    assert_eq!(read(t.path(), "big/index.html"), "300000,300001,300002/a-b");
     for i in 0..8 {
         assert_eq!(read(t.path(), &format!("p{i}/index.html")), "2/1");
     }
