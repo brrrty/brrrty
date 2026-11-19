@@ -225,10 +225,12 @@ fn what_strict_mode_makes_loud_sends_the_build_back() {
         assert!(asks_again(&mut w, &d, &["f"]), "{body}");
         drop(w);
         let (mut w, d) = begun(&node, &t);
-        assert_eq!(
-            w.exports_frozen(),
-            Err("BRRRTY_JS_EXPORTS=walk".to_string()),
-            "{body}"
+        // The walk says why: the build before it was sent back, not
+        // anything the user set.
+        let why = w.exports_frozen().unwrap_err();
+        assert!(
+            why.starts_with("this folder's last build was sent back: ") && why.contains("strict"),
+            "{body}: {why}"
         );
         assert_eq!(&ok(call(&mut w, &d, "f")).value, want, "{body}");
         assert_eq!(w.verify(), JsResult::Ok(()), "{body}");

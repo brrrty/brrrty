@@ -243,8 +243,16 @@ impl Mux {
                         ));
                     }
                     if now >= wait.next_note {
+                        // Node runs one request at a time: this one may be
+                        // waiting its turn behind the others.
+                        let waiting = locked(&self.routes).len();
+                        let behind = if waiting > 1 {
+                            format!(" ({waiting} requests are waiting on Node, which runs one at a time)")
+                        } else {
+                            String::new()
+                        };
                         (locked(&self.notes))(&format!(
-                            "note: still waiting on {what}, {} s",
+                            "note: still waiting on {what}, {} s{behind}",
                             wait.start.elapsed().as_secs()
                         ));
                         wait.next_note = now + locked(&self.note_times).1;
@@ -500,6 +508,8 @@ pub struct Worker {
     stats: Stats,
     /// The worker froze the data files' values when the calls began.
     frozen: bool,
+    /// Why this worker was started walking, when Brrrty asked it to.
+    walk: Option<String>,
     /// Why it walks them instead, when it does.
     walks: Option<String>,
 }
@@ -561,7 +571,7 @@ impl Worker {
     /// Start Node with the worker, in `root` (the project folder), with
     /// 11ty's environment variables added to Brrrty's own.
     pub fn start(node: &NodeInfo, root: &Path, run_mode: RunMode) -> Result<Worker, WorkerError> {
-        Worker::start_as(node, root, run_mode, false)
+        Worker::start_as(node, root, run_mode, None)
     }
 
     /// [`Worker::start`]; `replay` for one of the replay check's workers.
@@ -569,8 +579,14 @@ impl Worker {
         node: &NodeInfo,
         root: &Path,
         run_mode: RunMode,
-        replay: bool,
+        replay: Option<&crate::replay::Loads>,
     ) -> Result<Worker, WorkerError> {
+        // The build's own worker asks whether this folder's builds walk;
+        // the replay check's workers do as it did.
+        let walk = match replay {
+            Some(loads) => loads.walk.clone(),
+            None => walk_roots().starting(root),
+        };
         let mut cmd = Command::new(&node.path);
         cmd.args(["--input-type=module", "--eval", WORKER_SOURCE])
             .current_dir(root)
@@ -579,10 +595,13 @@ impl Worker {
             .env("ELEVENTY_RUN_MODE", run_mode.as_str())
             .env("ELEVENTY_VERSION", ELEVENTY_VERSION)
             .stdin(Stdio::piped());
-        if walk_roots().contains(root) {
+        if let Some(why) = &walk {
             cmd.env("BRRRTY_JS_EXPORTS", "walk");
+            cmd.env("BRRRTY_JS_WALK_WHY", why);
+        } else {
+            cmd.env_remove("BRRRTY_JS_WALK_WHY");
         }
-        if replay {
+        if replay.is_some() {
             cmd.env("BRRRTY_ROLE", "replay");
         }
         let cannot =
@@ -656,6 +675,7 @@ impl Worker {
                 ..Stats::default()
             },
             frozen: false,
+            walk,
             walks: None,
         })
     }
@@ -1381,7 +1401,7 @@ impl Worker {
         if let Some(why) = reply.get("again") {
             // The worker froze the data files' values and can't vouch for
             // what it then saw: this folder's builds walk them from now on.
-            walk_roots().insert(self.root.clone());
+            walk_roots().sent_back(&self.root, why.as_str().unwrap_or(""));
             let mut f = self.fail(&format!(
                 "the JavaScript worker has to check the data files' values after every call ({})",
                 why.as_str().unwrap_or("")
@@ -1435,6 +1455,10 @@ impl Worker {
             loads: std::mem::take(&mut self.load_log),
             global_end: self.global_end,
             load_handles: self.load_handles,
+            walk: self.walk.clone(),
+            // The replays load every file again, several in one request:
+            // none of it should take longer than all of it did here.
+            took: self.stats.started.map(|t| t.elapsed()).unwrap_or_default(),
         });
         let replays = [
             crate::replay::Handle::start(loads.clone(), true),
@@ -2006,6 +2030,9 @@ impl JsRuntime for Worker {
         }
         // Nothing to check: no page called a function, and no template or
         // template or directory data file loaded.
+        if self.frozen {
+            walk_roots().froze(&self.root);
+        }
         let Some(replays) = self.replays.take() else {
             return JsResult::Ok(());
         };
@@ -2053,7 +2080,7 @@ impl JsRuntime for Worker {
             }
             Err(crate::replay::Failure::Runtime(f)) => JsResult::Failed(f),
             Err(crate::replay::Failure::Again(why)) => {
-                walk_roots().insert(self.root.clone());
+                walk_roots().sent_back(&self.root, &why);
                 let mut f = self.fail(&format!(
                     "the JavaScript worker has to check the data files' values after every call ({why})"
                 ));
@@ -2109,10 +2136,63 @@ impl Drop for Worker {
 /// The project folders whose builds found they must walk the data files'
 /// values after each call rather than freeze them (see the worker's
 /// "Freezing"): a build there starts that way.
-fn walk_roots() -> MutexGuard<'static, std::collections::HashSet<PathBuf>> {
-    static ROOTS: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> =
-        std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+fn walk_roots() -> MutexGuard<'static, WalkMemo> {
+    static ROOTS: std::sync::LazyLock<Mutex<WalkMemo>> =
+        std::sync::LazyLock::new(|| Mutex::new(WalkMemo::default()));
     ROOTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Which folders' builds walk, and for how long. A build that was sent
+/// back runs again walking; the build after that tries the freeze again
+/// (under `brrrty serve` the code may have been fixed). A folder sent
+/// back again and again walks for twice as many builds each time, up to
+/// 64, so a site that can't be frozen stops paying for the try.
+#[derive(Default)]
+pub(crate) struct WalkMemo {
+    roots: HashMap<PathBuf, Walks>,
+}
+
+struct Walks {
+    why: String,
+    /// How many builds still start walking.
+    left: u32,
+    /// How many it was the last time the folder was sent back.
+    last: u32,
+}
+
+impl WalkMemo {
+    const MOST: u32 = 64;
+
+    /// A build of `root` was sent back.
+    pub(crate) fn sent_back(&mut self, root: &Path, why: &str) {
+        let w = self.roots.entry(root.to_path_buf()).or_insert(Walks {
+            why: String::new(),
+            left: 0,
+            last: 0,
+        });
+        // Several of one build's requests may say so.
+        if w.left > 0 {
+            return;
+        }
+        w.why = why.to_string();
+        w.last = (w.last * 2).clamp(1, Self::MOST);
+        w.left = w.last;
+    }
+
+    /// A build of `root` starts: why it walks, if it does.
+    pub(crate) fn starting(&mut self, root: &Path) -> Option<String> {
+        let w = self.roots.get_mut(root)?;
+        if w.left == 0 {
+            return None;
+        }
+        w.left -= 1;
+        Some(w.why.clone())
+    }
+
+    /// A build of `root` froze and passed.
+    pub(crate) fn froze(&mut self, root: &Path) {
+        self.roots.remove(root);
+    }
 }
 
 /// Whether to say on stderr what the JavaScript worker's requests cost
@@ -2153,7 +2233,17 @@ pub fn stop_all() {
 pub(crate) fn stop_pid(pid: u32) {
     #[cfg(unix)]
     kill_group(pid);
-    #[cfg(not(unix))]
+    // Elsewhere there is no group: Windows stops the tree by name.
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = pid;
 }
 
@@ -2434,5 +2524,44 @@ pub fn encode(v: &Value) -> Json {
         }
         Value::Date(d) => json!({"$d": d.timestamp_millis()}),
         Value::Function(h) => json!({"$f": h.0}),
+    }
+}
+
+#[cfg(test)]
+mod walk_memo {
+    use super::WalkMemo;
+    use std::path::Path;
+
+    /// A build sent back runs again walking, and the one after tries the
+    /// freeze again; a folder sent back every time walks for longer and
+    /// longer, and one that freezes is forgotten.
+    #[test]
+    fn a_folder_sent_back_walks_for_a_while_not_for_good() {
+        let root = Path::new("/site");
+        let mut m = WalkMemo::default();
+        assert_eq!(m.starting(root), None);
+        m.sent_back(root, "why");
+        // Several requests of the one build may say so.
+        m.sent_back(root, "another request");
+        assert_eq!(m.starting(root).as_deref(), Some("why"));
+        // The build after the rerun tries again.
+        assert_eq!(m.starting(root), None);
+        m.sent_back(root, "again");
+        assert_eq!(m.starting(root).as_deref(), Some("again"));
+        assert_eq!(m.starting(root).as_deref(), Some("again"));
+        assert_eq!(m.starting(root), None);
+        m.sent_back(root, "third");
+        let walked = std::iter::from_fn(|| m.starting(root)).count();
+        assert_eq!(walked, 4);
+        for _ in 0..10 {
+            m.sent_back(root, "more");
+            while m.starting(root).is_some() {}
+        }
+        m.sent_back(root, "most");
+        assert_eq!(std::iter::from_fn(|| m.starting(root)).count(), 64);
+        // A build that froze and passed starts over.
+        m.froze(root);
+        m.sent_back(root, "new");
+        assert_eq!(std::iter::from_fn(|| m.starting(root)).count(), 1);
     }
 }

@@ -51,6 +51,11 @@ pub(crate) struct Loads {
     /// How many of `loads` loaded global data.
     pub global_end: usize,
     pub load_handles: u64,
+    /// Why the build's own worker walks, when Brrrty asked it to: the
+    /// replays' workers do the same.
+    pub walk: Option<String>,
+    /// How long the first run's loads took, all of them.
+    pub took: Duration,
 }
 
 /// The requests the first run made once the data had loaded.
@@ -200,7 +205,20 @@ fn failed(f: RuntimeFailure) -> Failure {
 /// A request may take a while again, but not without end: the first run
 /// finished.
 fn deadline(slowest: Duration) -> Duration {
-    (slowest * 4).max(Duration::from_secs(10))
+    (slowest * 4).max(floor())
+}
+
+/// The least a replay's request is allowed: 10 s, or `BRRRTY_JS_REPLAY_FLOOR_MS`
+/// (for the tests, which can't wait that long to see a slow load pass).
+fn floor() -> Duration {
+    static FLOOR: std::sync::LazyLock<Duration> = std::sync::LazyLock::new(|| {
+        std::env::var("BRRRTY_JS_REPLAY_FLOOR_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(10))
+    });
+    *FLOOR
 }
 
 fn work(
@@ -213,7 +231,7 @@ fn work(
     if cancelled.load(Ordering::SeqCst) {
         return Ok(());
     }
-    let mut w = Worker::start_as(&loads.node, &loads.root, loads.run_mode, true)
+    let mut w = Worker::start_as(&loads.node, &loads.root, loads.run_mode, Some(loads))
         .map_err(|e| runtime(format!("the replay check couldn't start Node: {e}")))?;
     *live.lock().unwrap_or_else(|e| e.into_inner()) = Some(w.pid());
     let out = work_with(&mut w, loads, reverse, rx, cancelled);
@@ -236,12 +254,15 @@ fn work_with(
     }
     // Replies are compared as text.
     w.decode.store(false, std::sync::atomic::Ordering::Relaxed);
-    w.deadline = Some(deadline(Duration::ZERO));
+    // A replay's loads run in another order, several modules in one
+    // request, so each request is allowed what all of the first run's
+    // loads took together, four times over.
+    w.deadline = Some(deadline(loads.took));
     // The template and template/directory data modules run in the
     // reverse of the build's order in one worker, and rotated by one
     // (the first last) in the other: a rotation moves every module's
     // place, which the reverse leaves alone for the middle one.
-    let mut early = loads_reordered(w, loads, reverse).and_then(|()| {
+    let mut early = loads_reordered(w, loads, reverse, cancelled).and_then(|()| {
         let begun = send(w, r#"{"op":"callsBegin"}"#, None)?;
         if begun.head.get("handles").and_then(Json::as_u64) != Some(loads.load_handles) {
             return Err(Failure::Differs(
@@ -282,8 +303,21 @@ fn work_with(
 /// shared counter it read at load) differs in one of them. A
 /// dependence that comes out the same in the build's order, its reverse
 /// and its rotation is not seen.
-fn loads_reordered(w: &mut Worker, log: &Loads, reverse: bool) -> Result<(), Failure> {
+fn loads_reordered(
+    w: &mut Worker,
+    log: &Loads,
+    reverse: bool,
+    cancelled: &AtomicBool,
+) -> Result<(), Failure> {
     let feed = |r: &LoadRecord| r.clock.as_deref().unwrap_or("[]").to_string();
+    // The build ended without the check (it failed, or was sent back):
+    // nothing more is loaded for it.
+    let send = |w: &mut Worker, text: &str, feed: Option<&str>| {
+        if cancelled.load(Ordering::SeqCst) {
+            return Err(runtime("the replay check was stopped".to_string()));
+        }
+        send(w, text, feed)
+    };
     // A replay worker, handed no clock of its own: each load brings its own.
     send(w, r#"{"op":"feedClock","values":[]}"#, None)?;
     let split = log.global_end.min(log.loads.len());

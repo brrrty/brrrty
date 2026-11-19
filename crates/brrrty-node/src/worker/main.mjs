@@ -61,13 +61,30 @@ function closeOnExec(fd, flags = fs.constants.O_WRONLY) {
 // together and reads their replies together.
 let held = [];
 let heldSince = 0;
+let heldTimer = null;
+// The clock and timers as they are before the worker stands in for them.
+const realNow = Date.now.bind(Date);
+const realSetTimeout = setTimeout;
+const realClearTimeout = clearTimeout;
 
 function out(text, hold = false) {
-  // Not for long: Brrrty takes a slow reply for a stuck worker.
-  if (hold && (held.length === 0 || Date.now() - heldSince < 50)) {
-    if (held.length === 0) heldSince = Date.now();
+  // Not for long: Brrrty takes a slow reply for a stuck worker. A timer
+  // sends what is held when the request after it waits on something (a
+  // fetch): the next reply may be a while.
+  if (hold && (held.length === 0 || realNow() - heldSince < 50)) {
+    if (held.length === 0) {
+      heldSince = realNow();
+      heldTimer = realSetTimeout(() => {
+        heldTimer = null;
+        if (held.length) out("");
+      }, 50);
+    }
     held.push(text);
     return;
+  }
+  if (heldTimer !== null) {
+    realClearTimeout(heldTimer);
+    heldTimer = null;
   }
   if (held.length) {
     text = held.join("") + text;
@@ -241,8 +258,10 @@ function disguise(standIn, original) {
 // again, or `BRRRTY_JS_EXPORTS=walk`): nothing is frozen, and no file is
 // loaded as strict that wasn't written so.
 const walkOnly = process.env.BRRRTY_JS_EXPORTS === "walk";
-if (walkOnly) cantVouch("BRRRTY_JS_EXPORTS=walk");
+// Why, when Brrrty asked: this folder's last build was sent back.
+if (walkOnly) cantVouch(process.env.BRRRTY_JS_WALK_WHY ? `this folder's last build was sent back: ${process.env.BRRRTY_JS_WALK_WHY}` : "BRRRTY_JS_EXPORTS=walk");
 delete process.env.BRRRTY_JS_EXPORTS;
+delete process.env.BRRRTY_JS_WALK_WHY;
 if (!loadHooks) cantVouch("this Node has no module load hooks (before 22.15), so the worker can't see every file that loads");
 if (/(^|\s)(-r|--require|--import|--loader|--experimental-loader|--experimental-(default-)?config-file|--inspect[\w-]*)([=\s]|$)/.test(`${process.execArgv.join(" ")} ${process.env.NODE_OPTIONS || ""}`)) {
   cantVouch("Node was started with a preload, a loader or the inspector");
