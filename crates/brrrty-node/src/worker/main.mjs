@@ -2481,6 +2481,11 @@ function define(req) {
     fromWire(req.v, true);
     if (nextObject - req.id !== req.n) defProblem = `definition ${req.id} holds ${nextObject - req.id} values, not ${req.n}`;
   } catch (e) {
+    // It refers to a value this worker forgot (a call here changed
+    // one, and Brrrty wrote this before it heard): the values it would
+    // have defined stay unknown, and a request that refers to one is
+    // told so, as for any forgotten value.
+    if (e instanceof Stale) return;
     defProblem = `definition ${req.id}: ${e && e.message}`;
   }
 }
