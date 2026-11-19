@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `brrrty build --no-order-check` (and `serve`), or `config.set_order_check(false)`, builds without the order check: the site's JavaScript runs once, and Brrrty does not run it again in other orders to check that no page depends on the order pages are built in. The build says so in one line. The check stays on by default, and `brrrty doctor` always runs it.
 - On a site with JavaScript templates, on a machine with four or more cores, the pages' calls run in several Nodes at once (half the cores, at most four), each page's calls in one Node, and pages are written to a staging folder while the replay check runs. The check runs every call again in one Node as before, now in three orders that between them put every two calls of different pages both ways round. A build that needs one Node (a call returns a function, or the check finds a difference) runs again in one. `BRRRTY_JS_BUILD_NODES=1` keeps one Node. Data files load once more per extra Node.
 - The Linux musl builds (the npm packages) use mimalloc instead of musl's own allocator, which was slow under threads: a 1,070-page site built in 3.0 s instead of 3.75 s in one Node.
 

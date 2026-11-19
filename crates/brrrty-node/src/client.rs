@@ -543,6 +543,8 @@ pub struct Worker {
     group_target: usize,
     /// A render's calls went to another Node.
     spread: bool,
+    /// The replay check runs (see [`Worker::start_with`]).
+    order_check: bool,
     /// Where this worker's own Node's lines go once its calls begin in a
     /// build of several Nodes: a thread writes them, so that a Node busy
     /// with a long call doesn't hold up what Brrrty sends the others.
@@ -634,6 +636,28 @@ impl Worker {
         run_mode: RunMode,
         replay: Option<&crate::replay::Loads>,
     ) -> Result<Worker, WorkerError> {
+        Worker::start_checked(node, root, run_mode, replay, true)
+    }
+
+    /// [`Worker::start`], with or without the replay check: without it
+    /// the site's JavaScript runs once, in this worker's Node alone, and
+    /// nothing is kept of the calls to run them again.
+    pub fn start_with(
+        node: &NodeInfo,
+        root: &Path,
+        run_mode: RunMode,
+        order_check: bool,
+    ) -> Result<Worker, WorkerError> {
+        Worker::start_checked(node, root, run_mode, None, order_check)
+    }
+
+    fn start_checked(
+        node: &NodeInfo,
+        root: &Path,
+        run_mode: RunMode,
+        replay: Option<&crate::replay::Loads>,
+        order_check: bool,
+    ) -> Result<Worker, WorkerError> {
         // The build's own worker asks whether this folder's builds walk;
         // the replay check's workers do as it did.
         let walk = match replay {
@@ -692,7 +716,7 @@ impl Worker {
         let tail = stderr_tail.clone();
         let stderr_thread = std::thread::spawn(move || drain_stderr(stderr, tail));
         // The other Nodes of the build start now, and load as this one does.
-        let nodes = if replay.is_some() {
+        let nodes = if replay.is_some() || !order_check {
             1
         } else {
             build_nodes(root)
@@ -736,6 +760,7 @@ impl Worker {
             target: 0,
             group_target: 0,
             spread: false,
+            order_check,
             writer: None,
             solo: false,
             slowest: Duration::ZERO,
@@ -1116,6 +1141,13 @@ impl Worker {
                     body,
                     clock,
                 });
+            } else if logged(req.op) && !self.order_check {
+                // Nothing runs the calls again: nothing is kept of them.
+                let dropped = frame
+                    .as_ref()
+                    .is_some_and(|f| f.head.get("dropShared").is_some());
+                self.dropped |= dropped;
+                unchecked |= dropped;
             } else if logged(req.op) {
                 let (unit, label) = match brrrty_js::functions::unit() {
                     Some(u) => u,
@@ -1666,6 +1698,9 @@ impl Worker {
     }
 
     fn start_replays(&mut self) {
+        if !self.order_check {
+            return;
+        }
         let loads = Arc::new(crate::replay::Loads {
             node: self.node.clone(),
             root: self.root.clone(),
