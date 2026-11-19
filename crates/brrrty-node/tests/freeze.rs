@@ -484,3 +484,37 @@ fn naming_a_function_leaves_the_watcher_watching() {
     }
     assert!(asks_again(&mut w, &d, &["quiet"]));
 }
+
+/// An error both modes throw, in a file loaded as strict, is the site's
+/// own business: the build stays frozen.
+#[test]
+fn errors_strict_mode_shares_with_sloppy_mode_change_nothing() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "d.js",
+        r#"var box = { n: 1 };
+module.exports = {
+  list: [box],
+  read: function () { try { return null.x; } catch (e) { return e.name; } },
+  name: function () { try { return missing; } catch (e) { return e.name; } },
+  call: function () { try { return box.nope(); } catch (e) { return e.name; } },
+  plus: function () { try { missing += 1; } catch (e) { return e.name; } },
+  mine: function () { try { throw new TypeError("mine"); } catch (e) { return e.message; } },
+  own: function () { return this.list.length; }
+};
+"#,
+    )]);
+    let (mut w, d) = begun(&node, &t);
+    assert_eq!(w.exports_frozen(), Ok(()));
+    for (name, want) in [
+        ("read", Value::String("TypeError".into())),
+        ("name", Value::String("ReferenceError".into())),
+        ("call", Value::String("TypeError".into())),
+        ("plus", Value::String("ReferenceError".into())),
+        ("mine", Value::String("mine".into())),
+        ("own", Value::Number(1.0)),
+    ] {
+        assert_eq!(ok(call(&mut w, &d, name)).value, want, "{name}");
+    }
+    assert_eq!(w.verify(), JsResult::Ok(()));
+}

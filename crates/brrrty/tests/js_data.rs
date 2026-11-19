@@ -1546,3 +1546,198 @@ fn a_key_order_changed_and_restored_between_pages_is_refused() {
     assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
     assert_eq!(written(&t, "b/index.html"), None);
 }
+
+/// Whether the worker can show Brrrty every file that loads (Node 22.15
+/// and later): only then does it freeze the data files' values.
+fn node_freezes() -> bool {
+    Command::new("node")
+        .args(["-p", "typeof require('node:module').registerHooks"])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "function")
+}
+
+const TRACE: (&str, &str) = ("BRRRTY_JS_TRACE", "1");
+const FROZEN: &str = "the data files' values are frozen";
+const WALKED: &str = "the data files' values are walked after every call";
+
+/// A site whose functions change nothing is built once, its data files'
+/// values frozen: as an ES module, as CommonJS that says "use strict",
+/// and as CommonJS that doesn't (loaded as strict, since that changes
+/// nothing in it).
+#[test]
+fn a_site_that_changes_nothing_is_frozen_and_built_once() {
+    if !has_node() || !node_freezes() {
+        return;
+    }
+    let body = "{ title: 'Hi', list: [{ n: 1 }, { n: 2 }], up(s) { return String(s).toUpperCase() + this.title; }, count: () => list.length }";
+    let log =
+        "require('fs').appendFileSync(require('path').join(__dirname, '..', '..', 'loads'), 'x');";
+    for (package, file) in [
+        (
+            r#"{"type":"module"}"#,
+            format!(
+                "import fs from 'node:fs';\nfs.appendFileSync(new URL('../../loads', import.meta.url), 'x');\nconst list = [{{ n: 1 }}, {{ n: 2 }}];\nexport default {body};"
+            ),
+        ),
+        (
+            "{}",
+            format!(
+                "'use strict';\n{log}\nconst list = [{{ n: 1 }}, {{ n: 2 }}];\nmodule.exports = {body};"
+            ),
+        ),
+        (
+            "{}",
+            format!("{log}\nvar list = [{{ n: 1 }}, {{ n: 2 }}];\nmodule.exports = {body};"),
+        ),
+    ] {
+        let t = site(&[
+            ("brrrty.config.rhai", ON),
+            ("package.json", package),
+            ("src/_data/site.js", &file),
+            (
+                "src/index.njk",
+                "{{ site.up('a') }} {{ site.count() }} {{ site.list | length }}",
+            ),
+        ]);
+        let o = build(t.path(), &[], &[TRACE]);
+        let out = text(&o);
+        assert!(o.status.success(), "{out}");
+        assert!(out.contains(FROZEN), "{file}\n{out}");
+        assert!(!out.contains(WALKED), "{file}\n{out}");
+        assert_eq!(written(&t, "index.html").as_deref(), Some("AHi 2 2"));
+        // The build's own load, and one for each of the check's two workers.
+        assert_eq!(
+            fs::read_to_string(t.path().join("loads")).unwrap(),
+            "xxx",
+            "{file}"
+        );
+    }
+}
+
+/// A frozen build that meets a write is built again with the walk, which
+/// refuses it as it always did; `BRRRTY_JS_EXPORTS=walk` gives the same
+/// from the start.
+#[test]
+fn a_frozen_build_that_meets_a_write_is_decided_by_the_walk() {
+    if !has_node() || !node_freezes() {
+        return;
+    }
+    let files = [
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "const list = [{ n: 1 }];\nmodule.exports = { list, push() { list.push({ n: 2 }); return ''; }, pop() { list.pop(); return ''; } };",
+        ),
+        // The list ends as it began, and no function shows it in between.
+        ("src/a.njk", "{{ h.push() }}{{ h.pop() }}"),
+        ("src/b.njk", "{{ h.list | length }}"),
+    ];
+    let t = site(&files);
+    let o = build(t.path(), &[], &[TRACE]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains(FROZEN) && out.contains(WALKED), "{out}");
+    assert!(out.contains("js-data-impure"), "{out}");
+    assert!(
+        out.contains("changes the data src/_data/h.js gives"),
+        "{out}"
+    );
+    assert_eq!(written(&t, "b/index.html"), None);
+
+    let t = site(&files);
+    let walked = build(t.path(), &[], &[TRACE, ("BRRRTY_JS_EXPORTS", "walk")]);
+    let walked_out = text(&walked);
+    assert_eq!(walked.status.code(), Some(1), "{walked_out}");
+    assert!(!walked_out.contains(FROZEN), "{walked_out}");
+    assert!(
+        walked_out.contains("changes the data src/_data/h.js gives"),
+        "{walked_out}"
+    );
+}
+
+/// A CommonJS file with no "use strict" is loaded as strict when strict
+/// mode changes nothing in it without a sound. What strict mode makes
+/// loud (here an assignment to a name nothing declares, which makes a
+/// global as written) sends the build back, and it is built as written.
+#[test]
+fn a_sloppy_file_that_strict_mode_would_stop_is_built_as_written() {
+    if !has_node() || !node_freezes() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "module.exports = { list: [1], next() { counter = 5; return counter; } };",
+        ),
+        ("src/index.njk", "{{ h.next() }} {{ h.list | length }}"),
+    ]);
+    let o = build(t.path(), &[], &[TRACE]);
+    let out = text(&o);
+    assert!(o.status.success(), "{out}");
+    assert!(out.contains(FROZEN) && out.contains(WALKED), "{out}");
+    assert_eq!(written(&t, "index.html").as_deref(), Some("5 1"));
+}
+
+/// The freeze and the walk agree on builds neither refuses: the same
+/// pages, byte for byte.
+#[test]
+fn the_freeze_and_the_walk_write_the_same_pages() {
+    if !has_node() || !node_freezes() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/site.js".into(),
+            "const posts = []; for (let i = 0; i < 50; i++) posts.push({ id: i, title: 'Post ' + i, tags: ['t' + (i % 3)] });\nmodule.exports = { posts, when: new Date(86400000), label(p) { return p.title.toUpperCase() + ' #' + p.id; }, byTag(t) { return posts.filter((p) => p.tags.includes(t)).length; } };".into(),
+        ),
+        (
+            "src/posts/posts.11tydata.js".into(),
+            "module.exports = { eleventyComputed: { shout: (d) => d.title + '!', permalink: (d) => '/p/' + d.page.fileSlug + '/' } };".into(),
+        ),
+        (
+            "src/item.11ty.js".into(),
+            "module.exports = { data: { pagination: { data: 'site.posts', size: 1, alias: 'post' }, permalink: (d) => '/item/' + d.post.id + '/' }, render(d) { return '<p>' + d.post.title + ' of ' + d.site.posts.length + ' ' + this.slugify(d.post.title) + '</p>'; } };".into(),
+        ),
+    ];
+    for i in 0..12 {
+        files.push((
+            format!("src/posts/p{i}.njk"),
+            format!(
+                "---\ntitle: post {i}\n---\n{{{{ shout }}}} {{{{ site.label(site.posts[{i}]) }}}} {{{{ site.byTag('t1') }}}} {{{{ site.when | dump }}}}"
+            ),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let pages = |env: &[(&str, &str)]| {
+        let t = site(&refs);
+        let o = build(t.path(), &[], env);
+        let out = text(&o);
+        assert!(o.status.success(), "{out}");
+        let mut pages = Vec::new();
+        let mut dirs = vec![t.path().join("_site")];
+        while let Some(dir) = dirs.pop() {
+            for e in fs::read_dir(&dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    dirs.push(p);
+                } else {
+                    let rel = p.strip_prefix(t.path()).unwrap().to_path_buf();
+                    pages.push((rel, fs::read(&p).unwrap()));
+                }
+            }
+        }
+        pages.sort();
+        (out, pages)
+    };
+    let (frozen_out, frozen) = pages(&[TRACE]);
+    let (walked_out, walked) = pages(&[TRACE, ("BRRRTY_JS_EXPORTS", "walk")]);
+    assert!(frozen_out.contains(FROZEN), "{frozen_out}");
+    assert!(walked_out.contains(WALKED), "{walked_out}");
+    assert_eq!(frozen.len(), 62);
+    assert_eq!(frozen, walked);
+}

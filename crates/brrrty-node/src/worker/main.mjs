@@ -209,7 +209,7 @@ const walkOnly = process.env.BRRRTY_JS_EXPORTS === "walk";
 if (walkOnly) cantVouch("BRRRTY_JS_EXPORTS=walk");
 delete process.env.BRRRTY_JS_EXPORTS;
 if (!loadHooks) cantVouch("this Node has no module load hooks (before 22.15), so the worker can't see every file that loads");
-if (/(^|\s)(-r|--require|--import|--loader|--experimental-loader|--inspect[\w-]*)([=\s]|$)/.test(`${process.execArgv.join(" ")} ${process.env.NODE_OPTIONS || ""}`)) {
+if (/(^|\s)(-r|--require|--import|--loader|--experimental-loader|--experimental-(default-)?config-file|--inspect[\w-]*)([=\s]|$)/.test(`${process.execArgv.join(" ")} ${process.env.NODE_OPTIONS || ""}`)) {
   cantVouch("Node was started with a preload, a loader or the inspector");
 }
 
@@ -367,21 +367,102 @@ function sameInStrict(ast) {
   return true;
 }
 
-// `source` with "use strict" ahead of it, after a hashbang line if it has
-// one.
-function withUseStrict(source) {
+const USE_STRICT = '"use strict";';
+
+// Where "use strict" goes in `source`: at its start, or after a hashbang
+// line. The offset, and the line (from 0).
+function useStrictAt(source) {
   let at = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let line = 0;
   if (source.startsWith("#!", at)) {
     const nl = source.indexOf("\n", at);
     at = nl === -1 ? source.length : nl + 1;
+    line = 1;
   }
-  return `${source.slice(0, at)}"use strict";${source.slice(at)}`;
+  return [at, line];
 }
 
+// `source` with "use strict" ahead of it.
+function withUseStrict(source) {
+  const [at] = useStrictAt(source);
+  return `${source.slice(0, at)}${USE_STRICT}${source.slice(at)}`;
+}
+
+// The files loaded as strict that were written sloppy, and the line (from
+// 0) "use strict" went on.
+const strictLines = new Map();
+
 // The files loaded as strict that were written sloppy, by the hash of
-// their path (see `pathHash`): an error the watcher saw in one of them
-// may be strict mode's doing.
-const strictified = new Set();
+// their path (see `pathHash`), each with the places where strict mode
+// throws an error sloppy mode wouldn't (see `strictPlaces`): an error the
+// watcher saw at one of them may be strict mode's doing.
+const strictified = new Map();
+
+// Where, in a file loaded as strict, an error may be one only strict mode
+// throws:
+// - `this`: wherever a property of `this` is read, set or called. In a
+//   plain call `this` is `undefined` in strict mode, and the global object
+//   as written.
+// - `assign`: wherever a plain `=` (or a `for...in`, `for...of`) assigns to
+//   a name. A name nothing declares makes a global as written, and a
+//   ReferenceError in strict mode. (`+=`, `++` and the like read the name
+//   first, which throws either way.)
+// Each place is the whole expression around it, so it errs toward
+// counting. `starts` has where each line begins, for the inspector's
+// lines and columns.
+function strictPlaces(tree, text) {
+  const places = { this: [], assign: [], starts: [0] };
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) places.starts.push(i + 1);
+  const named = (pattern) => {
+    switch (pattern && pattern.type) {
+      case "Identifier":
+        return true;
+      case "ArrayPattern":
+        return pattern.elements.some(named);
+      case "ObjectPattern":
+        return pattern.properties.some((q) => named(q.type === "RestElement" ? q.argument : q.value));
+      case "AssignmentPattern":
+        return named(pattern.left);
+      case "RestElement":
+        return named(pattern.argument);
+      default:
+        return false;
+    }
+  };
+  const stack = [[tree, null]];
+  while (stack.length) {
+    const [node, parent] = stack.pop();
+    if (node.type === "MemberExpression" && node.object && node.object.type === "ThisExpression") {
+      const around = parent || node;
+      places.this.push(around.start, around.end);
+    } else if (node.type === "AssignmentExpression" && node.operator === "=" && named(node.left)) {
+      places.assign.push(node.start, node.end);
+    } else if ((node.type === "ForInStatement" || node.type === "ForOfStatement") && named(node.left)) {
+      places.assign.push(node.start, node.body ? node.body.start : node.end);
+    }
+    for (const k of Object.keys(node)) {
+      const child = node[k];
+      if (child === null || typeof child !== "object") continue;
+      if (Array.isArray(child)) {
+        for (const c of child) if (c !== null && typeof c === "object" && typeof c.type === "string") stack.push([c, node]);
+      } else if (typeof child.type === "string") {
+        stack.push([child, node]);
+      }
+    }
+  }
+  return places;
+}
+
+// Whether the inspector's (line, column) is in one of `ranges` (starts
+// and ends, flat).
+function inPlaces(places, ranges, line, column) {
+  if (line < 0 || line >= places.starts.length) return true;
+  const at = places.starts[line] + column;
+  for (let i = 0; i < ranges.length; i += 2) {
+    if (at >= ranges[i] && at <= ranges[i + 1]) return true;
+  }
+  return false;
+}
 // Whether the watcher is there to see what strict mode makes loud: set
 // before the first file loads.
 let canStrictify = false;
@@ -406,10 +487,13 @@ function asStrict(source, file) {
     if (!sameInStrict(acorn.parse(source, options))) return null;
     const strict = withUseStrict(source);
     // It must still be a program, to acorn and to V8, as Node wraps it.
-    acorn.parse(strict, options);
+    const tree = acorn.parse(strict, options);
     const at = strict.indexOf('"use strict";');
     new vm.Script(`${strict.slice(0, at)}(function (exports, require, module, __filename, __dirname) {${strict.slice(at)}\n})`);
-    if (typeof file === "string") strictified.add(pathHash(file));
+    if (typeof file === "string") {
+      strictified.set(pathHash(file), strictPlaces(tree, strict));
+      strictLines.set(file, useStrictAt(source)[1]);
+    }
     return strict;
   } catch {
     return null;
@@ -433,7 +517,7 @@ if (loadHooks) {
     load(url, context, nextLoad) {
       if (url.startsWith("file:")) note(url.split("?")[0]);
       const r = nextLoad(url, context);
-      if (!walkOnly && (unprovable === null || exportsMode === "frozen")) {
+      if (!walkOnly) {
         try {
           const format = r && r.format;
           if (!STRICT_FORMATS.has(format)) {
@@ -471,7 +555,7 @@ if (loadHooks) {
   const compile = nodeModule.prototype._compile;
   if (typeof compile === "function") {
     nodeModule.prototype._compile = function (content, ...rest) {
-      if (!walkOnly && (unprovable === null || exportsMode === "frozen") && typeof content === "string" && !isStrictSource(content)) {
+      if (!walkOnly && typeof content === "string" && !isStrictSource(content)) {
         const strict = asStrict(content, typeof rest[0] === "string" ? rest[0] : null);
         if (strict !== null) {
           content = strict;
@@ -994,9 +1078,44 @@ for (const [obj, name] of [
   [Reflect, "preventExtensions"],
 ]) {
   wrapFirst(obj, name, (target) => {
-    if (exportsMode === "frozen" && isObject(target) && frozenByUs.has(target)) {
+    // A Proxy may stand in front of one of them.
+    if (exportsMode === "frozen" && isObject(target) && (frozenByUs.has(target) || utilTypes.isProxy(target))) {
       cantVouch(`the site's code calls \`${obj === Object ? "Object" : "Reflect"}.${name}\` on a value a data file gave`);
     }
+  });
+}
+// What a function can learn of the function that called it. A function in
+// a file loaded as strict that wasn't written so (see `asStrict`) shows
+// here as no caller at all.
+{
+  for (const name of ["caller", "arguments"]) {
+    const d = ownDescriptor(Function.prototype, name);
+    if (!d || typeof d.get !== "function") continue;
+    const get = d.get;
+    defineProperty(Function.prototype, name, {
+      ...d,
+      get() {
+        if (strictified.size > 0) redo(`the site's code asks a function for its \`${name}\`, which a file loaded as strict hides or refuses`);
+        return get.call(this);
+      },
+    });
+  }
+  // A stack trace's own objects give a frame's function and `this` only
+  // for sloppy code.
+  let prepare = Error.prepareStackTrace;
+  defineProperty(Error, "prepareStackTrace", {
+    get() {
+      return prepare;
+    },
+    set(v) {
+      if (typeof v === "function") {
+        cantVouch("the site's code formats stack traces itself (`Error.prepareStackTrace`)");
+        if (strictified.size > 0) redo("the site's code formats stack traces itself, where a file loaded as strict shows differently");
+      }
+      prepare = v;
+    },
+    configurable: true,
+    enumerable: false,
   });
 }
 // A write that answers `false` instead of throwing.
@@ -1176,6 +1295,9 @@ function quickRecord(v, freezing = false) {
     const held = freezing && hold(x);
     if (Array.isArray(x)) {
       if (!held) out.push(x, proto, 0, x.slice(), Object.keys(x).length);
+      // A key this walk doesn't follow (a symbol, one that isn't
+      // enumerable) may lead to an object that isn't frozen.
+      if (freezing && Reflect.ownKeys(x).length !== Object.keys(x).length + 1) out.soft = true;
       for (let i = 0; i < x.length; i++) stack.push(x[i]);
       continue;
     }
@@ -1200,7 +1322,11 @@ function quickRecord(v, freezing = false) {
       }
     }
     if (!held || getters.length) out.push(x, proto, 2, [keys, vals, getters], keys.length);
+    if (freezing && Reflect.ownKeys(x).length !== keys.length) out.soft = true;
   }
+  // `soft`: something in the value can still change (what is recorded
+  // here, or behind a key this walk doesn't follow).
+  if (out.length) out.soft = true;
   return out;
 }
 
@@ -1342,8 +1468,8 @@ session.connectToMainThread();
 // The text of V8's errors for a write a frozen object refuses, and for a
 // Proxy whose target's frozen properties it must show as they are.
 const WRITE = /read only|not extensible|Cannot delete|Cannot redefine|Cannot define|on proxy/;
-// The errors strict mode throws where sloppy mode goes on.
-const STRICT = /^(TypeError|ReferenceError|SyntaxError|EvalError)\\b/;
+// The other errors only strict mode throws, whatever is around them.
+const STRICT_ONLY = /which has only a getter|Cannot create property|may not be accessed on strict mode|Assignment to constant variable/;
 const RING = ${RING};
 function pathHash(file) {
   let h = 0x811c9dc5;
@@ -1365,7 +1491,25 @@ session.on("Debugger.paused", (m) => {
       const d = p.data;
       const text = d && typeof d.description === "string" ? d.description.split("\\n")[0] : null;
       if (text === null ? !d || d.type === "object" : WRITE.test(text)) Atomics.add(flags, 0, 1);
-      if (text === null || STRICT.test(text)) {
+      // What kind of error, for a file loaded as strict that wasn't
+      // written so: 1, one only strict mode throws; 2, a TypeError that
+      // strict mode throws where \`this\` is \`undefined\`; 3, a
+      // ReferenceError, which strict mode throws where a name nothing
+      // declares is assigned to; 4, one the watcher can't place. Any
+      // other error is the same either way.
+      const kind =
+        text === null
+          ? 4
+          : WRITE.test(text) || STRICT_ONLY.test(text)
+            ? 1
+            : /^TypeError\\b/.test(text)
+              ? 2
+              : /^ReferenceError\\b/.test(text)
+                ? 3
+                : /^(SyntaxError|EvalError)\\b/.test(text)
+                  ? 4
+                  : 0;
+      if (kind !== 0) {
         // Where it was thrown, for the worker to tell whether a file it
         // loaded as strict threw it.
         const top = p.callFrames && p.callFrames[0];
@@ -1378,7 +1522,11 @@ session.on("Debugger.paused", (m) => {
           } catch {}
         }
         const n = Atomics.load(flags, 2);
-        Atomics.store(flags, 4 + (n % RING), pathHash(file));
+        const at = 4 + (n % RING) * 4;
+        Atomics.store(flags, at, pathHash(file));
+        Atomics.store(flags, at + 1, top && top.location ? top.location.lineNumber : -1);
+        Atomics.store(flags, at + 2, top && top.location ? top.location.columnNumber || 0 : 0);
+        Atomics.store(flags, at + 3, kind);
         Atomics.store(flags, 2, n + 1);
       }
     }
@@ -1404,12 +1552,16 @@ session.post("Debugger.enable", (e) => parentPort.postMessage(e ? "failed" : "re
 `;
 
 let watcher = null;
+// A frozen object of the worker's own, for one last failed write (see
+// `exportsFinal`), and how Node wraps a CommonJS module.
+const WATCHED_SAMPLE = objectFreeze({ a: 1 });
+const WRAP_SAMPLE = typeof nodeModule.wrap === "function" ? nodeModule.wrap("X") : undefined;
 
 // The thread, started while the data files load (the build's own worker
 // only: a replay's compares replies), so it is there when the calls begin.
 function launchWatcher() {
   try {
-    const flags = new Int32Array(new SharedArrayBuffer(4 * (4 + RING)));
+    const flags = new Int32Array(new SharedArrayBuffer(4 * (4 + RING * 4)));
     // It takes none of this process's own flags (`--eval` among them).
     const thread = new Thread(WATCHER, { eval: true, workerData: flags, stdout: true, stderr: true, execArgv: [], argv: [] });
     thread.unref();
@@ -1537,7 +1689,15 @@ function checkWatcher() {
     if (strictified.size === 0) return;
     // More than the watcher keeps places for: one of them may be ours.
     let ours = m - from > RING;
-    for (let i = from; i < m && !ours; i++) ours = strictified.has(Atomics.load(flags, 4 + (i % RING)));
+    for (let i = from; i < m && !ours; i++) {
+      const at = 4 + (i % RING) * 4;
+      const places = strictified.get(Atomics.load(flags, at));
+      if (places === undefined) continue;
+      const line = Atomics.load(flags, at + 1);
+      const column = Atomics.load(flags, at + 2);
+      const kind = Atomics.load(flags, at + 3);
+      ours = kind === 2 ? inPlaces(places, places.this, line, column) : kind === 3 ? inPlaces(places, places.assign, line, column) : true;
+    }
     if (ours) redo("a CommonJS file with no \"use strict\" throws an error that strict mode may have caused");
   }
 }
@@ -2065,13 +2225,28 @@ function renderRefusal(inst) {
 
 // --- Errors. ---
 
+// Places in `text` (a stack trace) as the files are written: on the line
+// "use strict" was put on, a file loaded as strict has every column that
+// much further right.
+function asWritten(text) {
+  for (const [file, line] of strictLines) {
+    for (const name of [file, pathToFileURL(file).href]) {
+      if (!text.includes(name)) continue;
+      text = text.replaceAll(new RegExp(`(${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:${line + 1}:)(\\d+)`, "g"), (all, head, column) =>
+        Number(column) > USE_STRICT.length ? `${head}${Number(column) - USE_STRICT.length}` : all,
+      );
+    }
+  }
+  return text;
+}
+
 function thrown(e) {
   if (e instanceof Error || (e && typeof e === "object" && typeof e.stack === "string")) {
     return {
       name: toWellFormed(String(e.name || "Error")),
       message: toWellFormed(String(e.message ?? "")),
-      stack: toWellFormed(String(e.stack || "")),
-      inspect: toWellFormed(String(e.brrrtyPlace || util.inspect(e))),
+      stack: asWritten(toWellFormed(String(e.stack || ""))),
+      inspect: asWritten(toWellFormed(String(e.brrrtyPlace || util.inspect(e)))),
     };
   }
   const text = typeof e === "string" ? JSON.stringify(e) : util.inspect(e);
@@ -2170,7 +2345,10 @@ function fnPlace(fn) {
     if (!file) return null;
     const rel = path.relative(root, file);
     const shown = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : file;
-    return `${shown.split(path.sep).join("/")}:${loc.lineNumber + 1}:${loc.columnNumber + 1}`;
+    // In a file loaded as strict, the line "use strict" went on is
+    // that much longer than the file's own.
+    const shift = strictLines.get(file) === loc.lineNumber && loc.columnNumber >= USE_STRICT.length ? USE_STRICT.length : 0;
+    return `${shown.split(path.sep).join("/")}:${loc.lineNumber + 1}:${loc.columnNumber + 1 - shift}`;
   } catch {
     return null;
   } finally {
@@ -2353,6 +2531,12 @@ async function handle(req) {
           exportsMode = "frozen";
         }
         for (const v of loadedRoots.keys()) {
+          if (freezing && quickRecords.get(v).soft !== true) {
+            // Frozen through and through: there is nothing the walk at
+            // the end of the build could find changed.
+            loadRecords.delete(v);
+            continue;
+          }
           loadRecords.set(v, completeRecord(v, true));
         }
         if (!freezing) quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v)]));
@@ -2375,11 +2559,30 @@ async function handle(req) {
     }
     case "exportsFinal": {
       checkWatcher();
+      // The watcher must still be there: one more write it has to see.
+      if (watcher !== null && again === null && (exportsMode === "frozen" || strictified.size > 0)) {
+        const before = Atomics.load(watcher.flags, 0);
+        try {
+          WATCHED_SAMPLE.a = 2;
+        } catch {
+          // As it should.
+        }
+        if (Atomics.load(watcher.flags, 0) !== before + 1) {
+          redo("the thread that watches for failed writes stopped");
+        } else {
+          watcher.seen = before + 1;
+          watcher.strictSeen = Atomics.load(watcher.flags, 2);
+        }
+      }
+      if (nodeModule.wrap("X") !== WRAP_SAMPLE && (exportsMode === "frozen" || strictified.size > 0)) {
+        redo("the site's code changes how Node wraps CommonJS modules");
+      }
       if (again !== null) return { again };
       if (strayFilter !== null) return { refused: strayFilter, impure: true };
       if (exportChange !== null) return { refused: exportChange, impure: true };
       if (quickRecords === null) return { ok: null };
       for (const [v, file] of loadedRoots) {
+        if (!loadRecords.has(v)) continue;
         if (!sameList(completeRecord(v, false), loadRecords.get(v))) {
           return {
             refused: `a function from the data changes the data ${relFile(file)} gives (a property it defines, or one with a symbol key), which 11ty's templates then show changed; Brrrty's templates show the data as it loaded, so the pages would differ`,
