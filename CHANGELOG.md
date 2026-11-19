@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.25 - 2026-11-19
 
 - `config.add_random_filter(name, fn)` ports a filter that uses `Math.random`, such as a shuffle: inside it, `random()` gives a number in [0, 1), as `Math.random()` does. 11ty writes such a page differently on every build, so any result is one 11ty could have written: each page that calls the filter builds, with one `random-output` note saying 11ty writes it differently on every build. A page that shows a random page's output gets the note too: one that reads its content (`templateContent`, also through another page), and, when a random filter gives a page's data (its permalink or computed data), every page that reads `collections` (conservatively, as Brrrty doesn't track which items it reads). `brrrty doctor` lists the notes and counts the pages as building. `--verify` doesn't compare a random page's file, pairs the files a random permalink puts at different paths, and then says how many files it compared instead of "byte-compatible". A random filter called on `this` from a JavaScript template, permalink or computed function works too; the replay check is handed the filter's first answers. `random()` anywhere else (the script's top level, global data, a collection, a filter added with `add_filter`) is still an error, now naming `add_random_filter`.
 - `BRRRTY_RANDOM_SEED` (Brrrty's own; 11ty has no seed) seeds random filters: each page draws from its own stream, so every build with the same seed and the same Brrrty version writes the same pages.

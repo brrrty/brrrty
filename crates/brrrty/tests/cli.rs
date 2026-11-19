@@ -647,11 +647,11 @@ fn a_random_filter_builds_with_a_note_and_a_seed_repeats_it() {
     assert_ne!(first, second);
     assert!(err.contains("set BRRRTY_RANDOM_SEED"), "{err}");
     // Seeded, every build writes the same pages, and another seed others.
-    let (seeded, a) = random_build(dir.path(), Some("porksicle"));
+    let (seeded, a) = random_build(dir.path(), Some("tortoise"));
     let err = stderr(&seeded);
     assert!(err.contains("BRRRTY_RANDOM_SEED is set"), "{err}");
     assert!(!err.contains("set BRRRTY_RANDOM_SEED"), "{err}");
-    let (_, b) = random_build(dir.path(), Some("porksicle"));
+    let (_, b) = random_build(dir.path(), Some("tortoise"));
     assert_eq!(a, b);
     let (_, c) = random_build(dir.path(), Some("other"));
     assert_ne!(a, c);
