@@ -1082,9 +1082,10 @@ function view(v, handler) {
 // A wrapper nothing else has: with `deep`, what is read through it is
 // new each time as well; without, it is the values themselves.
 function freshView(v, deep) {
-  if (!deep) return view(v, membrane);
-  return view(v, { __proto__: ownHandler, root: false, paged: false, fresh: true, same: null, kids: null });
+  return view(v, deep ? FRESH : membrane);
 }
+// Nothing is kept for a view like that, so they share one handler.
+const FRESH = { __proto__: ownHandler, root: false, paged: false, fresh: true, same: null, kids: null };
 
 // A page's data as its functions and templates see it. `same` names the
 // keys of a paginated page's data that are the values themselves, when
