@@ -3262,6 +3262,7 @@ fn build_once(
         .map(|i| -> Ready<'_> {
             let p = &prepared[i];
             let _unit = UnitGuard::enter(format!("6 layout {}", p.label()));
+            let _own = brrrty_js::functions::OwnPageGuard::enter(&p.data);
             let draws = PageGuard::enter(&p.source.shown, format!("layout {}", p.label()));
             if let Some(problem) = unsupported_layout(p) {
                 // A survey also records what the page's content would have been refused for.

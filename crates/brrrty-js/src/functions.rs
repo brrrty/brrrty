@@ -57,6 +57,49 @@ thread_local! {
     static UNIT: RefCell<Option<(u64, Arc<str>)>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    static OWN_PAGE: RefCell<Option<(crate::Value, Option<f64>)>> = const { RefCell::new(None) };
+}
+
+/// The page whose template is rendering on this thread: its `page`
+/// object and, on a paginated page, its number. A function the template
+/// calls is told, so that it finds the page's own data among the
+/// collections' items as the same objects it was handed (in 11ty they
+/// are: a collection item's `data` is the page's data).
+pub fn own_page() -> Option<(crate::Value, Option<f64>)> {
+    OWN_PAGE.with(|p| p.borrow().clone())
+}
+
+/// Marks the renders on this thread, until it drops, as the page's whose
+/// data is `data`.
+pub struct OwnPageGuard(Option<(crate::Value, Option<f64>)>);
+
+impl OwnPageGuard {
+    pub fn enter(data: &indexmap::IndexMap<String, crate::Value>) -> OwnPageGuard {
+        let own = match data.get("page") {
+            Some(page @ crate::Value::Object(_)) => {
+                let number = match data.get("pagination") {
+                    Some(crate::Value::Object(p)) => match p.get("pageNumber") {
+                        Some(crate::Value::Number(n)) => Some(*n),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                Some((page.clone(), number))
+            }
+            _ => None,
+        };
+        OwnPageGuard(OWN_PAGE.with(|p| std::mem::replace(&mut *p.borrow_mut(), own)))
+    }
+}
+
+impl Drop for OwnPageGuard {
+    fn drop(&mut self) {
+        let before = self.0.take();
+        OWN_PAGE.with(|p| *p.borrow_mut() = before);
+    }
+}
+
 static NEXT_UNIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// The render the calls on this thread belong to (a page's content, its
