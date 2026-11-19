@@ -2485,7 +2485,12 @@ function define(req) {
     // one, and Brrrty wrote this before it heard): the values it would
     // have defined stay unknown, and a request that refers to one is
     // told so, as for any forgotten value.
-    if (e instanceof Stale) return;
+    if (e instanceof Stale) {
+      // The ids it had handed out by then hold values half read, wire
+      // markers still in them: they are unknown too.
+      for (let id = req.id; id < req.id + req.n; id++) delete objects[id];
+      return;
+    }
     defProblem = `definition ${req.id}: ${e && e.message}`;
   }
 }
