@@ -518,3 +518,272 @@ module.exports = {
     }
     assert_eq!(w.verify(), JsResult::Ok(()));
 }
+
+/// Ways around the checks that keep sloppy code from running on frozen
+/// values, each closed: the file writes to its list in sloppy code the
+/// worker used to take for strict (or never saw), where the write does
+/// nothing and nothing throws. The build must not stay frozen, and the
+/// walk then refuses the write as it always did.
+#[test]
+fn sloppy_code_in_disguise_never_runs_on_frozen_values() {
+    let Some(node) = node() else { return };
+    let cases: &[(&str, &str)] = &[
+        // A builtin that compiles code, reached without `require`.
+        (
+            "getBuiltinModule",
+            "'use strict';\nconst vm = process.getBuiltinModule('node:vm');\nconst list = ['a'];\nconst add = vm.runInThisContext(\"(function (l) { l[l.length] = 'b'; })\");\nmodule.exports = { list, add() { add(list); return ''; } };",
+        ),
+        (
+            "getBuiltinModule, no prefix",
+            "'use strict';\nconst vm = process.getBuiltinModule('vm');\nconst list = ['a'];\nconst add = new vm.Script(\"(function (l) { l[l.length] = 'b'; })\").runInThisContext();\nmodule.exports = { list, add() { add(list); return ''; } };",
+        ),
+        // A string that only looks like a directive: the next line goes
+        // on with the same expression.
+        (
+            "comma after the string",
+            "\"use strict\"\n,0;\nconst list = ['a'];\nmodule.exports = { list, add() { list[list.length] = 'b'; return ''; } };",
+        ),
+        (
+            "member of the string",
+            "'use strict'\n.length;\nconst list = ['a'];\nmodule.exports = { list, add() { list[list.length] = 'b'; return ''; } };",
+        ),
+        (
+            "an empty statement first",
+            ";'use strict';\nconst list = ['a'];\nmodule.exports = { list, add() { list[list.length] = 'b'; return ''; } };",
+        ),
+        // The same in a function made from text.
+        (
+            "new Function body",
+            "'use strict';\nconst list = ['a'];\nconst add = new Function('l', '\"use strict\"\\n,0;\\nl[l.length] = \"b\";');\nmodule.exports = { list, add() { add(list); return ''; } };",
+        ),
+        // Parameters are code too.
+        (
+            "Function parameters",
+            "'use strict';\nconst list = ['a'];\nconst add = Function(\"l, _ = (l[l.length] = 'b')\", 'return this');\nmodule.exports = { list, add() { add(list); return ''; } };",
+        ),
+        // The error's name, changed for the length of one call.
+        (
+            "TypeError.prototype.name",
+            "'use strict';\nconst list = ['a'];\nmodule.exports = { list, add() { const n = TypeError.prototype.name; TypeError.prototype.name = '\\n'; try { list.push('b'); } catch (e) {} TypeError.prototype.name = n; return ''; } };",
+        ),
+        (
+            "Error.prototype.toString",
+            "'use strict';\nconst list = ['a'];\nmodule.exports = { list, add() { const s = Error.prototype.toString; Error.prototype.toString = () => 'fine'; try { list.push('b'); } catch (e) {} Error.prototype.toString = s; return ''; } };",
+        ),
+    ];
+    for (what, body) in cases {
+        let t = site(&[("d.js", body)]);
+        let (mut w, d) = begun(&node, &t);
+        let frozen = w.exports_frozen().is_ok();
+        if frozen {
+            assert!(asks_again(&mut w, &d, &["add"]), "{what}: stayed frozen");
+        }
+        drop(w);
+        let refused = if frozen {
+            walked(&node, &t, &["add"])
+        } else {
+            // It walked from the start: the same worker decides.
+            let (mut w, d) = begun(&node, &t);
+            match call(&mut w, &d, "add") {
+                JsResult::Refused(r) => Err(r.why),
+                JsResult::Ok(_) => match w.verify() {
+                    JsResult::Refused(r) => Err(r.why),
+                    other => panic!("{what}: {other:?}"),
+                },
+                other => panic!("{what}: {other:?}"),
+            }
+        };
+        let why = refused.expect_err(what);
+        assert!(why.contains("changes the data"), "{what}: {why}");
+    }
+}
+
+/// A function made from text is checked as the text V8 compiles: an
+/// object that gives other text the second time it is asked is asked
+/// once.
+#[test]
+fn a_function_body_is_made_text_once() {
+    let Some(node) = node() else { return };
+    let t = site(&[(
+        "d.js",
+        "'use strict';\nconst body = { n: 0, toString() { return this.n++ ? 'return 2' : 'return this'; } };\nconst f = Function(body);\nmodule.exports = { list: [1], kind: () => typeof f() };",
+    )]);
+    let (mut w, d) = begun(&node, &t);
+    assert_eq!(w.exports_frozen(), Ok(()));
+    assert_eq!(
+        ok(call(&mut w, &d, "kind")).value,
+        Value::String("object".into())
+    );
+    assert_eq!(w.verify(), JsResult::Ok(()));
+}
+
+/// A stack trace's own objects hide a frame's function when the frame is
+/// strict, so a file loaded as strict shows differently to a formatter
+/// of the site's own, however it is put in place: the build runs again
+/// with every file as written, and then gives what 11ty gives.
+#[test]
+fn a_stack_formatter_of_the_sites_own_sends_a_strictified_build_back() {
+    let Some(node) = node() else { return };
+    let ways = [
+        "Error.prepareStackTrace = function (e, cs) { return cs; };",
+        "Object.defineProperty(Error, 'prepareStackTrace', { value: function (e, cs) { return cs; }, writable: true, configurable: true });",
+        "delete Error.prepareStackTrace; Error.prepareStackTrace = function (e, cs) { return cs; };",
+        "Reflect.defineProperty(Error, 'prepareStackTrace', { value: function (e, cs) { return cs; }, writable: true, configurable: true });",
+    ];
+    for way in ways {
+        // Both files are sloppy as written, and loaded as strict.
+        let t = site(&[
+            (
+                "d.js",
+                "var who = require('./who.js');\nmodule.exports = { list: [1], name: function name() { return who(); } };",
+            ),
+            (
+                "who.js",
+                &format!(
+                    "module.exports = function who() {{\n  var saved = Error.prepareStackTrace;\n  {way}\n  var cs = new Error().stack;\n  Error.prepareStackTrace = saved;\n  var f = cs[1].getFunction();\n  return f ? 'fn ' + f.name : 'hidden';\n}};"
+                ),
+            ),
+        ]);
+        let (mut w, d) = begun(&node, &t);
+        assert_eq!(w.exports_frozen(), Ok(()), "{way}");
+        assert!(asks_again(&mut w, &d, &["name"]), "{way}");
+        drop(w);
+        let (mut w, d) = begun(&node, &t);
+        assert!(w.exports_frozen().is_err(), "{way}");
+        assert_eq!(
+            ok(call(&mut w, &d, "name")).value,
+            Value::String("fn name".into()),
+            "{way}"
+        );
+    }
+}
+
+/// The text of a stack trace, as the site's code reads it, has the
+/// columns the file has, though a file loaded as strict has "use strict"
+/// ahead of its first line; and Node's own frames are named as they are
+/// without the worker.
+#[test]
+fn stack_text_is_as_the_file_was_written() {
+    let Some(node) = node() else { return };
+    let body = "var here = new Error('x').stack.split('\\n').slice(1, 3).join('|'); module.exports = { list: [1], here: here, s: function () { return new Error('e').stack.split('\\n')[1]; }, t: function () { return [1].map(function g() { return new Error('z').stack.split('\\n')[1]; })[0]; } };";
+    let t = site(&[("d.js", body)]);
+    let (mut w, d) = begun(&node, &t);
+    assert_eq!(w.exports_frozen(), Ok(()));
+    let column = |needle: &str| body.find(needle).unwrap() + 1;
+    let text = |v: Value| match v {
+        Value::String(s) => s.to_string(),
+        other => panic!("{other:?}"),
+    };
+    let s = text(ok(call(&mut w, &d, "s")).value);
+    assert!(
+        s.ends_with(&format!("d.js:1:{})", column("new Error('e')"))),
+        "{s}"
+    );
+    let g = text(ok(call(&mut w, &d, "t")).value);
+    assert!(
+        g.ends_with(&format!("d.js:1:{})", column("new Error('z')"))),
+        "{g}"
+    );
+    let Value::Object(o) = &d else { panic!() };
+    let here = text(o["here"].clone());
+    let frames: Vec<&str> = here.split('|').collect();
+    assert!(
+        frames[0].ends_with(&format!("d.js:1:{})", column("new Error('x')"))),
+        "{here}"
+    );
+    assert!(
+        frames[1]
+            .trim()
+            .starts_with("at Module._compile (node:internal/modules/cjs/loader"),
+        "{here}"
+    );
+    assert_eq!(w.verify(), JsResult::Ok(()));
+}
+
+/// The worker's stand-ins for built-in functions print as the built-ins
+/// do, and a look at a property the worker defines its own way sends the
+/// build back to where nothing stands in.
+#[test]
+fn stand_ins_look_like_what_they_stand_in_for() {
+    let Some(node) = node() else { return };
+    let t = module_site(
+        "export default { list: [1],\n  native: () => [Object.freeze, Object.getOwnPropertyDescriptor, Reflect.defineProperty, Function, Function.prototype.toString, Error.prepareStackTrace].map((f) => /\\{\\s*\\[native code\\]\\s*\\}$/.test(Function.prototype.toString.call(f)) || /internalPrepareStackTrace/.test(String(f))).join(),\n  names: () => [Object.freeze.name, Function.name, Error.prepareStackTrace.name, Error.prepareStackTrace.length].join(),\n  evalShape: () => typeof Object.getOwnPropertyDescriptor(globalThis, 'eval').value,\n};",
+    );
+    let (mut w, d) = begun(&node, &t);
+    assert_eq!(w.exports_frozen(), Ok(()));
+    assert_eq!(
+        ok(call(&mut w, &d, "native")).value,
+        Value::String("true,true,true,true,true,true".into())
+    );
+    assert_eq!(
+        ok(call(&mut w, &d, "names")).value,
+        Value::String("freeze,Function,ErrorPrepareStackTrace,2".into())
+    );
+    // `eval` is a property with a getter while the worker freezes: asking
+    // how it is defined would show that.
+    assert!(asks_again(&mut w, &d, &["evalShape"]));
+    drop(w);
+    let (mut w, d) = begun(&node, &t);
+    assert!(w.exports_frozen().is_err());
+    assert_eq!(
+        ok(call(&mut w, &d, "evalShape")).value,
+        Value::String("function".into())
+    );
+}
+
+/// A write to an argument after the call returned (in a promise nothing
+/// waited for) is seen at the next call: the build is refused instead of
+/// the change reaching later pages.
+#[test]
+fn a_write_after_the_call_returned_is_refused() {
+    let Some(node) = node() else { return };
+    let t = module_site(
+        "export default { list: [1], stash: (o) => { Promise.resolve().then(() => { o.extra = 1; }); return ''; }, count: (o) => Object.keys(o).length };",
+    );
+    let (mut w, d) = begun(&node, &t);
+    let arg = Value::from_json(&serde_json::json!({ "a": 1 }));
+    let held = arg.clone();
+    assert_eq!(
+        ok(w.call(
+            handle(&d, "stash"),
+            This::Value(&d),
+            std::slice::from_ref(&arg),
+            Settle::AsIs
+        ))
+        .value,
+        Value::String("".into())
+    );
+    match w.call(
+        handle(&d, "count"),
+        This::Value(&d),
+        std::slice::from_ref(&held),
+        Settle::Await,
+    ) {
+        JsResult::Refused(r) => assert!(r.why.contains("after it returns"), "{}", r.why),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Questions about an argument (Brrrty's own wrapper around a page's
+/// data, not a value a data file gave) leave the build frozen.
+#[test]
+fn descriptors_of_an_argument_leave_the_build_frozen() {
+    let Some(node) = node() else { return };
+    let t = module_site(
+        "export default { list: [1], copy: (o) => Object.keys(Object.getOwnPropertyDescriptors(o)).join() + Object.isFrozen(o) + Object.isExtensible(o.in) };",
+    );
+    let (mut w, d) = begun(&node, &t);
+    assert_eq!(w.exports_frozen(), Ok(()));
+    let arg = Value::from_json(&serde_json::json!({ "a": 1, "in": { "b": 2 } }));
+    assert_eq!(
+        ok(w.call(
+            handle(&d, "copy"),
+            This::Value(&d),
+            &[arg],
+            Settle::Await
+        ))
+        .value,
+        Value::String("a,infalsetrue".into())
+    );
+    assert_eq!(w.verify(), JsResult::Ok(()));
+}

@@ -347,6 +347,7 @@ function strictByTree(text) {
 // character, on the same line, so every line number stays.
 const rawBinding = typeof process.binding === "function" ? process.binding.bind(process) : null;
 const VmScript = vm.Script;
+const InspectorSession = inspector.Session;
 const RawFunction = Function;
 let acornModule;
 
@@ -2862,7 +2863,7 @@ function opaqueThis(what) {
 function fnPlace(fn) {
   let session;
   try {
-    session = new inspector.Session();
+    session = new InspectorSession();
     session.connect();
     const scripts = new Map();
     session.on("Debugger.scriptParsed", (m) => scripts.set(m.params.scriptId, m.params.url));
