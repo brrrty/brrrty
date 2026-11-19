@@ -940,6 +940,7 @@ pub(crate) struct Helper {
     pub useless: bool,
     live: Arc<Mutex<Option<u32>>>,
     cancelled: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 enum Step {
@@ -954,11 +955,30 @@ enum Step {
 }
 
 impl Drop for Helper {
+    /// Its Node is stopped before this returns (within a few seconds at
+    /// most), so workers started and dropped one after another never
+    /// leave a crowd of helpers still starting behind them.
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::SeqCst);
-        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(pid) = *live {
-            crate::client::stop_pid(pid);
+        // Its thread sees the channel close.
+        self.tx = mpsc::channel().0;
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        let patience = std::time::Instant::now();
+        loop {
+            // Its Node may only now have started.
+            if let Some(pid) = *self.live.lock().unwrap_or_else(|e| e.into_inner()) {
+                crate::client::stop_pid(pid);
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+                return;
+            }
+            if patience.elapsed() > Duration::from_secs(5) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 }
@@ -994,6 +1014,7 @@ impl Helper {
             useless: spawned.is_err(),
             live,
             cancelled,
+            thread: spawned.ok(),
         }
     }
 
