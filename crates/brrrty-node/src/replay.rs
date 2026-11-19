@@ -30,8 +30,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use brrrty_js::runtime::RuntimeFailure;
@@ -85,6 +86,20 @@ enum Msg {
 pub(crate) struct Handle {
     tx: Sender<Msg>,
     result: Receiver<Result<(), Failure>>,
+    /// Its Node's process id while it runs, so a build that ends without
+    /// the check stops it at once.
+    live: Arc<Mutex<Option<u32>>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(pid) = *live {
+            crate::client::stop_pid(pid);
+        }
+    }
 }
 
 impl Handle {
@@ -94,6 +109,8 @@ impl Handle {
     pub fn start(loads: Arc<Loads>, reverse: bool) -> Handle {
         let (tx, rx) = mpsc::channel();
         let (done, result) = mpsc::channel();
+        let live = Arc::new(Mutex::new(None));
+        let cancelled = Arc::new(AtomicBool::new(false));
         // Requests are parsed again here, and data may nest deep: a roomy
         // stack, as for replies.
         let spawned = std::thread::Builder::new()
@@ -101,8 +118,9 @@ impl Handle {
             .stack_size(crate::client::REPLY_STACK)
             .spawn({
                 let done = done.clone();
+                let (live, cancelled) = (live.clone(), cancelled.clone());
                 move || {
-                    let _ = done.send(work(&loads, reverse, rx));
+                    let _ = done.send(work(&loads, reverse, rx, &live, &cancelled));
                 }
             });
         if let Err(e) = spawned {
@@ -110,7 +128,12 @@ impl Handle {
                 "the replay check couldn't start: {e}"
             ))));
         }
-        Handle { tx, result }
+        Handle {
+            tx,
+            result,
+            live,
+            cancelled,
+        }
     }
 
     pub fn line(&self, line: Arc<str>) {
@@ -127,6 +150,7 @@ impl Handle {
                 message: "the replay check stopped".into(),
                 stderr_tail: Vec::new(),
                 stopped: false,
+                again: false,
             }))
         })
     }
@@ -137,6 +161,7 @@ fn runtime(why: impl Into<String>) -> Failure {
         message: why.into(),
         stderr_tail: Vec::new(),
         stopped: false,
+        again: false,
     })
 }
 
@@ -166,9 +191,35 @@ fn deadline(slowest: Duration) -> Duration {
     (slowest * 4).max(Duration::from_secs(10))
 }
 
-fn work(loads: &Loads, reverse: bool, rx: Receiver<Msg>) -> Result<(), Failure> {
+fn work(
+    loads: &Loads,
+    reverse: bool,
+    rx: Receiver<Msg>,
+    live: &Mutex<Option<u32>>,
+    cancelled: &AtomicBool,
+) -> Result<(), Failure> {
+    if cancelled.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     let mut w = Worker::start(&loads.node, &loads.root, loads.run_mode)
         .map_err(|e| runtime(format!("the replay check couldn't start Node: {e}")))?;
+    *live.lock().unwrap_or_else(|e| e.into_inner()) = Some(w.pid());
+    let out = work_with(&mut w, loads, reverse, rx, cancelled);
+    // Its process id is no longer this worker's once it is dropped.
+    *live.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    out
+}
+
+fn work_with(
+    w: &mut Worker,
+    loads: &Loads,
+    reverse: bool,
+    rx: Receiver<Msg>,
+    cancelled: &AtomicBool,
+) -> Result<(), Failure> {
+    if cancelled.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     // Replies are compared as text.
     w.decode.store(false, std::sync::atomic::Ordering::Relaxed);
     w.deadline = Some(deadline(Duration::ZERO));
@@ -176,8 +227,8 @@ fn work(loads: &Loads, reverse: bool, rx: Receiver<Msg>) -> Result<(), Failure> 
     // reverse of the build's order in one worker, and rotated by one
     // (the first last) in the other: a rotation moves every module's
     // place, which the reverse leaves alone for the middle one.
-    let mut early = loads_reordered(&mut w, loads, reverse).and_then(|()| {
-        let begun = send(&mut w, r#"{"op":"callsBegin"}"#, None)?;
+    let mut early = loads_reordered(w, loads, reverse).and_then(|()| {
+        let begun = send(w, r#"{"op":"callsBegin"}"#, None)?;
         if begun.head.get("handles").and_then(Json::as_u64) != Some(loads.load_handles) {
             return Err(Failure::Differs(
                 "the JavaScript data gave different functions when it loaded again, so Brrrty can't check that the functions' results don't depend on the order pages call them".into(),
@@ -197,7 +248,7 @@ fn work(loads: &Loads, reverse: bool, rx: Receiver<Msg>) -> Result<(), Failure> 
             }
             Ok(Msg::Run(calls)) => {
                 early?;
-                return replay(&mut w, &calls, reverse);
+                return replay(w, &calls, reverse);
             }
             // The build ended without the check.
             Err(_) => return Ok(()),

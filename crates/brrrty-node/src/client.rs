@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -214,10 +214,31 @@ pub struct Worker {
     pub(crate) deadline: Option<Duration>,
     /// The template id of the last `templateLoad` reply.
     last_template: Option<u64>,
+    /// What the requests cost, for `BRRRTY_JS_TRACE`.
+    stats: Stats,
+    /// The worker froze the data files' values when the calls began.
+    frozen: bool,
+    /// Why it walks them instead, when it does.
+    walks: Option<String>,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
     note_times: (Duration, Duration),
+}
+
+/// What a worker's requests cost so far.
+#[derive(Default)]
+struct Stats {
+    started: Option<Instant>,
+    requests: u64,
+    /// Bytes of requests, and of definitions.
+    sent: u64,
+    defined: u64,
+    definitions: u64,
+    /// Bytes of replies.
+    received: u64,
+    /// Time between a request going out and its reply coming in.
+    waited: Duration,
 }
 
 /// One request of the first run: what to send, and what the replay check
@@ -267,6 +288,9 @@ impl Worker {
             .env("ELEVENTY_RUN_MODE", run_mode.as_str())
             .env("ELEVENTY_VERSION", ELEVENTY_VERSION)
             .stdin(Stdio::piped());
+        if walk_roots().contains(root) {
+            cmd.env("BRRRTY_JS_EXPORTS", "walk");
+        }
         let cannot =
             |e: std::io::Error| WorkerError(format!("cannot start {}: {e}", node.path.display()));
         let (mut child, frames, stderr, answers) = spawn(cmd).map_err(cannot)?;
@@ -319,6 +343,12 @@ impl Worker {
             slowest: Duration::ZERO,
             deadline: None,
             last_template: None,
+            stats: Stats {
+                started: Some(Instant::now()),
+                ..Stats::default()
+            },
+            frozen: false,
+            walks: None,
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -334,6 +364,31 @@ impl Worker {
     ) {
         self.notes = Box::new(notes);
         self.note_times = (first, next);
+    }
+
+    /// Whether the worker froze the data files' values when the pages'
+    /// calls began (`Ok`), or walks them after every call, and why (`Err`).
+    pub fn exports_frozen(&self) -> Result<(), String> {
+        if self.frozen {
+            Ok(())
+        } else {
+            Err(self.walks.clone().unwrap_or_default())
+        }
+    }
+
+    /// One line of what the requests cost so far (`BRRRTY_JS_TRACE`).
+    fn trace(&self, at: &str) {
+        let s = &self.stats;
+        eprintln!(
+            "note: {at}, {:.3} s after Node started: {} requests ({:.1} MB) and {} definitions ({:.1} MB) sent, {:.1} MB of replies, {:.3} s waiting on Node",
+            s.started.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0),
+            s.requests,
+            s.sent as f64 / 1e6,
+            s.definitions,
+            s.defined as f64 / 1e6,
+            s.received as f64 / 1e6,
+            s.waited.as_secs_f64(),
+        );
     }
 
     /// Node's process id.
@@ -380,6 +435,8 @@ impl Worker {
         // The values the request refers to for the first time, each in a
         // line of its own, to this worker and to the replay check's.
         for (line, dynamic) in &req.added.lines {
+            self.stats.definitions += 1;
+            self.stats.defined += line.len() as u64;
             if let Err(f) = self.write_line(line) {
                 return JsResult::Failed(f);
             }
@@ -566,7 +623,12 @@ impl Worker {
                 Err(f) => return Err(f),
             }
         };
-        self.slowest = self.slowest.max(wait.start.elapsed());
+        let took = wait.start.elapsed();
+        self.slowest = self.slowest.max(took);
+        self.stats.requests += 1;
+        self.stats.sent += line.len() as u64;
+        self.stats.received += frame.body.len() as u64;
+        self.stats.waited += took;
         if frame.id != id {
             let head = frame.head.clone();
             return Err(self.fail(&format!("a reply out of order: {head}")));
@@ -645,6 +707,18 @@ impl Worker {
         }
         if let Some(p) = reply.get("protocol") {
             return JsResult::Failed(self.fail(&format!("the worker refused a request: {p}")));
+        }
+        if let Some(why) = reply.get("again") {
+            // The worker froze the data files' values and can't vouch for
+            // what it then saw: this folder's builds walk them from now on.
+            walk_roots().insert(self.root.clone());
+            let mut f = self.fail(&format!(
+                "the JavaScript worker has to check the data files' values after every call ({})",
+                why.as_str().unwrap_or("")
+            ));
+            f.again = true;
+            self.failed = Some(f.clone());
+            return JsResult::Failed(f);
         }
         if let Some(t) = reply.get("thrown") {
             return JsResult::Thrown(js_error(t, &self.root));
@@ -741,6 +815,7 @@ impl Worker {
         };
         let failure = RuntimeFailure {
             stopped,
+            again: false,
             message,
             stderr_tail: self
                 .stderr_tail
@@ -762,6 +837,7 @@ impl Worker {
                 message: "the replay check stopped its Node".into(),
                 stderr_tail: Vec::new(),
                 stopped: false,
+                again: false,
             });
         }
     }
@@ -1069,8 +1145,21 @@ impl JsRuntime for Worker {
         };
         let head = &frame.head;
         self.load_handles = head.get("handles").and_then(Json::as_u64).unwrap_or(0);
+        self.frozen = head.get("exports").and_then(Json::as_str) == Some("frozen");
+        self.walks = head.get("walks").and_then(Json::as_str).map(str::to_string);
         self.table.load_handles = Some(u32::try_from(self.load_handles).unwrap_or(u32::MAX));
         self.calls_begun = true;
+        if trace() {
+            self.trace("the data files loaded");
+            match self.exports_frozen() {
+                Ok(()) => {
+                    eprintln!("note: the data files' values are frozen while pages call functions")
+                }
+                Err(why) => {
+                    eprintln!("note: the data files' values are walked after every call ({why})")
+                }
+            }
+        }
         let changed: Vec<&str> = head
             .get("changed")
             .and_then(Json::as_array)
@@ -1212,10 +1301,20 @@ impl JsRuntime for Worker {
             lines: self.table.lines.clone(),
             dropped: self.dropped,
         });
+        if trace() {
+            self.trace("the pages' calls ended");
+        }
+        let checking = Instant::now();
         let [a, b] = replays;
         a.run(calls.clone());
         b.run(calls);
         let (a, b) = (a.finish(), b.finish());
+        if trace() {
+            eprintln!(
+                "note: the replay check took {:.3} s after the build's own calls",
+                checking.elapsed().as_secs_f64()
+            );
+        }
         match a.and(b) {
             Ok(()) => JsResult::Ok(()),
             Err(crate::replay::Failure::Differs(why, handle)) => {
@@ -1280,6 +1379,23 @@ impl Drop for Worker {
     }
 }
 
+/// The project folders whose builds found they must walk the data files'
+/// values after each call rather than freeze them (see the worker's
+/// "Freezing"): a build there starts that way.
+fn walk_roots() -> MutexGuard<'static, std::collections::HashSet<PathBuf>> {
+    static ROOTS: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> =
+        std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+    ROOTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether to say on stderr what the JavaScript worker's requests cost
+/// (`BRRRTY_JS_TRACE`, for whoever looks into a slow build).
+fn trace() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("BRRRTY_JS_TRACE").is_some());
+    *ON
+}
+
 /// The process ids of the workers running now. Each leads its own process
 /// group, so a terminal's Ctrl-C doesn't reach it: [`stop_all`] does.
 static LIVE: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -1304,6 +1420,14 @@ pub fn stop_all() {
     for pid in l.iter() {
         kill_group(*pid);
     }
+}
+
+/// Kill the worker with this process id and what it started.
+pub(crate) fn stop_pid(pid: u32) {
+    #[cfg(unix)]
+    kill_group(pid);
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 #[cfg(unix)]

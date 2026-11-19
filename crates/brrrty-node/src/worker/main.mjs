@@ -19,6 +19,7 @@ import path from "node:path";
 import util from "node:util";
 import nodeModule, { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { Worker as Thread } from "node:worker_threads";
 import inspector from "node:inspector";
 import { AsyncLocalStorage } from "node:async_hooks";
 import nodeCrypto from "node:crypto";
@@ -124,6 +125,8 @@ function note(p) {
   }
 }
 
+const readFileRaw = fs.readFileSync;
+
 function wrap(obj, name) {
   const original = obj[name];
   if (typeof original !== "function") return;
@@ -148,13 +151,190 @@ nodeModule.syncBuiltinESMExports();
 
 const requireHere = createRequire(path.join(root, "brrrty-worker.js"));
 const loadHooks = typeof nodeModule.registerHooks === "function";
+
+// --- Whether every function that can run is in strict mode. ---
+//
+// The worker can freeze the data files' values instead of walking them
+// after every call (see "Freezing"), but only where a write to a frozen
+// object can't pass in silence: in strict code it throws, in sloppy code
+// it does nothing. So the worker follows every way code gets in: an ES
+// module is strict; a CommonJS file is strict when it starts with "use
+// strict"; `eval`, `new Function`, `vm`, a native addon, a preload, the
+// module hooks and the inspector are each taken as code the worker can't
+// vouch for. `unprovable` is why, once there is a reason: the worker then
+// walks (and a build that already froze runs again, walking).
+let unprovable = null;
+// Why the build must run again with the walk: set once frozen.
+let again = null;
+// "walk": the data files' values are walked after each call. "frozen":
+// they are frozen, and a failed write is what the worker looks for.
+let exportsMode = "walk";
+
+function cantVouch(why) {
+  if (unprovable === null) unprovable = why;
+  if (exportsMode === "frozen" && again === null) again = why;
+}
+
+if (process.env.BRRRTY_JS_EXPORTS === "walk") cantVouch("BRRRTY_JS_EXPORTS=walk");
+delete process.env.BRRRTY_JS_EXPORTS;
+if (!loadHooks) cantVouch("this Node has no module load hooks (before 22.15), so the worker can't see every file that loads");
+if (/(^|\s)(-r|--require|--import|--loader|--experimental-loader|--inspect[\w-]*)([=\s]|$)/.test(`${process.execArgv.join(" ")} ${process.env.NODE_OPTIONS || ""}`)) {
+  cantVouch("Node was started with a preload, a loader or the inspector");
+}
+
+// Whether CommonJS source text is strict as a whole: its directive
+// prologue (after a hashbang, white space and comments) has "use strict".
+function isStrictSource(text) {
+  let i = 0;
+  const n = text.length;
+  if (text.charCodeAt(0) === 0xfeff) i = 1;
+  if (text.startsWith("#!", i)) {
+    const nl = text.indexOf("\n", i);
+    i = nl === -1 ? n : nl + 1;
+  }
+  for (;;) {
+    // White space and comments.
+    for (;;) {
+      const c = text.charCodeAt(i);
+      if (c === 32 || c === 9 || c === 10 || c === 13 || c === 11 || c === 12 || c === 0xa0 || c === 0x2028 || c === 0x2029 || c === 59) {
+        i++;
+      } else if (c === 47 && text.charCodeAt(i + 1) === 47) {
+        const nl = text.indexOf("\n", i);
+        i = nl === -1 ? n : nl + 1;
+      } else if (c === 47 && text.charCodeAt(i + 1) === 42) {
+        const end = text.indexOf("*/", i + 2);
+        if (end === -1) return false;
+        i = end + 2;
+      } else {
+        break;
+      }
+    }
+    // One directive: a string literal standing as a statement.
+    const q = text[i];
+    if (q !== '"' && q !== "'") return false;
+    const end = text.indexOf(q, i + 1);
+    if (end === -1) return false;
+    const body = text.slice(i + 1, end);
+    if (body.includes("\\") || body.includes("\n")) return false;
+    i = end + 1;
+    // What follows must end the statement.
+    let j = i;
+    while (text.charCodeAt(j) === 32 || text.charCodeAt(j) === 9) j++;
+    const after = text.charCodeAt(j);
+    if (!(j >= n || after === 59 || after === 10 || after === 13 || after === 125 || (after === 47 && (text.charCodeAt(j + 1) === 47 || text.charCodeAt(j + 1) === 42)))) return false;
+    if (body === "use strict") return true;
+  }
+}
+
+// Builtin modules that run code the worker can't see, or change how
+// JavaScript runs.
+const UNSEEN_BUILTINS = new Set(["node:vm", "node:inspector", "node:inspector/promises", "node:repl", "node:v8", "node:wasi"]);
+const STRICT_FORMATS = new Set(["module", "json", "builtin", "wasm", "module-typescript"]);
+
 if (loadHooks) {
   nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const r = nextResolve(specifier, context);
+      if (r && typeof r.url === "string" && UNSEEN_BUILTINS.has(r.url)) {
+        cantVouch(`the site's code loads ${r.url}`);
+      }
+      return r;
+    },
     load(url, context, nextLoad) {
       if (url.startsWith("file:")) note(url.split("?")[0]);
-      return nextLoad(url, context);
+      const r = nextLoad(url, context);
+      if (unprovable === null || (exportsMode === "frozen" && again === null)) {
+        try {
+          const format = r && r.format;
+          if (!STRICT_FORMATS.has(format)) {
+            let source = r && r.source;
+            if (source === null || source === undefined) {
+              source = url.startsWith("file:") ? readFileRaw(fileURLToPath(url.split("?")[0]), "utf8") : null;
+            } else if (typeof source !== "string") {
+              source = Buffer.from(source.buffer ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength) : source).toString("utf8");
+            }
+            if (typeof source !== "string" || !isStrictSource(source)) {
+              cantVouch(`${url.startsWith("file:") ? relFile(fileURLToPath(url.split("?")[0])) : url} is not in strict mode`);
+            }
+          }
+        } catch {
+          cantVouch(`${url} can't be read to see whether it is in strict mode`);
+        }
+      }
+      return r;
     },
   });
+  // Hooks the site's code adds itself may hand Node source the worker
+  // never sees.
+  for (const name of ["registerHooks", "register"]) {
+    const original = nodeModule[name];
+    if (typeof original !== "function") continue;
+    nodeModule[name] = function (...args) {
+      cantVouch("the site's code adds module hooks of its own");
+      return original.apply(this, args);
+    };
+  }
+  // Source compiled by hand (`module._compile`), or by a require hook.
+  const compile = nodeModule.prototype._compile;
+  if (typeof compile === "function") {
+    nodeModule.prototype._compile = function (content, ...rest) {
+      if (typeof content === "string" && !isStrictSource(content)) {
+        cantVouch(`${typeof rest[0] === "string" ? relFile(rest[0]) : "a script"} is not in strict mode`);
+      }
+      return compile.call(this, content, ...rest);
+    };
+  }
+  nodeModule.syncBuiltinESMExports();
+}
+
+// `eval` and the function constructors make code from text.
+{
+  const realEval = globalThis.eval;
+  defineProperty(globalThis, "eval", {
+    get() {
+      cantVouch("the site's code uses `eval`");
+      return realEval;
+    },
+    set(v) {
+      defineProperty(globalThis, "eval", { value: v, writable: true, configurable: true, enumerable: false });
+    },
+    configurable: true,
+    enumerable: false,
+  });
+  // `Function("return this")()` is how old libraries find the global
+  // object: it writes nothing. Text that starts with "use strict" is
+  // strict.
+  const harmless = (args) => {
+    const body = args.length ? String(args[args.length - 1]) : "";
+    return /^\s*return this;?\s*$/.test(body) || isStrictSource(body);
+  };
+  const guard = (ctor) =>
+    new Proxy(ctor, {
+      apply(t, self, args) {
+        if (!harmless(args)) cantVouch("the site's code makes a function from text (`new Function`)");
+        return Reflect.apply(t, self, args);
+      },
+      construct(t, args, newTarget) {
+        if (!harmless(args)) cantVouch("the site's code makes a function from text (`new Function`)");
+        return Reflect.construct(t, args, newTarget);
+      },
+    });
+  const guardedFunction = guard(Function);
+  for (const sample of [function () {}, async function () {}, function* () {}, async function* () {}]) {
+    const proto = Object.getPrototypeOf(sample);
+    const ctor = proto.constructor;
+    const d = ownDescriptor(proto, "constructor");
+    defineProperty(proto, "constructor", { ...d, value: ctor === Function ? guardedFunction : guard(ctor) });
+  }
+  globalThis.Function = guardedFunction;
+  for (const name of ["dlopen", "binding", "_linkedBinding"]) {
+    const original = process[name];
+    if (typeof original !== "function") continue;
+    process[name] = function (...args) {
+      cantVouch(name === "dlopen" ? "the site's code loads a native addon" : "the site's code reaches into Node's internals");
+      return original.apply(this, args);
+    };
+  }
 }
 
 function allReads() {
@@ -182,8 +362,6 @@ let nextObject = 0;
 let keptObjects = new WeakSet();
 let defProblem = null;
 
-const defineProperty = Object.defineProperty;
-
 // An object Brrrty can't answer every question about: `collections` when
 // the site's config may add collections (`missing`: a name it doesn't have
 // is a trap) or when 11ty's order of its names isn't known (`list`: listing
@@ -207,7 +385,7 @@ function guarded(o, c) {
       return Reflect.ownKeys(t);
     },
     getOwnPropertyDescriptor(t, k) {
-      const d = Reflect.getOwnPropertyDescriptor(t, k);
+      const d = reflectOwnDescriptor(t, k);
       if (d && "value" in d && d.configurable) d.value = watch(d.value);
       return d;
     },
@@ -239,7 +417,7 @@ function ownPath(data, key) {
     const next = o[path[i]];
     if (next !== null && typeof next === "object" && !Array.isArray(next) && keptObjects.has(next)) {
       const copy = Object.create(Object.getPrototypeOf(next));
-      Object.defineProperties(copy, Object.getOwnPropertyDescriptors(next));
+      Object.defineProperties(copy, ownDescriptors(next));
       o[path[i]] = copy;
       o = copy;
     } else {
@@ -272,12 +450,12 @@ function noteWrite() {
 const membrane = {
   get(t, k, r) {
     const v = Reflect.get(t, k, r);
-    const d = Reflect.getOwnPropertyDescriptor(t, k);
+    const d = reflectOwnDescriptor(t, k);
     if (d && !d.configurable && "value" in d && !d.writable) return v;
     return watch(v);
   },
   getOwnPropertyDescriptor(t, k) {
-    const d = Reflect.getOwnPropertyDescriptor(t, k);
+    const d = reflectOwnDescriptor(t, k);
     if (d && "value" in d && d.configurable) d.value = watch(d.value);
     return d;
   },
@@ -394,7 +572,7 @@ const nowMs = () => ambient("now", () => originalNow.call(OriginalDate));
 // can't be replaced stays as it is.
 function setFn(obj, name, fn) {
   try {
-    const d = Object.getOwnPropertyDescriptor(obj, name);
+    const d = ownDescriptor(obj, name);
     Object.defineProperty(obj, name, {
       value: fn,
       writable: true,
@@ -427,7 +605,7 @@ Math.random = function random() {
 // the clock themselves.
 {
   const proto = Intl.DateTimeFormat.prototype;
-  const formatGetter = Object.getOwnPropertyDescriptor(proto, "format").get;
+  const formatGetter = ownDescriptor(proto, "format").get;
   Object.defineProperty(proto, "format", {
     configurable: true,
     enumerable: false,
@@ -547,6 +725,28 @@ Math.random = function random() {
 // A property added with a symbol key by plain assignment, and removed
 // again before the end of the build, is seen only by the complete walk at
 // the end (`exportsFinal`); templates can't read symbol keys.
+//
+// Freezing. The walk after each call costs as much as the data files'
+// values weigh, every call. Where the worker can vouch that every
+// function is strict (see `cantVouch`), it freezes those values instead
+// when the pages' calls begin ("frozen" mode): a frozen object can't
+// change, so there is nothing to walk. What a walk would have found is
+// then a write that fails, and a failed write never passes unseen:
+// - in strict code and in JavaScript's own functions it throws a
+//   TypeError, and a thread of the worker's own watches every exception
+//   the worker throws through the inspector, caught or not;
+// - `Reflect.set` and its kin answer `false`, and are wrapped;
+// - a Date's time isn't a property, so Date's setters are wrapped.
+// Code that asks whether an object is frozen, or for a property's
+// attributes, would see the worker's doing: those questions are wrapped
+// too. Any of these, and anything else the worker can't vouch for, ends
+// the build with `again`: Brrrty then runs it once more with the walk,
+// which decides as it always has. So a build that stays frozen is one in
+// which no call tried to change these values at all, and the walk would
+// have passed after every call.
+// What freezing can't hold still is walked as before: an object with a
+// getter (its value may change), a Proxy, a RegExp (`lastIndex`), a
+// typed array, and the built-in prototypes.
 
 // Every value a data file gave: value -> file.
 const loadedRoots = new Map();
@@ -561,6 +761,73 @@ let exportChange = null;
 let watchedObjects = new WeakSet();
 let definedOnWatched = false;
 
+// Wrap a function of the reflection API: `before` sees its first argument.
+function wrapFirst(obj, name, before, after) {
+  const original = obj[name];
+  if (typeof original !== "function") return;
+  const wrapped = function (target, ...rest) {
+    before(target, rest);
+    const r = original.call(this, target, ...rest);
+    if (after) after(target, rest, r);
+    return r;
+  };
+  defineProperty(wrapped, "name", { value: original.name, configurable: true });
+  defineProperty(wrapped, "length", { value: original.length, configurable: true });
+  setFn(obj, name, wrapped);
+}
+
+function isObject(v) {
+  return v !== null && (typeof v === "object" || typeof v === "function");
+}
+
+// Questions that show whether the worker froze an object, and requests to
+// freeze one that are no longer what they would be.
+for (const [obj, name] of [
+  [Object, "isFrozen"],
+  [Object, "isSealed"],
+  [Object, "isExtensible"],
+  [Reflect, "isExtensible"],
+  [Object, "getOwnPropertyDescriptor"],
+  [Object, "getOwnPropertyDescriptors"],
+  [Reflect, "getOwnPropertyDescriptor"],
+  [Object, "freeze"],
+  [Object, "seal"],
+  [Object, "preventExtensions"],
+  [Reflect, "preventExtensions"],
+]) {
+  wrapFirst(obj, name, (target) => {
+    if (exportsMode === "frozen" && isObject(target) && frozenByUs.has(target)) {
+      cantVouch(`the site's code calls \`${obj === Object ? "Object" : "Reflect"}.${name}\` on a value a data file gave`);
+    }
+  });
+}
+// A write that answers `false` instead of throwing.
+wrapFirst(Reflect, "set", () => {}, (target, rest, r) => {
+  const receiver = rest.length >= 3 ? rest[2] : target;
+  if (r === false && exportsMode === "frozen" && isObject(receiver) && watchedObjects.has(receiver)) {
+    cantVouch("the site's code sets a property of a value a data file gave (`Reflect.set`)");
+  }
+});
+for (const name of ["__defineGetter__", "__defineSetter__"]) {
+  const original = Object.prototype[name];
+  if (typeof original !== "function") continue;
+  setFn(Object.prototype, name, function (...args) {
+    if (isObject(this) && watchedObjects.has(this)) definedOnWatched = true;
+    return original.apply(this, args);
+  });
+}
+// A Date's time: no property holds it, so freezing doesn't.
+for (const name of Object.getOwnPropertyNames(Date.prototype)) {
+  if (!/^set[A-Z]/.test(name) || typeof Date.prototype[name] !== "function") continue;
+  const original = Date.prototype[name];
+  setFn(Date.prototype, name, function (...args) {
+    if (exportsMode === "frozen" && watchedObjects.has(this)) {
+      cantVouch(`the site's code changes a Date a data file gave (\`${name}\`)`);
+    }
+    return original.apply(this, args);
+  });
+}
+
 const BUILTIN_PROTOS = [
   Object.prototype, Array.prototype, String.prototype, Number.prototype, Boolean.prototype,
   Function.prototype, OriginalDate.prototype, RegExp.prototype, Map.prototype, Set.prototype,
@@ -572,7 +839,7 @@ function protosRecord() {
   const out = [];
   for (const p of BUILTIN_PROTOS) {
     for (const k of Reflect.ownKeys(p)) {
-      const d = Reflect.getOwnPropertyDescriptor(p, k);
+      const d = reflectOwnDescriptor(p, k);
       out.push(k, d.value, d.get, d.set, d.enumerable, d.writable);
     }
     out.push(Object.getPrototypeOf(p));
@@ -580,6 +847,37 @@ function protosRecord() {
   return out;
 }
 const startProtos = protosRecord();
+
+// The same check, quickly, for a call that defined no property through
+// `Object.defineProperty` and its kin (those are wrapped, and send the
+// call to `protosRecord`): each prototype's own keys in their order, its
+// data properties' values, and how many keys are enumerable. A key that
+// was deleted and set again comes back enumerable, or in another place.
+const ACCESSOR = Symbol("accessor");
+const quickProtos = BUILTIN_PROTOS.map((p) => {
+  const keys = Reflect.ownKeys(p);
+  const vals = keys.map((k) => {
+    const d = reflectOwnDescriptor(p, k);
+    return "value" in d ? d.value : ACCESSOR;
+  });
+  return [p, keys, vals, Object.getPrototypeOf(p), Object.keys(p).length];
+});
+
+function protosSame() {
+  for (let n = 0; n < quickProtos.length; n++) {
+    const [p, keys, vals, proto, enumerable] = quickProtos[n];
+    if (Object.getPrototypeOf(p) !== proto) return false;
+    const now = Reflect.ownKeys(p);
+    if (now.length !== keys.length) return false;
+    for (let i = 0; i < keys.length; i++) {
+      if (now[i] !== keys[i]) return false;
+      const was = vals[i];
+      if (was !== ACCESSOR && p[keys[i]] !== was) return false;
+    }
+    if (Object.keys(p).length !== enumerable) return false;
+  }
+  return true;
+}
 
 function sameList(a, b) {
   if (a.length !== b.length) return false;
@@ -622,7 +920,7 @@ function completeRecord(v, mark, byShape = false) {
     out.push(keys.length);
     for (let i = keys.length - 1; i >= 0; i--) {
       const k = keys[i];
-      const d = Reflect.getOwnPropertyDescriptor(x, k);
+      const d = reflectOwnDescriptor(x, k);
       out.push(k, d.enumerable, d.configurable);
       if ("value" in d) {
         out.push(d.writable);
@@ -636,8 +934,24 @@ function completeRecord(v, mark, byShape = false) {
   return out;
 }
 
-// The quick record of `v`, as `quickSame` checks it.
-function quickRecord(v) {
+// Freeze `x` where that holds it still. False where it doesn't: `x` is
+// then walked as before.
+function hold(x) {
+  if (utilTypes.isProxy(x) || utilTypes.isRegExp(x) || ArrayBuffer.isView(x) || utilTypes.isAnyArrayBuffer(x)) return false;
+  if (objectIsFrozen(x)) return true;
+  try {
+    objectFreeze(x);
+  } catch {
+    return false;
+  }
+  frozenByUs.add(x);
+  return true;
+}
+
+// The quick record of `v`, as `quickSame` checks it. With `freezing`,
+// each object in it is frozen, and only what freezing can't hold still
+// is recorded.
+function quickRecord(v, freezing = false) {
   const out = [];
   const seen = new Set();
   const stack = [v];
@@ -647,20 +961,23 @@ function quickRecord(v) {
     seen.add(x);
     watchedObjects.add(x);
     const proto = Object.getPrototypeOf(x);
+    const held = freezing && hold(x);
     if (Array.isArray(x)) {
-      out.push(x, proto, 0, x.slice(), Object.keys(x).length);
+      if (!held) out.push(x, proto, 0, x.slice(), Object.keys(x).length);
       for (let i = 0; i < x.length; i++) stack.push(x[i]);
       continue;
     }
     if (x instanceof OriginalDate) {
-      out.push(x, proto, 1, OriginalDate.prototype.getTime.call(x), 0);
+      // Frozen or not, its time changes only through Date's setters,
+      // which say so.
+      if (!freezing) out.push(x, proto, 1, OriginalDate.prototype.getTime.call(x), 0);
       continue;
     }
     const keys = Object.keys(x);
     const vals = new Array(keys.length);
     const getters = [];
     for (let i = 0; i < keys.length; i++) {
-      const d = Object.getOwnPropertyDescriptor(x, keys[i]);
+      const d = ownDescriptor(x, keys[i]);
       if (d && !("value" in d)) {
         // What a getter gives is compared by its shape: it may build it anew.
         getters.push(i);
@@ -670,7 +987,7 @@ function quickRecord(v) {
         stack.push(vals[i]);
       }
     }
-    out.push(x, proto, 2, [keys, vals, getters], keys.length);
+    if (!held || getters.length) out.push(x, proto, 2, [keys, vals, getters], keys.length);
   }
   return out;
 }
@@ -695,7 +1012,7 @@ function getterValue(x, get) {
 }
 
 function readGetter(x, k) {
-  const d = Object.getOwnPropertyDescriptor(x, k);
+  const d = ownDescriptor(x, k);
   return d && !("value" in d) ? getterValue(x, d.get) : x[k];
 }
 
@@ -763,7 +1080,12 @@ function checkAfterCall(labelOf) {
   if (quickRecords === null || exportChange !== null) return;
   const complete = definedOnWatched;
   definedOnWatched = false;
-  if (!sameList(protosRecord(), startProtos)) {
+  if (complete && exportsMode === "frozen") {
+    // Whether it changed anything, the walk says.
+    cantVouch("the site's code defines a property on a value a data file gave, or on a built-in prototype");
+    return;
+  }
+  if (complete ? !sameList(protosRecord(), startProtos) : !protosSame()) {
     exportChange = `${labelOf()} changes one of JavaScript's built-in prototypes (\`Array.prototype\` and the like), which 11ty's templates use and Brrrty's don't`;
     return;
   }
@@ -784,14 +1106,159 @@ for (const [obj, name] of [
   [Object, "setPrototypeOf"],
   [Reflect, "setPrototypeOf"],
   [Reflect, "deleteProperty"],
+  [Object, "freeze"],
+  [Object, "seal"],
 ]) {
-  const original = obj[name];
-  setFn(obj, name, function (target, ...rest) {
-    if (target !== null && (typeof target === "object" || typeof target === "function") && watchedObjects.has(target)) {
-      definedOnWatched = true;
-    }
-    return original.call(this, target, ...rest);
+  wrapFirst(obj, name, (target) => {
+    if (isObject(target) && watchedObjects.has(target)) definedOnWatched = true;
   });
+}
+// --- The thread that watches the worker's exceptions. ---
+//
+// It asks the inspector to stop this thread at every exception, caught or
+// not, counts the ones a failed write to a frozen object throws, and lets
+// the thread go on. Nothing else slows down: code that throws nothing
+// runs as before.
+const WATCHER = `
+const { workerData, parentPort } = require("node:worker_threads");
+const inspector = require("node:inspector");
+const flags = workerData;
+const session = new inspector.Session();
+session.connectToMainThread();
+// The text of V8's errors for a write a frozen object refuses, and for a
+// Proxy whose target's frozen properties it must show as they are.
+const WRITE = /read only|not extensible|Cannot delete|Cannot redefine|Cannot define|on proxy/;
+session.on("Debugger.paused", (m) => {
+  try {
+    const p = m.params || {};
+    if (p.reason === "exception" || p.reason === "promiseRejection") {
+      const d = p.data;
+      const text = d && typeof d.description === "string" ? d.description.split("\\n")[0] : null;
+      if (text === null ? !d || d.type === "object" : WRITE.test(text)) Atomics.add(flags, 0, 1);
+    }
+  } finally {
+    session.post("Debugger.resume");
+  }
+});
+parentPort.on("message", (m) => {
+  if (m === "bye") {
+    try {
+      session.disconnect();
+    } catch {}
+    Atomics.store(flags, 1, 1);
+    Atomics.notify(flags, 1);
+    process.exit(0);
+  }
+});
+setInterval(() => {}, 1 << 30);
+session.post("Debugger.enable", () => {
+  session.post("Debugger.setPauseOnExceptions", { state: "all" }, (e) => parentPort.postMessage(e ? "failed" : "ready"));
+});
+`;
+
+let watcher = null;
+
+// Start the watcher and try it: each kind of write a frozen object
+// refuses must be counted, on this Node. False when it can't be relied on.
+async function startWatcher() {
+  let thread;
+  try {
+    const flags = new Int32Array(new SharedArrayBuffer(8));
+    // It takes none of this process's own flags (`--eval` among them).
+    thread = new Thread(WATCHER, { eval: true, workerData: flags, stdout: true, stderr: true, execArgv: [], argv: [] });
+    const ready = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 3000);
+      const done = (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      };
+      thread.once("message", (m) => done(m === "ready"));
+      thread.once("error", () => done(false));
+      thread.once("exit", () => done(false));
+    });
+    if (!ready) {
+      thread.terminate();
+      return false;
+    }
+    thread.unref();
+    watcher = { thread, flags, seen: 0 };
+    const o = objectFreeze({ a: 1, list: objectFreeze([2, 1]) });
+    const tries = [
+      () => {
+        o.a = 2;
+      },
+      () => {
+        o.b = 1;
+      },
+      () => {
+        delete o.a;
+      },
+      () => {
+        o.a++;
+      },
+      () => {
+        o.list[0] = 2;
+      },
+      () => {
+        o.list.length = 0;
+      },
+      () => o.list.push(1),
+      () => o.list.pop(),
+      () => o.list.sort(),
+      () => Object.assign(o, { a: 2 }),
+      () => defineProperty(o, "a", { value: 2 }),
+      () => defineProperty(o, "c", { value: 2 }),
+      () => Object.setPrototypeOf(o, null),
+      () => {
+        o.__proto__ = null;
+      },
+      () => new Proxy(o, { get: () => 2 }).a,
+    ];
+    for (const attempt of tries) {
+      const before = Atomics.load(flags, 0);
+      let threw = false;
+      try {
+        attempt();
+      } catch {
+        threw = true;
+      }
+      if (!threw || Atomics.load(flags, 0) !== before + 1) {
+        stopWatcher();
+        return false;
+      }
+    }
+    watcher.seen = Atomics.load(flags, 0);
+    return true;
+  } catch {
+    if (thread) thread.terminate();
+    watcher = null;
+    return false;
+  }
+}
+
+// Let go of the inspector before Node exits, or Node says it is waiting
+// for a debugger.
+function stopWatcher() {
+  if (watcher === null) return;
+  const { thread, flags } = watcher;
+  watcher = null;
+  try {
+    thread.postMessage("bye");
+    Atomics.wait(flags, 1, 0, 500);
+  } catch {
+    // It is gone already.
+  }
+}
+process.on("exit", stopWatcher);
+
+// Whether a write to a frozen object failed since the last look.
+function checkWatcher() {
+  if (watcher === null) return;
+  const n = Atomics.load(watcher.flags, 0);
+  if (n !== watcher.seen) {
+    watcher.seen = n;
+    cantVouch("the site's code tries to change a value a data file gave, or shows it through a Proxy");
+  }
 }
 
 function register(fn) {
@@ -911,8 +1378,8 @@ function argumentPrint() {
 let argumentText;
 
 function deepFreeze(o) {
-  if (o && typeof o === "object" && !Object.isFrozen(o)) {
-    Object.freeze(o);
+  if (o && typeof o === "object" && !objectIsFrozen(o)) {
+    objectFreeze(o);
     for (const k of Object.keys(o)) deepFreeze(o[k]);
   }
   return o;
@@ -1577,13 +2044,20 @@ async function handle(req) {
           if (!sameList(completeRecord(v, false), loadRecords.get(v))) changed.push(relFile(file));
         }
         protos = !sameList(protosRecord(), startProtos);
+        // Freeze where the worker can vouch for every function, and a
+        // failed write will be seen; walk otherwise.
+        const freezing = changed.length === 0 && !protos && unprovable === null && (await startWatcher());
+        if (freezing) {
+          quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v, true)]));
+          exportsMode = "frozen";
+        }
         for (const v of loadedRoots.keys()) {
           loadRecords.set(v, completeRecord(v, true));
         }
-        quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v)]));
+        if (!freezing) quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v)]));
       }
       loadHandles = handles.length;
-      return { ok: null, handles: handles.length, changed, protos };
+      return { ok: null, handles: handles.length, changed, protos, exports: exportsMode, walks: unprovable };
     }
     case "loadsChanged": {
       // The global data files have loaded: their values as 11ty's pages
@@ -1599,6 +2073,8 @@ async function handle(req) {
       return { okText: JSON.stringify(encodeValue(out, register)) };
     }
     case "exportsFinal": {
+      checkWatcher();
+      if (again !== null) return { again };
       if (strayFilter !== null) return { refused: strayFilter, impure: true };
       if (exportChange !== null) return { refused: exportChange, impure: true };
       if (quickRecords === null) return { ok: null };
@@ -1759,6 +2235,11 @@ function handleLine(line) {
       define(req);
       return;
     }
+    if (again !== null) {
+      // Nothing more is of use: Brrrty runs the build again, walking.
+      frame("r", req.id, { again }, null);
+      return;
+    }
     let reply;
     // A call's clock and random reads, recorded, or handed back on a replay.
     const calling = clockPhase === "calls";
@@ -1785,6 +2266,10 @@ function handleLine(line) {
         : e && e.brrrtyInvalid
           ? { invalid: toWellFormed(String(e.message)) }
           : { thrown: thrown(e) };
+    }
+    if (exportsMode === "frozen") {
+      checkWatcher();
+      if (again !== null) reply = { again };
     }
     let clock = null;
     if (calling) {

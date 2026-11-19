@@ -53,6 +53,9 @@ pub(crate) struct JsSession<'a> {
     /// and Brrrty's filters that run them: given to the runtime when it
     /// starts.
     pub filters: Option<(Vec<String>, JsFilters)>,
+    /// Set when the runtime asks for the build to be run again (see
+    /// [`RuntimeFailure::again`]).
+    pub again: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// What loading one JavaScript template or layout gave.
@@ -89,6 +92,7 @@ impl<'a> JsSession<'a> {
             files: Vec::new(),
             check_ports: false,
             filters: None,
+            again: Arc::default(),
         }
     }
 
@@ -316,6 +320,7 @@ impl<'a> JsSession<'a> {
             failed: Mutex::new(None),
             impure: Mutex::new(Vec::new()),
             filters: Mutex::new(None),
+            again: self.again.clone(),
         }))
     }
 
@@ -364,6 +369,9 @@ pub(crate) struct JsCalls {
     impure: Mutex<Vec<Problem>>,
     /// The filters a JavaScript template calls on `this`, by name.
     filters: Mutex<Option<JsFilters>>,
+    /// The runtime asked for the build to be run again (see
+    /// [`RuntimeFailure::again`]).
+    again: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Runs one of Brrrty's filters for a JavaScript template: `(name,
@@ -430,10 +438,14 @@ impl JsCalls {
                 message: "JavaScript data stopped earlier in this build".into(),
                 stderr_tail: Vec::new(),
                 stopped: false,
+                again: false,
             });
         };
         let out = f(r.as_mut());
         if let JsResult::Failed(failure) = &out {
+            if failure.again {
+                self.again.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             *rt = None;
             let mut failed = lock(&self.failed);
             if failed.is_none() {
@@ -926,6 +938,7 @@ mod tests {
             message: "Node exited with status 1".into(),
             stderr_tail: vec!["boom".into()],
             stopped: false,
+            again: false,
         };
         let p = worker_failed_with(&f);
         let help = p.help.unwrap_or_default();

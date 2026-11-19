@@ -108,6 +108,9 @@ pub struct RuntimeFailure {
     /// Brrrty stopped the runtime itself (Ctrl-C, SIGTERM): not a failure
     /// of the data.
     pub stopped: bool,
+    /// The runtime asks for the build to be run again: it took a shortcut
+    /// it can't stand behind for this site, and the next runtime won't.
+    pub again: bool,
 }
 
 /// The outcome of one request: a value, the site's own exception, a value
