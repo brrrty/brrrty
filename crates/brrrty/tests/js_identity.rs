@@ -55,10 +55,10 @@ fn built(mode: Option<&str>) -> String {
         String::from_utf8_lossy(&o.stderr)
     );
     let mut out = String::new();
-    for page in ["d/x", "pg/0", "pg/1", "po/0", "po/1"] {
+    for page in ["d/x", "d/n", "d/l", "pg/0", "pg/1", "po/0", "po/1"] {
         let body = fs::read_to_string(t.path().join("_site").join(page).join("index.html"))
             .unwrap_or_else(|e| panic!("{page}: {e}"));
-        out.push_str(&format!("{page}: {body}\n"));
+        out.push_str(&format!("{page}: {}\n", body.trim_end()));
     }
     out
 }

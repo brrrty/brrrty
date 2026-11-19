@@ -1186,7 +1186,18 @@ impl Worker {
                     }
                     self.table.argument(a, false, &mut text, &mut added)?;
                 }
-                text.push_str("]}");
+                text.push(']');
+                // Whose template is calling: the worker finds that page's
+                // own data among the collections' items by it.
+                if let Some((page, number)) = brrrty_js::functions::own_page() {
+                    text.push_str(",\"own\":");
+                    self.table.argument(&page, false, &mut text, &mut added)?;
+                    if let Some(n) = number {
+                        text.push_str(",\"ownAt\":");
+                        crate::wire::number(&mut text, n);
+                    }
+                }
+                text.push('}');
                 let req = Request {
                     added,
                     handle: Some(f.0),

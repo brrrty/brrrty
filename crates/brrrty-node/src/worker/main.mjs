@@ -1051,10 +1051,13 @@ const ownHandler = {
     } else if (this.fresh) {
       return freshView(v, true);
     }
+    // What the calling template handed the function is the page's own
+    // (see `liveOwn`): the same object here as there.
+    if (liveOwn !== null && liveOwn.args.has(v) && ownKey(this.top) === liveOwn.key) return liveOwn.args.get(v);
     const kids = (this.kids ??= new Map());
     const have = kids.get(k);
     if (have !== undefined && have.t === v) return have.p;
-    const p = view(v, { __proto__: ownHandler, root: false, paged: false, fresh: false, same: null, kids: null });
+    const p = view(v, { __proto__: ownHandler, root: false, paged: false, fresh: false, same: null, kids: null, top: this.top });
     kids.set(k, { t: v, p });
     return p;
   },
@@ -1085,7 +1088,7 @@ function freshView(v, deep) {
   return view(v, deep ? FRESH : membrane);
 }
 // Nothing is kept for a view like that, so they share one handler.
-const FRESH = { __proto__: ownHandler, root: false, paged: false, fresh: true, same: null, kids: null };
+const FRESH = { __proto__: ownHandler, root: false, paged: false, fresh: true, same: null, kids: null, top: null };
 
 // A page's data as its functions and templates see it. `same` names the
 // keys of a paginated page's data that are the values themselves, when
@@ -1108,7 +1111,24 @@ function rootView(data, same) {
       if (cv !== null && typeof cv === "object") for (const k of Object.keys(cv)) keys.add(k);
     }
   }
-  return view(data, { __proto__: ownHandler, root: true, paged, fresh: false, same: keys, kids: null });
+  const handler = { __proto__: ownHandler, root: true, paged, fresh: false, same: keys, kids: null, top: null, data, key: undefined };
+  handler.top = handler;
+  return view(data, handler);
+}
+
+// A function a Nunjucks or Liquid template calls gets its arguments from
+// Brrrty, not through the page's data. In 11ty they are the page's own
+// objects, so `p.data.author === author` holds for the page's own item in
+// a collection and for no other. Brrrty says whose template is calling
+// (`own`), and while the call runs, a plain object among its arguments
+// is what that page's data gives wherever it holds the same value.
+let liveOwn = null;
+
+// Which page a root view's data is (see `dataKeyOf`), worked out once.
+function ownKey(top) {
+  if (top === null) return null;
+  if (top.key === undefined) top.key = dataKeyOf(top.data);
+  return top.key;
 }
 
 // Before a call: a write nothing was running for. A function kept the
@@ -2943,7 +2963,7 @@ function describeFn(fn) {
 
 // Run one call, once, as 11ty does. The reply's `refused` when it can't
 // be used exactly.
-async function runOnce(fn, thisArg, args, settle, page = null) {
+async function runOnce(fn, thisArg, args, settle, page = null, own = null) {
   refusedInCall = null;
   const late = lateWrite();
   if (late) return late;
@@ -2954,7 +2974,15 @@ async function runOnce(fn, thisArg, args, settle, page = null) {
     // A frozen value needs no watching, and a stack trace names the call
     // by what `this` is (`Object.name`, not `Proxy.name`).
     const self = isObject(thisArg) && frozenByUs.has(thisArg) ? thisArg : watch(thisArg);
-    value = fn.apply(self, page !== null ? [page.view] : args.map(watch));
+    const handed = page !== null ? [page.view] : args.map(pageObject);
+    if (own !== null) {
+      own.args = new Map();
+      for (let i = 0; i < args.length; i++) {
+        if (handed[i] !== args[i] && isPlainObject11ty(args[i])) own.args.set(args[i], handed[i]);
+      }
+      liveOwn = own.args.size ? own : null;
+    }
+    value = fn.apply(self, handed);
     if (settle === "await") {
       value = await value;
     } else if (value && typeof value.then === "function" && typeof value.catch === "function") {
@@ -2963,11 +2991,13 @@ async function runOnce(fn, thisArg, args, settle, page = null) {
     }
   } catch (e) {
     liveRoot = before;
+    liveOwn = null;
     const failed = callRefusal(fn);
     if (failed) return failed;
     throw e;
   }
   liveRoot = before;
+  liveOwn = null;
   const failed = callRefusal(fn);
   if (failed) return failed;
   let text;
@@ -3082,7 +3112,12 @@ async function handle(req) {
       const fn = getHandle(req.handle);
       const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this);
       const args = (req.args || []).map((a) => fromWire(a));
-      const r = await runOnce(fn, thisArg, args, req.await ? "await" : "asIs");
+      let own = null;
+      if (req.own !== undefined) {
+        const key = pageKeyOf(fromWire(req.own));
+        if (key !== null) own = { key: `${key}\0${typeof req.ownAt === "number" ? req.ownAt : ""}`, args: null };
+      }
+      const r = await runOnce(fn, thisArg, args, req.await ? "await" : "asIs", null, own);
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       return { okText: r.okText };
     }

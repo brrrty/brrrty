@@ -168,7 +168,9 @@ impl Run<'_, '_> {
         );
         let guard = traps::install(self.live.clone());
         let recording = Recording::start();
+        let own = brrrty_js::functions::OwnPageGuard::enter(self.pages[i].job.data);
         let result = self.pipeline.content(&self.pages[i].job);
+        drop(own);
         let highlight = recording.finish();
         let reads = traps::take_item_reads();
         drop(guard);
