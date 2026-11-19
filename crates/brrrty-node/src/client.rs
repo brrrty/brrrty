@@ -891,8 +891,12 @@ impl Worker {
         if let Some(f) = &self.failed {
             return Err(f.clone());
         }
+        // Starting the replays hands them every definition so far, these
+        // requests' own among them: they get each one once.
+        let mut handed = false;
         if self.calls_begun && self.replays.is_none() && reqs.iter().any(|r| logged(r.op)) {
             self.start_replays();
+            handed = true;
         }
         // The values the requests refer to for the first time, each in a
         // line of its own, to this worker and to the replay check's.
@@ -901,7 +905,10 @@ impl Worker {
                 self.stats.definitions += 1;
                 self.stats.defined += line.len() as u64;
                 self.write_line(line)?;
-                if !dynamic && let Some(replays) = &self.replays {
+                if !dynamic
+                    && !handed
+                    && let Some(replays) = &self.replays
+                {
                     for r in replays {
                         r.line(line.clone());
                     }
