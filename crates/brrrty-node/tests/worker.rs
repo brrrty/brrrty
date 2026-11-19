@@ -120,12 +120,18 @@ fn starting_and_stopping_leaves_no_node_behind() {
     assert!(left.is_empty(), "still running: {left:?}");
 }
 
+/// A megabyte of logging in one write, in lines of a kilobyte. Not one
+/// line of a megabyte: Brrrty passes Node's output on to its own stderr,
+/// and a GitHub Actions runner takes time that grows with the square of
+/// a line's length to record one (about 3 seconds at 64 KiB, 3 minutes
+/// at 450 KiB, and 20 minutes before and again after a whole megabyte,
+/// which ran a job with every test passing into its 45-minute limit).
 #[test]
 fn site_logging_never_breaks_the_frames() {
     let Some(node) = node() else { return };
     let t = site(&[(
         "noisy.js",
-        r#"console.log("x".repeat(1 << 20));
+        r#"console.log(("x".repeat(1023) + "\n").repeat(1 << 10).trimEnd());
 process.stdout.write("\x1eBRRRTY 5\nhello");
 console.info("info"); console.error("err");
 module.exports = { fine: true };"#,
