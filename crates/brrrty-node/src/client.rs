@@ -137,6 +137,9 @@ pub(crate) struct Frame {
     pub clock: Option<Box<str>>,
     /// The reply mentions a function a call made.
     pub made: bool,
+    /// Its place among the frames Node sent. Node runs one request at a
+    /// time and answers each as it ends, so this is the order it ran them.
+    pub seq: u64,
 }
 
 impl Frame {
@@ -198,6 +201,11 @@ pub(crate) struct Record {
     /// It ran after a call sent with it changed a value the worker kept:
     /// what it gave isn't used, and a replay's won't be the same.
     pub unchecked: bool,
+    /// When Node ran it: its reply's place among Node's frames, and for a
+    /// request with no reply, its place after the one before it. Threads
+    /// take their replies in any order, so the log is put in this order
+    /// before the replay check reads it.
+    pub at: (u64, u32),
 }
 
 /// Where notes about a slow request go.
@@ -492,6 +500,9 @@ pub struct Worker {
     /// load's reply said so.
     fixed: std::collections::HashSet<(bool, PathBuf)>,
     last_fixed: bool,
+    /// The latest of Node's frames a request of this worker's was
+    /// answered by (see [`Frame::seq`]).
+    last_seq: u64,
     /// The lists and objects the workers keep (see [`crate::wire`]).
     table: Table,
     /// What the worker was started with, for the replay check.
@@ -676,6 +687,7 @@ impl Worker {
             earlier: None,
             fixed: std::collections::HashSet::new(),
             last_fixed: false,
+            last_seq: 0,
             table: Table::default(),
             node: node.clone(),
             run_mode,
@@ -963,6 +975,8 @@ impl Worker {
         // A call in the group changed a value the worker kept: the ones
         // after it ran on what it left, which a replay doesn't have.
         let mut unchecked = false;
+        // When Node ran the last request of these that it answered.
+        let mut last_at = (self.last_seq, 0u32);
         let mut frames = frames.into_iter();
         let mut asked = asked.into_iter();
         for req in sent {
@@ -1037,7 +1051,19 @@ impl Worker {
                     .as_ref()
                     .is_some_and(|f| f.head.get("dropShared").is_some());
                 self.dropped |= dropped;
+                let at = match &frame {
+                    Some(f) => {
+                        self.last_seq = self.last_seq.max(f.seq);
+                        last_at = (f.seq, 0);
+                        last_at
+                    }
+                    None => {
+                        last_at.1 += 1;
+                        last_at
+                    }
+                };
                 self.call_log.push(Record {
+                    at,
                     unit,
                     label,
                     op: req.op,
@@ -2063,7 +2089,14 @@ impl JsRuntime for Worker {
             return JsResult::Ok(());
         };
         let calls = Arc::new(crate::replay::Calls {
-            records: std::mem::take(&mut self.call_log),
+            records: {
+                // The order Node ran them in, not the order the render
+                // threads took their replies: the replay check's orders are
+                // made from this one, and must differ from it.
+                let mut records = std::mem::take(&mut self.call_log);
+                records.sort_by_key(|r| r.at);
+                records
+            },
             load_handles: self.load_handles,
             slowest: self.slowest,
             dynamic: std::mem::take(&mut self.table.dynamic),
@@ -2380,7 +2413,9 @@ fn read_frames_to(
     mux: &Mux,
 ) {
     let mut r = BufReader::with_capacity(1 << 16, stdout);
+    let mut seq = 0u64;
     loop {
+        seq += 1;
         let mut header = Vec::new();
         match r.read_until(b'\n', &mut header) {
             Ok(0) => return,
@@ -2441,6 +2476,7 @@ fn read_frames_to(
                 body: body.into_boxed_str(),
                 clock: (!clock.is_empty()).then(|| clock.into_boxed_str()),
                 made: kind == "f",
+                seq,
             }
         });
         // A frame a ticket waits for goes to it; any other to the worker.
