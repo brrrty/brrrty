@@ -20,6 +20,10 @@ pub struct Flags {
     pub strict: bool,
     /// `--js-data`; the config's `set_js_data`, or off, when not given.
     pub js_data: Option<JsData>,
+    /// `--no-order-check` is `Some(false)`; `Some(true)` runs the check
+    /// whatever the config says (`brrrty doctor`); `None` leaves it to the
+    /// config's `set_order_check`, or on.
+    pub order_check: Option<bool>,
 }
 
 /// Read the config in `root` and combine it with `flags`. Flags on the command line win, as
@@ -48,7 +52,7 @@ pub fn build_options(root: &Path, flags: &Flags) -> Result<BuildOptions, Vec<Pro
         root: root.to_path_buf(),
         passthrough: flags.passthrough.clone(),
         strict: flags.strict,
-        js: js_options(root, &config, flags.js_data),
+        js: js_options(root, &config, flags.js_data, flags.order_check),
         config,
         ..BuildOptions::default()
     })
@@ -56,7 +60,13 @@ pub fn build_options(root: &Path, flags: &Flags) -> Result<BuildOptions, Vec<Pro
 
 /// Whether JavaScript data runs: `--js-data` over `config.set_js_data`, else off. When on,
 /// the Node to run it in: `BRRRTY_NODE`, else `node` on `PATH`.
-fn js_options(root: &Path, config: &ConfigOptions, flag: Option<JsData>) -> JsOptions {
+fn js_options(
+    root: &Path,
+    config: &ConfigOptions,
+    flag: Option<JsData>,
+    order_check: Option<bool>,
+) -> JsOptions {
+    let order_check = order_check.or(config.order_check).unwrap_or(true);
     let (mode, source) = match (flag, config.js_data) {
         (Some(m), _) => (m, JsDataSource::Flag),
         (None, Some((m, line))) => (
@@ -69,6 +79,7 @@ fn js_options(root: &Path, config: &ConfigOptions, flag: Option<JsData>) -> JsOp
         (None, None) => (JsData::Off, JsDataSource::Default),
     };
     let mut js = JsOptions {
+        order_check,
         mode,
         source,
         node: None,
@@ -91,7 +102,7 @@ fn js_options(root: &Path, config: &ConfigOptions, flag: Option<JsData>) -> JsOp
                     RunMode::Build => brrrty_node::RunMode::Build,
                     RunMode::Serve => brrrty_node::RunMode::Serve,
                 };
-                brrrty_node::Worker::start(&info, &root, mode)
+                brrrty_node::Worker::start_with(&info, &root, mode, order_check)
                     .map(|w| Box::new(w) as Box<dyn brrrty_js::runtime::JsRuntime>)
                     .map_err(|e| e.to_string())
             }));

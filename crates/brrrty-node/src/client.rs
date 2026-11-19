@@ -528,6 +528,8 @@ pub struct Worker {
     /// The replay check's two workers, started as soon as there is
     /// something for them to check.
     replays: Option<[crate::replay::Handle; 2]>,
+    /// The replay check runs (see [`Worker::start_with`]).
+    order_check: bool,
     /// The longest a request took.
     slowest: Duration,
     /// How long a request may take before the worker is given up on (the
@@ -612,6 +614,28 @@ impl Worker {
         root: &Path,
         run_mode: RunMode,
         replay: Option<&crate::replay::Loads>,
+    ) -> Result<Worker, WorkerError> {
+        Worker::start_checked(node, root, run_mode, replay, true)
+    }
+
+    /// [`Worker::start`], with or without the replay check: without it
+    /// the site's JavaScript runs once, in this worker's Node alone, and
+    /// nothing is kept of the calls to run them again.
+    pub fn start_with(
+        node: &NodeInfo,
+        root: &Path,
+        run_mode: RunMode,
+        order_check: bool,
+    ) -> Result<Worker, WorkerError> {
+        Worker::start_checked(node, root, run_mode, None, order_check)
+    }
+
+    fn start_checked(
+        node: &NodeInfo,
+        root: &Path,
+        run_mode: RunMode,
+        replay: Option<&crate::replay::Loads>,
+        order_check: bool,
     ) -> Result<Worker, WorkerError> {
         // The build's own worker asks whether this folder's builds walk;
         // the replay check's workers do as it did.
@@ -699,6 +723,7 @@ impl Worker {
             calls_begun: false,
             load_handles: 0,
             replays: None,
+            order_check,
             slowest: Duration::ZERO,
             deadline: None,
             last_template: None,
@@ -1049,6 +1074,13 @@ impl Worker {
                     body,
                     clock,
                 });
+            } else if logged(req.op) && !self.order_check {
+                // Nothing runs the calls again: nothing is kept of them.
+                let dropped = frame
+                    .as_ref()
+                    .is_some_and(|f| f.head.get("dropShared").is_some());
+                self.dropped |= dropped;
+                unchecked |= dropped;
             } else if logged(req.op) {
                 let (unit, label) = match brrrty_js::functions::unit() {
                     Some(u) => u,
@@ -1518,6 +1550,9 @@ impl Worker {
     /// their own orders, while this one goes on, and are sent every value
     /// this one defines as it defines it.
     fn start_replays(&mut self) {
+        if !self.order_check {
+            return;
+        }
         let loads = Arc::new(crate::replay::Loads {
             node: self.node.clone(),
             root: self.root.clone(),

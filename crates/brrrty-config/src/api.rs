@@ -91,6 +91,8 @@ pub struct State {
     pub closed: Option<brrrty_core::LateProblems>,
     /// `set_js_data(...)`: the last call's mode and line.
     pub js_data: Option<(brrrty_core::JsData, Option<usize>)>,
+    /// `set_order_check(...)`: the last call's answer.
+    pub order_check: Option<bool>,
 }
 
 /// The `config` object.
@@ -382,6 +384,14 @@ pub fn engine_for(
             };
             open(&c.0, "config.set_js_data", pos).js_data = Some((m, pos.line()));
             Ok(())
+        },
+    );
+    // Brrrty's own: whether the site's JavaScript is run again in other
+    // orders before anything is written.
+    e.register_fn(
+        "set_order_check",
+        |ctx: rhai::NativeCallContext, c: &mut Config, on: bool| {
+            open(&c.0, "config.set_order_check", ctx.call_position()).order_check = Some(on);
         },
     );
     // 11ty's `addLayoutAlias`: `layout: from` names the layout file `to`,

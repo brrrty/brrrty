@@ -98,6 +98,10 @@ pub type JsStarter = std::sync::Arc<
 pub struct JsOptions {
     pub mode: JsData,
     pub source: JsDataSource,
+    /// Whether the site's JavaScript is run again in other orders before
+    /// anything is written (`--no-order-check` and
+    /// `config.set_order_check(false)` turn it off).
+    pub order_check: bool,
     /// The Node that runs them, or why there is none. Looked for only when
     /// the mode is `Node`; `None` otherwise.
     pub node: Option<Result<JsNode, JsNodeMissing>>,
@@ -190,6 +194,8 @@ pub struct ConfigOptions {
     pub late_problems: LateProblems,
     /// `config.set_js_data(...)`: the mode and the line of the call.
     pub js_data: Option<(JsData, Option<usize>)>,
+    /// `config.set_order_check(...)`, when the config calls it.
+    pub order_check: Option<bool>,
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
     /// nothing is written or copied.
     pub unported: Option<Problem>,

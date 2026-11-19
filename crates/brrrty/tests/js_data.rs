@@ -1888,3 +1888,73 @@ fn a_counter_is_refused_every_time_however_the_threads_race() {
         passed[0]
     );
 }
+
+/// `--no-order-check` and `config.set_order_check(false)` build a site
+/// without running its JavaScript again in other orders: the counter two
+/// pages share is built, where the check refuses it, and the build says
+/// what it skipped. `brrrty doctor` runs the check whichever is set.
+#[test]
+fn the_order_check_can_be_skipped_and_doctor_still_runs_it() {
+    if !has_node() {
+        return;
+    }
+    let counter = [
+        (
+            "src/_data/ids.js",
+            "let n = 0;\nmodule.exports = {\n  next: () => ++n,\n};\n",
+        ),
+        ("src/a.njk", "{{ ids.next() }}"),
+        ("src/b.njk", "{{ ids.next() }}"),
+    ];
+    let with_config = |config: &'static str| {
+        let mut files = vec![("brrrty.config.rhai", config)];
+        files.extend(counter);
+        site(&files)
+    };
+    let skipped = "The order check was skipped";
+    let pages = |t: &tempfile::TempDir| {
+        let mut both = [written(t, "a/index.html"), written(t, "b/index.html")];
+        both.sort();
+        both
+    };
+    let one_and_two = [Some("1".to_string()), Some("2".to_string())];
+
+    // Checked, as always: refused.
+    let t = with_config(ON);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("js-data-impure"), "{}", text(&o));
+    assert!(!text(&o).contains(skipped), "{}", text(&o));
+
+    // The flag.
+    let t = with_config(ON);
+    let o = build(t.path(), &["--no-order-check"], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(text(&o).contains(skipped), "{}", text(&o));
+    assert_eq!(pages(&t), one_and_two);
+
+    // The config.
+    let off = "config.set_js_data(\"node\");\nconfig.set_order_check(false);\n";
+    let t = with_config(off);
+    let o = build(t.path(), &[], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(text(&o).contains(skipped), "{}", text(&o));
+    assert_eq!(pages(&t), one_and_two);
+
+    // Doctor checks either way, and writes nothing.
+    for config in [ON, off] {
+        let t = with_config(config);
+        let o = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+            .current_dir(t.path())
+            .args(["doctor", "--input", "src"])
+            .env_remove("BRRRTY_NODE")
+            .output()
+            .expect("run brrrty doctor");
+        let out = text(&o);
+        assert!(
+            out.contains("gives a different result when the pages' calls"),
+            "{out}"
+        );
+        assert!(!out.contains(skipped), "{out}");
+    }
+}
