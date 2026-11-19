@@ -1810,3 +1810,56 @@ fn a_slow_data_file_loads_again_in_the_replay_check() {
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert_eq!(written(&t, "a/index.html").as_deref(), Some("done"));
 }
+
+/// The replay check's orders are made from the order Node ran the calls
+/// in, which is not the order the render threads took their replies in.
+/// Two pages that call a counter are refused every time, whichever
+/// thread was first to its reply: built 200 times, with more pages than
+/// threads so that the replies race.
+#[test]
+fn a_counter_is_refused_every_time_however_the_threads_race() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/ids.js".into(),
+            "let n = 0;\nmodule.exports = {\n  next: () => ++n,\n};\n".into(),
+        ),
+    ];
+    for name in ["a", "b"] {
+        files.push((format!("src/{name}.njk"), "{{ ids.next() }}".into()));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let passed = std::sync::Mutex::new(Vec::new());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..8 {
+            s.spawn(|| {
+                while next.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 200 {
+                    let t = site(&files);
+                    let o = build(t.path(), &[], &[]);
+                    let out = text(&o);
+                    if o.status.code() != Some(1) || !out.contains("js-data-impure") {
+                        passed.lock().unwrap().push(format!(
+                            "a={:?} b={:?}\n{out}",
+                            written(&t, "a/index.html"),
+                            written(&t, "b/index.html")
+                        ));
+                    }
+                }
+            });
+        }
+    });
+    let passed = passed.into_inner().unwrap();
+    assert!(
+        passed.is_empty(),
+        "{} of 200 builds were not refused; the first:\n{}",
+        passed.len(),
+        passed[0]
+    );
+}
