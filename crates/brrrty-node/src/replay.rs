@@ -69,14 +69,21 @@ impl Log<'_> {
         if self.calls.is_empty() && self.loads.len() <= self.global_end {
             return Ok(());
         }
-        let units = self.units();
         // Every value Brrrty kept in the worker, as it was first sent, each
-        // once (a kept value inside another stands as a reference), shared
-        // by both replays.
+        // once (a kept value inside another stands as a reference), and the
+        // functions made by calls that each request uses, shared by both
+        // replays: each request is parsed once here.
         let mut kept: HashMap<u64, Json> = HashMap::new();
+        let mut uses: Vec<Vec<u64>> = Vec::with_capacity(self.calls.len());
         for r in self.calls {
-            kept_values(&r.req(), &mut kept);
+            let req = r.req();
+            kept_values(&req, &mut kept);
+            let mut used = Vec::new();
+            handles_in(&req, &mut used, true);
+            used.retain(|h| *h >= self.load_handles);
+            uses.push(used);
         }
+        let units = self.units(&uses);
         let reverse: Vec<usize> = (0..units.len()).rev().collect();
         let mut named: Vec<usize> = (0..units.len()).collect();
         named.sort_by(|a, b| units[*a].label.cmp(&units[*b].label).then(a.cmp(b)));
@@ -84,9 +91,9 @@ impl Log<'_> {
         // stack, as for replies.
         let thread = || std::thread::Builder::new().stack_size(crate::client::REPLY_STACK);
         let (a, b) = std::thread::scope(|s| {
-            let a = thread().spawn_scoped(s, || self.replay(&units, &reverse, true, &kept));
+            let a = thread().spawn_scoped(s, || self.replay(&units, &reverse, true, &kept, &uses));
             // Both load in another order, so both run even with no calls.
-            let b = thread().spawn_scoped(s, || self.replay(&units, &named, false, &kept));
+            let b = thread().spawn_scoped(s, || self.replay(&units, &named, false, &kept, &uses));
             let join = |h: std::io::Result<
                 std::thread::ScopedJoinHandle<'_, Result<(), Failure>>,
             >| match h {
@@ -110,7 +117,10 @@ impl Log<'_> {
         joined(b)
     }
 
-    fn units(&self) -> Vec<Unit> {
+    /// The renders' requests, each render with the handles of functions
+    /// made by calls that it uses before its own replies made them (`uses`
+    /// gives each request's).
+    fn units(&self, uses: &[Vec<u64>]) -> Vec<Unit> {
         let mut index: HashMap<u64, usize> = HashMap::new();
         let mut units: Vec<Unit> = Vec::new();
         for (i, r) in self.calls.iter().enumerate() {
@@ -128,10 +138,8 @@ impl Log<'_> {
             let mut made: HashSet<u64> = HashSet::new();
             for &i in &unit.records {
                 let r = &self.calls[i];
-                let mut used = Vec::new();
-                handles_in(&r.req(), &mut used, true);
-                for h in used {
-                    if h >= self.load_handles && !made.contains(&h) {
+                for &h in &uses[i] {
+                    if !made.contains(&h) {
                         unit.needs.insert(h);
                     }
                 }
@@ -160,6 +168,7 @@ impl Log<'_> {
         order: &[usize],
         interleave: bool,
         kept: &HashMap<u64, Json>,
+        uses: &[Vec<u64>],
     ) -> Result<(), Failure> {
         let mut w = Worker::start(self.node, self.root, self.run_mode)
             .map_err(|e| Self::runtime(format!("the replay check couldn't start Node: {e}")))?;
@@ -244,12 +253,7 @@ impl Log<'_> {
                 for slot in active.iter_mut() {
                     let (u, at) = *slot;
                     let i = units[u].records[at];
-                    let mut used = Vec::new();
-                    handles_in(&self.calls[i].req(), &mut used, true);
-                    if !used
-                        .iter()
-                        .all(|h| *h < self.load_handles || st.functions.contains_key(h))
-                    {
+                    if !uses[i].iter().all(|h| st.functions.contains_key(h)) {
                         continue;
                     }
                     self.step(&mut w, &mut st, i, &send)?;

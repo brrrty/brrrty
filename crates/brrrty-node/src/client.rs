@@ -136,8 +136,9 @@ pub(crate) struct Record {
 pub struct Worker {
     child: Child,
     stdin: Option<ChildStdin>,
-    /// Where Brrrty answers the worker's questions (a filter a JavaScript
-    /// template calls on `this`).
+    /// Where Brrrty sends requests and answers the worker's questions (a
+    /// filter a JavaScript template calls on `this`), on Unix; elsewhere
+    /// requests go on stdin.
     answers: Option<Box<dyn Write + Send>>,
     /// The replay check's answers, as the first run gave them, in order.
     pub(crate) answers_feed: Option<VecDeque<(Json, Json)>>,
@@ -282,8 +283,20 @@ impl Worker {
     /// Send one request and wait for its reply. `what` names it in the
     /// notes about a slow reply.
     fn request(&mut self, req: Json, what: &str) -> JsResult<Decoded> {
+        let op = req
+            .get("op")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string();
+        self.request_text(&op, req.to_string(), what)
+    }
+
+    /// [`Worker::request`] of a request already written as JSON text (an
+    /// object, without its `id`), whose `op` is `op`.
+    fn request_text(&mut self, op: &str, req: String, what: &str) -> JsResult<Decoded> {
         let filters = self.filters.clone();
         self.request_with(
+            op,
             req,
             what,
             &mut |name: &str, args: &[Value]| match &filters {
@@ -295,21 +308,17 @@ impl Worker {
         )
     }
 
-    /// [`Worker::request`], answering the worker's filter questions with
-    /// `filters`.
+    /// [`Worker::request_text`], answering the worker's filter questions
+    /// with `filters`.
     fn request_with(
         &mut self,
-        req: Json,
+        op: &str,
+        req: String,
         what: &str,
         filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded> {
-        let op = req
-            .get("op")
-            .and_then(Json::as_str)
-            .unwrap_or("")
-            .to_string();
         let logged = !matches!(
-            op.as_str(),
+            op,
             "reads"
                 | "info"
                 | "callsBegin"
@@ -320,13 +329,13 @@ impl Worker {
                 | "describe"
         );
         self.asked.clear();
-        let frame = match self.exchange_with(req.clone(), what, filters) {
+        let frame = match self.exchange_with(&req, what, filters) {
             Ok(f) => f,
             Err(f) => return JsResult::Failed(f),
         };
         if logged && !self.calls_begun {
             self.load_log.push(LoadRecord {
-                req: req.clone(),
+                req: parse_reply(req.as_bytes()).unwrap_or(Json::Null),
                 text: frame.text.clone().unwrap_or_default(),
             });
         }
@@ -338,7 +347,7 @@ impl Worker {
             self.call_log.push(Record {
                 unit,
                 label,
-                req_text: req.to_string().into_boxed_str(),
+                req_text: req.into_boxed_str(),
                 head: frame.head.clone(),
                 raw: frame.raw.clone(),
                 answers: std::mem::take(&mut self.asked),
@@ -350,7 +359,7 @@ impl Worker {
 
     /// Send one request and wait for its reply frame.
     pub(crate) fn exchange(&mut self, req: Json, what: &str) -> Result<Frame, RuntimeFailure> {
-        self.exchange_with(req, what, &mut |name: &str, _: &[Value]| {
+        self.exchange_with(&req.to_string(), what, &mut |name: &str, _: &[Value]| {
             Err(format!(
                 "calls `this.{name}` where Brrrty has no filters to run it"
             ))
@@ -407,7 +416,7 @@ impl Worker {
     /// `filters` while it waits.
     pub(crate) fn exchange_with(
         &mut self,
-        mut req: Json,
+        req: &str,
         what: &str,
         filters: &mut FilterCall<'_>,
     ) -> Result<Frame, RuntimeFailure> {
@@ -416,13 +425,17 @@ impl Worker {
         }
         self.next_id += 1;
         let id = self.next_id;
-        req["id"] = json!(id);
-        let mut line = req.to_string();
+        // The request with its `id` first: `{"id":7,...}`.
+        let rest = req.strip_prefix('{').unwrap_or(req);
+        let mut line = String::with_capacity(req.len() + 24);
+        line.push_str("{\"id\":");
+        line.push_str(&id.to_string());
+        if !rest.starts_with('}') {
+            line.push(',');
+        }
+        line.push_str(rest);
         line.push('\n');
-        let sent = self
-            .stdin
-            .as_mut()
-            .map(|s| s.write_all(line.as_bytes()).and_then(|_| s.flush()));
+        let sent = self.send_line(&line);
         if !matches!(sent, Some(Ok(()))) {
             return Err(self.fail("Node stopped reading requests"));
         }
@@ -485,6 +498,19 @@ impl Worker {
         Ok(frame)
     }
 
+    /// Write one line to the worker where it reads requests: the answers
+    /// pipe where there is one (the worker reads it blocking, see
+    /// `worker/main.mjs`), stdin otherwise.
+    fn send_line(&mut self, line: &str) -> Option<std::io::Result<()>> {
+        match self.answers.as_mut() {
+            Some(w) => Some(w.write_all(line.as_bytes()).and_then(|_| w.flush())),
+            None => self
+                .stdin
+                .as_mut()
+                .map(|s| s.write_all(line.as_bytes()).and_then(|_| s.flush())),
+        }
+    }
+
     /// What a reply means.
     fn interpret(&mut self, frame: Frame, what: &str) -> JsResult<Decoded> {
         let Frame {
@@ -536,6 +562,7 @@ impl Worker {
     /// exited, and the last lines of its stderr.
     fn fail(&mut self, why: &str) -> RuntimeFailure {
         drop(self.stdin.take());
+        drop(self.answers.take());
         let deadline = Instant::now() + Duration::from_secs(2);
         let status = loop {
             match self.child.try_wait() {
@@ -646,23 +673,36 @@ impl JsRuntime for Worker {
         args: &[Value],
         settle: Settle,
     ) -> JsResult<Decoded> {
-        let mut req = json!({"op": "call", "handle": f.0, "await": settle == Settle::Await});
+        let mut req = format!(
+            r#"{{"op":"call","handle":{},"await":{}"#,
+            f.0,
+            settle == Settle::Await
+        );
         let encoded = match this {
             This::Value(v) => encode_all(std::iter::once(v).chain(args), Some(&mut self.kept)),
             This::Opaque(what) => {
-                req["opaque"] = json!(what);
+                req.push_str(r#","opaque":"#);
+                req.push_str(&Json::from(what).to_string());
                 encode_all(args.iter(), Some(&mut self.kept))
             }
         };
         let mut encoded = match encoded {
-            Ok(e) => e,
+            Ok(e) => e.into_iter(),
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
         if let This::Value(_) = this {
-            req["this"] = encoded.remove(0);
+            req.push_str(r#","this":"#);
+            req.push_str(&encoded.next().unwrap_or_default());
         }
-        req["args"] = Json::Array(encoded);
-        self.request(req, "a data function")
+        req.push_str(r#","args":["#);
+        for (i, a) in encoded.enumerate() {
+            if i > 0 {
+                req.push(',');
+            }
+            req.push_str(&a);
+        }
+        req.push_str("]}");
+        self.request_text("call", req, "a data function")
     }
 
     fn page_open(
@@ -675,10 +715,12 @@ impl JsRuntime for Worker {
             Ok(e) => e,
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
-        let r = self.request(
-            json!({"op": "pageOpen", "data": data, "traps": traps, "defaults": defaults}),
-            "a page's data",
+        let req = format!(
+            r#"{{"op":"pageOpen","traps":{},"defaults":{},"data":{data}}}"#,
+            json!(traps),
+            json!(defaults)
         );
+        let r = self.request_text("pageOpen", req, "a page's data");
         match r {
             JsResult::Ok(d) => match d.value {
                 Value::Number(n) if n >= 1.0 && n.fract() == 0.0 => JsResult::Ok(PageId(n as u64)),
@@ -718,10 +760,12 @@ impl JsRuntime for Worker {
             Ok(mut e) => e.remove(0),
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
-        match self.request(
-            json!({"op": "pageSet", "page": page.0, "key": key, "value": value}),
-            "a page's data",
-        ) {
+        let req = format!(
+            r#"{{"op":"pageSet","page":{},"key":{},"value":{value}}}"#,
+            page.0,
+            Json::from(key)
+        );
+        match self.request_text("pageSet", req, "a page's data") {
             JsResult::Ok(_) => JsResult::Ok(()),
             JsResult::Thrown(e) => JsResult::Thrown(e),
             JsResult::Refused(r) => JsResult::Refused(r),
@@ -861,11 +905,17 @@ impl JsRuntime for Worker {
             Ok(e) => e,
             Err(why) => return JsResult::Refused(Refusal::new(why)),
         };
-        let mut req = json!({"op": "render", "template": template.0, "data": data, "traps": traps});
+        let mut req = format!(
+            r#"{{"op":"render","template":{},"traps":{},"data":{data}"#,
+            template.0,
+            json!(traps)
+        );
         if let Some(first) = first {
-            req["first"] = first;
+            req.push_str(r#","first":"#);
+            req.push_str(&first);
         }
-        self.request_with(req, "a JavaScript template", filters)
+        req.push('}');
+        self.request_with("render", req, "a JavaScript template", filters)
     }
 
     fn verify(&mut self) -> JsResult<()> {
@@ -927,9 +977,9 @@ impl JsRuntime for Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        if let Some(mut stdin) = self.stdin.take() {
-            let _ = stdin.write_all(b"{\"op\":\"bye\"}\n");
-        }
+        let _ = self.send_line("{\"op\":\"bye\"}\n");
+        drop(self.answers.take());
+        drop(self.stdin.take());
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             match self.child.try_wait() {
@@ -1188,50 +1238,45 @@ fn js_error(t: &Json, root: &Path) -> JsError {
     }
 }
 
-/// Values in the worker's wire forms, for a call: an object or array
-/// that appears more than once is sent once (`{"$s": [id, value]}`, then
-/// `{"$r": id}`), so data shared between pages, as 11ty shares it, stays
-/// one object; and a property Brrrty doesn't have the value of (a
-/// collection item's content, a key it withholds) is sent as a trap,
-/// `{"$t": why}`, which refuses the call when the function reads it. `Err`
-/// when a value can't be handed over at all.
+/// Values in the worker's wire forms, for a call, written as JSON text: an
+/// object or array that appears more than once is sent once (`{"$s": [id,
+/// value]}`, then `{"$r": id}`), so data shared between pages, as 11ty
+/// shares it, stays one object; and a property Brrrty doesn't have the
+/// value of (a collection item's content, a key it withholds) is sent as a
+/// trap, `{"$t": why}`, which refuses the call when the function reads it.
+/// `Err` when a value can't be handed over at all.
 ///
-/// With `kept`, a list of [`KEPT_LEN`] items or more is kept by the worker
-/// between requests (`{"$S": [id, value]}`, then `{"$R": id}`): the lists
-/// global data gives every page cross once, and stay one list, as in 11ty.
+/// With `kept`, a list or object worth keeping (see [`worth_keeping`]) is
+/// kept by the worker between requests (`{"$S": [id, value]}`, then
+/// `{"$R": id}`): the values global data gives every page cross once, and
+/// stay one value, as in 11ty.
 pub fn encode_all<'v>(
     values: impl Iterator<Item = &'v Value> + Clone,
     kept: Option<&mut Kept>,
-) -> Result<Vec<Json>, String> {
+) -> Result<Vec<String>, String> {
     let mut counts: HashMap<usize, u32> = HashMap::new();
     for v in values.clone() {
         count(v, &mut counts, kept.as_deref());
     }
-    let mut e = Encoder {
-        counts,
-        ids: HashMap::new(),
-        kept,
-        no_keep: None,
-        in_kept: 0,
-        guard: false,
-    };
-    values.map(|v| e.encode(v)).collect()
+    let mut e = Encoder::new(counts, kept, None, false);
+    let out = values
+        .map(|v| {
+            let mut buf = Vec::new();
+            e.encode(v, &mut buf).map(|()| text(buf))
+        })
+        .collect();
+    e.finish(out)
 }
 
 /// [`encode_all`] of a page's data, whose top object is the page's own:
 /// what is inside it may be kept, the object itself isn't.
-fn encode_page(data: &Value, kept: &mut Kept) -> Result<Json, String> {
+fn encode_page(data: &Value, kept: &mut Kept) -> Result<String, String> {
     let mut counts: HashMap<usize, u32> = HashMap::new();
     count(data, &mut counts, Some(kept));
-    let mut e = Encoder {
-        counts,
-        ids: HashMap::new(),
-        kept: Some(kept),
-        no_keep: ptr_of(data),
-        in_kept: 0,
-        guard: false,
-    };
-    e.encode(data)
+    let mut e = Encoder::new(counts, Some(kept), ptr_of(data), false);
+    let mut buf = Vec::new();
+    let r = e.encode(data, &mut buf).map(|()| text(buf));
+    e.finish(r)
 }
 
 /// A render's data and `first` page in the worker's wire forms: the data's
@@ -1243,30 +1288,75 @@ fn encode_render(
     data: &Value,
     first: Option<&Value>,
     kept: &mut Kept,
-) -> Result<(Json, Option<Json>), String> {
+) -> Result<(String, Option<String>), String> {
     let mut counts: HashMap<usize, u32> = HashMap::new();
     count(data, &mut counts, Some(kept));
     if let Some(f) = first {
         count(f, &mut counts, Some(kept));
     }
-    let mut e = Encoder {
-        counts,
-        ids: HashMap::new(),
-        kept: Some(kept),
-        no_keep: ptr_of(data),
-        in_kept: 0,
-        guard: true,
+    let mut e = Encoder::new(counts, Some(kept), ptr_of(data), true);
+    let mut both = || -> Result<(String, Option<String>), String> {
+        let mut buf = Vec::new();
+        e.encode(data, &mut buf)?;
+        let first = match first {
+            Some(f) => {
+                let mut fb = Vec::new();
+                e.encode(f, &mut fb)?;
+                Some(text(fb))
+            }
+            None => None,
+        };
+        Ok((text(buf), first))
     };
-    let data = e.encode(data)?;
-    let first = first.map(|f| e.encode(f)).transpose()?;
-    Ok((data, first))
+    let r = both();
+    e.finish(r)
+}
+
+/// The encoder writes only JSON text: valid UTF-8.
+fn text(buf: Vec<u8>) -> String {
+    String::from_utf8(buf).expect("the encoder writes UTF-8")
 }
 
 /// How many items or keys a list or object must have for the worker to
-/// keep it between requests.
+/// keep it between requests whatever it holds.
 pub const KEPT_LEN: usize = 8;
 
-/// The lists the worker keeps, by address, each held so the address stays
+/// How many bytes of text a smaller list or object must hold directly to be
+/// kept.
+const KEPT_TEXT: usize = 256;
+
+/// Whether the worker keeps `v` between requests: a list or object with
+/// [`KEPT_LEN`] items or more, or one that holds a list or object that
+/// isn't empty, or [`KEPT_TEXT`] bytes of text. What isn't kept is sent in
+/// full with every request that holds it, so a small object holding a
+/// large one would cost its whole size each time.
+fn worth_keeping(v: &Value) -> bool {
+    let heavy = |x: &Value| match x {
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        _ => false,
+    };
+    let text_len = |x: &Value| match x {
+        Value::String(s) => s.len(),
+        _ => 0,
+    };
+    match v {
+        Value::Array(a) => {
+            a.len() >= KEPT_LEN
+                || a.iter().any(heavy)
+                || a.iter().map(text_len).sum::<usize>() >= KEPT_TEXT
+        }
+        Value::Object(o) => {
+            !brrrty_js::traps::is_guarded_object(o)
+                && (o.len() >= KEPT_LEN
+                    || o.values().any(heavy)
+                    || o.values().map(text_len).sum::<usize>() >= KEPT_TEXT)
+        }
+        _ => false,
+    }
+}
+
+/// The values the worker keeps, by address, each held so the address stays
 /// its own.
 #[derive(Default)]
 pub struct Kept {
@@ -1306,6 +1396,9 @@ struct Encoder<'k> {
     /// The id of each shared object or array sent so far.
     ids: HashMap<usize, usize>,
     kept: Option<&'k mut Kept>,
+    /// The first id this request keeps: a request that can't be sent
+    /// forgets what it would have kept.
+    kept_from: u64,
     /// The one object or list not to keep.
     no_keep: Option<usize>,
     /// How many kept values the encoder is inside.
@@ -1339,22 +1432,95 @@ fn trap_reason(key: &str) -> String {
     }
 }
 
-impl Encoder<'_> {
-    fn encode(&mut self, v: &Value) -> Result<Json, String> {
+/// `s` as a JSON string.
+fn write_str(s: &str, out: &mut Vec<u8>) {
+    serde_json::to_writer(out, s).expect("writing to memory");
+}
+
+/// A number, `undefined`, `null`, a boolean, a string, a date or a
+/// function handle in the worker's wire forms (see [`encode`]).
+fn write_plain(v: &Value, out: &mut Vec<u8>) {
+    match v {
+        Value::Undefined => out.extend_from_slice(br#"{"$u":1}"#),
+        Value::Null => out.extend_from_slice(b"null"),
+        Value::Bool(true) => out.extend_from_slice(b"true"),
+        Value::Bool(false) => out.extend_from_slice(b"false"),
+        Value::Number(n) => {
+            if n.is_nan() {
+                out.extend_from_slice(br#"{"$n":"NaN"}"#)
+            } else if *n == f64::INFINITY {
+                out.extend_from_slice(br#"{"$n":"Infinity"}"#)
+            } else if *n == f64::NEG_INFINITY {
+                out.extend_from_slice(br#"{"$n":"-Infinity"}"#)
+            } else if *n == 0.0 && n.is_sign_negative() {
+                out.extend_from_slice(br#"{"$n":"-0"}"#)
+            } else {
+                serde_json::to_writer(out, n).expect("writing to memory")
+            }
+        }
+        Value::String(s) => write_str(s, out),
+        Value::Date(d) => {
+            out.extend_from_slice(br#"{"$d":"#);
+            out.extend_from_slice(d.timestamp_millis().to_string().as_bytes());
+            out.push(b'}');
+        }
+        Value::Function(h) => {
+            out.extend_from_slice(br#"{"$f":"#);
+            out.extend_from_slice(h.0.to_string().as_bytes());
+            out.push(b'}');
+        }
+        Value::Array(_) | Value::Object(_) => {
+            serde_json::to_writer(out, &encode(v)).expect("writing to memory")
+        }
+    }
+}
+
+impl<'k> Encoder<'k> {
+    fn new(
+        counts: HashMap<usize, u32>,
+        kept: Option<&'k mut Kept>,
+        no_keep: Option<usize>,
+        guard: bool,
+    ) -> Encoder<'k> {
+        let kept_from = kept.as_deref().map_or(0, |k| k.next);
+        Encoder {
+            counts,
+            ids: HashMap::new(),
+            kept,
+            kept_from,
+            no_keep,
+            in_kept: 0,
+            guard,
+        }
+    }
+
+    /// Pass `r` on; when it failed, the values this request would have
+    /// kept were never sent, so they aren't kept.
+    fn finish<T>(self, r: Result<T, String>) -> Result<T, String> {
+        if r.is_err()
+            && let Some(kept) = self.kept
+        {
+            let from = self.kept_from;
+            kept.lists.retain(|_, (_, id)| *id < from);
+        }
+        r
+    }
+
+    fn encode(&mut self, v: &Value, out: &mut Vec<u8>) -> Result<(), String> {
         let Some(p) = ptr_of(v) else {
-            return Ok(encode(v));
+            write_plain(v, out);
+            return Ok(());
         };
-        let big = match v {
-            Value::Array(a) => a.len() >= KEPT_LEN,
-            Value::Object(o) => o.len() >= KEPT_LEN && !brrrty_js::traps::is_guarded_object(o),
-            _ => false,
-        };
-        if big
-            && self.no_keep != Some(p)
+        if self.no_keep != Some(p)
+            && self.kept.is_some()
+            && worth_keeping(v)
             && let Some(kept) = self.kept.as_deref_mut()
         {
             if let Some((_, id)) = kept.lists.get(&p) {
-                return Ok(json!({"$R": id}));
+                out.extend_from_slice(br#"{"$R":"#);
+                out.extend_from_slice(id.to_string().as_bytes());
+                out.push(b'}');
+                return Ok(());
             }
             let id = kept.next;
             kept.next += 1;
@@ -1362,44 +1528,58 @@ impl Encoder<'_> {
             // A kept value stands on its own: it may be sent again, by
             // itself, in another request (the replay check does), so what
             // is inside it never refers to this request's shared values.
+            out.extend_from_slice(br#"{"$S":["#);
+            out.extend_from_slice(id.to_string().as_bytes());
+            out.push(b',');
             self.in_kept += 1;
-            let inner = self.inner(v);
+            let inner = self.inner(v, out);
             self.in_kept -= 1;
-            return Ok(json!({"$S": [id, inner?]}));
+            inner?;
+            out.extend_from_slice(b"]}");
+            return Ok(());
         }
         if self.in_kept > 0 {
-            return self.inner(v);
+            return self.inner(v, out);
         }
-        self.encode_inline(v, p)
+        self.encode_inline(v, p, out)
     }
 
     /// `v` (at address `p`) in full, as a value shared within the request
     /// when it appears more than once in it.
-    fn encode_inline(&mut self, v: &Value, p: usize) -> Result<Json, String> {
+    fn encode_inline(&mut self, v: &Value, p: usize, out: &mut Vec<u8>) -> Result<(), String> {
         if let Some(id) = self.ids.get(&p) {
-            return Ok(json!({"$r": id}));
+            out.extend_from_slice(br#"{"$r":"#);
+            out.extend_from_slice(id.to_string().as_bytes());
+            out.push(b'}');
+            return Ok(());
         }
         let shared = self.counts.get(&p).copied().unwrap_or(0) > 1;
-        let id = self.ids.len();
-        if shared {
-            self.ids.insert(p, id);
+        if !shared {
+            return self.inner(v, out);
         }
-        let inner = self.inner(v)?;
-        Ok(if shared {
-            json!({"$s": [id, inner]})
-        } else {
-            inner
-        })
+        let id = self.ids.len();
+        self.ids.insert(p, id);
+        out.extend_from_slice(br#"{"$s":["#);
+        out.extend_from_slice(id.to_string().as_bytes());
+        out.push(b',');
+        self.inner(v, out)?;
+        out.extend_from_slice(b"]}");
+        Ok(())
     }
 
     /// A list or object's own wire form.
-    fn inner(&mut self, v: &Value) -> Result<Json, String> {
-        Ok(match v {
-            Value::Array(a) => Json::Array(
-                a.iter()
-                    .map(|x| self.encode(x))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
+    fn inner(&mut self, v: &Value, out: &mut Vec<u8>) -> Result<(), String> {
+        match v {
+            Value::Array(a) => {
+                out.push(b'[');
+                for (i, x) in a.iter().enumerate() {
+                    if i > 0 {
+                        out.push(b',');
+                    }
+                    self.encode(x, out)?;
+                }
+                out.push(b']');
+            }
             Value::Object(o) => {
                 let open = brrrty_js::traps::is_open_object(o);
                 let unordered = brrrty_js::traps::unordered_reason(o);
@@ -1408,26 +1588,50 @@ impl Encoder<'_> {
                         "passes the whole `collections` object to a function, which Brrrty doesn't do yet; pass one collection, like `collections.post`".to_string(),
                     );
                 }
-                let mut entries = Vec::with_capacity(o.len());
+                out.extend_from_slice(br#"{"$o":["#);
                 // A render's own `content` (a layout's, given `undefined` by
                 // a template's render) is a value, not an item's marker.
                 let top = self.guard && self.no_keep == ptr_of(v);
+                let mut first = true;
+                let mut sep = |out: &mut Vec<u8>| {
+                    if !first {
+                        out.push(b',');
+                    }
+                    first = false;
+                };
                 for (k, x) in o.iter() {
-                    let item = if matches!(x, Value::Undefined)
+                    sep(out);
+                    out.push(b'[');
+                    write_str(k, out);
+                    out.push(b',');
+                    if matches!(x, Value::Undefined)
                         && brrrty_js::traps::TRAP_KEYS.contains(&k.as_str())
                         && !(top && brrrty_js::traps::CONTENT_KEYS.contains(&k.as_str()))
                     {
-                        json!({"$t": trap_reason(k)})
+                        out.extend_from_slice(br#"{"$t":"#);
+                        write_str(&trap_reason(k), out);
+                        out.push(b'}');
                     } else {
-                        self.encode(x)?
-                    };
-                    entries.push(json!([k, item]));
+                        self.encode(x, out)?;
+                    }
+                    out.push(b']');
                 }
                 if let Some(keys) = brrrty_js::traps::withheld_keys(o) {
                     for k in keys.iter().filter(|k| !o.contains_key(k.as_str())) {
-                        entries.push(json!([k, {"$t": format!("reads `{k}` of another page's `data`, which Brrrty can't supply")}]));
+                        sep(out);
+                        out.push(b'[');
+                        write_str(k, out);
+                        out.extend_from_slice(br#",{"$t":"#);
+                        write_str(
+                            &format!(
+                                "reads `{k}` of another page's `data`, which Brrrty can't supply"
+                            ),
+                            out,
+                        );
+                        out.extend_from_slice(b"}]");
                     }
                 }
+                out.push(b']');
                 if open || unordered.is_some() {
                     let mut c = serde_json::Map::new();
                     if open {
@@ -1445,12 +1649,14 @@ impl Encoder<'_> {
                         }
                         (None, false) => {}
                     }
-                    return Ok(json!({"$o": entries, "$c": c}));
+                    out.extend_from_slice(br#","$c":"#);
+                    serde_json::to_writer(&mut *out, &Json::Object(c)).expect("writing to memory");
                 }
-                json!({"$o": entries})
+                out.push(b'}');
             }
-            _ => encode(v),
-        })
+            _ => write_plain(v, out),
+        }
+        Ok(())
     }
 }
 
@@ -1501,10 +1707,10 @@ mod tests {
         let big = object(KEPT_LEN);
         let small = object(2);
         let first = encode_all([&big, &small].into_iter(), Some(&mut kept)).unwrap();
-        assert!(first[0].get("$S").is_some(), "{}", first[0]);
-        assert!(first[1].get("$o").is_some(), "{}", first[1]);
+        assert!(first[0].starts_with(r#"{"$S":[0,"#), "{}", first[0]);
+        assert!(first[1].starts_with(r#"{"$o":"#), "{}", first[1]);
         let again = encode_all([&big].into_iter(), Some(&mut kept)).unwrap();
-        assert_eq!(again[0], json!({"$R": 0}));
+        assert_eq!(again[0], r#"{"$R":0}"#);
         // A page's own data object holds kept values but isn't one.
         let page = Value::Object(Arc::new(
             (0..KEPT_LEN)
@@ -1512,7 +1718,70 @@ mod tests {
                 .collect(),
         ));
         let p = encode_page(&page, &mut kept).unwrap();
-        assert!(p.get("$o").is_some(), "{p}");
-        assert!(p.to_string().contains("\"$R\":0"), "{p}");
+        assert!(p.starts_with(r#"{"$o":"#), "{p}");
+        assert!(p.contains(r#""$R":0"#), "{p}");
+    }
+
+    #[test]
+    fn a_small_object_holding_a_large_one_is_kept() {
+        let mut kept = Kept::default();
+        let deep = Value::Object(Arc::new(
+            [("only".to_string(), object(2))].into_iter().collect(),
+        ));
+        let long = Value::Object(Arc::new(
+            [(
+                "text".to_string(),
+                Value::String("x".repeat(KEPT_TEXT).into()),
+            )]
+            .into_iter()
+            .collect(),
+        ));
+        let flat = object(2);
+        let e = encode_all([&deep, &long, &flat].into_iter(), Some(&mut kept)).unwrap();
+        assert!(e[0].starts_with(r#"{"$S":"#), "{}", e[0]);
+        assert!(e[1].starts_with(r#"{"$S":"#), "{}", e[1]);
+        assert!(e[2].starts_with(r#"{"$o":"#), "{}", e[2]);
+    }
+
+    #[test]
+    fn a_request_that_cant_be_sent_keeps_nothing() {
+        let mut kept = Kept::default();
+        let big = object(KEPT_LEN);
+        // An open `collections` object can't be handed to a function.
+        let o: Arc<indexmap::IndexMap<String, Value>> = Arc::new(indexmap::IndexMap::new());
+        let id = brrrty_js::traps::object_id(&o);
+        brrrty_js::traps::open(id);
+        let both = Value::Array(Arc::new(vec![big.clone(), Value::Object(o.clone())]));
+        let r = encode_all([&both].into_iter(), Some(&mut kept));
+        brrrty_js::traps::close(id);
+        assert!(r.is_err());
+        // The list and the object inside it were never sent: sent again,
+        // they are sent in full.
+        let again = encode_all([&big].into_iter(), Some(&mut kept)).unwrap();
+        assert!(again[0].starts_with(r#"{"$S":"#), "{}", again[0]);
+    }
+
+    #[test]
+    fn text_is_the_wire_forms_encode_gives() {
+        let d = chrono::DateTime::from_timestamp_millis(86_400_000)
+            .unwrap()
+            .fixed_offset();
+        let v = Value::Array(Arc::new(vec![
+            Value::Undefined,
+            Value::Null,
+            Value::Bool(true),
+            Value::Number(1.5),
+            Value::Number(-0.0),
+            Value::Number(f64::NAN),
+            Value::Number(f64::INFINITY),
+            Value::Number(f64::NEG_INFINITY),
+            Value::String("a \"q\" \\ \n \u{1}".into()),
+            Value::Date(d),
+            Value::Function(FnHandle(3)),
+            object(2),
+        ]));
+        let e = encode_all([&v].into_iter(), None).unwrap();
+        let parsed: Json = serde_json::from_str(&e[0]).unwrap();
+        assert_eq!(parsed, encode(&v));
     }
 }
