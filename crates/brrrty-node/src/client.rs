@@ -1964,11 +1964,10 @@ impl JsRuntime for Worker {
         {
             self.page_node.insert(page.0, target);
         }
-        self.group_target = target;
-        self.target = target;
         if !Worker::fits(&reqs) {
             // Too much to send ahead of the first reply: one part at a
             // time, here.
+            self.group_target = target;
             let results = self.requests(reqs, what, filters);
             let done = Done {
                 sent: Vec::new(),
@@ -1982,6 +1981,7 @@ impl JsRuntime for Worker {
             };
             return Begun::Done(self.shaped(done, results));
         }
+        self.target = target;
         match self.send(reqs, what, shape, page) {
             Ok(ticket) => Begun::Sent(Box::new(ticket)),
             Err(f) => Begun::Done(Finished::Results {

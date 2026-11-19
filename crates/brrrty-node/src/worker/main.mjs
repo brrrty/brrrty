@@ -3256,6 +3256,10 @@ async function handle(req) {
       return { okText: JSON.stringify(encodeValue(out, register)) };
     }
     case "exportsFinal": {
+      // Timers the last calls left due run first (a request that came
+      // in with the one before it would otherwise run ahead of them):
+      // what they do is part of what this looks at.
+      await new Promise((resolve) => realSetTimeout(resolve, 1));
       checkWatcher();
       // The watcher must still be there: one more write it has to see.
       if (watcher !== null && again === null && (exportsMode === "frozen" || strictified.size > 0)) {

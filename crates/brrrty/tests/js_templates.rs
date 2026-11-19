@@ -1055,8 +1055,10 @@ fn computed_functions_after_one_that_throws_do_not_run() {
     assert!(out.contains("boom two"), "{out}");
     // With the real value of `two` it never runs.
     assert!(!out.contains("THREE RAN with two=\"x\""), "{out}");
+    // One look in the build's Node and one in each replay's: two
+    // replays, or three when the build's calls run in several Nodes.
     let looks = out.matches("THREE RAN with two=\"").count();
-    assert_eq!(looks, 3, "{out}");
+    assert!(looks == 3 || looks == 4, "{out}");
     assert_eq!(read(t.path(), "b/index.html"), "b");
 }
 
