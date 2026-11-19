@@ -1,9 +1,11 @@
 //! One Node process running the worker, and the requests Brrrty makes of it.
 
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -18,6 +20,7 @@ use serde_json::{Value as Json, json};
 
 use crate::decode::decode;
 use crate::find::NodeInfo;
+use crate::wire::{Added, Table};
 
 /// The worker's source: the encoding, the computed data proxy, then the
 /// protocol. Passed with `--eval`; nothing is written to disk.
@@ -75,60 +78,82 @@ impl std::fmt::Display for WorkerError {
     }
 }
 
-/// One reply frame, its value already decoded on the reader's thread (see
-/// [`REPLY_STACK`]), or why there is none.
+/// One frame from the worker, or why there is none.
 type Reply = Result<Frame, String>;
 
 pub(crate) struct Frame {
+    /// A question of the worker's own (a filter a JavaScript template
+    /// calls on `this`), not a reply.
+    pub question: bool,
+    /// The request it answers.
+    pub id: u64,
     /// The reply without its value.
     pub head: Json,
     /// The decoded `ok` value, when the reply has one.
     ok: Option<Result<Decoded, String>>,
-    /// The `ok` value as sent, kept when the worker records its requests
-    /// for the replay check (see `JsRuntime::verify`).
-    pub raw: Option<Json>,
-    /// The whole reply as text, kept while the data loads: the replay
-    /// check compares loads, and a deep value is safer kept as text than
-    /// as a parsed value on a thread with a small stack.
-    pub text: Option<Box<str>>,
+    /// The reply as sent, without its id and clock: what the replay check
+    /// compares.
+    pub body: Box<str>,
+    /// The clock and random values the request read, as JSON text.
+    pub clock: Option<Box<str>>,
+    /// The reply mentions a function a call made.
+    pub made: bool,
 }
 
-/// What a reply's reader keeps besides the decoded value.
-pub(crate) const KEEP_RAW: u8 = 1;
-pub(crate) const KEEP_TEXT: u8 = 2;
-
-impl Record {
-    /// The request, parsed.
-    pub fn req(&self) -> Json {
-        parse_reply(self.req_text.as_bytes()).unwrap_or(Json::Null)
+impl Frame {
+    /// The decoded `ok` value, when it crossed exactly.
+    pub fn value(&self) -> Option<&Value> {
+        match &self.ok {
+            Some(Ok(d)) => Some(&d.value),
+            _ => None,
+        }
     }
 }
 
 /// One request that loaded data or a template, with its reply, for the
 /// replay check.
-#[derive(Clone)]
 pub(crate) struct LoadRecord {
-    pub req: Json,
-    /// The whole reply, as text: parsed by the replay check, on its roomy
-    /// stack.
+    /// The request as sent, without its id.
     pub text: Box<str>,
+    /// Whether it loads a template (`templateLoad`), a data file (`load`)
+    /// or neither.
+    pub kind: LoadKind,
+    pub path: String,
+    pub body: Box<str>,
+    pub clock: Option<Box<str>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoadKind {
+    Data,
+    Template,
+    Other,
 }
 
 /// One request made after the data files loaded, with its reply, for the
 /// replay check.
-#[derive(Clone)]
 pub(crate) struct Record {
     /// The render that made it ([`brrrty_js::functions::unit`]); a request
     /// made outside one is a unit of its own.
     pub unit: u64,
     pub label: Arc<str>,
-    /// The request as sent, as text: a parsed request takes ten times the
-    /// memory, and a build keeps one per call (see [`Record::req`]).
-    pub req_text: Box<str>,
-    pub head: Json,
-    pub raw: Option<Json>,
-    /// The questions the request asked Brrrty, with the answers it got.
-    pub answers: Vec<(Json, Json)>,
+    pub op: &'static str,
+    /// The function called, when the request calls one.
+    pub handle: Option<u32>,
+    /// The request as sent, without its id. It refers to the values the
+    /// workers keep by id, which are the same in every worker.
+    pub text: Box<str>,
+    pub body: Box<str>,
+    pub clock: Option<Box<str>>,
+    /// The reply mentions a function a call made.
+    pub made: bool,
+    /// The dynamic definitions the request needs (see [`crate::wire`]),
+    /// and whether it names a function a call made itself.
+    pub dynamic: Vec<u32>,
+    pub names_made: bool,
+    /// The questions the request asked Brrrty, with the answers it got,
+    /// both as sent.
+    pub answers: Vec<(Box<str>, Box<str>)>,
 }
 
 /// A running worker. Dropping it closes Node's stdin, waits up to 2 s for
@@ -140,9 +165,9 @@ pub struct Worker {
     /// template calls on `this`).
     answers: Option<Box<dyn Write + Send>>,
     /// The replay check's answers, as the first run gave them, in order.
-    pub(crate) answers_feed: Option<VecDeque<(Json, Json)>>,
+    pub(crate) answers_feed: Option<VecDeque<(Box<str>, Box<str>)>>,
     /// The questions the request in flight asked, with their answers.
-    asked: Vec<(Json, Json)>,
+    asked: Vec<(Box<str>, Box<str>)>,
     /// Brrrty's filters, for the questions a request asks.
     filters: Option<Filters>,
     replies: Receiver<Reply>,
@@ -150,20 +175,21 @@ pub struct Worker {
     stderr_thread: Option<JoinHandle<()>>,
     root: PathBuf,
     next_id: u64,
+    next_page: u64,
     /// Set once the worker failed: every later request fails the same way.
     failed: Option<RuntimeFailure>,
     /// The value each load (by call mode and file) gave last.
     last_loaded: HashMap<(bool, PathBuf), Decoded>,
     /// The value a `same` reply to the request in flight stands for.
     earlier: Option<Decoded>,
-    /// Values sent to the worker and kept there, by their data's address
-    /// (the value is held, so the address can't be reused).
-    kept: Kept,
+    /// The lists and objects the workers keep (see [`crate::wire`]).
+    table: Table,
     /// What the worker was started with, for the replay check.
     node: NodeInfo,
     run_mode: RunMode,
-    /// Keep each reply's value as sent, as well as decoded.
-    pub(crate) keep_raw: Arc<std::sync::atomic::AtomicU8>,
+    /// Decode each reply's value. The replay check's workers don't: they
+    /// compare replies as text.
+    pub(crate) decode: Arc<AtomicBool>,
     /// The requests that loaded the data, in order, with their replies.
     load_log: Vec<LoadRecord>,
     /// How many of them loaded global data (the rest are template and
@@ -172,22 +198,61 @@ pub struct Worker {
     global_end: usize,
     /// The requests made since, with their replies.
     call_log: Vec<Record>,
+    /// A call changed a value the worker kept.
+    dropped: bool,
     /// Set once the data files loaded: see [`JsRuntime::begin_calls`].
     calls_begun: bool,
     /// How many function handles the data files' values made.
     load_handles: u64,
+    /// The replay check's two workers, started as soon as there is
+    /// something for them to check.
+    replays: Option<[crate::replay::Handle; 2]>,
     /// The longest a request took.
     slowest: Duration,
     /// How long a request may take before the worker is given up on (the
     /// replay check's workers only).
     pub(crate) deadline: Option<Duration>,
-    /// The last reply's head, for a request whose reply says more than its
-    /// value (`templateLoad`'s id).
-    last_head: Json,
+    /// The template id of the last `templateLoad` reply.
+    last_template: Option<u64>,
     /// Where slow-request notes go; stderr unless a test replaces it.
     notes: Box<dyn Fn(&str) + Send>,
     /// When the first note comes, and then how often.
     note_times: (Duration, Duration),
+}
+
+/// One request of the first run: what to send, and what the replay check
+/// needs to know of it.
+struct Request<'a> {
+    op: &'static str,
+    /// The request as JSON text, without its id.
+    text: String,
+    /// The definitions it needs sent first.
+    added: Added,
+    /// The function it calls.
+    handle: Option<u32>,
+    /// The file it loads.
+    path: Option<&'a Path>,
+}
+
+impl<'a> Request<'a> {
+    fn new(op: &'static str, text: String) -> Request<'a> {
+        Request {
+            op,
+            text,
+            added: Added::default(),
+            handle: None,
+            path: None,
+        }
+    }
+}
+
+/// A wait for one frame: when it began, and when the next note is due.
+pub(crate) struct Wait {
+    start: Instant,
+    next_note: Instant,
+    /// Node exiting ends the wait even when a process it started keeps
+    /// the replies' pipe open.
+    exited_at: Option<Instant>,
 }
 
 impl Worker {
@@ -207,16 +272,15 @@ impl Worker {
         let (mut child, frames, stderr, answers) = spawn(cmd).map_err(cannot)?;
         live(child.id(), true);
         let (tx, replies) = mpsc::channel();
-        // Load replies are kept as text: the replay check compares them.
-        let keep_raw = Arc::new(std::sync::atomic::AtomicU8::new(KEEP_TEXT));
-        let keep = keep_raw.clone();
+        let decode = Arc::new(AtomicBool::new(true));
+        let decoding = decode.clone();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
         // recurses once per level: a roomy stack, not serde's 128 limit.
         std::thread::Builder::new()
             .name("brrrty-node-replies".into())
             .stack_size(REPLY_STACK)
-            .spawn(move || read_frames(frames, tx, keep))
+            .spawn(move || read_frames(frames, tx, decoding))
             .map_err(|e| {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -237,21 +301,24 @@ impl Worker {
             stderr_thread: Some(stderr_thread),
             root: root.to_path_buf(),
             next_id: 0,
+            next_page: 0,
             failed: None,
             last_loaded: HashMap::new(),
             earlier: None,
-            kept: Kept::default(),
+            table: Table::default(),
             node: node.clone(),
             run_mode,
-            keep_raw,
+            decode,
             load_log: Vec::new(),
             global_end: 0,
             call_log: Vec::new(),
+            dropped: false,
             calls_begun: false,
             load_handles: 0,
+            replays: None,
             slowest: Duration::ZERO,
             deadline: None,
-            last_head: Json::Null,
+            last_template: None,
             notes: Box::new(|s| eprintln!("{s}")),
             note_times: (FIRST_NOTE, NEXT_NOTE),
         })
@@ -281,7 +348,7 @@ impl Worker {
 
     /// Send one request and wait for its reply. `what` names it in the
     /// notes about a slow reply.
-    fn request(&mut self, req: Json, what: &str) -> JsResult<Decoded> {
+    fn request(&mut self, req: Request<'_>, what: &str) -> JsResult<Decoded> {
         let filters = self.filters.clone();
         self.request_with(
             req,
@@ -299,58 +366,126 @@ impl Worker {
     /// `filters`.
     fn request_with(
         &mut self,
-        req: Json,
+        req: Request<'_>,
         what: &str,
         filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded> {
-        let op = req
-            .get("op")
-            .and_then(Json::as_str)
-            .unwrap_or("")
-            .to_string();
         let logged = !matches!(
-            op.as_str(),
-            "reads"
-                | "info"
-                | "callsBegin"
-                | "feedClock"
-                | "feedCalls"
-                | "loadsChanged"
-                | "exportsFinal"
-                | "describe"
+            req.op,
+            "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
         );
+        if logged && self.calls_begun && self.replays.is_none() {
+            self.start_replays();
+        }
+        // The values the request refers to for the first time, each in a
+        // line of its own, to this worker and to the replay check's.
+        for (line, dynamic) in &req.added.lines {
+            if let Err(f) = self.write_line(line) {
+                return JsResult::Failed(f);
+            }
+            if !dynamic && let Some(replays) = &self.replays {
+                for r in replays {
+                    r.line(line.clone());
+                }
+            }
+        }
         self.asked.clear();
-        let frame = match self.exchange_with(req.clone(), what, filters) {
+        let frame = match self.exchange_with(&req.text, None, what, filters) {
             Ok(f) => f,
             Err(f) => return JsResult::Failed(f),
         };
+        if req.op == "templateLoad" {
+            self.last_template = frame.head.get("template").and_then(Json::as_u64);
+        }
+        let mut frame = frame;
+        let body = std::mem::take(&mut frame.body);
+        let clock = frame.clock.take();
         if logged && !self.calls_begun {
             self.load_log.push(LoadRecord {
-                req: req.clone(),
-                text: frame.text.clone().unwrap_or_default(),
+                text: req.text.into_boxed_str(),
+                kind: match req.op {
+                    "load" => LoadKind::Data,
+                    "templateLoad" => LoadKind::Template,
+                    _ => LoadKind::Other,
+                },
+                path: req
+                    .path
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                body,
+                clock,
             });
-        }
-        if logged && self.calls_begun {
+        } else if logged {
             let (unit, label) = match brrrty_js::functions::unit() {
                 Some(u) => u,
                 None => (u64::MAX - self.call_log.len() as u64, Arc::from("")),
             };
+            self.dropped |= frame.head.get("dropShared").is_some();
             self.call_log.push(Record {
                 unit,
                 label,
-                req_text: req.to_string().into_boxed_str(),
-                head: frame.head.clone(),
-                raw: frame.raw.clone(),
+                op: req.op,
+                handle: req.handle,
+                text: req.text.into_boxed_str(),
+                body,
+                clock,
+                made: frame.made,
+                names_made: req.added.made
+                    || req.handle.is_some_and(|h| self.table.made_by_call(h)),
+                dynamic: req.added.dynamic,
                 answers: std::mem::take(&mut self.asked),
             });
         }
-        self.last_head = frame.head.clone();
         self.interpret(frame, what)
     }
 
+    /// Write one line to Node's stdin.
+    pub(crate) fn write_line(&mut self, line: &str) -> Result<(), RuntimeFailure> {
+        if let Some(f) = &self.failed {
+            return Err(f.clone());
+        }
+        let sent = self.stdin.as_mut().map(|s| {
+            s.write_all(line.as_bytes())
+                .and_then(|_| s.write_all(b"\n"))
+                .and_then(|_| s.flush())
+        });
+        if !matches!(sent, Some(Ok(()))) {
+            return Err(self.fail("Node stopped reading requests"));
+        }
+        Ok(())
+    }
+
+    /// Node's stdin, for a thread that writes requests ahead of their
+    /// replies.
+    pub(crate) fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.stdin.take()
+    }
+
+    /// The next request id, and the line that sends `text` under it, with
+    /// the clock and random values `feed` when the replay check hands the
+    /// first run's back.
+    pub(crate) fn line_for(&mut self, text: &str, feed: Option<&str>) -> (u64, String) {
+        self.next_id += 1;
+        let id = self.next_id;
+        let mut line = String::with_capacity(text.len() + 32);
+        let _ = write!(line, "{{\"id\":{id},");
+        if let Some(feed) = feed {
+            line.push_str("\"feed\":");
+            line.push_str(feed);
+            line.push(',');
+        }
+        line.push_str(text.strip_prefix('{').unwrap_or(text));
+        (id, line)
+    }
+
     /// Send one request and wait for its reply frame.
-    pub(crate) fn exchange(&mut self, req: Json, what: &str) -> Result<Frame, RuntimeFailure> {
-        self.exchange_with(req, what, &mut |name: &str, _: &[Value]| {
+    pub(crate) fn exchange(
+        &mut self,
+        text: &str,
+        feed: Option<&str>,
+        what: &str,
+    ) -> Result<Frame, RuntimeFailure> {
+        self.exchange_with(text, feed, what, &mut |name: &str, _: &[Value]| {
             Err(format!(
                 "calls `this.{name}` where Brrrty has no filters to run it"
             ))
@@ -359,22 +494,26 @@ impl Worker {
 
     /// Answer one of the worker's questions: run the filter it names, or,
     /// in the replay check, give the first run's answer.
-    fn answer(&mut self, frame: &Frame, filters: &mut FilterCall<'_>) -> Result<(), String> {
-        let name = frame
-            .head
-            .get("filter")
-            .and_then(Json::as_str)
-            .unwrap_or("")
-            .to_string();
-        let question = json!({"filter": name, "args": frame.raw.clone().unwrap_or(Json::Null)});
-        let reply = match self.answers_feed.as_mut() {
+    pub(crate) fn answer(
+        &mut self,
+        frame: &Frame,
+        filters: &mut FilterCall<'_>,
+    ) -> Result<(), String> {
+        let reply: Box<str> = match self.answers_feed.as_mut() {
             Some(feed) => match feed.pop_front() {
-                Some((q, a)) if q == question => a,
+                Some((q, a)) if q == frame.body => a,
                 _ => {
-                    json!({"refused": "asks for a filter the first run didn't ask for at this point"})
+                    r#"{"refused":"asks for a filter the first run didn't ask for at this point"}"#
+                        .into()
                 }
             },
             None => {
+                let name = frame
+                    .head
+                    .get("filter")
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 let args = match &frame.ok {
                     Some(Ok(d)) if d.is_exact() => match &d.value {
                         Value::Array(a) => Ok(a.to_vec()),
@@ -389,14 +528,15 @@ impl Worker {
                     Ok(v) => json!({"ok": encode(&v)}),
                     Err(why) => json!({"refused": why}),
                 }
+                .to_string()
+                .into()
             }
         };
-        self.asked.push((question, reply.clone()));
-        let mut line = reply.to_string();
-        line.push('\n');
+        self.asked.push((frame.body.clone(), reply.clone()));
         match self.answers.as_mut() {
             Some(w) => w
-                .write_all(line.as_bytes())
+                .write_all(reply.as_bytes())
+                .and_then(|_| w.write_all(b"\n"))
                 .and_then(|_| w.flush())
                 .map_err(|e| format!("cannot answer Node: {e}")),
             None => Err("Node asked a question it can't be answered on".to_string()),
@@ -407,63 +547,80 @@ impl Worker {
     /// `filters` while it waits.
     pub(crate) fn exchange_with(
         &mut self,
-        mut req: Json,
+        text: &str,
+        feed: Option<&str>,
         what: &str,
         filters: &mut FilterCall<'_>,
+    ) -> Result<Frame, RuntimeFailure> {
+        let (id, line) = self.line_for(text, feed);
+        self.write_line(&line)?;
+        let mut wait = self.wait();
+        let frame = loop {
+            match self.next_frame(what, &mut wait) {
+                Ok(f) if f.question => {
+                    if let Err(why) = self.answer(&f, filters) {
+                        return Err(self.fail(&why));
+                    }
+                }
+                Ok(f) => break f,
+                Err(f) => return Err(f),
+            }
+        };
+        self.slowest = self.slowest.max(wait.start.elapsed());
+        if frame.id != id {
+            let head = frame.head.clone();
+            return Err(self.fail(&format!("a reply out of order: {head}")));
+        }
+        Ok(frame)
+    }
+
+    /// Start waiting for a frame.
+    pub(crate) fn wait(&self) -> Wait {
+        let start = Instant::now();
+        Wait {
+            start,
+            next_note: start + self.note_times.0,
+            exited_at: None,
+        }
+    }
+
+    /// The next frame from Node: a reply, or a question of its own.
+    pub(crate) fn next_frame(
+        &mut self,
+        what: &str,
+        wait: &mut Wait,
     ) -> Result<Frame, RuntimeFailure> {
         if let Some(f) = &self.failed {
             return Err(f.clone());
         }
-        self.next_id += 1;
-        let id = self.next_id;
-        req["id"] = json!(id);
-        let mut line = req.to_string();
-        line.push('\n');
-        let sent = self
-            .stdin
-            .as_mut()
-            .map(|s| s.write_all(line.as_bytes()).and_then(|_| s.flush()));
-        if !matches!(sent, Some(Ok(()))) {
-            return Err(self.fail("Node stopped reading requests"));
-        }
-        let start = Instant::now();
-        let mut next_note = start + self.note_times.0;
-        // Node exiting ends the wait even when a process it started keeps
-        // the replies' pipe open.
-        let mut exited_at: Option<Instant> = None;
         let reply = loop {
             match self.replies.recv_timeout(POLL) {
-                Ok(Ok(f)) if f.head.get("filter").is_some() => {
-                    if let Err(why) = self.answer(&f, filters) {
-                        break Err(why);
-                    }
-                }
                 Ok(r) => break r,
                 Err(RecvTimeoutError::Timeout) => {
                     let now = Instant::now();
                     if let Some(d) = self.deadline
-                        && now.duration_since(start) > d
+                        && now.duration_since(wait.start) > d
                     {
                         break Err(format!(
                             "{what} took more than {} s, longer than the first run allows",
                             d.as_secs()
                         ));
                     }
-                    if now >= next_note {
+                    if now >= wait.next_note {
                         (self.notes)(&format!(
                             "note: still waiting on {what}, {} s",
-                            start.elapsed().as_secs()
+                            wait.start.elapsed().as_secs()
                         ));
-                        next_note = now + self.note_times.1;
+                        wait.next_note = now + self.note_times.1;
                     }
-                    match exited_at {
+                    match wait.exited_at {
                         Some(t) if now.duration_since(t) >= POLL => {
                             break Err("Node exited without replying".to_string());
                         }
                         Some(_) => {}
                         None => {
                             if matches!(self.child.try_wait(), Ok(Some(_))) {
-                                exited_at = Some(now);
+                                wait.exited_at = Some(now);
                             }
                         }
                     }
@@ -473,16 +630,7 @@ impl Worker {
                 }
             }
         };
-        self.slowest = self.slowest.max(start.elapsed());
-        let frame = match reply {
-            Ok(r) => r,
-            Err(why) => return Err(self.fail(&why)),
-        };
-        if frame.head.get("id") != Some(&json!(id)) {
-            let head = frame.head.clone();
-            return Err(self.fail(&format!("a reply out of order: {head}")));
-        }
-        Ok(frame)
+        reply.map_err(|why| self.fail(&why))
     }
 
     /// What a reply means.
@@ -510,7 +658,7 @@ impl Worker {
         }
         if reply.get("dropShared").is_some() {
             // The worker forgot them; ids go on rising, so none is reused.
-            self.kept.lists.clear();
+            self.table.forget();
         }
         if let Some(r) = reply.get("refused") {
             return JsResult::Refused(Refusal {
@@ -532,9 +680,35 @@ impl Worker {
         }
     }
 
+    /// Start the replay check's two workers: they load the data again, in
+    /// their own orders, while this one goes on, and are sent every value
+    /// this one defines as it defines it.
+    fn start_replays(&mut self) {
+        let loads = Arc::new(crate::replay::Loads {
+            node: self.node.clone(),
+            root: self.root.clone(),
+            run_mode: self.run_mode,
+            loads: std::mem::take(&mut self.load_log),
+            global_end: self.global_end,
+            load_handles: self.load_handles,
+        });
+        let replays = [
+            crate::replay::Handle::start(loads.clone(), true),
+            crate::replay::Handle::start(loads, false),
+        ];
+        for (line, dynamic) in &self.table.lines {
+            if !dynamic {
+                for r in &replays {
+                    r.line(line.clone());
+                }
+            }
+        }
+        self.replays = Some(replays);
+    }
+
     /// The worker can't go on: say why, with Node's exit status when it
     /// exited, and the last lines of its stderr.
-    fn fail(&mut self, why: &str) -> RuntimeFailure {
+    pub(crate) fn fail(&mut self, why: &str) -> RuntimeFailure {
         drop(self.stdin.take());
         let deadline = Instant::now() + Duration::from_secs(2);
         let status = loop {
@@ -578,6 +752,20 @@ impl Worker {
         failure
     }
 
+    /// Stop Node at once (the replay check, at a difference).
+    pub(crate) fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.stop_group();
+        if self.failed.is_none() {
+            self.failed = Some(RuntimeFailure {
+                message: "the replay check stopped its Node".into(),
+                stderr_tail: Vec::new(),
+                stopped: false,
+            });
+        }
+    }
+
     /// Kill what is left of Node's process group: processes the site's
     /// code started and left running. One started in a session of its
     /// own (`detached`) is out of reach and keeps running, as under 11ty.
@@ -609,17 +797,46 @@ impl Worker {
     }
 }
 
+/// `{"op":"<op>"` and the fields `rest` writes, closed.
+fn op_text(op: &str, rest: impl FnOnce(&mut String)) -> String {
+    let mut t = String::with_capacity(96);
+    let _ = write!(t, "{{\"op\":\"{op}\"");
+    rest(&mut t);
+    t.push('}');
+    t
+}
+
+/// `[[key, why], ...]` as JSON text.
+fn pairs(out: &mut String, traps: &[(String, String)]) {
+    out.push('[');
+    for (i, (k, why)) in traps.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push('[');
+        crate::wire::string(out, k);
+        out.push(',');
+        crate::wire::string(out, why);
+        out.push(']');
+    }
+    out.push(']');
+}
+
+fn unit(r: JsResult<Decoded>) -> JsResult<()> {
+    match r {
+        JsResult::Ok(_) => JsResult::Ok(()),
+        JsResult::Thrown(e) => JsResult::Thrown(e),
+        JsResult::Refused(r) => JsResult::Refused(r),
+        JsResult::Failed(f) => JsResult::Failed(f),
+    }
+}
+
 impl JsRuntime for Worker {
     fn set_argument(&mut self, arg: &Value) -> JsResult<()> {
-        match self.request(
-            json!({"op": "setArg", "value": encode(arg)}),
-            "the data argument",
-        ) {
-            JsResult::Ok(_) => JsResult::Ok(()),
-            JsResult::Thrown(e) => JsResult::Thrown(e),
-            JsResult::Refused(r) => JsResult::Refused(r),
-            JsResult::Failed(f) => JsResult::Failed(f),
-        }
+        let text = op_text("setArg", |t| {
+            let _ = write!(t, ",\"value\":{}", encode(arg));
+        });
+        unit(self.request(Request::new("setArg", text), "the data argument"))
     }
 
     fn load(&mut self, file: &Path, call: bool) -> JsResult<Decoded> {
@@ -629,8 +846,16 @@ impl JsRuntime for Worker {
         // time for this file, and the decoded value is used again: equal
         // data, and the same objects, which Brrrty compares cheaply.
         self.earlier = self.last_loaded.get(&key).cloned();
+        let text = op_text("load", |t| {
+            t.push_str(",\"path\":");
+            crate::wire::string(t, &file.to_string_lossy());
+            let _ = write!(t, ",\"call\":{call}");
+        });
         let r = self.request(
-            json!({"op": "load", "path": file.to_string_lossy(), "call": call}),
+            Request {
+                path: Some(file),
+                ..Request::new("load", text)
+            },
             &what,
         );
         if let JsResult::Ok(d) = &r {
@@ -646,23 +871,46 @@ impl JsRuntime for Worker {
         args: &[Value],
         settle: Settle,
     ) -> JsResult<Decoded> {
-        let mut req = json!({"op": "call", "handle": f.0, "await": settle == Settle::Await});
-        let encoded = match this {
-            This::Value(v) => encode_all(std::iter::once(v).chain(args), Some(&mut self.kept)),
-            This::Opaque(what) => {
-                req["opaque"] = json!(what);
-                encode_all(args.iter(), Some(&mut self.kept))
+        let mut added = Added::default();
+        let mut text = String::with_capacity(128);
+        let _ = write!(
+            text,
+            "{{\"op\":\"call\",\"handle\":{},\"await\":{}",
+            f.0,
+            settle == Settle::Await
+        );
+        let mut write = |text: &mut String| -> Result<(), String> {
+            match this {
+                This::Value(v) => {
+                    text.push_str(",\"this\":");
+                    self.table.argument(v, false, text, &mut added)?;
+                }
+                This::Opaque(what) => {
+                    text.push_str(",\"opaque\":");
+                    crate::wire::string(text, what);
+                }
             }
+            text.push_str(",\"args\":[");
+            for (i, a) in args.iter().enumerate() {
+                if i > 0 {
+                    text.push(',');
+                }
+                self.table.argument(a, false, text, &mut added)?;
+            }
+            text.push_str("]}");
+            Ok(())
         };
-        let mut encoded = match encoded {
-            Ok(e) => e,
-            Err(why) => return JsResult::Refused(Refusal::new(why)),
-        };
-        if let This::Value(_) = this {
-            req["this"] = encoded.remove(0);
+        if let Err(why) = write(&mut text) {
+            return JsResult::Refused(Refusal::new(why));
         }
-        req["args"] = Json::Array(encoded);
-        self.request(req, "a data function")
+        self.request(
+            Request {
+                added,
+                handle: Some(f.0),
+                ..Request::new("call", text)
+            },
+            "a data function",
+        )
     }
 
     fn page_open(
@@ -671,19 +919,28 @@ impl JsRuntime for Worker {
         traps: &[(String, String)],
         defaults: &[String],
     ) -> JsResult<PageId> {
-        let data = match encode_page(data, &mut self.kept) {
-            Ok(e) => e,
-            Err(why) => return JsResult::Refused(Refusal::new(why)),
-        };
+        self.next_page += 1;
+        let page = self.next_page;
+        let mut added = Added::default();
+        let mut text = String::with_capacity(1024);
+        let _ = write!(text, "{{\"op\":\"pageOpen\",\"page\":{page},\"data\":");
+        if let Err(why) = self.table.page_data(data, false, &mut text, &mut added) {
+            return JsResult::Refused(Refusal::new(why));
+        }
+        text.push_str(",\"traps\":");
+        pairs(&mut text, traps);
+        text.push_str(",\"defaults\":");
+        crate::wire::strings(&mut text, defaults);
+        text.push('}');
         let r = self.request(
-            json!({"op": "pageOpen", "data": data, "traps": traps, "defaults": defaults}),
+            Request {
+                added,
+                ..Request::new("pageOpen", text)
+            },
             "a page's data",
         );
         match r {
-            JsResult::Ok(d) => match d.value {
-                Value::Number(n) if n >= 1.0 && n.fract() == 0.0 => JsResult::Ok(PageId(n as u64)),
-                other => JsResult::Failed(self.fail(&format!("pageOpen gave {other:?}"))),
-            },
+            JsResult::Ok(_) => JsResult::Ok(PageId(page)),
             JsResult::Thrown(e) => JsResult::Thrown(e),
             JsResult::Refused(r) => JsResult::Refused(r),
             JsResult::Failed(f) => JsResult::Failed(f),
@@ -691,8 +948,15 @@ impl JsRuntime for Worker {
     }
 
     fn page_vars(&mut self, page: PageId, f: FnHandle, keys: &[String]) -> JsResult<Vec<String>> {
+        let text = op_text("pageVars", |t| {
+            let _ = write!(t, ",\"page\":{},\"handle\":{},\"keys\":", page.0, f.0);
+            crate::wire::strings(t, keys);
+        });
         let r = self.request(
-            json!({"op": "pageVars", "page": page.0, "handle": f.0, "keys": keys}),
+            Request {
+                handle: Some(f.0),
+                ..Request::new("pageVars", text)
+            },
             "a computed data function",
         );
         match r {
@@ -707,35 +971,54 @@ impl JsRuntime for Worker {
     }
 
     fn page_call(&mut self, page: PageId, f: FnHandle, set: Option<&str>) -> JsResult<Decoded> {
+        let text = op_text("pageCall", |t| {
+            let _ = write!(t, ",\"page\":{},\"handle\":{},\"set\":", page.0, f.0);
+            match set {
+                Some(key) => crate::wire::string(t, key),
+                None => t.push_str("null"),
+            }
+        });
         self.request(
-            json!({"op": "pageCall", "page": page.0, "handle": f.0, "set": set}),
+            Request {
+                handle: Some(f.0),
+                ..Request::new("pageCall", text)
+            },
             "a computed data function",
         )
     }
 
     fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()> {
-        let value = match encode_all(std::iter::once(value), Some(&mut self.kept)) {
-            Ok(mut e) => e.remove(0),
-            Err(why) => return JsResult::Refused(Refusal::new(why)),
-        };
-        match self.request(
-            json!({"op": "pageSet", "page": page.0, "key": key, "value": value}),
-            "a page's data",
-        ) {
-            JsResult::Ok(_) => JsResult::Ok(()),
-            JsResult::Thrown(e) => JsResult::Thrown(e),
-            JsResult::Refused(r) => JsResult::Refused(r),
-            JsResult::Failed(f) => JsResult::Failed(f),
+        let mut added = Added::default();
+        let mut text = String::with_capacity(128);
+        let _ = write!(text, "{{\"op\":\"pageSet\",\"page\":{},\"key\":", page.0);
+        crate::wire::string(&mut text, key);
+        text.push_str(",\"value\":");
+        if let Err(why) = self.table.argument(value, false, &mut text, &mut added) {
+            return JsResult::Refused(Refusal::new(why));
         }
+        text.push('}');
+        unit(self.request(
+            Request {
+                added,
+                ..Request::new("pageSet", text)
+            },
+            "a page's data",
+        ))
     }
 
     fn page_close(&mut self, page: PageId) {
-        let _ = self.request(json!({"op": "pageClose", "page": page.0}), "a page's data");
+        let text = op_text("pageClose", |t| {
+            let _ = write!(t, ",\"page\":{}", page.0);
+        });
+        let _ = self.request(Request::new("pageClose", text), "a page's data");
     }
 
     fn loads_changed(&mut self) -> JsResult<Vec<(PathBuf, Decoded)>> {
         self.global_end = self.load_log.len();
-        let d = match self.request(json!({"op": "loadsChanged"}), "the data files") {
+        let d = match self.request(
+            Request::new("loadsChanged", op_text("loadsChanged", |_| {})),
+            "the data files",
+        ) {
             JsResult::Ok(d) => d,
             JsResult::Thrown(e) => return JsResult::Thrown(e),
             JsResult::Refused(r) => return JsResult::Refused(r),
@@ -780,16 +1063,15 @@ impl JsRuntime for Worker {
     }
 
     fn begin_calls(&mut self) -> JsResult<()> {
-        self.keep_raw
-            .store(KEEP_RAW, std::sync::atomic::Ordering::SeqCst);
-        let frame = match self.exchange(json!({"op": "callsBegin"}), "the data files") {
+        let frame = match self.exchange(&op_text("callsBegin", |_| {}), None, "the data files") {
             Ok(f) => f,
             Err(f) => return JsResult::Failed(f),
         };
-        let raw = frame.raw.unwrap_or(Json::Null);
-        self.load_handles = raw.get("handles").and_then(Json::as_u64).unwrap_or(0);
+        let head = &frame.head;
+        self.load_handles = head.get("handles").and_then(Json::as_u64).unwrap_or(0);
+        self.table.load_handles = Some(u32::try_from(self.load_handles).unwrap_or(u32::MAX));
         self.calls_begun = true;
-        let changed: Vec<&str> = raw
+        let changed: Vec<&str> = head
             .get("changed")
             .and_then(Json::as_array)
             .map(|a| a.iter().filter_map(Json::as_str).collect())
@@ -804,11 +1086,17 @@ impl JsRuntime for Worker {
                 impure: true,
             });
         }
-        if raw.get("protos").and_then(Json::as_bool) == Some(true) {
+        if head.get("protos").and_then(Json::as_bool) == Some(true) {
             return JsResult::Refused(Refusal {
                 why: "a JavaScript data file changes one of JavaScript's built-in prototypes (`Array.prototype` and the like), which 11ty's templates use and Brrrty's don't".into(),
                 impure: true,
             });
+        }
+        // Template and directory data files and templates load in an order
+        // of 11ty's own: with any, the check runs even when no page calls
+        // a function, so it starts now.
+        if self.load_log.len() > self.global_end {
+            self.start_replays();
         }
         JsResult::Ok(())
     }
@@ -818,25 +1106,33 @@ impl JsRuntime for Worker {
     }
 
     fn template_setup(&mut self, filters: &[String]) -> JsResult<()> {
-        match self.request(
-            json!({"op": "templateSetup", "filters": filters}),
+        let text = op_text("templateSetup", |t| {
+            t.push_str(",\"filters\":");
+            crate::wire::strings(t, filters);
+        });
+        unit(self.request(
+            Request::new("templateSetup", text),
             "the JavaScript templates' setup",
-        ) {
-            JsResult::Ok(_) => JsResult::Ok(()),
-            JsResult::Thrown(e) => JsResult::Thrown(e),
-            JsResult::Refused(r) => JsResult::Refused(r),
-            JsResult::Failed(f) => JsResult::Failed(f),
-        }
+        ))
     }
 
     fn load_template(&mut self, file: &Path, layout: bool) -> JsResult<LoadedTemplate> {
         let what = self.shown(file);
+        let text = op_text("templateLoad", |t| {
+            t.push_str(",\"path\":");
+            crate::wire::string(t, &file.to_string_lossy());
+            let _ = write!(t, ",\"layout\":{layout}");
+        });
+        self.last_template = None;
         let r = self.request(
-            json!({"op": "templateLoad", "path": file.to_string_lossy(), "layout": layout}),
+            Request {
+                path: Some(file),
+                ..Request::new("templateLoad", text)
+            },
             &what,
         );
         match r {
-            JsResult::Ok(data) => match self.last_head.get("template").and_then(Json::as_u64) {
+            JsResult::Ok(data) => match self.last_template {
                 Some(id) => JsResult::Ok(LoadedTemplate {
                     id: TemplateId(id),
                     data,
@@ -857,21 +1153,42 @@ impl JsRuntime for Worker {
         traps: &[(String, String)],
         filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded> {
-        let (data, first) = match encode_render(data, first, &mut self.kept) {
-            Ok(e) => e,
-            Err(why) => return JsResult::Refused(Refusal::new(why)),
-        };
-        let mut req = json!({"op": "render", "template": template.0, "data": data, "traps": traps});
-        if let Some(first) = first {
-            req["first"] = first;
+        let mut added = Added::default();
+        let mut text = String::with_capacity(1024);
+        let _ = write!(
+            text,
+            "{{\"op\":\"render\",\"template\":{},\"data\":",
+            template.0
+        );
+        if let Err(why) = self.table.page_data(data, true, &mut text, &mut added) {
+            return JsResult::Refused(Refusal::new(why));
         }
-        self.request_with(req, "a JavaScript template", filters)
+        text.push_str(",\"traps\":");
+        pairs(&mut text, traps);
+        if let Some(first) = first {
+            text.push_str(",\"first\":");
+            if let Err(why) = self.table.argument(first, true, &mut text, &mut added) {
+                return JsResult::Refused(Refusal::new(why));
+            }
+        }
+        text.push('}');
+        self.request_with(
+            Request {
+                added,
+                ..Request::new("render", text)
+            },
+            "a JavaScript template",
+            filters,
+        )
     }
 
     fn verify(&mut self) -> JsResult<()> {
         // What the calls changed of the data files' values comes first: it
         // explains whatever the replay would find.
-        match self.request(json!({"op": "exportsFinal"}), "the data files' values") {
+        match self.request(
+            Request::new("exportsFinal", op_text("exportsFinal", |_| {})),
+            "the data files' values",
+        ) {
             JsResult::Ok(_) => {}
             other @ (JsResult::Refused(_) | JsResult::Failed(_)) => {
                 return match other {
@@ -882,26 +1199,37 @@ impl JsRuntime for Worker {
             }
             JsResult::Thrown(e) => return JsResult::Thrown(e),
         }
-        let log = crate::replay::Log {
-            node: &self.node,
-            root: &self.root,
-            run_mode: self.run_mode,
-            loads: &self.load_log,
-            global_end: self.global_end,
-            load_handles: self.load_handles,
-            calls: &self.call_log,
-            slowest: self.slowest,
+        // Nothing to check: no page called a function, and no template or
+        // template or directory data file loaded.
+        let Some(replays) = self.replays.take() else {
+            return JsResult::Ok(());
         };
-        match log.check() {
+        let calls = Arc::new(crate::replay::Calls {
+            records: std::mem::take(&mut self.call_log),
+            load_handles: self.load_handles,
+            slowest: self.slowest,
+            dynamic: std::mem::take(&mut self.table.dynamic),
+            lines: self.table.lines.clone(),
+            dropped: self.dropped,
+        });
+        let [a, b] = replays;
+        a.run(calls.clone());
+        b.run(calls);
+        let (a, b) = (a.finish(), b.finish());
+        match a.and(b) {
             Ok(()) => JsResult::Ok(()),
             Err(crate::replay::Failure::Differs(why, handle)) => {
                 let named = handle
                     .and_then(|h| {
-                        self.exchange(json!({"op": "describe", "handle": h}), "a function's name")
-                            .ok()
+                        let text = op_text("describe", |t| {
+                            let _ = write!(t, ",\"handle\":{h}");
+                        });
+                        self.exchange(&text, None, "a function's name").ok()
                     })
-                    .and_then(|f| f.raw)
-                    .and_then(|r| r.as_str().map(str::to_string))
+                    .and_then(|f| match f.value() {
+                        Some(Value::String(s)) => Some(s.to_string()),
+                        _ => None,
+                    })
                     .unwrap_or_else(|| "a function from JavaScript data".to_string());
                 JsResult::Refused(Refusal {
                     why: why.replace("{fn}", &named),
@@ -913,7 +1241,10 @@ impl JsRuntime for Worker {
     }
 
     fn reads(&mut self) -> JsResult<Vec<PathBuf>> {
-        match self.request(json!({"op": "reads"}), "the list of files read") {
+        match self.request(
+            Request::new("reads", op_text("reads", |_| {})),
+            "the list of files read",
+        ) {
             JsResult::Ok(d) => match strings(&d.value) {
                 Some(list) => JsResult::Ok(list.into_iter().map(PathBuf::from).collect()),
                 None => JsResult::Failed(self.fail(&format!("reads gave {:?}", d.value))),
@@ -1066,14 +1397,11 @@ fn signal_of(_: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
-/// Read `\x1eBRRRTY <len>\n<json>` frames until Node closes stdout.
-/// Anything else is a protocol error, sent once.
-fn read_frames(
-    stdout: impl Read,
-    tx: mpsc::Sender<Reply>,
-    keep_raw: Arc<std::sync::atomic::AtomicU8>,
-) {
-    let mut r = BufReader::new(stdout);
+/// Read `\x1eBRRRTY <kind> <id> <clock length> <body length>\n<clock><body>`
+/// frames until Node closes its output. Anything else is a protocol error,
+/// sent once.
+fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>, decoding: Arc<AtomicBool>) {
+    let mut r = BufReader::with_capacity(1 << 16, stdout);
     loop {
         let mut header = Vec::new();
         match r.read_until(b'\n', &mut header) {
@@ -1084,12 +1412,20 @@ fn read_frames(
                 return;
             }
         }
-        let len = header
+        let fields = header
             .strip_prefix(b"\x1eBRRRTY ")
             .and_then(|h| h.strip_suffix(b"\n"))
-            .and_then(|n| std::str::from_utf8(n).ok())
-            .and_then(|n| n.parse::<usize>().ok());
-        let Some(len) = len else {
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| {
+                let mut it = h.split(' ');
+                let kind = it.next()?;
+                let id = it.next()?.parse::<u64>().ok()?;
+                let clock = it.next()?.parse::<usize>().ok()?;
+                let body = it.next()?.parse::<usize>().ok()?;
+                (it.next().is_none() && matches!(kind, "r" | "f" | "q"))
+                    .then_some((kind, id, clock, body))
+            });
+        let Some((kind, id, clock_len, body_len)) = fields else {
             let shown = String::from_utf8_lossy(&header);
             let _ = tx.send(Err(format!(
                 "something other than the worker wrote to its output: {:?}",
@@ -1097,23 +1433,36 @@ fn read_frames(
             )));
             return;
         };
-        let mut body = vec![0; len];
-        if let Err(e) = r.read_exact(&mut body) {
-            let _ = tx.send(Err(format!("a cut-off reply: {e}")));
-            return;
-        }
-        let keep = keep_raw.load(std::sync::atomic::Ordering::SeqCst);
-        let parsed = parse_reply(&body).map(|mut head| {
+        let mut read = |len: usize| -> Result<String, String> {
+            let mut bytes = vec![0; len];
+            r.read_exact(&mut bytes)
+                .map_err(|e| format!("a cut-off reply: {e}"))?;
+            String::from_utf8(bytes).map_err(|_| "a reply that isn't UTF-8".to_string())
+        };
+        let parts = read(clock_len).and_then(|c| read(body_len).map(|b| (c, b)));
+        let (clock, body) = match parts {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = tx.send(Err(e));
+                return;
+            }
+        };
+        let decode_ok = decoding.load(std::sync::atomic::Ordering::Relaxed);
+        let parsed = parse_reply(body.as_bytes()).map(|mut head| {
             let value = head.as_object_mut().and_then(|o| o.remove("ok"));
-            let ok = value.as_ref().map(decode);
-            let raw = if keep == KEEP_RAW { value } else { None };
-            let text = (keep == KEEP_TEXT)
-                .then(|| String::from_utf8_lossy(&body).into_owned().into_boxed_str());
+            let ok = if decode_ok || kind == "q" {
+                value.as_ref().map(decode)
+            } else {
+                None
+            };
             Frame {
+                question: kind == "q",
+                id,
                 head,
                 ok,
-                raw,
-                text,
+                body: body.into_boxed_str(),
+                clock: (!clock.is_empty()).then(|| clock.into_boxed_str()),
+                made: kind == "f",
             }
         });
         if tx.send(parsed).is_err() {
@@ -1188,272 +1537,6 @@ fn js_error(t: &Json, root: &Path) -> JsError {
     }
 }
 
-/// Values in the worker's wire forms, for a call: an object or array
-/// that appears more than once is sent once (`{"$s": [id, value]}`, then
-/// `{"$r": id}`), so data shared between pages, as 11ty shares it, stays
-/// one object; and a property Brrrty doesn't have the value of (a
-/// collection item's content, a key it withholds) is sent as a trap,
-/// `{"$t": why}`, which refuses the call when the function reads it. `Err`
-/// when a value can't be handed over at all.
-///
-/// With `kept`, a list of [`KEPT_LEN`] items or more is kept by the worker
-/// between requests (`{"$S": [id, value]}`, then `{"$R": id}`): the lists
-/// global data gives every page cross once, and stay one list, as in 11ty.
-pub fn encode_all<'v>(
-    values: impl Iterator<Item = &'v Value> + Clone,
-    kept: Option<&mut Kept>,
-) -> Result<Vec<Json>, String> {
-    let mut counts: HashMap<usize, u32> = HashMap::new();
-    for v in values.clone() {
-        count(v, &mut counts, kept.as_deref());
-    }
-    let mut e = Encoder {
-        counts,
-        ids: HashMap::new(),
-        kept,
-        no_keep: None,
-        in_kept: 0,
-        guard: false,
-    };
-    values.map(|v| e.encode(v)).collect()
-}
-
-/// [`encode_all`] of a page's data, whose top object is the page's own:
-/// what is inside it may be kept, the object itself isn't.
-fn encode_page(data: &Value, kept: &mut Kept) -> Result<Json, String> {
-    let mut counts: HashMap<usize, u32> = HashMap::new();
-    count(data, &mut counts, Some(kept));
-    let mut e = Encoder {
-        counts,
-        ids: HashMap::new(),
-        kept: Some(kept),
-        no_keep: ptr_of(data),
-        in_kept: 0,
-        guard: false,
-    };
-    e.encode(data)
-}
-
-/// A render's data and `first` page in the worker's wire forms: the data's
-/// own top object isn't kept, `first` is page 0's `page` (the same object
-/// as the data's `page` on page 0, sent once), and a `collections` object
-/// Brrrty can't answer everything about crosses guarded (see
-/// [`Encoder::guard`]).
-fn encode_render(
-    data: &Value,
-    first: Option<&Value>,
-    kept: &mut Kept,
-) -> Result<(Json, Option<Json>), String> {
-    let mut counts: HashMap<usize, u32> = HashMap::new();
-    count(data, &mut counts, Some(kept));
-    if let Some(f) = first {
-        count(f, &mut counts, Some(kept));
-    }
-    let mut e = Encoder {
-        counts,
-        ids: HashMap::new(),
-        kept: Some(kept),
-        no_keep: ptr_of(data),
-        in_kept: 0,
-        guard: true,
-    };
-    let data = e.encode(data)?;
-    let first = first.map(|f| e.encode(f)).transpose()?;
-    Ok((data, first))
-}
-
-/// How many items or keys a list or object must have for the worker to
-/// keep it between requests.
-pub const KEPT_LEN: usize = 8;
-
-/// The lists the worker keeps, by address, each held so the address stays
-/// its own.
-#[derive(Default)]
-pub struct Kept {
-    lists: HashMap<usize, (Value, u64)>,
-    next: u64,
-}
-
-fn ptr_of(v: &Value) -> Option<usize> {
-    match v {
-        Value::Object(o) => Some(Arc::as_ptr(o) as usize),
-        Value::Array(a) => Some(Arc::as_ptr(a) as usize),
-        _ => None,
-    }
-}
-
-/// How often each object and list appears in a request. A list the worker
-/// keeps already is sent as a reference, so what is inside it doesn't count.
-fn count(v: &Value, counts: &mut HashMap<usize, u32>, kept: Option<&Kept>) {
-    let mut stack = vec![v];
-    while let Some(v) = stack.pop() {
-        let Some(p) = ptr_of(v) else { continue };
-        let n = counts.entry(p).or_insert(0);
-        *n += 1;
-        if *n > 1 || kept.is_some_and(|k| k.lists.contains_key(&p)) {
-            continue;
-        }
-        match v {
-            Value::Object(o) => stack.extend(o.values()),
-            Value::Array(a) => stack.extend(a.iter()),
-            _ => {}
-        }
-    }
-}
-
-struct Encoder<'k> {
-    counts: HashMap<usize, u32>,
-    /// The id of each shared object or array sent so far.
-    ids: HashMap<usize, usize>,
-    kept: Option<&'k mut Kept>,
-    /// The one object or list not to keep.
-    no_keep: Option<usize>,
-    /// How many kept values the encoder is inside.
-    in_kept: usize,
-    /// Send a `collections` object that traps (an open or order-unknown
-    /// one) as a guarded object instead of refusing it: a render gets the
-    /// whole page data, `collections` included.
-    guard: bool,
-}
-
-/// Why a JavaScript template can't read a name an open `collections`
-/// object doesn't have (`{key}` is the name).
-const OPEN_MISSING: &str = "reads `collections.{key}`, which Brrrty doesn't have: the site's 11ty config may add it, or a page in it can't be built (see the other problems)";
-
-/// Why a JavaScript template can't list an open `collections` object.
-const OPEN_LIST: &str = "lists the names in `collections`, and the site's 11ty config may add collections Brrrty can't see";
-
-/// Why a property Brrrty marks as unknown can't be handed to a function.
-fn trap_reason(key: &str) -> String {
-    match key {
-        "templateContent" | "content" => format!(
-            "reads `{key}` of a collection item, which 11ty fills in only as it renders pages"
-        ),
-        "template" => {
-            "reads `template` of a collection item, 11ty's internal template object".to_string()
-        }
-        "rawInput" => {
-            "reads `rawInput` of a JavaScript template's page, which in 11ty is its instance object, not text".to_string()
-        }
-        _ => format!("reads `{key}`, which Brrrty doesn't hand to JavaScript functions yet"),
-    }
-}
-
-impl Encoder<'_> {
-    fn encode(&mut self, v: &Value) -> Result<Json, String> {
-        let Some(p) = ptr_of(v) else {
-            return Ok(encode(v));
-        };
-        let big = match v {
-            Value::Array(a) => a.len() >= KEPT_LEN,
-            Value::Object(o) => o.len() >= KEPT_LEN && !brrrty_js::traps::is_guarded_object(o),
-            _ => false,
-        };
-        if big
-            && self.no_keep != Some(p)
-            && let Some(kept) = self.kept.as_deref_mut()
-        {
-            if let Some((_, id)) = kept.lists.get(&p) {
-                return Ok(json!({"$R": id}));
-            }
-            let id = kept.next;
-            kept.next += 1;
-            kept.lists.insert(p, (v.clone(), id));
-            // A kept value stands on its own: it may be sent again, by
-            // itself, in another request (the replay check does), so what
-            // is inside it never refers to this request's shared values.
-            self.in_kept += 1;
-            let inner = self.inner(v);
-            self.in_kept -= 1;
-            return Ok(json!({"$S": [id, inner?]}));
-        }
-        if self.in_kept > 0 {
-            return self.inner(v);
-        }
-        self.encode_inline(v, p)
-    }
-
-    /// `v` (at address `p`) in full, as a value shared within the request
-    /// when it appears more than once in it.
-    fn encode_inline(&mut self, v: &Value, p: usize) -> Result<Json, String> {
-        if let Some(id) = self.ids.get(&p) {
-            return Ok(json!({"$r": id}));
-        }
-        let shared = self.counts.get(&p).copied().unwrap_or(0) > 1;
-        let id = self.ids.len();
-        if shared {
-            self.ids.insert(p, id);
-        }
-        let inner = self.inner(v)?;
-        Ok(if shared {
-            json!({"$s": [id, inner]})
-        } else {
-            inner
-        })
-    }
-
-    /// A list or object's own wire form.
-    fn inner(&mut self, v: &Value) -> Result<Json, String> {
-        Ok(match v {
-            Value::Array(a) => Json::Array(
-                a.iter()
-                    .map(|x| self.encode(x))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-            Value::Object(o) => {
-                let open = brrrty_js::traps::is_open_object(o);
-                let unordered = brrrty_js::traps::unordered_reason(o);
-                if (open || unordered.is_some()) && !self.guard {
-                    return Err(
-                        "passes the whole `collections` object to a function, which Brrrty doesn't do yet; pass one collection, like `collections.post`".to_string(),
-                    );
-                }
-                let mut entries = Vec::with_capacity(o.len());
-                // A render's own `content` (a layout's, given `undefined` by
-                // a template's render) is a value, not an item's marker.
-                let top = self.guard && self.no_keep == ptr_of(v);
-                for (k, x) in o.iter() {
-                    let item = if matches!(x, Value::Undefined)
-                        && brrrty_js::traps::TRAP_KEYS.contains(&k.as_str())
-                        && !(top && brrrty_js::traps::CONTENT_KEYS.contains(&k.as_str()))
-                    {
-                        json!({"$t": trap_reason(k)})
-                    } else {
-                        self.encode(x)?
-                    };
-                    entries.push(json!([k, item]));
-                }
-                if let Some(keys) = brrrty_js::traps::withheld_keys(o) {
-                    for k in keys.iter().filter(|k| !o.contains_key(k.as_str())) {
-                        entries.push(json!([k, {"$t": format!("reads `{k}` of another page's `data`, which Brrrty can't supply")}]));
-                    }
-                }
-                if open || unordered.is_some() {
-                    let mut c = serde_json::Map::new();
-                    if open {
-                        c.insert("missing".into(), json!(OPEN_MISSING));
-                    }
-                    match (&unordered, open) {
-                        (Some(why), _) => {
-                            c.insert(
-                                "list".into(),
-                                json!(format!("lists the names in `collections`, {why}")),
-                            );
-                        }
-                        (None, true) => {
-                            c.insert("list".into(), json!(OPEN_LIST));
-                        }
-                        (None, false) => {}
-                    }
-                    return Ok(json!({"$o": entries, "$c": c}));
-                }
-                json!({"$o": entries})
-            }
-            _ => encode(v),
-        })
-    }
-}
-
 /// A Brrrty value in the worker's wire forms.
 pub fn encode(v: &Value) -> Json {
     match v {
@@ -1480,39 +1563,5 @@ pub fn encode(v: &Value) -> Json {
         }
         Value::Date(d) => json!({"$d": d.timestamp_millis()}),
         Value::Function(h) => json!({"$f": h.0}),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn object(n: usize) -> Value {
-        Value::Object(Arc::new(
-            (0..n)
-                .map(|i| (format!("k{i}"), Value::Number(i as f64)))
-                .collect(),
-        ))
-    }
-
-    #[test]
-    fn big_objects_and_lists_cross_once_and_the_page_itself_never_is_kept() {
-        let mut kept = Kept::default();
-        let big = object(KEPT_LEN);
-        let small = object(2);
-        let first = encode_all([&big, &small].into_iter(), Some(&mut kept)).unwrap();
-        assert!(first[0].get("$S").is_some(), "{}", first[0]);
-        assert!(first[1].get("$o").is_some(), "{}", first[1]);
-        let again = encode_all([&big].into_iter(), Some(&mut kept)).unwrap();
-        assert_eq!(again[0], json!({"$R": 0}));
-        // A page's own data object holds kept values but isn't one.
-        let page = Value::Object(Arc::new(
-            (0..KEPT_LEN)
-                .map(|i| (format!("p{i}"), big.clone()))
-                .collect(),
-        ));
-        let p = encode_page(&page, &mut kept).unwrap();
-        assert!(p.get("$o").is_some(), "{p}");
-        assert!(p.to_string().contains("\"$R\":0"), "{p}");
     }
 }

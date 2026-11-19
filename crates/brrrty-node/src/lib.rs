@@ -10,6 +10,7 @@ pub mod decode;
 mod find;
 mod replay;
 pub mod stack;
+mod wire;
 
 pub use client::{RunMode, Worker, WorkerError, encode, stop_all};
 pub use decode::decode;

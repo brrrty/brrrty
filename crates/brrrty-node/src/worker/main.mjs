@@ -18,7 +18,6 @@ import fs from "node:fs";
 import path from "node:path";
 import util from "node:util";
 import nodeModule, { createRequire } from "node:module";
-import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 import inspector from "node:inspector";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -71,7 +70,12 @@ function out(text) {
   }
 }
 
-function frame(obj) {
+// One frame: `kind` is "r" for a reply, "f" for a reply that mentions a
+// function a call made, "q" for a question of the worker's own. The
+// header carries what differs between two runs of the same request (its
+// id, and the clock and random values it read); the body is the rest, so
+// the replay check compares bodies as text.
+function frame(kind, id, obj, clock) {
   // A value already encoded as JSON text goes in as it is.
   let json;
   if (obj.okText !== undefined) {
@@ -81,7 +85,8 @@ function frame(obj) {
   } else {
     json = JSON.stringify(obj);
   }
-  out(`\x1eBRRRTY ${Buffer.byteLength(json, "utf8")}\n${json}`);
+  const clockText = clock && clock.length ? JSON.stringify(clock) : "";
+  out(`\x1eBRRRTY ${kind} ${id === null ? 0 : id} ${Buffer.byteLength(clockText, "utf8")} ${Buffer.byteLength(json, "utf8")}\n${clockText}${json}`);
 }
 
 process.stdout.write = process.stderr.write.bind(process.stderr);
@@ -157,31 +162,27 @@ function allReads() {
   return [...reads].sort();
 }
 
-// --- Decoding values Brrrty sends (the same wire forms as encode.mjs). ---
+// --- Decoding values Brrrty sends (see `wire.rs`). ---
 
 const handles = [];
 const handleOf = new Map();
+// How many functions the data files' values gave: one numbered from here
+// on was made by a call.
+let loadHandles = Infinity;
+// Set when a reply mentions a function a call made.
+let mentionedMade = false;
 
-// Lists kept between requests, by Brrrty's id, and every object and list
-// inside them.
-// Values (lists and objects) kept between requests, by Brrrty's id, and
-// every list and object inside them: pages share them.
-let persistent = new Map();
+// The lists and objects Brrrty defined (`def`), by id: the data pages
+// share. A request refers to them (`{"$R": id}`), so each is one object
+// however many pages hold it.
+let objects = [];
+let nextObject = 0;
+// The plain objects among them: a computed key set inside one copies it
+// for that page first (see `ownPath`).
 let keptObjects = new WeakSet();
+let defProblem = null;
 
-function markKept(v) {
-  const stack = [v];
-  while (stack.length) {
-    let x = stack.pop();
-    if (x !== null && typeof x === "object" && guardTarget.has(x)) x = guardTarget.get(x);
-    if (x === null || typeof x !== "object" || keptObjects.has(x)) continue;
-    keptObjects.add(x);
-    for (const k of Object.keys(x)) {
-      const d = Object.getOwnPropertyDescriptor(x, k);
-      if (d && "value" in d) stack.push(d.value);
-    }
-  }
-}
+const defineProperty = Object.defineProperty;
 
 // An object Brrrty can't answer every question about: `collections` when
 // the site's config may add collections (`missing`: a name it doesn't have
@@ -330,9 +331,10 @@ function takeWrote() {
   return out;
 }
 
-// Forget the kept values: one was changed. Brrrty sends them again.
+// Forget the kept values: one was changed. Brrrty defines what it needs
+// again, under new ids.
 function dropPersistent() {
-  persistent = new Map();
+  objects = [];
   keptObjects = new WeakSet();
 }
 
@@ -793,69 +795,109 @@ for (const [obj, name] of [
 }
 
 function register(fn) {
-  const at = handleOf.get(fn);
-  if (at !== undefined) return at;
-  handles.push(fn);
-  handleOf.set(fn, handles.length - 1);
-  return handles.length - 1;
+  let at = handleOf.get(fn);
+  if (at === undefined) {
+    handles.push(fn);
+    at = handles.length - 1;
+    handleOf.set(fn, at);
+  }
+  if (at >= loadHandles) mentionedMade = true;
+  return at;
 }
 
-// A value from its wire form. `shared` holds the objects sent once and
-// referred to again (`$s` and `$r`) within one request.
-function fromWire(w, shared = new Map()) {
+class Trap {
+  constructor(why) {
+    this.why = why;
+  }
+}
+const HOLE = new Trap("a hole");
+
+// A value from its wire form, in place where it can be: what `JSON.parse`
+// made is the value, with each marker in it replaced. With `def`, every
+// list and object takes the next id, in the order Brrrty wrote them.
+function fromWire(w, def = false) {
   if (w === null || typeof w !== "object") return w;
   if (Array.isArray(w)) {
-    const outList = new Array(w.length);
+    if (def) objects[nextObject++] = w;
     for (let i = 0; i < w.length; i++) {
-      if (w[i] && typeof w[i] === "object" && !Array.isArray(w[i]) && "$hole" in w[i]) continue;
-      outList[i] = fromWire(w[i], shared);
+      const x = w[i];
+      if (x === null || typeof x !== "object") continue;
+      const v = fromWire(x, def);
+      if (v === HOLE) delete w[i];
+      else if (v !== x) w[i] = v;
     }
-    return outList;
+    return w;
   }
-  if ("$o" in w) {
-    const o = {};
-    for (const [k, v] of w.$o) {
-      if (v && typeof v === "object" && !Array.isArray(v) && "$t" in v) {
-        trapKey(o, k, v.$t);
-      } else {
-        // A key named `__proto__` is an own property, as in parsed JSON.
-        Object.defineProperty(o, k, { value: fromWire(v, shared), writable: true, enumerable: true, configurable: true });
+  const keys = Object.keys(w);
+  if (keys.length !== 0 && keys[0].charCodeAt(0) === 36) return fromMarker(w, keys[0], def);
+  if (def) {
+    objects[nextObject++] = w;
+    keptObjects.add(w);
+  }
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const x = w[k];
+    if (x === null || typeof x !== "object") continue;
+    const v = fromWire(x, def);
+    if (v instanceof Trap) trapKey(w, k, v.why);
+    else if (v !== x) w[k] = v;
+  }
+  return w;
+}
+
+function fromMarker(w, tag, def) {
+  switch (tag) {
+    case "$R": {
+      const v = objects[w.$R];
+      if (v === undefined) throw new Error(`no kept value ${w.$R}`);
+      return v;
+    }
+    case "$u":
+      return undefined;
+    case "$n":
+      return Number(w.$n);
+    case "$d":
+      return new Date(w.$d);
+    case "$f":
+      if (typeof handles[w.$f] !== "function") throw new Error(`no function ${w.$f}`);
+      return handles[w.$f];
+    case "$t":
+      return new Trap(w.$t);
+    case "$hole":
+      return HOLE;
+    case "$o": {
+      const o = {};
+      const id = def ? nextObject++ : -1;
+      if (def) keptObjects.add(o);
+      for (const [k, x] of w.$o) {
+        const v = fromWire(x, def);
+        if (v instanceof Trap) {
+          trapKey(o, k, v.why);
+        } else {
+          // A key named `__proto__` is an own property, as in parsed JSON.
+          defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
+        }
       }
+      const made = w.$c ? guarded(o, w.$c) : o;
+      if (def) objects[id] = made;
+      return made;
     }
-    return w.$c ? guarded(o, w.$c) : o;
+    default:
+      throw new Error(`not a wire form: ${JSON.stringify(w).slice(0, 200)}`);
   }
-  if ("$S" in w) {
-    // A value Brrrty sends once and refers to in later requests: data
-    // pages share.
-    const [id, inner] = w.$S;
-    if (persistent.has(id)) return persistent.get(id);
-    const v = fromWire(inner, shared);
-    markKept(v);
-    persistent.set(id, v);
-    return v;
+}
+
+// One definition: the value takes `req.id`, and what is in it the ids
+// after, `req.n` in all.
+function define(req) {
+  if (defProblem !== null) return;
+  try {
+    nextObject = req.id;
+    fromWire(req.v, true);
+    if (nextObject - req.id !== req.n) defProblem = `definition ${req.id} holds ${nextObject - req.id} values, not ${req.n}`;
+  } catch (e) {
+    defProblem = `definition ${req.id}: ${e && e.message}`;
   }
-  if ("$R" in w) {
-    if (!persistent.has(w.$R)) throw new Error(`no kept value ${w.$R}`);
-    return persistent.get(w.$R);
-  }
-  if ("$s" in w) {
-    const [id, inner] = w.$s;
-    const v = fromWire(inner, shared);
-    shared.set(id, v);
-    return v;
-  }
-  if ("$r" in w) {
-    if (!shared.has(w.$r)) throw new Error(`no shared value ${w.$r}`);
-    return shared.get(w.$r);
-  }
-  if ("$u" in w) return undefined;
-  if ("$n" in w) return Number(w.$n);
-  if ("$d" in w) return new Date(w.$d);
-  if ("$f" in w) {
-    if (typeof handles[w.$f] !== "function") throw new Error(`no function ${w.$f}`);
-    return handles[w.$f];
-  }
-  throw new Error(`not a wire form: ${JSON.stringify(w)}`);
 }
 
 // The argument as text: 11ty merges the global data files over this same
@@ -1168,7 +1210,7 @@ function askFilter(name, args) {
     if (e && e.brrrtyRefusal) throw refuse(`passes \`this.${name}\` something that ${e.brrrtyRefusal}`);
     throw e;
   }
-  frame({ filter: name, okText: text });
+  frame("q", activeRequest, { filter: name, okText: text });
   const answer = JSON.parse(readAnswer());
   if (answer.refused !== undefined) throw refuse(String(answer.refused));
   return fromWire(answer.ok);
@@ -1438,7 +1480,6 @@ function callRefusal(fn) {
 }
 
 const pages = new Map();
-let nextPage = 0;
 
 // Whether setting the dotted `key` would go through a list (or a
 // function): lodash would set a property on it, and lists are shared
@@ -1519,9 +1560,8 @@ async function handle(req) {
     }
     case "call": {
       const fn = getHandle(req.handle);
-      const shared = new Map();
-      const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this, shared);
-      const args = (req.args || []).map((a) => fromWire(a, shared));
+      const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this);
+      const args = (req.args || []).map((a) => fromWire(a));
       const r = await runOnce(fn, thisArg, args, req.await ? "await" : "asIs");
       if (r.refused !== undefined) return { refused: r.refused, impure: r.impure, dropShared: r.dropShared };
       return { okText: r.okText };
@@ -1542,7 +1582,8 @@ async function handle(req) {
         }
         quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v)]));
       }
-      return { ok: { clock: clockRecord, handles: handles.length, changed, protos } };
+      loadHandles = handles.length;
+      return { ok: null, handles: handles.length, changed, protos };
     }
     case "loadsChanged": {
       // The global data files have loaded: their values as 11ty's pages
@@ -1597,9 +1638,9 @@ async function handle(req) {
           lodashSet(data, key, "");
         }
       }
-      nextPage += 1;
-      pages.set(nextPage, { data });
-      return { ok: nextPage };
+      // Brrrty numbers the pages, so a replay's are the first run's.
+      pages.set(req.page, { data });
+      return { ok: null };
     }
     case "pageVars": {
       const p = getPage(req.page);
@@ -1678,17 +1719,21 @@ async function handle(req) {
           clockFeed = saved;
         }
       }
-      return { ok: consumed };
+      return { ok: null, consumed };
     }
     case "render": {
       const t = templates[req.template];
       if (!t) throw new Error(`no template ${req.template}`);
-      const shared = new Map();
-      const data = fromWire(req.data, shared);
+      const data = fromWire(req.data);
       for (const [k, why] of req.traps || []) trapKey(data, k, why);
-      const first = req.first === undefined ? undefined : fromWire(req.first, shared);
+      const first = req.first === undefined ? undefined : fromWire(req.first);
       return renderTemplate(t, data, first);
     }
+    case "resetDefs":
+      // The replay check: a call changed a kept value, so Brrrty sends
+      // every definition again.
+      dropPersistent();
+      return { ok: null };
     case "reads":
       return { ok: allReads() };
     case "info":
@@ -1699,17 +1744,21 @@ async function handle(req) {
 }
 
 let queue = Promise.resolve();
-const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on("line", (line) => {
+
+function handleLine(line) {
   queue = queue.then(async () => {
     let req;
     try {
       req = JSON.parse(line);
     } catch {
-      frame({ id: null, protocol: "a request that isn't JSON" });
+      frame("r", null, { protocol: "a request that isn't JSON" });
       return;
     }
     if (req.op === "bye") process.exit(0);
+    if (req.op === "def") {
+      define(req);
+      return;
+    }
     let reply;
     // A call's clock and random reads, recorded, or handed back on a replay.
     const calling = clockPhase === "calls";
@@ -1722,9 +1771,14 @@ lines.on("line", (line) => {
     const loadStart = clockRecord.length;
     const savedFeed = clockFeed;
     if (!calling && Array.isArray(req.feed)) clockFeed = req.feed.slice();
+    mentionedMade = false;
     try {
       activeRequest = req.id;
-      reply = await requestContext.run({ id: req.id, template: req.template }, () => handle(req));
+      if (defProblem !== null) {
+        reply = { protocol: defProblem };
+      } else {
+        reply = await requestContext.run({ id: req.id, template: req.template }, () => handle(req));
+      }
     } catch (e) {
       reply = e && e.brrrtyRefusal
         ? { refused: `a function ${e.brrrtyRefusal}` }
@@ -1732,18 +1786,17 @@ lines.on("line", (line) => {
           ? { invalid: toWellFormed(String(e.message)) }
           : { thrown: thrown(e) };
     }
+    let clock = null;
     if (calling) {
       clockFeed = null;
-      if (callClock.length) reply = { ...reply, clock: callClock };
+      clock = callClock;
       callClock = [];
     } else {
       if (Array.isArray(req.feed)) clockFeed = savedFeed;
-      if (clockRecord.length > loadStart && req.op !== "callsBegin") {
-        reply = { ...reply, loadClock: clockRecord.slice(loadStart) };
-      }
+      if (clockRecord.length > loadStart && req.op !== "callsBegin") clock = clockRecord.slice(loadStart);
     }
     activeRequest = null;
-    frame({ id: req.id, ...reply });
+    frame(mentionedMade ? "f" : "r", req.id, reply, clock);
     // What the call changed, checked once its reply is on its way.
     if (calling && (req.op === "call" || req.op === "pageCall" || req.op === "pageVars")) {
       checkAfterCall(() =>
@@ -1754,5 +1807,24 @@ lines.on("line", (line) => {
       checkAfterCall(() => (templates[req.template] ? describeRender(templates[req.template].inst) : "a JavaScript template"));
     }
   });
-});
-lines.on("close", () => process.exit(0));
+}
+
+// Requests are lines of JSON on stdin. A definition can be many megabytes
+// long, so the pieces of a line are kept as they come and joined once.
+{
+  let pieces = [];
+  process.stdin.on("data", (chunk) => {
+    let from = 0;
+    for (;;) {
+      const nl = chunk.indexOf(10, from);
+      if (nl === -1) break;
+      const tail = chunk.subarray(from, nl);
+      const line = pieces.length ? Buffer.concat([...pieces, tail]).toString("utf8") : tail.toString("utf8");
+      pieces = [];
+      from = nl + 1;
+      if (line.length) handleLine(line);
+    }
+    if (from < chunk.length) pieces.push(from === 0 ? chunk : chunk.subarray(from));
+  });
+  process.stdin.on("end", () => process.exit(0));
+}
