@@ -1030,3 +1030,77 @@ fn undefined_content_reaches_a_javascript_layout() {
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(read(t.path(), "u/index.html"), "[undefined]");
 }
+
+/// 11ty stops computing a page's data at the function that throws: the
+/// ones after it never run (here the third logs when it does). Brrrty
+/// sends a page's functions together, and the worker stops at the same
+/// place. The only runs left are the look each worker takes at what the
+/// functions read, as 11ty takes one.
+#[test]
+fn computed_functions_after_one_that_throws_do_not_run() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/a.11ty.js",
+            "module.exports = class {\n  data() { return { title: 't', eleventyComputed: {\n    one: (d) => `${d.title}1`,\n    two: (d) => { if (d.one === 't1') throw new Error('boom two'); return 'x'; },\n    three: (d) => { console.error('THREE RAN with two=' + JSON.stringify(d.two)); return `${d.two}3`; },\n    four: (d) => d.three + '4',\n  } }; }\n  render(d) { return d.four; }\n};\n",
+        ),
+        ("src/b.njk", "b"),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("boom two"), "{out}");
+    // With the real value of `two` it never runs.
+    assert!(!out.contains("THREE RAN with two=\"x\""), "{out}");
+    let looks = out.matches("THREE RAN with two=\"").count();
+    assert_eq!(looks, 3, "{out}");
+    assert_eq!(read(t.path(), "b/index.html"), "b");
+}
+
+/// What Brrrty sends together comes back right: a page's data too large
+/// for one write of the pipe, a function that waits behind a quick one
+/// (its reply held, then sent by the timer), and a page whose function
+/// changes its data, after which the workers are sent the shared values
+/// again and the replay check steps through the calls one at a time.
+#[test]
+fn requests_sent_together_come_back_in_order() {
+    if !has_node() {
+        return;
+    }
+    let big = "x".repeat(300_000);
+    let page = format!(
+        "exports.data = {{ big: '{big}', eleventyComputed: {{\n  a: (d) => d.big.length,\n  b: async (d) => {{ await new Promise((r) => setTimeout(r, 150)); return d.a + 1; }},\n  c: (d) => d.b + 1,\n}} }};\nexports.render = (d) => [d.a, d.b, d.c].join();\n"
+    );
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        ("src/_data/site.json".into(), r#"{"list":[{"n":1},{"n":2}],"o":{"k":1}}"#.into()),
+        (
+            "src/_data/h.js".into(),
+            "module.exports = { poke(o) { o.k = 2; return ''; }, count(l) { return l.length; }, key(o) { return o.k; } };".into(),
+        ),
+        ("src/big.11ty.js".into(), page),
+        ("src/poke.njk".into(), "{{ h.poke(site.o) }}".into()),
+    ];
+    for i in 0..8 {
+        files.push((
+            format!("src/p{i}.njk"),
+            "{{ h.count(site.list) }}/{{ h.key(site.o) }}".into(),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let t = site(&files);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    // Only the page that changes its data is refused.
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(out.contains("src/poke.njk"), "{out}");
+    assert!(out.contains("changes the data it is given"), "{out}");
+    assert!(!out.contains("different result"), "{out}");
+    assert_eq!(read(t.path(), "big/index.html"), "300000,300001,300002");
+    for i in 0..8 {
+        assert_eq!(read(t.path(), &format!("p{i}/index.html")), "2/1");
+    }
+}

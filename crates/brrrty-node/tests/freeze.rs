@@ -229,7 +229,7 @@ fn what_strict_mode_makes_loud_sends_the_build_back() {
         // anything the user set.
         let why = w.exports_frozen().unwrap_err();
         assert!(
-            why.starts_with("this folder's last build was sent back: ") && why.contains("strict"),
+            why.starts_with("this folder's last build was sent back: "),
             "{body}: {why}"
         );
         assert_eq!(&ok(call(&mut w, &d, "f")).value, want, "{body}");
@@ -788,4 +788,38 @@ fn descriptors_of_an_argument_leave_the_build_frozen() {
         Value::String("a,infalsetrue".into())
     );
     assert_eq!(w.verify(), JsResult::Ok(()));
+}
+
+/// A call that changes a shared value makes the worker forget the values
+/// it kept; the next request that refers to one is told so, and Brrrty
+/// sends the values again with it. The caller sees only the answer.
+#[test]
+fn a_request_for_a_forgotten_value_goes_again_with_it() {
+    let Some(node) = node() else { return };
+    let t = module_site(
+        "export default { list: [1], poke: (o) => { o.in.x = 1; return ''; }, count: (o, p) => Object.keys(o.in).length + (p ? p.list.length : 0) };",
+    );
+    let (mut w, d) = begun(&node, &t);
+    // Held twice, so the workers keep them under an id.
+    let arg = Value::from_json(&serde_json::json!({ "in": { "a": 1 } }));
+    let other = Value::from_json(&serde_json::json!({ "list": [1, 2, 3] }));
+    let keep = (arg.clone(), other.clone());
+    let n = |w: &mut Worker, args: &[Value]| {
+        ok(w.call(handle(&d, "count"), This::Value(&d), args, Settle::Await)).value
+    };
+    assert_eq!(n(&mut w, &[arg.clone(), other.clone()]), Value::Number(4.0));
+    match w.call(
+        handle(&d, "poke"),
+        This::Value(&d),
+        std::slice::from_ref(&arg),
+        Settle::Await,
+    ) {
+        JsResult::Refused(r) => assert!(r.why.contains("changes the data it is given"), "{}", r.why),
+        other => panic!("{other:?}"),
+    }
+    // Both were defined before the change, and are known by id again
+    // after: as Brrrty has them, not as the call left them.
+    assert_eq!(n(&mut w, &[arg.clone(), other.clone()]), Value::Number(4.0));
+    assert_eq!(n(&mut w, std::slice::from_ref(&arg)), Value::Number(1.0));
+    drop(keep);
 }

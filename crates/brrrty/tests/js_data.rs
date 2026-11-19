@@ -1741,3 +1741,64 @@ fn the_freeze_and_the_walk_write_the_same_pages() {
     assert_eq!(frozen.len(), 62);
     assert_eq!(frozen, walked);
 }
+
+/// A site that throws (and catches) errors by the hundred: the worker
+/// stops watching each one, and the build runs again walking, where an
+/// error costs what it costs in 11ty. The pages are the same.
+#[test]
+fn a_site_that_throws_a_lot_is_walked_instead_of_watched() {
+    if !has_node() || !node_freezes() {
+        return;
+    }
+    let mut files = vec![
+        ("brrrty.config.rhai".to_string(), ON.to_string()),
+        (
+            "src/_data/f.js".to_string(),
+            "'use strict';\nmodule.exports = { tryParse(x) { let n = 0; for (let i = 0; i < 60; i++) { try { JSON.parse('{'); } catch (e) { n++; } } return x + ':' + n; } };".to_string(),
+        ),
+    ];
+    for i in 0..12 {
+        files.push((format!("src/p{i}.njk"), format!("{{{{ f.tryParse({i}) }}}}")));
+    }
+    let files: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let t = site(&files);
+    let o = build(t.path(), &[], &[TRACE]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert!(out.contains(FROZEN), "{out}");
+    assert!(
+        out.contains("throws more than 500 errors, and watching each one costs more than walking the data"),
+        "{out}"
+    );
+    assert_eq!(written(&t, "p7/index.html").as_deref(), Some("7:60"));
+
+    // A few errors are watched, and the build stays frozen.
+    let t = site(&files[..4]);
+    let o = build(t.path(), &[], &[TRACE]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert!(out.contains(FROZEN) && !out.contains(WALKED), "{out}");
+}
+
+/// The replay check loads the data files again, several in one request,
+/// and a load may take as long as it took the first time: a slow data
+/// file isn't a stuck worker. (The least a request is allowed is 10 s;
+/// the test sets 1 s so that a file slower than that shows it.)
+#[test]
+fn a_slow_data_file_loads_again_in_the_replay_check() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/slow.js",
+            "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1300);\nmodule.exports = { f: () => 'done' };",
+        ),
+        ("src/a.njk", "{{ slow.f() }}"),
+    ]);
+    let o = build(t.path(), &[], &[("BRRRTY_JS_REPLAY_FLOOR_MS", "1000")]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert_eq!(written(&t, "a/index.html").as_deref(), Some("done"));
+}

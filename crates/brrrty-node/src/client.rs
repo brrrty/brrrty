@@ -973,6 +973,11 @@ impl Worker {
                     }
                     break;
                 }
+                // A step of the page before this one failed: the worker
+                // ran neither this nor the ones after it.
+                if f.head.get("after").is_some() {
+                    break;
+                }
             }
             if req.op == "templateLoad" {
                 self.last_template = frame

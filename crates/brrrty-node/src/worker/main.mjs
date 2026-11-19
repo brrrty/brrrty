@@ -2289,6 +2289,10 @@ class Stale extends Error {
 // The requests Brrrty sent together with one that was stale: none of the
 // rest runs.
 let staleTicket = null;
+// The requests Brrrty sent together for one page, one of which failed:
+// the page's steps after it don't run.
+let brokenTicket = null;
+const PAGE_STEPS = new Set(["pageOpen", "pageVars", "pageCall", "pageSet"]);
 const HOLE = new Trap("a hole");
 
 // A value from its wire form, in place where it can be: what `JSON.parse`
@@ -3352,6 +3356,12 @@ async function handleRequest(line) {
       frame("r", req.id, { stale: true }, null);
       return;
     }
+    if (req.t !== undefined && req.t === brokenTicket && PAGE_STEPS.has(req.op)) {
+      // A step of this page before it failed: 11ty stops the page there,
+      // so the functions after it don't run.
+      frame("r", req.id, { after: true }, null);
+      return;
+    }
     // Site code runs from here on: the watcher is up first, or isn't
     // coming.
     if (req.op === "load" || req.op === "templateLoad" || req.op === "preload") await watching;
@@ -3388,6 +3398,9 @@ async function handleRequest(line) {
     if (watcher !== null) checkWatcher();
     checkStackHook();
     if (again !== null) reply = { again };
+    if (req.t !== undefined && PAGE_STEPS.has(req.op) && (reply.thrown !== undefined || reply.refused !== undefined || reply.invalid !== undefined)) {
+      brokenTicket = req.t;
+    }
     let clock = null;
     if (calling) {
       clockFeed = null;
