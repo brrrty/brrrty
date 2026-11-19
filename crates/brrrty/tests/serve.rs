@@ -118,9 +118,22 @@ fn with_session_flags(
     hold: Duration,
     test: impl FnOnce(&Live),
 ) -> Finished {
+    let debounce = Settings::default().debounce;
+    with_session_settings(root, flags, hold, debounce, test)
+}
+
+/// [`with_session_flags`] with the given debounce.
+fn with_session_settings(
+    root: &Path,
+    flags: Flags,
+    hold: Duration,
+    debounce: Duration,
+    test: impl FnOnce(&Live),
+) -> Finished {
     let settings = Settings {
         flags,
         quiet: true,
+        debounce,
         ..Settings::default()
     };
     let mut session = Session::start(root, settings).unwrap();
@@ -323,7 +336,16 @@ fn an_include_and_a_stylesheet_rebuild_and_css_alone_is_marked() {
 #[test]
 fn a_burst_of_twenty_edits_inside_the_debounce_makes_one_build() {
     let t = site();
-    with_session(t.path(), |live| {
+    let flags = Flags {
+        input: Some(PathBuf::from("src")),
+        ..Flags::default()
+    };
+    // A debounce of a second, not the 150 ms a session has by default: the saves are
+    // 10 ms apart, but on a loaded machine the watcher's thread hands them on with gaps
+    // of its own (187 ms was seen on CI), and a gap wider than the window rightly makes
+    // another build.
+    let window = Duration::from_secs(1);
+    with_session_settings(t.path(), flags, Duration::ZERO, window, |live| {
         live.settle();
         let mut last = Instant::now();
         let mut widest = Duration::ZERO;
@@ -346,10 +368,10 @@ fn a_burst_of_twenty_edits_inside_the_debounce_makes_one_build() {
             seen.push(r.changed_paths);
         }
         let builds = seen.len();
-        // Every save landed well inside the 150 ms window, so the burst is one build. Only
-        // a machine so loaded that two saves were 100 ms apart may split it, and then
-        // into no more than two.
-        if widest < Duration::from_millis(100) {
+        // Every save landed well inside the window, so the burst is one build. Only a
+        // machine so loaded that two saves were half a second apart may split it, and
+        // then into no more than two.
+        if widest < window / 2 {
             assert_eq!(builds, 1, "widest gap {widest:?}, changed: {seen:?}");
         } else {
             assert!(
