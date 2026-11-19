@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `brrrty build --no-order-check` (and `serve`), or `config.set_order_check(false)`, builds without the order check: the site's JavaScript runs once, and Brrrty does not run it again in other orders to check that no page depends on the order pages are built in. The build says so in one line. The check stays on by default, and `brrrty doctor` always runs it.
+- A build in which a function changes the data it is given always ends with that problem. Now and then it ended with "JavaScript data stopped: ... definition N: no kept value M" instead, when another page's request reached Node just before Brrrty heard of the change.
 
 ## 0.0.27 - 2026-11-19
 

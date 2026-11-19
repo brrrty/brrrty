@@ -1958,3 +1958,56 @@ fn the_order_check_can_be_skipped_and_doctor_still_runs_it() {
         assert!(!out.contains(skipped), "{out}");
     }
 }
+/// Requests go to Node ahead of its replies, a shared value's definition
+/// with them. When a call changes the data, the worker forgets every
+/// value it kept, and Brrrty hears of it only with that call's reply: a
+/// definition written in between may refer to a value that is gone.
+/// That is no fault of the protocol (the request that follows it is told
+/// the value is stale, and is sent again), and the build ends with the
+/// site's problem, the function that changed its data, not with a
+/// stopped worker.
+///
+/// Here the changing call takes a while, and the other pages meanwhile
+/// define `site`, which refers to `site.o` as an earlier call defined
+/// it. Without the fix about four builds in ten ended with "the worker
+/// refused a request: definition 12: no kept value 1".
+#[test]
+fn a_definition_written_before_brrrty_hears_of_a_change_is_not_a_protocol_error() {
+    if !has_node() {
+        return;
+    }
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), ON.into()),
+        (
+            "src/_data/site.json".into(),
+            r#"{"o":{"k":1},"list":[{"n":1},{"n":2}]}"#.into(),
+        ),
+        (
+            "src/_data/h.js".into(),
+            "module.exports = {\n  key(o) { return o.k; },\n  size(s) { return s.list.length; },\n  poke(o) { let x = 0; for (let i = 0; i < 2e8; i++) x = (x + i) | 0; o.k = 2 + (x & 0); return \"\"; },\n};\n".into(),
+        ),
+        ("src/p0.njk".into(), "{{ h.poke(site.o) }}".into()),
+    ];
+    for i in 1..=20 {
+        files.push((
+            format!("src/y{i}.njk"),
+            "{{ h.key(site.o) }}/{{ h.size(site) }}".into(),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let t = site(&files);
+    for run in 0..12 {
+        let o = build(t.path(), &[], &[]);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "run {run}: {out}");
+        assert!(!out.contains("no kept value"), "run {run}: {out}");
+        assert!(!out.contains("JavaScript data stopped"), "run {run}: {out}");
+        assert!(
+            out.contains("the function `poke`") && out.contains("changes the data it is given"),
+            "run {run}: {out}"
+        );
+    }
+}

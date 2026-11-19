@@ -2699,3 +2699,74 @@ mod walk_memo {
         assert_eq!(std::iter::from_fn(|| m.starting(root)).count(), 1);
     }
 }
+
+#[cfg(test)]
+mod skipped_definition {
+    use super::*;
+
+    /// A definition that refers to a value the worker forgot is skipped
+    /// (Brrrty wrote it before it heard of the change), and so is all of
+    /// it: the ids it had handed out before it met the forgotten value
+    /// held objects half read, with wire markers still inside. A request
+    /// that names one is told it is stale, like any forgotten value, and
+    /// the worker goes on.
+    #[test]
+    fn a_skipped_definition_leaves_none_of_its_values_behind() {
+        let node = match crate::find::find_node(None) {
+            Ok(n) => n,
+            Err(e) => {
+                assert!(std::env::var_os("CI").is_none(), "CI needs Node: {e}");
+                eprintln!("skipped: {e}");
+                return;
+            }
+        };
+        let t = tempfile::tempdir().unwrap();
+        let file = t.path().join("h.js");
+        std::fs::write(
+            &file,
+            "module.exports = { poke(o) { o.k = 2; return ''; }, show(v) { return JSON.stringify(v); } };",
+        )
+        .unwrap();
+        let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+        assert!(matches!(w.load(&file, true), JsResult::Ok(_)));
+        w.exchange(r#"{"op":"callsBegin"}"#, None, "the calls' start")
+            .expect("begins");
+        let call = |w: &mut Worker, handle: u32, arg: u32| {
+            w.exchange(
+                &format!(
+                    r#"{{"op":"call","handle":{handle},"await":false,"this":{{"$u":1}},"args":[{{"$R":{arg}}}]}}"#
+                ),
+                None,
+                "a call",
+            )
+            .expect("answers")
+        };
+        // A kept value, which `poke` changes: the worker forgets it.
+        w.write_line(r#"{"op":"def","id":50,"v":{"k":1},"n":1}"#)
+            .unwrap();
+        let poked = call(&mut w, 0, 50);
+        assert!(poked.head.get("dropShared").is_some(), "{}", poked.body);
+        // Written before Brrrty heard: it refers to the forgotten value,
+        // after two values of its own.
+        w.write_line(r#"{"op":"def","id":60,"v":{"a":{"x":1},"o":{"$R":50}},"n":2}"#)
+            .unwrap();
+        for id in [60, 61, 50] {
+            let shown = call(&mut w, 1, id);
+            assert_eq!(
+                shown.head.get("stale"),
+                Some(&Json::Bool(true)),
+                "value {id}: {}",
+                shown.body
+            );
+        }
+        // And the worker is none the worse: the values sent again work.
+        w.write_line(r#"{"op":"def","id":70,"v":{"a":{"x":1},"o":{"k":1}},"n":3}"#)
+            .unwrap();
+        let shown = call(&mut w, 1, 70);
+        assert!(
+            shown.body.contains(r#"{\"a\":{\"x\":1},\"o\":{\"k\":1}}"#),
+            "{}",
+            shown.body
+        );
+    }
+}
