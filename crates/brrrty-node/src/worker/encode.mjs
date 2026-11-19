@@ -15,6 +15,18 @@
 
 import { types as utilTypes } from "node:util";
 
+// Reflection as JavaScript has it, kept from before the worker's main
+// module wraps these functions for the site's code (see "Freezing" there).
+const ownDescriptor = Object.getOwnPropertyDescriptor;
+const ownDescriptors = Object.getOwnPropertyDescriptors;
+const reflectOwnDescriptor = Reflect.getOwnPropertyDescriptor;
+const objectIsFrozen = Object.isFrozen;
+const objectFreeze = Object.freeze;
+const defineProperty = Object.defineProperty;
+// The objects the worker froze itself, to see what a call changes: to the
+// site's code and to 11ty's rules they are as they were.
+const frozenByUs = new WeakSet();
+
 // How many objects and arrays deep a value may nest. Brrrty's templates and
 // filters walk values recursively, so a deeper one is refused, never a crash.
 const MAX_DEPTH = 1000;
@@ -77,7 +89,7 @@ function unseen(v, isArray) {
   if (!symbols.length && names.length === Object.keys(v).length + (isArray ? 1 : 0)) return [];
   const hidden = names.filter((k) => {
     if (isArray && (k === "length" || (String(k >>> 0) === k && (k >>> 0) !== 4294967295))) return false;
-    const d = Object.getOwnPropertyDescriptor(v, k);
+    const d = ownDescriptor(v, k);
     return d && !d.enumerable;
   });
   const known = symbols.filter((s) => WELL_KNOWN.has(s)).map((s) => s.description);
@@ -99,6 +111,10 @@ function pathTextRaw(path) {
 // What stands behind a value the worker wrapped to watch a call's writes;
 // the worker sets it.
 let unwrapHook = (v) => v;
+
+// Set when an encoding read a getter or met a Proxy: the value may read
+// differently next time.
+let encodedLive = false;
 
 // Encode `value`. `register(fn)` returns a handle for a function value.
 function encodeValue(value, register) {
@@ -138,7 +154,10 @@ function encodeValue(value, register) {
     // The worker's own view of data it handed a function is the data.
     v = unwrapHook(v);
     // A proxy can answer reads its own properties don't hold.
-    if (utilTypes.isProxy(v)) return { $x: "a Proxy" };
+    if (utilTypes.isProxy(v)) {
+      encodedLive = true;
+      return { $x: "a Proxy" };
+    }
     const at = stack.indexOf(v);
     if (at !== -1) {
       return { $x: `a circular reference to ${pathText(stackPaths[at])}` };
@@ -176,7 +195,7 @@ function encodeValue(value, register) {
       return out;
     }
     if (proto === Object.prototype || proto === null) {
-      const byReference = shared || Object.isFrozen(v);
+      const byReference = shared || (objectIsFrozen(v) && !frozenByUs.has(v));
       if (byReference) {
         const hidden = unseen(v, false);
         if (hidden.length) return { $x: `an object with properties Brrrty can't list (${hidden.join(", ")}), which 11ty passes to templates as they are` };
@@ -190,8 +209,9 @@ function encodeValue(value, register) {
         if (!wellFormed(key)) {
           item = { $x: "a key with a lone surrogate" };
         } else {
-          const desc = Object.getOwnPropertyDescriptor(v, key);
+          const desc = ownDescriptor(v, key);
           if (desc && desc.get) {
+            encodedLive = true;
             // 11ty reads a getter as many times as it copies the data, so
             // one that changes between reads has no single value.
             const first = enc(v[key], byReference);

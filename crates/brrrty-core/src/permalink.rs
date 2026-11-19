@@ -402,13 +402,12 @@ impl Locator<'_> {
                         "`permalink` is a function, and JavaScript data isn't running",
                     )
                 })?;
-                let mut p = calls.page(
+                calls.page_once(
                     &Value::Object(Arc::new(data.clone())),
                     self.traps,
-                    &[],
+                    f,
                     self.shown,
-                )?;
-                p.call(f, None)?
+                )?
             }
         };
         let returned = |what: &str| {

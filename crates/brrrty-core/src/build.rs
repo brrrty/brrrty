@@ -2248,9 +2248,18 @@ fn build_in_pool(
     mode: Mode,
 ) -> BuildReport {
     let mut found = Vec::new();
+    // Set when the JavaScript runtime asks for the build to be run again:
+    // it took a shortcut it can't stand behind for this site (see
+    // `RuntimeFailure::again`), and the next one it starts here won't.
+    let rerun = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut reran = false;
     loop {
         let mut again = Vec::new();
-        let report = build_once(opts, markdown, start, mode, &found, &mut again);
+        let report = build_once(opts, markdown, start, mode, &found, &mut again, &rerun);
+        if !reran && rerun.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            reran = true;
+            continue;
+        }
         if again.is_empty() {
             return report;
         }
@@ -2269,6 +2278,7 @@ fn build_once(
     mode: Mode,
     found: &[crate::plugins::syntaxhighlight::scan::Found],
     again: &mut Vec<crate::plugins::syntaxhighlight::scan::Found>,
+    rerun: &Arc<std::sync::atomic::AtomicBool>,
 ) -> BuildReport {
     let mut report = BuildReport {
         written: 0,
@@ -2549,6 +2559,7 @@ fn build_once(
     let js_filter_fns = js_filters(&opts.config.filters, rss);
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
     js.filters = Some((js_names, js_filter_fns.clone()));
+    js.again = rerun.clone();
     js.check_ports = log.is_some();
     let GlobalData {
         value: user_value,
@@ -3385,6 +3396,9 @@ fn build_once(
             }
         }
     }
+    // Nothing more is asked of the JavaScript runtime: it winds down while
+    // the pages are written.
+    let _closing = js_calls.as_ref().map(|c| c.close());
     // Which pages 11ty writes differently on every build.
     let mut ready = ready;
     let mut layout_drawn: Vec<Option<LayoutDrawn>> = (0..prepared.len()).map(|_| None).collect();

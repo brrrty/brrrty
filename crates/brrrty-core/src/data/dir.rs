@@ -191,6 +191,16 @@ impl DirDataIndex {
                 LocalFile::Failed(p) => return Err(p),
                 LocalFile::Json(None) => {}
                 LocalFile::Json(Some(data)) => {
+                    // 11ty parses a JSON file anew for each template, and
+                    // cleans every file's `tags` into a new list.
+                    let own;
+                    let data = if shown.extension().is_some_and(|e| e == "json") {
+                        own = super::fresh_copy(data);
+                        &own
+                    } else {
+                        own = own_tags(data);
+                        &own
+                    };
                     merge(&mut local.data, data);
                     for k in data.keys() {
                         let k = k.strip_prefix(OVERRIDE_PREFIX).unwrap_or(k);
@@ -207,6 +217,8 @@ impl DirDataIndex {
                 }
                 LocalFile::JsRan(None, _) => {}
                 LocalFile::JsRan(Some(data), inexact) => {
+                    let own = own_tags(data);
+                    let data = &own;
                     merge(&mut local.data, data);
                     for k in data.keys() {
                         let k = k.strip_prefix(OVERRIDE_PREFIX).unwrap_or(k);
@@ -226,6 +238,17 @@ impl DirDataIndex {
         }
         Ok(local)
     }
+}
+
+/// `data` with a `tags` list of its own, as 11ty's cleanup gives each
+/// template.
+fn own_tags(data: &Data) -> Data {
+    let mut own = data.clone();
+    if let Some(Value::Array(tags)) = own.get("tags") {
+        let copy = Value::Array(std::sync::Arc::new(tags.as_ref().clone()));
+        own.insert("tags".to_string(), copy);
+    }
+    own
 }
 
 /// The help for a JavaScript data file Brrrty can't run: the exact name
