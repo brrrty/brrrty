@@ -778,13 +778,7 @@ fn descriptors_of_an_argument_leave_the_build_frozen() {
     assert_eq!(w.exports_frozen(), Ok(()));
     let arg = Value::from_json(&serde_json::json!({ "a": 1, "in": { "b": 2 } }));
     assert_eq!(
-        ok(w.call(
-            handle(&d, "copy"),
-            This::Value(&d),
-            &[arg],
-            Settle::Await
-        ))
-        .value,
+        ok(w.call(handle(&d, "copy"), This::Value(&d), &[arg], Settle::Await)).value,
         Value::String("a,infalsetrue".into())
     );
     assert_eq!(w.verify(), JsResult::Ok(()));
@@ -814,7 +808,9 @@ fn a_request_for_a_forgotten_value_goes_again_with_it() {
         std::slice::from_ref(&arg),
         Settle::Await,
     ) {
-        JsResult::Refused(r) => assert!(r.why.contains("changes the data it is given"), "{}", r.why),
+        JsResult::Refused(r) => {
+            assert!(r.why.contains("changes the data it is given"), "{}", r.why)
+        }
         other => panic!("{other:?}"),
     }
     // Both were defined before the change, and are known by id again

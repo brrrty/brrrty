@@ -247,7 +247,9 @@ impl Mux {
                         // waiting its turn behind the others.
                         let waiting = locked(&self.routes).len();
                         let behind = if waiting > 1 {
-                            format!(" ({waiting} requests are waiting on Node, which runs one at a time)")
+                            format!(
+                                " ({waiting} requests are waiting on Node, which runs one at a time)"
+                            )
                         } else {
                             String::new()
                         };

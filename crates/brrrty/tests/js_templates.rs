@@ -1090,7 +1090,10 @@ fn requests_sent_together_come_back_in_order() {
             "{{ h.count(site.list) }}/{{ h.key(site.o) }}".into(),
         ));
     }
-    let files: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
     let t = site(&files);
     let o = build(t.path(), &[]);
     let out = text(&o);

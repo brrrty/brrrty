@@ -1758,16 +1758,24 @@ fn a_site_that_throws_a_lot_is_walked_instead_of_watched() {
         ),
     ];
     for i in 0..12 {
-        files.push((format!("src/p{i}.njk"), format!("{{{{ f.tryParse({i}) }}}}")));
+        files.push((
+            format!("src/p{i}.njk"),
+            format!("{{{{ f.tryParse({i}) }}}}"),
+        ));
     }
-    let files: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
     let t = site(&files);
     let o = build(t.path(), &[], &[TRACE]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert!(out.contains(FROZEN), "{out}");
     assert!(
-        out.contains("throws more than 500 errors, and watching each one costs more than walking the data"),
+        out.contains(
+            "throws more than 500 errors, and watching each one costs more than walking the data"
+        ),
         "{out}"
     );
     assert_eq!(written(&t, "p7/index.html").as_deref(), Some("7:60"));
