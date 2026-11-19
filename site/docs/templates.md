@@ -81,7 +81,7 @@ Brrrty writes a page only when it can write exactly what 11ty would. Otherwise i
 
 - **JavaScript templates and data, without `config.set_js_data("node")`.** `.11ty.js` templates, and data from a `.js` data file with no `.rhai` port. With it on, see [JavaScript templates](#javascript-templates).
 - **Shortcodes and missing filters**, as above.
-- **Randomness.** Nunjucks' `random` filter, and a filter your config marks with `add_nondeterministic_filter`.
+- **Randomness.** Nunjucks' `random` filter, and a filter your config marks with `add_nondeterministic_filter`. A filter ported with `add_random_filter` builds instead, with a note; see [Random filters](/docs/configuration/#random-filters).
 - **Sorting that depends on V8.** A Nunjucks `sort` or `dictsort` whose order would depend on how V8 sorts ties.
 - **Async.** Async filters and tags, `setAsync`, `getBundle` and `getBundleFileUrl`.
 - **Printing a function**, which Nunjucks prints as its JavaScript source.

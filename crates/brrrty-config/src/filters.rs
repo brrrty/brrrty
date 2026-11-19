@@ -24,8 +24,41 @@ use crate::convert::{to_dynamic, to_value};
 #[derive(Debug, Clone)]
 pub enum FilterDef {
     Fn(FnPtr),
+    /// `add_random_filter`: a filter that may call `random()`, as a
+    /// JavaScript filter calls `Math.random`. 11ty's page differs on every
+    /// build then, so any result is one 11ty could have written: it runs,
+    /// and each page that calls it gets a note.
+    Random(FnPtr),
     /// A filter whose output can't match 11ty's: it uses randomness.
     Nondeterministic,
+}
+
+thread_local! {
+    /// How many random filters are running on this thread: `random()`
+    /// works only inside one.
+    static IN_RANDOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a filter declared with `add_random_filter` is running on this
+/// thread.
+pub(crate) fn in_random_filter() -> bool {
+    IN_RANDOM.with(|n| n.get() > 0)
+}
+
+/// Marks a random filter as running until dropped.
+struct RandomScope;
+
+impl RandomScope {
+    fn enter() -> RandomScope {
+        IN_RANDOM.with(|n| n.set(n.get() + 1));
+        RandomScope
+    }
+}
+
+impl Drop for RandomScope {
+    fn drop(&mut self) {
+        IN_RANDOM.with(|n| n.set(n.get().saturating_sub(1)));
+    }
 }
 
 /// The script, kept so its filters can run while pages render.
@@ -55,12 +88,26 @@ pub fn make(rt: Arc<Runtime>, name: String, def: FilterDef) -> ArgsFilterFn {
     match def {
         FilterDef::Nondeterministic => Arc::new(move |_, _, _: &FilterCtx| {
             Err(format!(
-                "the filter `{name}` is nondeterministic: it uses randomness, so its output can't be the same as 11ty's; Brrrty refuses pages that use it"
+                "the filter `{name}` is nondeterministic: it uses randomness, so its output can't be the same as 11ty's; Brrrty refuses pages that use it. To port it as it is, use config.add_random_filter(\"{name}\", fn) and call random() where it calls Math.random"
             ))
         }),
         FilterDef::Fn(f) => {
             let arity = arity(&rt, &f);
             Arc::new(move |input, args, _: &FilterCtx| call(&rt, &name, &f, arity, input, args))
+        }
+        FilterDef::Random(f) => {
+            let arity = arity(&rt, &f);
+            Arc::new(move |input, args, _: &FilterCtx| {
+                let out = {
+                    let _scope = RandomScope::enter();
+                    call(&rt, &name, &f, arity, input, args)
+                };
+                // The page is random once the filter gave it a result.
+                if out.is_ok() {
+                    brrrty_core::random::filter_called(&name);
+                }
+                out
+            })
         }
     }
 }

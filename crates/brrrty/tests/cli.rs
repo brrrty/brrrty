@@ -584,3 +584,83 @@ fn a_closed_stderr_keeps_the_bug_reports_exit_code() {
     let status = run_with_closed_pipes(t.path(), &["--__panic"]);
     assert_eq!(status.code(), Some(101), "{status:?}");
 }
+
+/// A Rhai port of a Fisher-Yates `shuffle` filter, and a page that lists
+/// twelve items through it.
+const RANDOM_SITE: &[(&str, &str)] = &[
+    (
+        "brrrty.config.rhai",
+        r#"config.add_random_filter("shuffle", |arr| {
+    let a = if truthy(arr) { arr } else { [] };
+    let i = a.len() - 1;
+    while i > 0 {
+        let j = (random() * (i + 1)).floor().to_int();
+        let t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+        i -= 1;
+    }
+    a
+});
+"#,
+    ),
+    (
+        "src/index.njk",
+        "{{ [1,2,3,4,5,6,7,8,9,10,11,12] | shuffle | join(',') }}",
+    ),
+    (
+        "src/list.njk",
+        "---\npagination:\n  data: items\n  size: 1\nitems: [a, b]\n---\n{{ [1,2,3,4,5,6,7,8,9,10,11,12] | shuffle | join(',') }}",
+    ),
+];
+
+fn random_build(root: &std::path::Path, seed: Option<&str>) -> (std::process::Output, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_brrrty"));
+    cmd.args(["build", "--input", "src"]).current_dir(root);
+    match seed {
+        Some(s) => cmd.env("BRRRTY_RANDOM_SEED", s),
+        None => cmd.env_remove("BRRRTY_RANDOM_SEED"),
+    };
+    let out = cmd.output().unwrap();
+    let page = |rel: &str| std::fs::read_to_string(root.join("_site").join(rel)).unwrap();
+    let pages = format!(
+        "{}|{}|{}",
+        page("index.html"),
+        page("list/index.html"),
+        page("list/1/index.html")
+    );
+    (out, pages)
+}
+
+#[test]
+fn a_random_filter_builds_with_a_note_and_a_seed_repeats_it() {
+    let dir = site(RANDOM_SITE);
+    let (out, first) = random_build(dir.path(), None);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("random-output"), "{err}");
+    assert!(err.contains("src/index.njk"), "{err}");
+    assert!(err.ends_with("0 errors, 0 warnings, 2 notes\n"), "{err}");
+    // Unseeded, the pages differ from build to build, as 11ty's do: twelve
+    // items have 479,001,600 orders, three pages of them.
+    let (_, second) = random_build(dir.path(), None);
+    assert_ne!(first, second);
+    assert!(err.contains("set BRRRTY_RANDOM_SEED"), "{err}");
+    // Seeded, every build writes the same pages, and another seed others.
+    let (seeded, a) = random_build(dir.path(), Some("tortoise"));
+    let err = stderr(&seeded);
+    assert!(err.contains("BRRRTY_RANDOM_SEED is set"), "{err}");
+    assert!(!err.contains("set BRRRTY_RANDOM_SEED"), "{err}");
+    let (_, b) = random_build(dir.path(), Some("tortoise"));
+    assert_eq!(a, b);
+    let (_, c) = random_build(dir.path(), Some("other"));
+    assert_ne!(a, c);
+    // Each page draws its own: the pages aren't all in one order.
+    let orders: std::collections::BTreeSet<&str> = a.split('|').collect();
+    assert_eq!(orders.len(), 3, "{a}");
+    for order in a.split('|') {
+        let mut n: Vec<u32> = order.split(',').map(|x| x.parse().unwrap()).collect();
+        n.sort();
+        assert_eq!(n, (1..=12).collect::<Vec<_>>());
+    }
+}

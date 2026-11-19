@@ -430,11 +430,14 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
             let report =
                 brrrty_compat::compare_dirs(&out, &ours, &brrrty_compat::AllowList::empty())
                     .map_err(|err| format!("Brrrty could not compare the two builds: {err}"))?;
+            let (random, random_paths) = random_outputs(&diagnosis.report);
             Ok(verify::Verified {
                 eleventy_version: e.version.clone(),
                 eleventy_time,
                 brrrty_time: diagnosis.report.elapsed,
                 report,
+                random,
+                random_paths,
             })
         }));
     }
@@ -468,6 +471,28 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// The files written for random pages, and those of them at a random path.
+fn random_outputs(
+    report: &brrrty_core::BuildReport,
+) -> (
+    std::collections::BTreeSet<PathBuf>,
+    std::collections::BTreeSet<PathBuf>,
+) {
+    let all = report
+        .pages
+        .iter()
+        .filter(|p| p.random)
+        .map(|p| p.output.clone())
+        .collect();
+    let paths = report
+        .pages
+        .iter()
+        .filter(|p| p.random_path)
+        .map(|p| p.output.clone())
+        .collect();
+    (all, paths)
 }
 
 /// Stop after a signal: remove the temporary folder, say so and exit 130 or 143.

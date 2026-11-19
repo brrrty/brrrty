@@ -299,6 +299,21 @@ pub fn engine_for(
             Ok(())
         },
     );
+    // Brrrty's own: a filter that calls `random()` where the JavaScript
+    // one calls `Math.random`.
+    e.register_fn(
+        "add_random_filter",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         name: ImmutableString,
+         f: FnPtr|
+         -> Result<(), Box<EvalAltResult>> {
+            open(&c.0, "config.add_random_filter", ctx.call_position())
+                .filters
+                .insert(name.to_string(), FilterDef::Random(f));
+            Ok(())
+        },
+    );
     e.register_fn(
         "add_nondeterministic_filter",
         |ctx: rhai::NativeCallContext,

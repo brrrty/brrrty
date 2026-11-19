@@ -22,9 +22,11 @@
 //! wrote them (a keyword argument arrives in place as `[name, value]`); a
 //! missing argument is `()`, so `n ?? 40` is a default. A filter that
 //! fails refuses its page, with the template's position and the script's.
-//! `config.add_nondeterministic_filter("shuffle")` stands in for a filter
-//! that uses `Math.random`: its output can never match 11ty's, so pages
-//! that use it are refused.
+//! `config.add_random_filter("shuffle", |arr| ...)` adds a filter that may
+//! call `random()` where its JavaScript calls `Math.random`: 11ty's page
+//! differs on every build then, so the page builds, with a note.
+//! `config.add_nondeterministic_filter("shuffle")` stands in for such a
+//! filter without porting it: pages that use it are refused.
 //!
 //! ## Collections
 //!

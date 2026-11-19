@@ -369,7 +369,334 @@ fn a_nondeterministic_filter_refuses_only_the_pages_that_use_it() {
         .unwrap();
     assert!(p.message.contains("nondeterministic"), "{}", p.message);
     assert!(p.message.contains("shuffle"), "{}", p.message);
+    // It points at the way to port the filter as it is.
+    assert!(p.message.contains("add_random_filter"), "{}", p.message);
     assert_eq!(p.path.as_deref(), Some(Path::new("src/a.liquid")));
+}
+
+/// A port of the usual JavaScript Fisher-Yates shuffle:
+///
+/// ```js
+/// const a = (arr || []).slice();
+/// for (let i = a.length - 1; i > 0; i--) {
+///   const j = Math.floor(Math.random() * (i + 1));
+///   [a[i], a[j]] = [a[j], a[i]];
+/// }
+/// return a;
+/// ```
+const SHUFFLE: &str = r#"
+config.add_random_filter("shuffle", |arr| {
+    let a = if truthy(arr) { arr } else { [] };
+    let i = a.len() - 1;
+    while i > 0 {
+        let j = (random() * (i + 1)).floor().to_int();
+        let t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+        i -= 1;
+    }
+    a
+});
+"#;
+
+fn notes(r: &brrrty_core::BuildReport) -> Vec<&Problem> {
+    r.problems
+        .iter()
+        .filter(|p| p.code == codes::RANDOM_OUTPUT)
+        .collect()
+}
+
+#[test]
+fn a_random_filter_builds_its_pages_with_a_note_each() {
+    let (t, r) = site(
+        SHUFFLE,
+        &[
+            (
+                "a.liquid",
+                "{{ '1,2,3,4,5' | split: ',' | shuffle | join: ',' }}",
+            ),
+            (
+                "b.njk",
+                "{% set s = [1, 2, 3, 4, 5] | shuffle %}{{ s | sort | join(',') }}|{{ s.length }}",
+            ),
+            ("c.liquid", "{{ nothing | shuffle | size }}"),
+            ("d.liquid", "no shuffle here"),
+        ],
+    );
+    assert!(
+        r.problems
+            .iter()
+            .all(|p| p.severity == brrrty_core::Severity::Info),
+        "{:#?}",
+        r.problems
+    );
+    let read = |rel: &str| fs::read_to_string(t.path().join("_site").join(rel)).unwrap();
+    // Every result is a permutation of the input.
+    let mut a: Vec<String> = read("a/index.html").split(',').map(String::from).collect();
+    a.sort();
+    assert_eq!(a, ["1", "2", "3", "4", "5"]);
+    assert_eq!(read("b/index.html"), "1,2,3,4,5|5");
+    assert_eq!(read("c/index.html"), "0");
+    assert_eq!(read("d/index.html"), "no shuffle here");
+    // One note per page that calls it, at the page; none for the others.
+    let mut at: Vec<&Path> = notes(&r).iter().filter_map(|p| p.path.as_deref()).collect();
+    at.sort();
+    assert_eq!(
+        at,
+        [
+            Path::new("src/a.liquid"),
+            Path::new("src/b.njk"),
+            Path::new("src/c.liquid")
+        ]
+    );
+    let n = notes(&r)[0];
+    assert_eq!(n.severity, brrrty_core::Severity::Info);
+    assert!(n.message.contains("`shuffle`"), "{}", n.message);
+    assert!(
+        n.message
+            .contains("11ty writes it differently on every build"),
+        "{}",
+        n.message
+    );
+    assert!(
+        n.help.as_deref().unwrap().contains("BRRRTY_RANDOM_SEED"),
+        "{:?}",
+        n.help
+    );
+}
+
+/// Whether the page written to `output` is random, and its path random.
+fn random_page(r: &brrrty_core::BuildReport, output: &str) -> (bool, bool) {
+    let p = r
+        .pages
+        .iter()
+        .find(|p| p.output == Path::new(output))
+        .unwrap_or_else(|| panic!("{output} not written: {:#?}", r.pages));
+    (p.random, p.random_path)
+}
+
+fn note_for<'a>(r: &'a brrrty_core::BuildReport, path: &str) -> Option<&'a Problem> {
+    notes(r)
+        .into_iter()
+        .find(|p| p.path.as_deref() == Some(Path::new(path)))
+}
+
+const PICK: &str =
+    "config.add_random_filter(\"pick\", |a| a[(random() * a.len()).floor().to_int()]);\n";
+
+#[test]
+fn a_page_that_shows_random_content_is_random_too() {
+    let (_t, r) = site(
+        &format!("{SHUFFLE}{PICK}"),
+        &[
+            (
+                "post.liquid",
+                "---\ntags: post\n---\n{{ '1,2,3' | split: ',' | shuffle | join: '' }}",
+            ),
+            ("plain.liquid", "---\ntags: post\n---\nplain"),
+            // Shows the random post's content.
+            (
+                "index.liquid",
+                "{% for p in collections.post %}[{{ p.templateContent }}]{% endfor %}",
+            ),
+            (
+                "index2.njk",
+                "{% for p in collections.post %}[{{ p.templateContent | safe }}]{% endfor %}",
+            ),
+            // Shows only data and urls, which no random filter made.
+            (
+                "urls.liquid",
+                "{% for p in collections.post %}{{ p.url }}{% endfor %}",
+            ),
+            // Shows the content of a page that shows random content.
+            (
+                "outer.liquid",
+                "---\ntags: outer\n---\n{% for p in collections.post %}[{{ p.templateContent }}]{% endfor %}",
+            ),
+            (
+                "outermost.liquid",
+                "{% for p in collections.outer %}{{ p.templateContent }}{% endfor %}",
+            ),
+        ],
+    );
+    assert!(
+        r.problems
+            .iter()
+            .all(|p| p.severity == brrrty_core::Severity::Info),
+        "{:#?}",
+        r.problems
+    );
+    assert_eq!(random_page(&r, "post/index.html"), (true, false));
+    assert_eq!(random_page(&r, "plain/index.html"), (false, false));
+    assert_eq!(random_page(&r, "urls/index.html"), (false, false));
+    for (src, out) in [
+        ("src/index.liquid", "index.html"),
+        ("src/index2.njk", "index2/index.html"),
+        ("src/outer.liquid", "outer/index.html"),
+        ("src/outermost.liquid", "outermost/index.html"),
+    ] {
+        assert_eq!(random_page(&r, out), (true, false), "{out}");
+        let n = note_for(&r, src).unwrap_or_else(|| panic!("no note for {src}"));
+        assert!(n.message.contains("shows the content of"), "{}", n.message);
+    }
+    assert!(note_for(&r, "src/urls.liquid").is_none());
+    assert!(note_for(&r, "src/plain.liquid").is_none());
+}
+
+#[test]
+fn a_random_permalink_makes_every_reader_of_collections_random() {
+    let (_t, r) = site(
+        PICK,
+        &[
+            (
+                "perma.liquid",
+                "---\npermalink: \"/p-{{ 'a,b' | split: ',' | pick }}/\"\ntags: post\n---\nperma",
+            ),
+            (
+                "urls.liquid",
+                "{% for p in collections.post %}{{ p.url }}{% endfor %}",
+            ),
+            ("alone.liquid", "no collections here"),
+            (
+                "list.njk",
+                "---\npagination:\n  data: collections.post\n  size: 1\n---\n{{ pagination.items[0].url }}",
+            ),
+        ],
+    );
+    assert!(
+        r.problems
+            .iter()
+            .all(|p| p.severity == brrrty_core::Severity::Info),
+        "{:#?}",
+        r.problems
+    );
+    let perma = r
+        .pages
+        .iter()
+        .find(|p| p.source == Path::new("src/perma.liquid"))
+        .unwrap();
+    assert!(perma.random && perma.random_path);
+    assert_eq!(random_page(&r, "urls/index.html"), (true, false));
+    // Its page comes from the collections, so its path may be random too.
+    assert_eq!(random_page(&r, "list/index.html"), (true, true));
+    assert_eq!(random_page(&r, "alone/index.html"), (false, false));
+    let n = note_for(&r, "src/urls.liquid").unwrap();
+    assert!(n.message.contains("reads `collections`"), "{}", n.message);
+    assert!(n.message.contains("src/perma.liquid"), "{}", n.message);
+    assert!(note_for(&r, "src/alone.liquid").is_none());
+}
+
+#[test]
+fn only_the_pages_that_draw_of_a_paginated_template_are_random() {
+    let (_t, r) = site(
+        SHUFFLE,
+        &[(
+            "list.liquid",
+            "---\npagination:\n  data: items\n  size: 1\nitems: [a, b]\n---\n{% if pagination.pageNumber == 0 %}{{ '1,2,3' | split: ',' | shuffle | join: '' }}{% else %}fixed{% endif %}",
+        )],
+    );
+    assert_eq!(random_page(&r, "list/index.html"), (true, false));
+    assert_eq!(random_page(&r, "list/1/index.html"), (false, false));
+    assert_eq!(notes(&r).len(), 1);
+}
+
+#[test]
+fn a_page_gets_one_note_however_many_random_filters_it_calls() {
+    let (_t, r) = site(
+        &format!("{SHUFFLE}{PICK}"),
+        &[(
+            "a.liquid",
+            "{{ '1,2' | split: ',' | shuffle | join: '' }}{{ '1,2' | split: ',' | pick }}{{ '1,2' | split: ',' | pick }}",
+        )],
+    );
+    let all = notes(&r);
+    assert_eq!(all.len(), 1, "{all:#?}");
+    assert!(
+        all[0].message.contains("`pick` and `shuffle`"),
+        "{}",
+        all[0].message
+    );
+}
+
+#[test]
+fn a_refused_page_gets_no_random_note() {
+    let (t, r) = site(
+        &format!(
+            "{SHUFFLE}fn mk(v) {{ |x| random() }}\nconfig.add_random_filter(\"mk\", Fn(\"mk\"));\n"
+        ),
+        &[
+            // The filter fails: its result can't be data.
+            ("a.liquid", "{{ 1 | mk }}"),
+            // Refused for another reason after a random filter ran.
+            (
+                "b.liquid",
+                "{{ '1,2' | split: ',' | shuffle | join: '' }}{{ 1 | nope }}",
+            ),
+        ],
+    );
+    assert!(!t.path().join("_site/a/index.html").exists());
+    assert!(!t.path().join("_site/b/index.html").exists());
+    assert!(notes(&r).is_empty(), "{:#?}", r.problems);
+}
+
+#[test]
+fn a_random_filter_draws_every_permutation() {
+    // 3 items have 6 orders; 200 draws miss one with odds below 1 in 10^15.
+    let cfg = load(SHUFFLE);
+    let tpl = (0..200)
+        .map(|_| "{{ '1,2,3' | split: ',' | shuffle | join: '' }} ")
+        .collect::<String>();
+    let out = render(&cfg, &tpl, "{}").unwrap();
+    let seen: std::collections::BTreeSet<&str> = out.split_whitespace().collect();
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        ["123", "132", "213", "231", "312", "321"]
+    );
+}
+
+#[test]
+fn random_works_only_inside_a_random_filter() {
+    // A plain filter: its page is refused, with the way out.
+    let (t, r) = site(
+        "config.add_filter(\"roll\", |v| random());\n",
+        &[("a.liquid", "{{ 1 | roll }}"), ("b.liquid", "b")],
+    );
+    assert!(t.path().join("_site/b/index.html").exists());
+    assert!(!t.path().join("_site/a/index.html").exists());
+    let p = r
+        .problems
+        .iter()
+        .find(|p| p.code == codes::LIQUID_RENDER)
+        .unwrap();
+    assert!(p.message.contains("add_random_filter"), "{}", p.message);
+    assert!(notes(&r).is_empty(), "{:#?}", r.problems);
+    // A collection.
+    let (_t, r) = site(
+        "config.add_collection(\"c\", |api| [random()]);\n",
+        &[("a.liquid", "{{ collections.c | size }}")],
+    );
+    assert!(
+        r.problems
+            .iter()
+            .any(|p| p.message.contains("add_random_filter")),
+        "{:#?}",
+        r.problems
+    );
+    // Global data, and the script's top level.
+    let p = load_err("config.add_global_data(\"r\", random());");
+    assert!(p.message.contains("add_random_filter"), "{}", p.message);
+    // A random filter's own function, registered again as a plain filter.
+    let (_t, r) = site(
+        "fn roll(v) { random() }\nconfig.add_random_filter(\"r\", Fn(\"roll\"));\nconfig.add_filter(\"p\", Fn(\"roll\"));\n",
+        &[("a.liquid", "{{ 1 | r }}"), ("b.liquid", "{{ 1 | p }}")],
+    );
+    let refused: Vec<_> = r
+        .problems
+        .iter()
+        .filter(|p| p.code == codes::LIQUID_RENDER)
+        .filter_map(|p| p.path.as_deref())
+        .collect();
+    assert_eq!(refused, [Path::new("src/b.liquid")]);
 }
 
 #[test]
@@ -1611,11 +1938,7 @@ fn locale_compare_is_icus_root_order() {
 fn random_is_refused_with_the_reason() {
     let p = load_err("random()");
     assert!(p.message.contains("Math.random"), "{}", p.message);
-    assert!(
-        p.message.contains("add_nondeterministic_filter"),
-        "{}",
-        p.message
-    );
+    assert!(p.message.contains("add_random_filter"), "{}", p.message);
 }
 
 #[test]

@@ -73,11 +73,21 @@ global::NAME", which refuses the page that used it.)
 **Other things that would make output nondeterministic are refused**, and
 only the pages that hit them:
 
-- A filter that uses randomness: declare it with
-  `config.add_nondeterministic_filter("name")`. There's no `Math.random`:
-  `random()` is an error. A random value can't give 11ty's bytes, and a
-  seeded stand-in would silently differ from 11ty, so Brrrty doesn't offer
-  one.
+- `random()` outside a filter added with `config.add_random_filter`. A
+  filter that uses `Math.random` gives a different page on every 11ty
+  build, so there's no one output to match, and any result it gives is
+  one 11ty could have written: port it with
+  `config.add_random_filter("name", fn)`, calling `random()` where it
+  calls `Math.random()`, and each page that calls it builds with a
+  `random-output` note. Anywhere else a random value would change output
+  11ty writes the same every time, so `random()` is an error there.
+  `config.add_nondeterministic_filter("name")` still declares such a
+  filter without porting it, and refuses the pages that use it.
+  A page that shows a random page's output (its content, or, when a
+  random filter gives a page's data, anything from `collections`) gets
+  the note too. `BRRRTY_RANDOM_SEED` (Brrrty's own) seeds the draws, per
+  page, so builds with one seed and one Brrrty version write the same
+  pages.
 - `toLocaleString()` and `localeCompare()` without a locale follow Node's
   default locale, which it takes from the first of `LC_ALL`, `LC_MESSAGES`
   and `LANG` that is set (`de_DE` prints `1.234,5`, `en_IN` prints
@@ -161,7 +171,7 @@ Brrrty doesn't change Rhai's operators. Where they differ, call a helper.
 | `n.toFixed(d)` | | `to_fixed(n, d)` or `n.to_fixed(d)`: V8's exactly. It rounds the double's exact value and a tie goes away from zero (`2.5` gives `"3"`; `1.005` is 1.00499999..., so `to_fixed(1.005, 2)` is `"1.00"`); `1e21` and up print as `String(n)`; `-0` gives `"0.00"`, `-0.0001` gives `"-0.00"`. Digits outside 0-100 are an error (`RangeError`). `n` must be a number, as in JS: convert a string first. Checked against Node on 608,270 cases |
 | `n.toLocaleString('en-US')` | | `to_locale_string(n)` or `to_locale_string(n, "en-US")`: ICU's default format, the shortest digits rounded half up to 3 decimals, grouped by 3 (`1,234.568`, `-0`, `∞`). Any other locale, or options, is an error. Checked against Node on 300,000 values |
 | `a.localeCompare(b)` | | `locale_compare(a, b)`: -1, 0 or 1, ICU's root order (the `en-US` one: `a` < `A` < `á` < `b`). Another locale, or options, is an error. So is a Han character, or one whose compatibility form is Han (Node sorts them by radical and stroke count, from data Brrrty doesn't have), and a character new in Unicode 18 (Node 26's ICU is Unicode 17). Checked against Node on 316,129 pairs and on every other code point, sorted alone and with three suffixes |
-| `Math.random()` | | not available. `random()` is an error that says why; for a filter that shuffles, use `config.add_nondeterministic_filter(name)` |
+| `Math.random()` | | `random()`, only inside a filter added with `config.add_random_filter(name, fn)`; anywhere else an error that says why |
 | `new URL(u).hostname` | | `url_hostname(u)`, or `()` when `u` isn't an absolute URL |
 | `d.toLocaleDateString('en-US', {year:'numeric', month:'long', day:'numeric'})` | | `to_locale_date_string(d)` |
 | `Date.now()` | | `get_time(now())` (follows `SOURCE_DATE_EPOCH`) |

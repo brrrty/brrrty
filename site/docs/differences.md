@@ -41,6 +41,10 @@ In 11ty, Prism is shared across the whole build, and loading some languages chan
 
 `SOURCE_DATE_EPOCH`, a whole number of seconds since 1970, sets the time for `now()`, Liquid's `'now'` and `'today'`, and feed dates, so two builds of the same source give the same files. Without it, the clock is read as 11ty reads it.
 
+## Random filters can be seeded
+
+A filter that uses `Math.random`, ported with `config.add_random_filter`, gives a different page on every build, in 11ty and in Brrrty, and each such page gets a `random-output` note. Pages that show a random page's output get the note too. `BRRRTY_RANDOM_SEED`, which 11ty doesn't have, makes Brrrty's draws the same on every build with the same seed and the same Brrrty version. The numbers are Brrrty's own, so a seeded page is still one 11ty could have written, not the one a given 11ty run wrote. `brrrty doctor --verify` doesn't compare a random page's file, and says how many it skipped. See [Random filters](/docs/configuration/#random-filters).
+
 ## JavaScript data runs only when you turn it on
 
 `config.set_js_data("node")` runs JavaScript data files in your own Node, so their output is 11ty's. A few things differ from 11ty there, on purpose:

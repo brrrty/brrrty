@@ -282,11 +282,16 @@ pub fn register(e: &mut Engine) {
             )
         },
     );
-    // Math.random() can't give 11ty's output: each run differs, so a page
-    // built from it could never be the same file. Refused with the reason,
-    // like timestamp().
+    // Math.random(), inside a filter declared with add_random_filter: the
+    // page differs on every 11ty build, so any value is one 11ty could have
+    // drawn. Anywhere else (the script's top level, a plain filter, a
+    // collection, data) a random value would change output that 11ty
+    // writes the same every time: refused with the reason.
     e.register_fn("random", || -> Res<FLOAT> {
-        err("random() is not available: Math.random gives a different result on every build, so a page made from it can never match 11ty's. For a filter that shuffles or picks at random, use config.add_nondeterministic_filter(name), which refuses only the pages that use it".into())
+        if crate::filters::in_random_filter() {
+            return Ok(brrrty_core::random::next_f64() as FLOAT);
+        }
+        err("random() works only inside a filter declared with config.add_random_filter(name, fn), where it stands in for Math.random. Anywhere else, a random value would change output that 11ty writes the same on every build".into())
     });
     e.register_fn("js_string", |v: Dynamic| js_string(&v));
     e.register_fn("json_stringify", |v: Dynamic| json_stringify(&v));
