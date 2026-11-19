@@ -106,6 +106,10 @@ struct ServeArgs {
     /// need them (`off`) [default: `config.set_js_data(...)`, or off]
     #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
     js_data: Option<String>,
+    /// Run the site's JavaScript once, without running it again in other orders to
+    /// check that pages don't depend on the order they are built in
+    #[arg(long)]
+    no_order_check: bool,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -131,6 +135,10 @@ struct BuildArgs {
     /// need them (`off`) [default: `config.set_js_data(...)`, or off]
     #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
     js_data: Option<String>,
+    /// Run the site's JavaScript once, without running it again in other orders to
+    /// check that pages don't depend on the order they are built in
+    #[arg(long)]
+    no_order_check: bool,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -143,6 +151,10 @@ struct BuildArgs {
 }
 
 /// `--js-data`, which clap has already checked is `node` or `off`.
+/// What a build says when it ran the site's JavaScript without the order
+/// check.
+const ORDER_CHECK_SKIPPED: &str = "The order check was skipped (--no-order-check or config.set_order_check(false)): the site's JavaScript ran once, and Brrrty did not check that its results are the same whatever order pages are built in. `brrrty doctor` runs the check.";
+
 fn js_data_flag(v: Option<&str>) -> Option<brrrty_core::JsData> {
     v.and_then(brrrty_core::JsData::parse)
 }
@@ -166,6 +178,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
         passthrough: args.passthrough,
         strict: args.strict,
         js_data: js_data_flag(args.js_data.as_deref()),
+        order_check: args.no_order_check.then_some(false),
     };
     let opts = match build_options(&root, &flags) {
         Ok(opts) => opts,
@@ -177,6 +190,9 @@ fn run_build(args: BuildArgs) -> ExitCode {
     let report = build(&opts, &MarkdownIt::new());
     let root = opts.root_dir().unwrap_or_else(|_| opts.root.clone());
     report::print_build(&report, &root, args.quiet, color);
+    if opts.js.mode == brrrty_core::JsData::Node && !opts.js.order_check {
+        brrrty::say_err!("{ORDER_CHECK_SKIPPED}");
+    }
     if report.has_errors() {
         ExitCode::from(1)
     } else {
@@ -217,6 +233,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             passthrough: args.passthrough,
             strict: args.strict,
             js_data: js_data_flag(args.js_data.as_deref()),
+            order_check: args.no_order_check.then_some(false),
         },
         quiet,
         color,
@@ -381,6 +398,8 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         passthrough: args.passthrough,
         strict: false,
         js_data: js_data_flag(args.js_data.as_deref()),
+        // Doctor always runs the check, whatever the config says.
+        order_check: Some(true),
     };
     let opts = match build_options(&root, &flags) {
         Ok(opts) => opts,

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `brrrty build --no-order-check` (and `serve`), or `config.set_order_check(false)`, builds without the order check: the site's JavaScript runs once, and Brrrty does not run it again in other orders to check that no page depends on the order pages are built in. The build says so in one line. The check stays on by default, and `brrrty doctor` always runs it.
+
 ## 0.0.27 - 2026-11-19
 
 - The Linux musl builds (the ones npm installs on Linux) use mimalloc instead of musl's own allocator, which is slow under threads. A 1,070-page site with JavaScript templates builds in 3.03 s instead of 3.26 s; the pages are the same. The glibc and macOS builds are unchanged.
