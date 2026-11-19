@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The Linux musl builds (the ones npm installs on Linux) use mimalloc instead of musl's own allocator, which is slow under threads. A 1,070-page site with JavaScript templates builds in 3.03 s instead of 3.26 s; the pages are the same. The glibc and macOS builds are unchanged.
+
 ## 0.0.26 - 2026-11-19
 
 - JavaScript data, functions in it and JavaScript templates (`--js-data=node`) build much faster, with the same pages and the same refusals. A 1,070-page site built from `.11ty.js` templates over 15 MB of data went from 31.2 s to 2.6 s (11ty 3.1.8: 2.2 s) and from 3.9 GB to 0.4 GB of memory; 2,000 Nunjucks pages calling data functions beside a 30,000-item JavaScript list went from 130 s to 1.7 s (11ty: 1.5 s); 4,000 pages from one paginated `.11ty.js` went from 62 s to 2.5 s (11ty: 4.0 s). What changed:

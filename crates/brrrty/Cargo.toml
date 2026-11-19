@@ -51,3 +51,9 @@ signal-hook = { version = "=0.4.6", default-features = false, features = ["itera
 # The Chrome test hands Chrome its DevTools pipe (already in the tree through notify).
 libc = "0.2.191"
 toml = "1.2.1"
+
+# musl's own allocator is slow under threads, and the musl builds are the
+# ones npm installs on Linux. glibc and macOS show no difference with
+# mimalloc, and keep their own allocators.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "=0.1.43", default-features = false }

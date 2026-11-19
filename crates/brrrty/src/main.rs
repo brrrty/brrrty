@@ -8,6 +8,10 @@ use brrrty_core::build;
 use brrrty_markdown::MarkdownIt;
 use clap::{Args, Parser, Subcommand};
 
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(
     name = "brrrty",
