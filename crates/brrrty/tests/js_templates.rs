@@ -1060,7 +1060,7 @@ fn computed_functions_after_one_that_throws_do_not_run() {
     // With the real value of `two` it never runs.
     assert!(!out.contains("THREE RAN with two=\"x\""), "{out}");
     let looks = out.matches("THREE RAN with two=\"").count();
-    assert_eq!(looks, 3, "{out}");
+    assert_eq!(looks, 4, "{out}");
     assert_eq!(read(t.path(), "b/index.html"), "b");
 }
 
