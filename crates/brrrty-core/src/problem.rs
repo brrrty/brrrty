@@ -99,6 +99,9 @@ pub mod codes {
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
     pub const PERMALINK_UNSUPPORTED: &str = "permalink-unsupported";
+    /// A page calls a filter the config declares random: its output differs
+    /// from build to build, as 11ty's does.
+    pub const RANDOM_OUTPUT: &str = "random-output";
     pub const SERVE_STAGING_IN_USE: &str = "serve-staging-in-use";
     pub const SERVE_STAGING_LEFT: &str = "serve-staging-left";
     pub const SOURCE_DATE_EPOCH_INVALID: &str = "source-date-epoch-invalid";

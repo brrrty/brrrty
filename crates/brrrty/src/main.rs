@@ -1,5 +1,5 @@
 use std::io::{IsTerminal, Write as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use brrrty::options::{Flags, build_options};
@@ -435,6 +435,7 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
                 eleventy_time,
                 brrrty_time: diagnosis.report.elapsed,
                 report,
+                random: random_outputs(&diagnosis.report),
             })
         }));
     }
@@ -468,6 +469,23 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// The files written for pages that call a random filter (each has a
+/// `random-output` note).
+fn random_outputs(report: &brrrty_core::BuildReport) -> std::collections::BTreeSet<PathBuf> {
+    let sources: std::collections::BTreeSet<&Path> = report
+        .problems
+        .iter()
+        .filter(|p| p.code == brrrty_core::codes::RANDOM_OUTPUT)
+        .filter_map(|p| p.path.as_deref())
+        .collect();
+    report
+        .pages
+        .iter()
+        .filter(|p| sources.contains(p.source.as_path()))
+        .map(|p| p.output.clone())
+        .collect()
 }
 
 /// Stop after a signal: remove the temporary folder, say so and exit 130 or 143.

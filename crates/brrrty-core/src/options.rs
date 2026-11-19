@@ -217,10 +217,9 @@ impl LateProblems {
     /// Note `p`, unless the same problem (message and place) is noted already.
     pub fn add(&self, p: Problem) {
         let mut v = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if !v
-            .iter()
-            .any(|q| q.message == p.message && q.line == p.line && q.column == p.column)
-        {
+        if !v.iter().any(|q| {
+            q.message == p.message && q.path == p.path && q.line == p.line && q.column == p.column
+        }) {
             v.push(p);
         }
     }

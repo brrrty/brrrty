@@ -90,7 +90,7 @@ Built your site with 11ty 3.1.8 and with Brrrty 0.0.13, then compared every file
 Your site is byte-compatible on Brrrty: 2,272 files, 0.89 s vs 2.39 s
 ```
 
-The last line is meant for pasting into an issue or a post. When files differ, the first diffs are shown, and the files only one build wrote are listed. A file that differs only in whitespace counts as different: the check is for byte-identical output.
+The last line is meant for pasting into an issue or a post. When files differ, the first diffs are shown, and the files only one build wrote are listed. A file that differs only in whitespace counts as different: the check is for byte-identical output. The exception is a page that calls a [random filter](/docs/configuration/#random-filters): 11ty writes it differently on every build, so its file is counted as random, not different, and listed under `random` in `--json`.
 
 - **Your 11ty runs your site's JavaScript:** its config, data files and plugins, with your permissions. Doctor says so before it starts. On a terminal it asks first; anywhere else it needs `--yes`. Brrrty's own build runs JavaScript only for data files, and only when you turn that on.
 - **Both builds write to the system temp folder,** which is removed afterwards. Your output folder is left alone. 11ty itself may still write caches in your project, as it does in a normal build.

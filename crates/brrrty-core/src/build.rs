@@ -33,6 +33,7 @@ use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Located, Locator, Permalink};
 use crate::plugins::rss::{FeedOptions, FeedTemplate};
 use crate::problem::{Problem, Severity, codes};
+use crate::random::PageGuard;
 use crate::render::{DataEngine, Engines, Job, Pipeline, body_line, engines_for};
 use crate::survey::{Log, Mode};
 use crate::templates::Langs;
@@ -1266,7 +1267,9 @@ fn load_page_inner(
         };
         let mut undefined = BTreeSet::new();
         let unit = UnitGuard::enter(format!("1 load {}", shown.display()));
+        let draws = PageGuard::enter(&shown, format!("place {}", shown.display()));
         let (data, permalink) = place.locate(values, &locator, &mut undefined)?;
+        drop(draws);
         drop(unit);
         place.check_undefined(&undefined)?;
         let output_rel = match permalink {
@@ -1506,6 +1509,10 @@ impl Place<'_, '_> {
             .map(|n| {
                 let _unit =
                     UnitGuard::enter(format!("2 place {} {n}", self.source.shown.display()));
+                let _draws = PageGuard::enter(
+                    &self.source.shown,
+                    format!("place {} {n}", self.source.shown.display()),
+                );
                 let data = paging.page_data(&base, n, None).map_err(on_page(n))?;
                 let locator = Locator {
                     subdir: (n > 0 && !has_permalink).then_some(n),
@@ -1536,6 +1543,10 @@ impl Place<'_, '_> {
             .enumerate()
             .map(|(n, (found, _))| {
                 let _unit = UnitGuard::enter(format!("3 page {} {n}", self.source.shown.display()));
+                let _draws = PageGuard::enter(
+                    &self.source.shown,
+                    format!("page {} {n}", self.source.shown.display()),
+                );
                 let data = paging
                     .page_data(&base, n, Some(&links))
                     .map_err(on_page(n))?;
@@ -3221,6 +3232,7 @@ fn build_once(
         .map(|i| -> Ready<'_> {
             let p = &prepared[i];
             let _unit = UnitGuard::enter(format!("6 layout {}", p.label()));
+            let _draws = PageGuard::enter(&p.source.shown, format!("layout {}", p.label()));
             if let Some(problem) = unsupported_layout(p) {
                 // A survey also records what the page's content would have been refused for.
                 if let Some(log) = log {

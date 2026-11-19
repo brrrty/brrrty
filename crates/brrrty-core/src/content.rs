@@ -160,12 +160,17 @@ impl Run<'_, '_> {
     fn render<'s>(&'s self, i: usize, scope: &rayon::Scope<'s>) {
         let unit =
             brrrty_js::functions::UnitGuard::enter(format!("5 content {}", self.pages[i].label()));
+        let draws = crate::random::PageGuard::enter(
+            self.pages[i].job.shown,
+            format!("content {}", self.pages[i].label()),
+        );
         let guard = traps::install(self.live.clone());
         let recording = Recording::start();
         let result = self.pipeline.content(&self.pages[i].job);
         let highlight = recording.finish();
         let reads = traps::take_item_reads();
         drop(guard);
+        drop(draws);
         drop(unit);
 
         let mut ready = Vec::new();

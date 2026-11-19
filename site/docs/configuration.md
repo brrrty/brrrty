@@ -41,7 +41,8 @@ Nothing runs until the whole script has. An error in the script stops the build 
 | `config.ignores.delete(glob)` | `ignores.delete`. Removes a glob added earlier. |
 | `config.add_global_data(name, value)` | `addGlobalData`. Adds global data. Two objects under one name merge deeply, as in 11ty. A function is called once, when the config loads. |
 | `config.add_filter(name, fn)` | `addFilter`. Adds a filter to Liquid and Nunjucks. |
-| `config.add_nondeterministic_filter(name)` | Stands in for a filter that uses `Math.random` in your JavaScript config. Its output can never match 11ty's, so pages that use it are refused. |
+| `config.add_random_filter(name, fn)` | `addFilter`, for a filter that uses `Math.random`. Inside it, `random()` stands in for `Math.random()`. Pages that use it build, each with a note that its output differs from build to build, as it does in 11ty. See [Random filters](#random-filters). |
+| `config.add_nondeterministic_filter(name)` | Stands in for a filter that uses `Math.random` in your JavaScript config, without porting it: pages that use it are refused. `add_random_filter` ports it instead. |
 | `config.add_collection(name, fn)` | `addCollection`. Adds a collection. |
 | `config.add_layout_alias(name, file)` | `addLayoutAlias`. `layout: name` uses `file`, relative to the layouts folder. |
 | `config.add_plugin(name, options)` | `addPlugin`, for the plugins Brrrty has its own version of: `rss` and `syntaxhighlight`. `options` is optional. |
@@ -232,7 +233,7 @@ Values cross into the script as 11ty would give them to a JavaScript filter, and
 | `n.toFixed(digits)` | | `to_fixed(n, digits)`, V8's rounding exactly |
 | `n.toLocaleString("en-US")` | | `to_locale_string(n)` |
 | `a.localeCompare(b)` | | `locale_compare(a, b)` |
-| `Math.random()` | | not available: see below |
+| `Math.random()` | | `random()`, only inside a filter added with `add_random_filter`: see [Random filters](#random-filters) |
 | `new Date(ms)` | | `date(ms)` |
 | `new Date(y, m, d, h, mi, s, ms)` | | `date(y, m, d, h, mi, s, ms)`, from two to seven parts, in the local time zone |
 | `d.getFullYear()`, `d.getMonth()`, `d.getDate()`, `d.getDay()`, `d.getHours()`, ... | | `d.get_full_year()`, `d.get_month()`, `d.get_date()`, `d.get_day()`, `d.get_hours()`, ... (local time) |
@@ -254,7 +255,43 @@ Sorting runs V8's own TimSort, so even a comparator that isn't a consistent orde
 
 `markdown(s, options)` takes markdown-it's `html`, `linkify` and `typographer` options and linkify-it's `fuzzyLink` (as `fuzzy_link`), each `true` or `false`; any other option is an error. It is markdown-it 15 with linkify-it 6, so links without `http://` (`example.com`) need `fuzzy_link: true`, as in JavaScript. A markdown-it plugin or rule can't be added yet.
 
-`Math.random()` has no stand-in: a page built from a random number differs on every build, so it can never be the same file as 11ty's. Calling `random()` is an error that says so. If your JavaScript config has a filter that shuffles or picks at random, declare it with `config.add_nondeterministic_filter(name)`: pages that use it aren't written, and the rest of the site builds.
+### Random filters
+
+A filter that calls `Math.random` makes 11ty write a different page on every build, so there is no single 11ty output to match: any result the filter can give is one 11ty could have written. Port it with `config.add_random_filter(name, fn)`, and call `random()` where it calls `Math.random()`. `random()` gives a number from 0 up to but not including 1, as `Math.random()` does. This shuffle:
+
+```js
+eleventyConfig.addFilter("shuffle", (arr) => {
+  const a = (arr || []).slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+});
+```
+
+ports as:
+
+```rhai
+config.add_random_filter("shuffle", |arr| {
+    let a = if truthy(arr) { arr } else { [] };   // a copy, as .slice() makes
+    let i = a.len() - 1;
+    while i > 0 {
+        let j = (random() * (i + 1)).floor().to_int();
+        let t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+        i -= 1;
+    }
+    a
+});
+```
+
+Each page that calls a random filter builds, with a `random-output` note saying its output differs from build to build, as it does in 11ty. The note stops nothing, and `brrrty doctor` lists it with the other notes. A random filter called from a JavaScript template or a permalink or computed function on `this` works too: the replay check of JavaScript data is handed the answers the filter gave the first time.
+
+`random()` works only inside a filter added with `add_random_filter`. Anywhere else (the script's top level, global data, a collection, a filter added with `add_filter`) it is an error, since a random value there would change output that 11ty writes the same on every build.
+
+`BRRRTY_RANDOM_SEED` is Brrrty's own; 11ty has no seed. Set it to any text, and every Brrrty build with the same seed and the same source writes the same pages, which helps when comparing two builds or reviewing a change. Each page draws its own numbers, so the result doesn't depend on which pages render at the same time. Without it, every build draws new ones.
 
 Local dates (`date(y, m, d)`, the `get_*` methods, and dates printed in templates) use the time zone in the `TZ` environment variable, or the computer's, as Node does, with the time zone data Node 26 ships (release 2026b) built into Brrrty, so the computer's own, older or newer, data doesn't change your pages. Build with the same zone as your 11ty builds, or set `TZ`. A `TZ` that isn't a zone name (a typo, or a rule like `EST5EDT,M3.2.0,M11.1.0`) stops the build, where Node would quietly use UTC. A site built with another Node version can differ in a zone whose rules changed in between.
 

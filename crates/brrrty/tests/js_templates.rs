@@ -545,6 +545,56 @@ fn filters_on_this_are_brrrtys_own() {
     assert_eq!(read(t.path(), "f/index.html"), "a-b /x/ HI!");
 }
 
+/// A random filter called from a JavaScript template's `render` and its
+/// permalink function runs, notes its pages, and passes the replay check:
+/// the replays get the first run's answers.
+#[test]
+fn a_random_filter_on_this_runs_and_is_replayed() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_data(\"node\");\nconfig.add_random_filter(\"pick\", |a| a[(random() * a.len()).floor().to_int()]);\n",
+        ),
+        (
+            "src/r.11ty.js",
+            "module.exports = function () { return [1, 2, 3, 4, 5, 6].map(() => this.pick(['x', 'y', 'z'])).join(''); };\n",
+        ),
+        (
+            "src/p.11ty.js",
+            "module.exports = { data: { permalink() { return `/p-${this.pick(['a', 'b'])}/`; } }, render() { return 'p'; } };\n",
+        ),
+    ]);
+    let run = |seed: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_brrrty"))
+            .current_dir(t.path())
+            .args(["build", "--input", "src"])
+            .env_remove("BRRRTY_NODE")
+            .env_remove("SOURCE_DATE_EPOCH")
+            .env("BRRRTY_RANDOM_SEED", seed)
+            .output()
+            .expect("run brrrty");
+        assert!(o.status.success(), "{}", text(&o));
+        let out = text(&o);
+        assert!(out.contains("0 errors, 0 warnings, 2 notes"), "{out}");
+        assert!(out.contains("src/r.11ty.js"), "{out}");
+        assert!(out.contains("src/p.11ty.js"), "{out}");
+        let r = read(t.path(), "r/index.html");
+        assert!(r.len() == 6 && r.chars().all(|c| "xyz".contains(c)), "{r}");
+        let p = if t.path().join("_site/p-a/index.html").exists() {
+            "a"
+        } else {
+            "b"
+        };
+        assert_eq!(read(t.path(), &format!("p-{p}/index.html")), "p");
+        let _ = fs::remove_dir_all(t.path().join("_site"));
+        format!("{r}|{p}")
+    };
+    assert_eq!(run("1"), run("1"));
+}
+
 /// When the collections can't be built, a JavaScript template or layout
 /// that reads them is refused with why, never handed `undefined`.
 #[test]

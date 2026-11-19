@@ -28,6 +28,7 @@ pub mod passthrough;
 pub mod permalink;
 pub mod plugins;
 pub mod problem;
+pub mod random;
 mod render;
 mod scan;
 pub mod serve_lock;

@@ -1638,3 +1638,44 @@ fn collections_with_local_javascript_data_and_no_node_wait_on_node() {
     assert!(!text.contains("Turn JavaScript data on"), "{text}");
     assert!(text.contains("couldn't run"), "{text}");
 }
+
+#[test]
+fn a_page_with_a_random_filter_builds_with_a_note() {
+    let dir = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.add_random_filter(\"pick\", |a| a[(random() * a.len()).floor().to_int()]);\n",
+        ),
+        ("index.njk", "{{ [1, 2, 3] | pick }}"),
+        ("about.njk", "about"),
+    ]);
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}{}", stderr(&out));
+    assert!(
+        text.contains("Warnings and notes (these stop nothing):"),
+        "{text}"
+    );
+    assert!(
+        text.contains("note: index.njk: this page calls `pick`, a random filter, so its output differs from build to build, as it does in 11ty"),
+        "{text}"
+    );
+    assert!(text.ends_with("All 2 pages will build.\n"), "{text}");
+    let json: Value =
+        serde_json::from_str(&stdout(&run(dir.path(), &["doctor", "--json"]))).unwrap();
+    assert_eq!(json["builds"], true);
+    assert_eq!(json["notes"][0]["code"], "random-output");
+    assert_eq!(json["notes"][0]["severity"], "note");
+    // The old declaration still refuses the page, and names the new one.
+    let dir = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.add_nondeterministic_filter(\"pick\");\n",
+        ),
+        ("index.njk", "{{ [1, 2, 3] | pick }}"),
+    ]);
+    let out = run(dir.path(), &["doctor"]);
+    let text = stdout(&out);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("add_random_filter"), "{text}");
+}

@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use brrrty_compat::{CompareReport, Outcome};
+use std::collections::BTreeSet;
+
+use brrrty_compat::{CompareReport, FileResult, Outcome};
 use brrrty_core::doctor::thousands;
 use serde_json::{Value, json};
 
@@ -126,6 +128,10 @@ pub struct Verified {
     pub eleventy_time: Duration,
     pub brrrty_time: Duration,
     pub report: CompareReport,
+    /// Output files of pages that call a random filter, relative to the
+    /// output folder: 11ty writes them differently on every build, so they
+    /// can't be compared.
+    pub random: BTreeSet<PathBuf>,
 }
 
 impl Verified {
@@ -134,16 +140,44 @@ impl Verified {
         self.report.results.len()
     }
 
-    /// Every file is byte-identical.
-    pub fn passes(&self) -> bool {
-        let c = self.report.counts();
-        c.identical == self.files()
+    /// A random page's file that both builds wrote, differently.
+    fn varies(&self, r: &FileResult) -> bool {
+        matches!(r.outcome, Outcome::Different { .. } | Outcome::Equivalent)
+            && self.random.contains(&r.path)
     }
 
-    /// Different, including files that differ only in whitespace.
+    /// Random pages' files that differ.
+    fn varying(&self) -> usize {
+        self.report
+            .results
+            .iter()
+            .filter(|r| self.varies(r))
+            .count()
+    }
+
+    /// Every file is byte-identical, or a random page's.
+    pub fn passes(&self) -> bool {
+        let c = self.report.counts();
+        c.identical + self.varying() == self.files()
+    }
+
+    /// Different, including files that differ only in whitespace, and not
+    /// random pages'.
     fn different(&self) -> usize {
         let c = self.report.counts();
-        c.different + c.equivalent
+        c.different + c.equivalent - self.varying()
+    }
+
+    /// What the verdict adds for random pages' files.
+    fn random_note(&self) -> String {
+        match self.varying() {
+            0 => String::new(),
+            1 => " (1 is a random page, which 11ty writes differently on every build)".to_string(),
+            n => format!(
+                " ({} are random pages, which 11ty writes differently on every build)",
+                thousands(n)
+            ),
+        }
     }
 
     /// The one line to paste into an issue or a post.
@@ -151,8 +185,9 @@ impl Verified {
         let c = self.report.counts();
         if self.passes() {
             format!(
-                "Your site is byte-compatible on Brrrty: {} files, {} vs {}",
+                "Your site is byte-compatible on Brrrty: {} files{}, {} vs {}",
                 thousands(self.files()),
+                self.random_note(),
                 seconds(self.brrrty_time),
                 seconds(self.eleventy_time)
             )
@@ -188,9 +223,17 @@ pub fn text(v: &Verified) -> String {
     } else {
         String::new()
     };
+    let random = match v.varying() {
+        0 => String::new(),
+        n => format!(
+            ", {} random (11ty writes {} differently on every build)",
+            thousands(n),
+            if n == 1 { "it" } else { "them" }
+        ),
+    };
     let _ = writeln!(
         out,
-        "  {} files: {} byte-identical, {} different{whitespace}, {} missing, {} extra",
+        "  {} files: {} byte-identical{random}, {} different{whitespace}, {} missing, {} extra",
         thousands(v.files()),
         thousands(c.identical),
         thousands(v.different()),
@@ -208,6 +251,9 @@ pub fn text(v: &Verified) -> String {
     let mut missing = Vec::new();
     let mut extra = Vec::new();
     for r in &v.report.results {
+        if v.varies(r) {
+            continue;
+        }
         match &r.outcome {
             Outcome::Different { diff } => {
                 diffs += 1;
@@ -267,6 +313,9 @@ pub fn json(v: &Verified) -> Value {
         .results
         .iter()
         .filter_map(|r| {
+            if v.varies(r) {
+                return None;
+            }
             let (outcome, diff) = match &r.outcome {
                 Outcome::Identical => return None,
                 Outcome::Equivalent => ("whitespace", None),
@@ -282,6 +331,7 @@ pub fn json(v: &Verified) -> Value {
         "files": v.files(),
         "identical": c.identical,
         "different": v.different(),
+        "random": v.report.results.iter().filter(|r| v.varies(r)).map(|r| &r.path).collect::<Vec<_>>(),
         "missing": c.missing,
         "extra": c.extra,
         "eleventy_seconds": v.eleventy_time.as_secs_f64(),
@@ -312,6 +362,7 @@ mod tests {
                     })
                     .collect(),
             },
+            random: BTreeSet::new(),
         }
     }
 
@@ -338,5 +389,30 @@ mod tests {
             "Not byte-compatible yet: 1 different, 1 missing, 0 extra, of 3 files"
         );
         assert!(text(&v).contains("1 different (1 only in whitespace)"));
+    }
+
+    #[test]
+    fn a_random_page_that_differs_still_passes() {
+        let mut v = verified(vec![
+            Outcome::Identical,
+            Outcome::Different {
+                diff: "-a\n+b".into(),
+            },
+        ]);
+        assert!(!v.passes());
+        v.random.insert("f1.html".into());
+        assert!(v.passes());
+        assert_eq!(
+            v.verdict(),
+            "Your site is byte-compatible on Brrrty: 2 files (1 is a random page, which 11ty writes differently on every build), 0.85 s vs 2.32 s"
+        );
+        let t = text(&v);
+        assert!(t.contains("1 byte-identical, 1 random"), "{t}");
+        assert!(!t.contains("Different: f1.html"), "{t}");
+        assert_eq!(json(&v)["random"], serde_json::json!(["f1.html"]));
+        // A file random pages didn't write still counts.
+        v.random.clear();
+        v.random.insert("f9.html".into());
+        assert!(!v.passes());
     }
 }
