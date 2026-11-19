@@ -1780,6 +1780,31 @@ fn a_site_that_throws_a_lot_is_walked_instead_of_watched() {
     );
     assert_eq!(written(&t, "p7/index.html").as_deref(), Some("7:60"));
 
+    // One error in every call is the same site, seen sooner.
+    let mut each = vec![
+        ("brrrty.config.rhai".to_string(), ON.to_string()),
+        (
+            "src/_data/f.js".to_string(),
+            "'use strict';\nmodule.exports = { tryParse(x) { try { JSON.parse('{'); } catch (e) { return x + ':caught'; } } };".to_string(),
+        ),
+    ];
+    for i in 0..130 {
+        each.push((
+            format!("src/q{i}.njk"),
+            format!("{{{{ f.tryParse({i}) }}}}"),
+        ));
+    }
+    let each: Vec<(&str, &str)> = each.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let t = site(&each);
+    let o = build(t.path(), &[], &[TRACE]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert!(
+        out.contains("throws an error in each of 100 requests in a row"),
+        "{out}"
+    );
+    assert_eq!(written(&t, "q7/index.html").as_deref(), Some("7:caught"));
+
     // A few errors are watched, and the build stays frozen.
     let t = site(&files[..4]);
     let o = build(t.path(), &[], &[TRACE]);

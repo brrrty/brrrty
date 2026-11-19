@@ -19,6 +19,10 @@ import { types as utilTypes } from "node:util";
 // module wraps these functions for the site's code (see "Freezing" there).
 const ownDescriptor = Object.getOwnPropertyDescriptor;
 const ownDescriptors = Object.getOwnPropertyDescriptors;
+// The worker's own code keeps the `Error` it started with: the site's
+// code may put something else in the global one's place, or delete it.
+// eslint-disable-next-line no-shadow-restricted-names, no-redeclare
+const Error = globalThis.Error;
 const reflectOwnDescriptor = Reflect.getOwnPropertyDescriptor;
 const objectIsFrozen = Object.isFrozen;
 const objectFreeze = Object.freeze;
