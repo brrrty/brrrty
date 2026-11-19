@@ -165,6 +165,77 @@ pub struct LoadedTemplate {
     pub data: Decoded,
 }
 
+/// An operation the pages make while they build, for [`JsRuntime::begin`].
+#[derive(Debug, Clone, Copy)]
+pub enum Op<'a> {
+    /// [`JsRuntime::call`].
+    Call {
+        f: FnHandle,
+        this: This<'a>,
+        args: &'a [Value],
+        settle: Settle,
+    },
+    /// [`JsRuntime::page_once`].
+    PageOnce {
+        data: &'a Value,
+        traps: &'a [(String, String)],
+        defaults: &'a [String],
+        f: FnHandle,
+    },
+    /// [`JsRuntime::page_open_with_vars`]: the results are the open's and
+    /// each function's list, or the one that failed.
+    PageOpenWithVars {
+        data: &'a Value,
+        traps: &'a [(String, String)],
+        defaults: &'a [String],
+        functions: &'a [FnHandle],
+        keys: &'a [String],
+    },
+    /// [`JsRuntime::page_run`].
+    PageRun {
+        page: PageId,
+        steps: &'a [PageStep<'a>],
+    },
+    /// [`JsRuntime::render`].
+    Render {
+        template: TemplateId,
+        data: &'a Value,
+        first: Option<&'a Value>,
+        traps: &'a [(String, String)],
+    },
+}
+
+/// An operation begun (see [`JsRuntime::begin`]).
+pub enum Begun {
+    /// It is over already.
+    Done(Finished),
+    /// It was sent: wait for it without holding the runtime, then hand
+    /// what came to [`JsRuntime::finish`].
+    Sent(Box<dyn Pending>),
+}
+
+/// An operation on its way.
+pub trait Pending: Send {
+    /// Wait for it, answering the runtime's questions (a filter a
+    /// JavaScript template calls on `this`) with `filters`.
+    fn wait(self: Box<Self>, filters: &mut FilterCall<'_>) -> Waited;
+}
+
+/// What came of a [`Pending`] operation, for the runtime that sent it.
+pub struct Waited(pub Box<dyn std::any::Any + Send>);
+
+/// How an operation ended.
+pub enum Finished {
+    /// Its results, and the page it opened.
+    Results {
+        results: Vec<JsResult<Decoded>>,
+        page: Option<PageId>,
+    },
+    /// The runtime lost the values it referred to before it ran (another
+    /// page's call changed one): begin it again.
+    Again,
+}
+
 /// One step of a page's computed data, for [`JsRuntime::page_run`].
 #[derive(Debug, Clone, Copy)]
 pub enum PageStep<'a> {
@@ -219,6 +290,90 @@ pub trait JsRuntime: Send {
     fn page_set(&mut self, page: PageId, key: &str, value: &Value) -> JsResult<()>;
     /// Forget the page's data.
     fn page_close(&mut self, page: PageId);
+    /// Begin an operation. A runtime that can run several at once sends it
+    /// and gives back [`Begun::Sent`]: the render threads then wait for
+    /// their results at the same time, and the runtime never waits on
+    /// Brrrty between one request and the next. Any other runs it here.
+    fn begin(&mut self, op: Op<'_>, filters: &mut FilterCall<'_>) -> Begun {
+        let results = match op {
+            Op::Call {
+                f,
+                this,
+                args,
+                settle,
+            } => vec![self.call(f, this, args, settle)],
+            Op::PageOnce {
+                data,
+                traps,
+                defaults,
+                f,
+            } => vec![self.page_once(data, traps, defaults, f)],
+            Op::PageOpenWithVars {
+                data,
+                traps,
+                defaults,
+                functions,
+                keys,
+            } => {
+                return Begun::Done(
+                    match self.page_open_with_vars(data, traps, defaults, functions, keys) {
+                        JsResult::Ok((page, found)) => Finished::Results {
+                            results: std::iter::once(Value::Null)
+                                .chain(found.into_iter().map(|list| {
+                                    Value::Array(std::sync::Arc::new(
+                                        list.into_iter().map(|s| Value::String(s.into())).collect(),
+                                    ))
+                                }))
+                                .map(|value| {
+                                    JsResult::Ok(Decoded {
+                                        value,
+                                        functions: Vec::new(),
+                                        refused: Vec::new(),
+                                    })
+                                })
+                                .collect(),
+                            page: Some(page),
+                        },
+                        JsResult::Thrown(e) => Finished::Results {
+                            results: vec![JsResult::Thrown(e)],
+                            page: None,
+                        },
+                        JsResult::Refused(r) => Finished::Results {
+                            results: vec![JsResult::Refused(r)],
+                            page: None,
+                        },
+                        JsResult::Failed(f) => Finished::Results {
+                            results: vec![JsResult::Failed(f)],
+                            page: None,
+                        },
+                    },
+                );
+            }
+            Op::PageRun { page, steps } => self.page_run(page, steps),
+            Op::Render {
+                template,
+                data,
+                first,
+                traps,
+            } => vec![self.render(template, data, first, traps, filters)],
+        };
+        Begun::Done(Finished::Results {
+            results,
+            page: None,
+        })
+    }
+    /// What came of an operation [`JsRuntime::begin`] sent.
+    fn finish(&mut self, _waited: Waited) -> Finished {
+        Finished::Results {
+            results: vec![JsResult::Failed(RuntimeFailure {
+                message: "this runtime sends nothing ahead".into(),
+                stderr_tail: Vec::new(),
+                stopped: false,
+                again: false,
+            })],
+            page: None,
+        }
+    }
     /// [`JsRuntime::page_open`], one [`JsRuntime::page_call`] of `f` with
     /// nothing set, and [`JsRuntime::page_close`]: a permalink function
     /// called for a page with no computed data open.

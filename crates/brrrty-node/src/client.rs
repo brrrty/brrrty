@@ -13,8 +13,9 @@ use std::time::{Duration, Instant};
 
 use brrrty_js::Value;
 use brrrty_js::runtime::{
-    Decoded, FilterCall, Filters, FnHandle, JsError, JsResult, JsRuntime, LoadedTemplate, PageId,
-    PageStep, PathPart, Refusal, RuntimeFailure, Settle, TemplateId, This,
+    Begun, Decoded, FilterCall, Filters, Finished, FnHandle, JsError, JsResult, JsRuntime,
+    LoadedTemplate, Op, PageId, PageStep, PathPart, Pending, Refusal, RuntimeFailure, Settle,
+    TemplateId, This, Waited,
 };
 use serde_json::{Value as Json, json};
 
@@ -44,6 +45,18 @@ const STDERR_TAIL: usize = 20;
 /// How long a stopped worker's stderr may take to reach its end: past this,
 /// a process Node started still holds it, and Brrrty stops reading.
 const STDERR_GRACE: Duration = Duration::from_millis(200);
+
+/// How often a request is sent again when the worker lost the values it
+/// refers to before giving up.
+const AGAIN: usize = 16;
+
+/// Whether a request is one the replay check runs again.
+fn logged(op: &str) -> bool {
+    !matches!(
+        op,
+        "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
+    )
+}
 
 /// How many bytes of requests may be written behind one Node hasn't
 /// answered: less than any pipe holds.
@@ -168,14 +181,266 @@ pub(crate) struct Record {
     pub unchecked: bool,
 }
 
+/// Where notes about a slow request go.
+type Notes = Box<dyn Fn(&str) + Send>;
+
+/// The requests of one operation, how its results are shaped, the page it
+/// opens, and what to call it in a note.
+type Planned = (Vec<Request<'static>>, Shape, Option<PageId>, &'static str);
+
+/// What a worker's threads share: Node itself, and where its frames go.
+pub(crate) struct Mux {
+    child: Mutex<Child>,
+    stdin: Mutex<Option<ChildStdin>>,
+    /// Where Brrrty answers the worker's questions (a filter a JavaScript
+    /// template calls on `this`).
+    answers: Mutex<Option<Box<dyn Write + Send>>>,
+    /// The requests whose replies a [`Ticket`] waits for, by id: where
+    /// their frames go. Any other frame goes to the worker itself.
+    routes: Mutex<HashMap<u64, mpsc::Sender<Reply>>>,
+    /// Where slow-request notes go; stderr unless a test replaces it.
+    notes: Mutex<Notes>,
+    /// When the first note comes, and then how often.
+    note_times: Mutex<(Duration, Duration)>,
+}
+
+fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+impl Mux {
+    /// The next frame on `rx`: a reply, or a question of Node's own. `Err`
+    /// is why none will come.
+    fn next(
+        &self,
+        rx: &Receiver<Reply>,
+        what: &str,
+        wait: &mut Wait,
+        deadline: Option<Duration>,
+    ) -> Result<Frame, String> {
+        // Most replies come within microseconds: look for one a few times
+        // before sleeping, which costs more than the wait.
+        let spun = Instant::now();
+        loop {
+            match rx.try_recv() {
+                Ok(r) => return r,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) if spun.elapsed() < SPIN => std::hint::spin_loop(),
+                Err(mpsc::TryRecvError::Empty) => break,
+            }
+        }
+        loop {
+            match rx.recv_timeout(POLL) {
+                Ok(r) => return r,
+                Err(RecvTimeoutError::Timeout) => {
+                    let now = Instant::now();
+                    if let Some(d) = deadline
+                        && now.duration_since(wait.start) > d
+                    {
+                        return Err(format!(
+                            "{what} took more than {} s, longer than the first run allows",
+                            d.as_secs()
+                        ));
+                    }
+                    if now >= wait.next_note {
+                        (locked(&self.notes))(&format!(
+                            "note: still waiting on {what}, {} s",
+                            wait.start.elapsed().as_secs()
+                        ));
+                        wait.next_note = now + locked(&self.note_times).1;
+                    }
+                    match wait.exited_at {
+                        Some(t) if now.duration_since(t) >= POLL => {
+                            return Err("Node exited without replying".to_string());
+                        }
+                        Some(_) => {}
+                        None => {
+                            if matches!(locked(&self.child).try_wait(), Ok(Some(_))) {
+                                wait.exited_at = Some(now);
+                            }
+                        }
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err("Node closed its output".to_string());
+                }
+            }
+        }
+    }
+
+    /// Start waiting for a frame.
+    fn wait(&self) -> Wait {
+        let start = Instant::now();
+        Wait {
+            start,
+            next_note: start + locked(&self.note_times).0,
+            exited_at: None,
+        }
+    }
+
+    /// Run the filter a question names, and send Node the answer. The
+    /// answer as sent, or why it couldn't be.
+    fn answer(&self, frame: &Frame, filters: &mut FilterCall<'_>) -> Result<Box<str>, String> {
+        let name = frame
+            .head
+            .get("filter")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_string();
+        let args = match &frame.ok {
+            Some(Ok(d)) if d.is_exact() => match &d.value {
+                Value::Array(a) => Ok(a.to_vec()),
+                _ => Err("passes its filter something Brrrty can't read".to_string()),
+            },
+            Some(Ok(_)) => Err(format!(
+                "passes `this.{name}` a function or a value that can't cross from JavaScript to Brrrty exactly"
+            )),
+            _ => Err("passes its filter something Brrrty can't read".to_string()),
+        };
+        let reply: Box<str> = match args.and_then(|a| filters(&name, &a)) {
+            Ok(v) => json!({"ok": encode(&v)}),
+            Err(why) => json!({"refused": why}),
+        }
+        .to_string()
+        .into();
+        self.send_answer(&reply)?;
+        Ok(reply)
+    }
+
+    fn send_answer(&self, reply: &str) -> Result<(), String> {
+        match locked(&self.answers).as_mut() {
+            Some(w) => w
+                .write_all(reply.as_bytes())
+                .and_then(|_| w.write_all(b"\n"))
+                .and_then(|_| w.flush())
+                .map_err(|e| format!("cannot answer Node: {e}")),
+            None => Err("Node asked a question it can't be answered on".to_string()),
+        }
+    }
+}
+
+/// How the results of requests sent together are handed back.
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+    /// As they are: the list ends with the first that isn't a value.
+    List,
+    /// A page opened, one function called, the page closed: the call's
+    /// result.
+    Once,
+    /// A page opened, then what each function reads: all of them, or the
+    /// first that failed (the page is then closed).
+    OpenWithVars,
+}
+
+/// One request on its way.
+struct Sent {
+    id: u64,
+    op: &'static str,
+    handle: Option<u32>,
+    text: String,
+    path: Option<String>,
+    one_way: bool,
+    /// From [`Added`]: the request holds a function a call made, and the
+    /// dynamic definitions it needs.
+    made: bool,
+    dynamic: Vec<u32>,
+}
+
+/// Requests sent together, their replies still to come. Waiting for them
+/// needs no hold on the worker, so other requests go out meanwhile and
+/// Node runs them back to back.
+pub(crate) struct Ticket {
+    mux: Arc<Mux>,
+    rx: Receiver<Reply>,
+    sent: Vec<Sent>,
+    what: String,
+    shape: Shape,
+    page: Option<PageId>,
+    deadline: Option<Duration>,
+}
+
+/// The replies to a [`Ticket`]'s requests, for [`Worker::settle`].
+pub(crate) struct Done {
+    sent: Vec<Sent>,
+    /// One per request that has a reply, in order; shorter when Node
+    /// stopped.
+    frames: Vec<Frame>,
+    /// The questions each request asked, with the answers it got.
+    asked: Vec<Vec<(Box<str>, Box<str>)>>,
+    failure: Option<String>,
+    what: String,
+    shape: Shape,
+    page: Option<PageId>,
+    waited: Duration,
+}
+
+impl Ticket {
+    /// Wait for the replies, answering Node's questions with `filters`.
+    fn collect(self, filters: &mut FilterCall<'_>) -> Done {
+        let started = Instant::now();
+        let mut frames = Vec::with_capacity(self.sent.len());
+        let mut asked = Vec::with_capacity(self.sent.len());
+        let mut failure = None;
+        'all: for sent in self.sent.iter().filter(|s| !s.one_way) {
+            let mut wait = self.mux.wait();
+            let mut questions = Vec::new();
+            loop {
+                match self
+                    .mux
+                    .next(&self.rx, &self.what, &mut wait, self.deadline)
+                {
+                    Ok(f) if f.question => match self.mux.answer(&f, filters) {
+                        Ok(reply) => questions.push((f.body.clone(), reply)),
+                        Err(why) => {
+                            failure = Some(why);
+                            break 'all;
+                        }
+                    },
+                    Ok(f) if f.id != sent.id => {
+                        failure = Some(format!("a reply out of order: {}", f.head));
+                        break 'all;
+                    }
+                    Ok(f) => {
+                        frames.push(f);
+                        asked.push(questions);
+                        break;
+                    }
+                    Err(why) => {
+                        failure = Some(why);
+                        break 'all;
+                    }
+                }
+            }
+        }
+        let mut routes = locked(&self.mux.routes);
+        for sent in &self.sent {
+            routes.remove(&sent.id);
+        }
+        drop(routes);
+        Done {
+            sent: self.sent,
+            frames,
+            asked,
+            failure,
+            what: self.what,
+            shape: self.shape,
+            page: self.page,
+            waited: started.elapsed(),
+        }
+    }
+}
+
+impl Pending for Ticket {
+    fn wait(self: Box<Self>, filters: &mut FilterCall<'_>) -> Waited {
+        Waited(Box::new(self.collect(filters)))
+    }
+}
+
 /// A running worker. Dropping it closes Node's stdin, waits up to 2 s for
 /// it to exit, then kills it.
 pub struct Worker {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    /// Where Brrrty answers the worker's questions (a filter a JavaScript
-    /// template calls on `this`).
-    answers: Option<Box<dyn Write + Send>>,
+    mux: Arc<Mux>,
+    pid: u32,
     /// The replay check's answers, as the first run gave them, in order.
     pub(crate) answers_feed: Option<VecDeque<(Box<str>, Box<str>)>>,
     /// The questions the request in flight asked, with their answers.
@@ -194,6 +459,10 @@ pub struct Worker {
     last_loaded: HashMap<(bool, PathBuf), Decoded>,
     /// The value a `same` reply to the request in flight stands for.
     earlier: Option<Decoded>,
+    /// The loads whose value is the same every time, and whether the last
+    /// load's reply said so.
+    fixed: std::collections::HashSet<(bool, PathBuf)>,
+    last_fixed: bool,
     /// The lists and objects the workers keep (see [`crate::wire`]).
     table: Table,
     /// What the worker was started with, for the replay check.
@@ -226,16 +495,13 @@ pub struct Worker {
     pub(crate) deadline: Option<Duration>,
     /// The template id of the last `templateLoad` reply.
     last_template: Option<u64>,
+    next_ticket: u64,
     /// What the requests cost, for `BRRRTY_JS_TRACE`.
     stats: Stats,
     /// The worker froze the data files' values when the calls began.
     frozen: bool,
     /// Why it walks them instead, when it does.
     walks: Option<String>,
-    /// Where slow-request notes go; stderr unless a test replaces it.
-    notes: Box<dyn Fn(&str) + Send>,
-    /// When the first note comes, and then how often.
-    note_times: (Duration, Duration),
 }
 
 /// What a worker's requests cost so far.
@@ -322,18 +588,30 @@ impl Worker {
         let cannot =
             |e: std::io::Error| WorkerError(format!("cannot start {}: {e}", node.path.display()));
         let (mut child, frames, stderr, answers) = spawn(cmd).map_err(cannot)?;
-        live(child.id(), true);
+        let pid = child.id();
+        live(pid, true);
         let (tx, replies) = mpsc::channel();
         let decode = Arc::new(AtomicBool::new(true));
         let decoding = decode.clone();
+        let stdin = child.stdin.take();
+        let mux = Arc::new(Mux {
+            child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+            answers: Mutex::new(answers),
+            routes: Mutex::new(HashMap::new()),
+            notes: Mutex::new(Box::new(|s| eprintln!("{s}"))),
+            note_times: Mutex::new((FIRST_NOTE, NEXT_NOTE)),
+        });
+        let routing = mux.clone();
         // A reply nests up to three JSON levels per level of the value
         // (`encode.mjs` refuses values deeper than 1000), and parsing it
         // recurses once per level: a roomy stack, not serde's 128 limit.
         std::thread::Builder::new()
             .name("brrrty-node-replies".into())
             .stack_size(REPLY_STACK)
-            .spawn(move || read_frames(frames, tx, decoding))
+            .spawn(move || read_frames(frames, tx, decoding, &routing))
             .map_err(|e| {
+                let mut child = locked(&mux.child);
                 let _ = child.kill();
                 let _ = child.wait();
                 WorkerError(format!("cannot read Node's replies: {e}"))
@@ -342,12 +620,11 @@ impl Worker {
         let tail = stderr_tail.clone();
         let stderr_thread = std::thread::spawn(move || drain_stderr(stderr, tail));
         Ok(Worker {
-            stdin: child.stdin.take(),
-            answers,
+            mux,
+            pid,
             answers_feed: None,
             asked: Vec::new(),
             filters: None,
-            child,
             replies,
             stderr_tail,
             stderr_thread: Some(stderr_thread),
@@ -357,6 +634,8 @@ impl Worker {
             failed: None,
             last_loaded: HashMap::new(),
             earlier: None,
+            fixed: std::collections::HashSet::new(),
+            last_fixed: false,
             table: Table::default(),
             node: node.clone(),
             run_mode,
@@ -371,14 +650,13 @@ impl Worker {
             slowest: Duration::ZERO,
             deadline: None,
             last_template: None,
+            next_ticket: 0,
             stats: Stats {
                 started: Some(Instant::now()),
                 ..Stats::default()
             },
             frozen: false,
             walks: None,
-            notes: Box::new(|s| eprintln!("{s}")),
-            note_times: (FIRST_NOTE, NEXT_NOTE),
         })
     }
 
@@ -409,25 +687,6 @@ impl Worker {
         ))
     }
 
-    /// Requests of a page's computed data, sent together, answered with
-    /// the worker's own filters.
-    fn run(&mut self, reqs: Vec<Request<'_>>) -> Vec<JsResult<Decoded>> {
-        if reqs.is_empty() {
-            return Vec::new();
-        }
-        let filters = self.filters.clone();
-        self.requests(
-            reqs,
-            "a computed data function",
-            &mut |name: &str, args: &[Value]| match &filters {
-                Some(f) => f(name, args),
-                None => Err(format!(
-                    "calls `this.{name}` where Brrrty has no filters to run it"
-                )),
-            },
-        )
-    }
-
     /// Send slow-request notes to `notes` instead of stderr, the first
     /// after `first` and then every `next` (tests).
     pub fn set_notes(
@@ -436,8 +695,8 @@ impl Worker {
         first: Duration,
         next: Duration,
     ) {
-        self.notes = Box::new(notes);
-        self.note_times = (first, next);
+        *locked(&self.mux.notes) = Box::new(notes);
+        *locked(&self.mux.note_times) = (first, next);
     }
 
     /// Whether the worker froze the data files' values when the pages'
@@ -467,7 +726,7 @@ impl Worker {
 
     /// Node's process id.
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        self.pid
     }
 
     /// The project folder the worker runs in.
@@ -514,12 +773,71 @@ impl Worker {
         what: &str,
         filters: &mut FilterCall<'_>,
     ) -> Vec<JsResult<Decoded>> {
-        let logged = |op: &str| {
-            !matches!(
-                op,
-                "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
-            )
-        };
+        let mut out = Vec::with_capacity(reqs.len());
+        let mut reqs = reqs.into_iter().peekable();
+        while reqs.peek().is_some() {
+            // As many as can go in one write. Node may stop reading while
+            // it waits for an answer to a question of its own, so what is
+            // written past the first request must fit in the pipe.
+            let mut group = Vec::new();
+            let mut ahead = 0;
+            while let Some(next) = reqs.peek() {
+                if !group.is_empty() && ahead + next.text.len() + 48 > PIPE_SAFE {
+                    break;
+                }
+                if !group.is_empty() {
+                    ahead += next.text.len() + 48;
+                }
+                group.extend(reqs.next());
+            }
+            let ticket = match self.send(group, what, Shape::List, None) {
+                Ok(t) => t,
+                Err(f) => {
+                    out.push(JsResult::Failed(f));
+                    return out;
+                }
+            };
+            let done = ticket.collect(filters);
+            match self.settle(done) {
+                Finished::Results { results, .. } => {
+                    let stop = results.iter().any(|r| !matches!(r, JsResult::Ok(_)));
+                    out.extend(results);
+                    if stop {
+                        return out;
+                    }
+                }
+                Finished::Again => {
+                    out.push(JsResult::Failed(
+                        self.fail("the worker lost the values a request referred to"),
+                    ));
+                    return out;
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether the requests can go in one write (see [`PIPE_SAFE`]).
+    fn fits(reqs: &[Request<'_>]) -> bool {
+        reqs.iter()
+            .skip(1)
+            .map(|r| r.text.len() + 48)
+            .sum::<usize>()
+            <= PIPE_SAFE
+    }
+
+    /// Send requests together, in one write. Their replies come to the
+    /// ticket, which is waited on without the worker.
+    fn send(
+        &mut self,
+        reqs: Vec<Request<'_>>,
+        what: &str,
+        shape: Shape,
+        page: Option<PageId>,
+    ) -> Result<Ticket, RuntimeFailure> {
+        if let Some(f) = &self.failed {
+            return Err(f.clone());
+        }
         if self.calls_begun && self.replays.is_none() && reqs.iter().any(|r| logged(r.op)) {
             self.start_replays();
         }
@@ -529,9 +847,7 @@ impl Worker {
             for (line, dynamic) in &req.added.lines {
                 self.stats.definitions += 1;
                 self.stats.defined += line.len() as u64;
-                if let Err(f) = self.write_line(line) {
-                    return vec![JsResult::Failed(f)];
-                }
+                self.write_line(line)?;
                 if !dynamic && let Some(replays) = &self.replays {
                     for r in replays {
                         r.line(line.clone());
@@ -539,172 +855,381 @@ impl Worker {
                 }
             }
         }
-        let mut out = Vec::with_capacity(reqs.len());
+        let (tx, rx) = mpsc::channel();
+        // The requests of one ticket say so: when the worker has lost the
+        // values one of them refers to, it runs none of the rest.
+        self.next_ticket += 1;
+        let ticket = self.next_ticket;
+        let mut lines = String::new();
+        let mut sent = Vec::with_capacity(reqs.len());
+        {
+            let mut routes = locked(&self.mux.routes);
+            for req in reqs {
+                self.next_id += 1;
+                let id = self.next_id;
+                let _ = write!(lines, "{{\"id\":{id},\"t\":{ticket},");
+                lines.push_str(req.text.strip_prefix('{').unwrap_or(&req.text));
+                lines.push('\n');
+                if !req.one_way {
+                    routes.insert(id, tx.clone());
+                }
+                sent.push(Sent {
+                    id,
+                    op: req.op,
+                    handle: req.handle,
+                    path: req.path.map(|p| p.to_string_lossy().into_owned()),
+                    one_way: req.one_way,
+                    made: req.added.made,
+                    dynamic: req.added.dynamic,
+                    text: req.text,
+                });
+            }
+        }
+        self.stats.sent += lines.len() as u64;
+        let written = locked(&self.mux.stdin)
+            .as_mut()
+            .map(|s| s.write_all(lines.as_bytes()).and_then(|_| s.flush()));
+        if !matches!(written, Some(Ok(()))) {
+            return Err(self.fail("Node stopped reading requests"));
+        }
+        Ok(Ticket {
+            mux: self.mux.clone(),
+            rx,
+            sent,
+            what: what.to_string(),
+            shape,
+            page,
+            deadline: self.deadline,
+        })
+    }
+
+    /// What the replies to a ticket's requests mean: each is logged for
+    /// the replay check, and the results shaped as the ticket asked.
+    fn settle(&mut self, done: Done) -> Finished {
+        let Done {
+            sent,
+            frames,
+            asked,
+            failure,
+            what,
+            shape,
+            page,
+            waited,
+        } = done;
+        self.slowest = self.slowest.max(waited);
+        self.stats.waited += waited;
+        let mut results: Vec<JsResult<Decoded>> = Vec::with_capacity(frames.len());
         // A call in the group changed a value the worker kept: the ones
         // after it ran on what it left, which a replay doesn't have.
         let mut unchecked = false;
-        let mut reqs = reqs.into_iter().peekable();
-        while reqs.peek().is_some() {
-            // As many as can go in one write. Node may stop reading while
-            // it waits for an answer to a question of its own, so what is
-            // written past the first request must fit in the pipe.
-            let mut group: Vec<(Request<'_>, u64)> = Vec::new();
-            let mut lines = String::new();
-            let mut ahead = 0;
-            while let Some(next) = reqs.peek() {
-                if !group.is_empty() && ahead + next.text.len() + 32 > PIPE_SAFE {
+        let mut frames = frames.into_iter();
+        let mut asked = asked.into_iter();
+        for req in sent {
+            let mut frame = if req.one_way {
+                None
+            } else {
+                match frames.next() {
+                    Some(f) => Some(f),
+                    // Node stopped before this one.
+                    None => break,
+                }
+            };
+            let answers = if req.one_way {
+                Vec::new()
+            } else {
+                asked.next().unwrap_or_default()
+            };
+            if let Some(f) = &frame {
+                self.stats.requests += 1;
+                self.stats.received += f.body.len() as u64;
+                if f.head.get("stale").is_some() {
+                    // The worker forgot the values this refers to (a call
+                    // another page made changed one): it ran nothing of
+                    // this request or the ones sent with it after it. They
+                    // go again, the values with them.
+                    if results.iter().all(|r| matches!(r, JsResult::Ok(_))) {
+                        self.table.forget();
+                        return Finished::Again;
+                    }
                     break;
                 }
-                let Some(req) = reqs.next() else { break };
-                let (id, line) = self.line_for(&req.text, None);
-                if !group.is_empty() {
-                    ahead += line.len() + 1;
+            }
+            if req.op == "templateLoad" {
+                self.last_template = frame
+                    .as_ref()
+                    .and_then(|f| f.head.get("template"))
+                    .and_then(Json::as_u64);
+            }
+            if req.op == "load" {
+                self.last_fixed = frame
+                    .as_ref()
+                    .is_some_and(|f| f.head.get("fixed").is_some());
+            }
+            let body = frame
+                .as_mut()
+                .map(|f| std::mem::take(&mut f.body))
+                .unwrap_or_default();
+            let clock = frame.as_mut().and_then(|f| f.clock.take());
+            if logged(req.op) && !self.calls_begun {
+                self.load_log.push(LoadRecord {
+                    text: req.text.into_boxed_str(),
+                    kind: match req.op {
+                        "load" => LoadKind::Data,
+                        "templateLoad" => LoadKind::Template,
+                        _ => LoadKind::Other,
+                    },
+                    path: req.path.unwrap_or_default(),
+                    body,
+                    clock,
+                });
+            } else if logged(req.op) {
+                let (unit, label) = match brrrty_js::functions::unit() {
+                    Some(u) => u,
+                    None => (u64::MAX - self.call_log.len() as u64, Arc::from("")),
+                };
+                let dropped = frame
+                    .as_ref()
+                    .is_some_and(|f| f.head.get("dropShared").is_some());
+                self.dropped |= dropped;
+                self.call_log.push(Record {
+                    unit,
+                    label,
+                    op: req.op,
+                    handle: req.handle,
+                    text: req.text.into_boxed_str(),
+                    body,
+                    clock,
+                    made: frame.as_ref().is_some_and(|f| f.made),
+                    names_made: req.made || req.handle.is_some_and(|h| self.table.made_by_call(h)),
+                    dynamic: req.dynamic,
+                    answers,
+                    one_way: req.one_way,
+                    unchecked,
+                });
+                unchecked |= dropped;
+            }
+            let Some(frame) = frame else {
+                continue;
+            };
+            let r = self.interpret(frame, &what);
+            let failed = matches!(r, JsResult::Failed(_));
+            results.push(r);
+            if failed {
+                return Finished::Results {
+                    results: vec![results.pop().expect("just pushed")],
+                    page: None,
+                };
+            }
+        }
+        if let Some(why) = failure {
+            return Finished::Results {
+                results: vec![JsResult::Failed(self.fail(&why))],
+                page: None,
+            };
+        }
+        self.shape(shape, page, results)
+    }
+
+    /// The results of an operation whose requests went one part at a time.
+    fn shaped(&mut self, done: Done, results: Vec<JsResult<Decoded>>) -> Finished {
+        self.shape(done.shape, done.page, results)
+    }
+
+    fn shape(
+        &mut self,
+        shape: Shape,
+        page: Option<PageId>,
+        mut results: Vec<JsResult<Decoded>>,
+    ) -> Finished {
+        // The list ends with the first reply that isn't a value.
+        let bad = results.iter().position(|r| !matches!(r, JsResult::Ok(_)));
+        match shape {
+            Shape::List => {
+                if let Some(bad) = bad {
+                    results.truncate(bad + 1);
                 }
-                lines.push_str(&line);
-                lines.push('\n');
-                group.push((req, id));
+                Finished::Results { results, page }
             }
-            if let Err(f) = self.write_lines(&lines) {
-                out.push(JsResult::Failed(f));
-                return out;
+            Shape::Once => {
+                let result = match bad {
+                    Some(bad) => results.swap_remove(bad),
+                    // Opened, then called.
+                    None if results.len() == 2 => results.swap_remove(1),
+                    None => JsResult::Failed(self.fail("a page's call gave no reply")),
+                };
+                Finished::Results {
+                    results: vec![result],
+                    page,
+                }
             }
-            for (req, id) in group {
-                self.asked.clear();
-                let mut frame = if req.one_way {
-                    None
-                } else {
-                    match self.reply(id, req.text.len(), what, filters) {
-                        Ok(f) => Some(f),
-                        Err(f) => {
-                            out.push(JsResult::Failed(f));
-                            return out;
+            Shape::OpenWithVars => match bad {
+                Some(bad) => {
+                    if bad > 0
+                        && let Some(page) = page
+                    {
+                        self.page_close(page);
+                    }
+                    Finished::Results {
+                        results: vec![results.swap_remove(bad)],
+                        page: None,
+                    }
+                }
+                None => Finished::Results { results, page },
+            },
+        }
+    }
+
+    /// The requests an operation makes, how its results are shaped, and
+    /// the page it opens. `Err` when a value can't be handed over.
+    fn op_requests(&mut self, op: Op<'_>) -> Result<Planned, String> {
+        Ok(match op {
+            Op::Call {
+                f,
+                this,
+                args,
+                settle,
+            } => {
+                let mut added = Added::default();
+                let mut text = String::with_capacity(128);
+                let _ = write!(
+                    text,
+                    "{{\"op\":\"call\",\"handle\":{},\"await\":{}",
+                    f.0,
+                    settle == Settle::Await
+                );
+                match this {
+                    This::Value(v) => {
+                        text.push_str(",\"this\":");
+                        self.table.argument(v, false, &mut text, &mut added)?;
+                    }
+                    This::Opaque(what) => {
+                        text.push_str(",\"opaque\":");
+                        crate::wire::string(&mut text, what);
+                    }
+                }
+                text.push_str(",\"args\":[");
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        text.push(',');
+                    }
+                    self.table.argument(a, false, &mut text, &mut added)?;
+                }
+                text.push_str("]}");
+                let req = Request {
+                    added,
+                    handle: Some(f.0),
+                    ..Request::new("call", text)
+                };
+                (vec![req], Shape::List, None, "a data function")
+            }
+            Op::PageOnce {
+                data,
+                traps,
+                defaults,
+                f,
+            } => {
+                let (page, open) = self.open_request(data, traps, defaults)?;
+                (
+                    vec![open, call_request(page, f, None), close_request(page)],
+                    Shape::Once,
+                    None,
+                    "a permalink function",
+                )
+            }
+            Op::PageOpenWithVars {
+                data,
+                traps,
+                defaults,
+                functions,
+                keys,
+            } => {
+                let (page, open) = self.open_request(data, traps, defaults)?;
+                let mut reqs = vec![open];
+                reqs.extend(functions.iter().map(|f| vars_request(page, *f, keys)));
+                (
+                    reqs,
+                    Shape::OpenWithVars,
+                    Some(page),
+                    "a computed data function",
+                )
+            }
+            Op::PageRun { page, steps } => {
+                let mut reqs = Vec::with_capacity(steps.len());
+                for step in steps {
+                    match step {
+                        PageStep::Call(f, set) => reqs.push(call_request(page, *f, *set)),
+                        PageStep::Set(key, value) => {
+                            let mut added = Added::default();
+                            let mut text = String::with_capacity(128);
+                            let _ =
+                                write!(text, "{{\"op\":\"pageSet\",\"page\":{},\"key\":", page.0);
+                            crate::wire::string(&mut text, key);
+                            text.push_str(",\"value\":");
+                            self.table.argument(value, false, &mut text, &mut added)?;
+                            text.push('}');
+                            reqs.push(Request {
+                                added,
+                                ..Request::new("pageSet", text)
+                            });
                         }
                     }
-                };
-                if req.op == "templateLoad" {
-                    self.last_template = frame
-                        .as_ref()
-                        .and_then(|f| f.head.get("template"))
-                        .and_then(Json::as_u64);
                 }
-                let body = frame
-                    .as_mut()
-                    .map(|f| std::mem::take(&mut f.body))
-                    .unwrap_or_default();
-                let clock = frame.as_mut().and_then(|f| f.clock.take());
-                if logged(req.op) && !self.calls_begun {
-                    self.load_log.push(LoadRecord {
-                        text: req.text.into_boxed_str(),
-                        kind: match req.op {
-                            "load" => LoadKind::Data,
-                            "templateLoad" => LoadKind::Template,
-                            _ => LoadKind::Other,
-                        },
-                        path: req
-                            .path
-                            .map(|p| p.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                        body,
-                        clock,
-                    });
-                } else if logged(req.op) {
-                    let (unit, label) = match brrrty_js::functions::unit() {
-                        Some(u) => u,
-                        None => (u64::MAX - self.call_log.len() as u64, Arc::from("")),
-                    };
-                    let dropped = frame
-                        .as_ref()
-                        .is_some_and(|f| f.head.get("dropShared").is_some());
-                    self.dropped |= dropped;
-                    self.call_log.push(Record {
-                        unit,
-                        label,
-                        op: req.op,
-                        handle: req.handle,
-                        text: req.text.into_boxed_str(),
-                        body,
-                        clock,
-                        made: frame.as_ref().is_some_and(|f| f.made),
-                        names_made: req.added.made
-                            || req.handle.is_some_and(|h| self.table.made_by_call(h)),
-                        dynamic: req.added.dynamic,
-                        answers: std::mem::take(&mut self.asked),
-                        one_way: req.one_way,
-                        unchecked,
-                    });
-                    unchecked |= dropped;
-                }
-                let Some(frame) = frame else {
-                    // Nothing comes back from a one-way request.
-                    out.push(JsResult::Ok(Decoded {
-                        value: Value::Undefined,
-                        functions: Vec::new(),
-                        refused: Vec::new(),
-                    }));
-                    continue;
-                };
-                let r = self.interpret(frame, what);
-                if matches!(r, JsResult::Failed(_)) {
-                    out.push(r);
-                    return out;
-                }
-                out.push(r);
+                (reqs, Shape::List, None, "a computed data function")
             }
-        }
-        // The list ends with the first reply that isn't a value.
-        if let Some(bad) = out.iter().position(|r| !matches!(r, JsResult::Ok(_))) {
-            out.truncate(bad + 1);
-        }
-        out
+            Op::Render {
+                template,
+                data,
+                first,
+                traps,
+            } => {
+                let mut added = Added::default();
+                let mut text = String::with_capacity(1024);
+                let _ = write!(
+                    text,
+                    "{{\"op\":\"render\",\"template\":{},\"data\":",
+                    template.0
+                );
+                self.table.page_data(data, true, &mut text, &mut added)?;
+                text.push_str(",\"traps\":");
+                pairs(&mut text, traps);
+                if let Some(first) = first {
+                    text.push_str(",\"first\":");
+                    self.table.argument(first, true, &mut text, &mut added)?;
+                }
+                text.push('}');
+                let req = Request {
+                    added,
+                    ..Request::new("render", text)
+                };
+                (vec![req], Shape::List, None, "a JavaScript template")
+            }
+        })
     }
 
-    /// Write whole lines (each ending in a newline) to Node's stdin.
-    fn write_lines(&mut self, lines: &str) -> Result<(), RuntimeFailure> {
-        if let Some(f) = &self.failed {
-            return Err(f.clone());
-        }
-        let sent = self
-            .stdin
-            .as_mut()
-            .map(|s| s.write_all(lines.as_bytes()).and_then(|_| s.flush()));
-        if !matches!(sent, Some(Ok(()))) {
-            return Err(self.fail("Node stopped reading requests"));
-        }
-        Ok(())
+    /// [`Worker::now`], for an operation with one result.
+    fn one(&mut self, op: Op<'_>, filters: &mut FilterCall<'_>) -> JsResult<Decoded> {
+        self.now(op, filters)
+            .pop()
+            .unwrap_or_else(|| JsResult::Failed(self.fail("a request with no reply")))
     }
 
-    /// Wait for the reply to request `id`, answering the worker's filter
-    /// questions with `filters` meanwhile.
-    fn reply(
-        &mut self,
-        id: u64,
-        sent: usize,
-        what: &str,
-        filters: &mut FilterCall<'_>,
-    ) -> Result<Frame, RuntimeFailure> {
-        let mut wait = self.wait();
-        let frame = loop {
-            match self.next_frame(what, &mut wait) {
-                Ok(f) if f.question => {
-                    if let Err(why) = self.answer(&f, filters) {
-                        return Err(self.fail(&why));
-                    }
+    /// Run an operation and wait for it here.
+    fn now(&mut self, op: Op<'_>, filters: &mut FilterCall<'_>) -> Vec<JsResult<Decoded>> {
+        for _ in 0..AGAIN {
+            let finished = match self.begin(op, filters) {
+                Begun::Done(f) => f,
+                Begun::Sent(pending) => {
+                    let waited = pending.wait(filters);
+                    self.finish(waited)
                 }
-                Ok(f) => break f,
-                Err(f) => return Err(f),
+            };
+            if let Finished::Results { results, .. } = finished {
+                return results;
             }
-        };
-        let took = wait.start.elapsed();
-        self.slowest = self.slowest.max(took);
-        self.stats.requests += 1;
-        self.stats.sent += sent as u64;
-        self.stats.received += frame.body.len() as u64;
-        self.stats.waited += took;
-        if frame.id != id {
-            let head = frame.head.clone();
-            return Err(self.fail(&format!("a reply out of order: {head}")));
         }
-        Ok(frame)
+        vec![JsResult::Failed(self.fail(
+            "the worker kept losing the values a request referred to",
+        ))]
     }
 
     /// Write one line to Node's stdin.
@@ -715,8 +1240,7 @@ impl Worker {
         let mut bytes = Vec::with_capacity(line.len() + 1);
         bytes.extend_from_slice(line.as_bytes());
         bytes.push(b'\n');
-        let sent = self
-            .stdin
+        let sent = locked(&self.mux.stdin)
             .as_mut()
             .map(|s| s.write_all(&bytes).and_then(|_| s.flush()));
         if !matches!(sent, Some(Ok(()))) {
@@ -728,7 +1252,7 @@ impl Worker {
     /// Node's stdin, for a thread that writes requests ahead of their
     /// replies.
     pub(crate) fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.stdin.take()
+        locked(&self.mux.stdin).take()
     }
 
     /// The next request id, and the line that sends `text` under it, with
@@ -770,47 +1294,19 @@ impl Worker {
         filters: &mut FilterCall<'_>,
     ) -> Result<(), String> {
         let reply: Box<str> = match self.answers_feed.as_mut() {
-            Some(feed) => match feed.pop_front() {
-                Some((q, a)) if q == frame.body => a,
-                _ => {
-                    r#"{"refused":"asks for a filter the first run didn't ask for at this point"}"#
-                        .into()
-                }
-            },
-            None => {
-                let name = frame
-                    .head
-                    .get("filter")
-                    .and_then(Json::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let args = match &frame.ok {
-                    Some(Ok(d)) if d.is_exact() => match &d.value {
-                        Value::Array(a) => Ok(a.to_vec()),
-                        _ => Err("passes its filter something Brrrty can't read".to_string()),
-                    },
-                    Some(Ok(_)) => Err(format!(
-                        "passes `this.{name}` a function or a value that can't cross from JavaScript to Brrrty exactly"
-                    )),
-                    _ => Err("passes its filter something Brrrty can't read".to_string()),
+            Some(feed) => {
+                let reply: Box<str> = match feed.pop_front() {
+                    Some((q, a)) if q == frame.body => a,
+                    _ => r#"{"refused":"asks for a filter the first run didn't ask for at this point"}"#
+                        .into(),
                 };
-                match args.and_then(|a| filters(&name, &a)) {
-                    Ok(v) => json!({"ok": encode(&v)}),
-                    Err(why) => json!({"refused": why}),
-                }
-                .to_string()
-                .into()
+                self.mux.send_answer(&reply)?;
+                reply
             }
+            None => self.mux.answer(frame, filters)?,
         };
-        self.asked.push((frame.body.clone(), reply.clone()));
-        match self.answers.as_mut() {
-            Some(w) => w
-                .write_all(reply.as_bytes())
-                .and_then(|_| w.write_all(b"\n"))
-                .and_then(|_| w.flush())
-                .map_err(|e| format!("cannot answer Node: {e}")),
-            None => Err("Node asked a question it can't be answered on".to_string()),
-        }
+        self.asked.push((frame.body.clone(), reply));
+        Ok(())
     }
 
     /// [`Worker::exchange`], answering the worker's filter questions with
@@ -824,20 +1320,38 @@ impl Worker {
     ) -> Result<Frame, RuntimeFailure> {
         let (id, line) = self.line_for(text, feed);
         self.write_line(&line)?;
-        self.reply(id, line.len(), what, filters)
+        let mut wait = self.wait();
+        let frame = loop {
+            match self.next_frame(what, &mut wait) {
+                Ok(f) if f.question => {
+                    if let Err(why) = self.answer(&f, filters) {
+                        return Err(self.fail(&why));
+                    }
+                }
+                Ok(f) => break f,
+                Err(f) => return Err(f),
+            }
+        };
+        let took = wait.start.elapsed();
+        self.slowest = self.slowest.max(took);
+        self.stats.requests += 1;
+        self.stats.sent += line.len() as u64;
+        self.stats.received += frame.body.len() as u64;
+        self.stats.waited += took;
+        if frame.id != id {
+            let head = frame.head.clone();
+            return Err(self.fail(&format!("a reply out of order: {head}")));
+        }
+        Ok(frame)
     }
 
     /// Start waiting for a frame.
     pub(crate) fn wait(&self) -> Wait {
-        let start = Instant::now();
-        Wait {
-            start,
-            next_note: start + self.note_times.0,
-            exited_at: None,
-        }
+        self.mux.wait()
     }
 
-    /// The next frame from Node: a reply, or a question of its own.
+    /// The next frame from Node that no ticket waits for: a reply, or a
+    /// question of its own.
     pub(crate) fn next_frame(
         &mut self,
         what: &str,
@@ -846,58 +1360,9 @@ impl Worker {
         if let Some(f) = &self.failed {
             return Err(f.clone());
         }
-        // Most replies come within microseconds: look for one a few times
-        // before sleeping, which costs more than the wait.
-        let spun = Instant::now();
-        let early = loop {
-            match self.replies.try_recv() {
-                Ok(r) => break Some(r),
-                Err(mpsc::TryRecvError::Disconnected) => break None,
-                Err(mpsc::TryRecvError::Empty) if spun.elapsed() < SPIN => std::hint::spin_loop(),
-                Err(mpsc::TryRecvError::Empty) => break None,
-            }
-        };
-        if let Some(reply) = early {
-            return reply.map_err(|why| self.fail(&why));
-        }
-        let reply = loop {
-            match self.replies.recv_timeout(POLL) {
-                Ok(r) => break r,
-                Err(RecvTimeoutError::Timeout) => {
-                    let now = Instant::now();
-                    if let Some(d) = self.deadline
-                        && now.duration_since(wait.start) > d
-                    {
-                        break Err(format!(
-                            "{what} took more than {} s, longer than the first run allows",
-                            d.as_secs()
-                        ));
-                    }
-                    if now >= wait.next_note {
-                        (self.notes)(&format!(
-                            "note: still waiting on {what}, {} s",
-                            wait.start.elapsed().as_secs()
-                        ));
-                        wait.next_note = now + self.note_times.1;
-                    }
-                    match wait.exited_at {
-                        Some(t) if now.duration_since(t) >= POLL => {
-                            break Err("Node exited without replying".to_string());
-                        }
-                        Some(_) => {}
-                        None => {
-                            if matches!(self.child.try_wait(), Ok(Some(_))) {
-                                wait.exited_at = Some(now);
-                            }
-                        }
-                    }
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    break Err("Node closed its output".to_string());
-                }
-            }
-        };
-        reply.map_err(|why| self.fail(&why))
+        let mux = self.mux.clone();
+        mux.next(&self.replies, what, wait, self.deadline)
+            .map_err(|why| self.fail(&why))
     }
 
     /// What a reply means.
@@ -988,17 +1453,19 @@ impl Worker {
     /// The worker can't go on: say why, with Node's exit status when it
     /// exited, and the last lines of its stderr.
     pub(crate) fn fail(&mut self, why: &str) -> RuntimeFailure {
-        drop(self.stdin.take());
+        drop(locked(&self.mux.stdin).take());
         let deadline = Instant::now() + Duration::from_secs(2);
         let status = loop {
-            match self.child.try_wait() {
+            let mut child = locked(&self.mux.child);
+            match child.try_wait() {
                 Ok(Some(s)) => break Some(s),
                 Ok(None) if Instant::now() < deadline => {
+                    drop(child);
                     std::thread::sleep(Duration::from_millis(10))
                 }
                 _ => {
-                    let _ = self.child.kill();
-                    break self.child.wait().ok();
+                    let _ = child.kill();
+                    break child.wait().ok();
                 }
             }
         };
@@ -1034,8 +1501,11 @@ impl Worker {
 
     /// Stop Node at once (the replay check, at a difference).
     pub(crate) fn stop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        {
+            let mut child = locked(&self.mux.child);
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         self.stop_group();
         if self.failed.is_none() {
             self.failed = Some(RuntimeFailure {
@@ -1052,8 +1522,8 @@ impl Worker {
     /// own (`detached`) is out of reach and keeps running, as under 11ty.
     fn stop_group(&mut self) {
         #[cfg(unix)]
-        kill_group(self.child.id());
-        live(self.child.id(), false);
+        kill_group(self.pid);
+        live(self.pid, false);
     }
 
     /// Wait briefly for the rest of Node's stderr, then stop waiting: a
@@ -1171,6 +1641,14 @@ impl JsRuntime for Worker {
         // time for this file, and the decoded value is used again: equal
         // data, and the same objects, which Brrrty compares cheaply.
         self.earlier = self.last_loaded.get(&key).cloned();
+        // What a module exports as it is (no function to call, no getter)
+        // is the same every time: one request, however many templates the
+        // file applies to.
+        if self.fixed.contains(&key)
+            && let Some(d) = self.earlier.take()
+        {
+            return JsResult::Ok(d);
+        }
         let text = op_text("load", |t| {
             t.push_str(",\"path\":");
             crate::wire::string(t, &file.to_string_lossy());
@@ -1184,6 +1662,9 @@ impl JsRuntime for Worker {
             &what,
         );
         if let JsResult::Ok(d) = &r {
+            if self.last_fixed {
+                self.fixed.insert(key.clone());
+            }
             self.last_loaded.insert(key, d.clone());
         }
         r
@@ -1196,46 +1677,60 @@ impl JsRuntime for Worker {
         args: &[Value],
         settle: Settle,
     ) -> JsResult<Decoded> {
-        let mut added = Added::default();
-        let mut text = String::with_capacity(128);
-        let _ = write!(
-            text,
-            "{{\"op\":\"call\",\"handle\":{},\"await\":{}",
-            f.0,
-            settle == Settle::Await
-        );
-        let mut write = |text: &mut String| -> Result<(), String> {
-            match this {
-                This::Value(v) => {
-                    text.push_str(",\"this\":");
-                    self.table.argument(v, false, text, &mut added)?;
-                }
-                This::Opaque(what) => {
-                    text.push_str(",\"opaque\":");
-                    crate::wire::string(text, what);
-                }
-            }
-            text.push_str(",\"args\":[");
-            for (i, a) in args.iter().enumerate() {
-                if i > 0 {
-                    text.push(',');
-                }
-                self.table.argument(a, false, text, &mut added)?;
-            }
-            text.push_str("]}");
-            Ok(())
+        let op = Op::Call {
+            f,
+            this,
+            args,
+            settle,
         };
-        if let Err(why) = write(&mut text) {
-            return JsResult::Refused(Refusal::new(why));
+        self.one(op, &mut no_filters())
+    }
+
+    fn begin(&mut self, op: Op<'_>, filters: &mut FilterCall<'_>) -> Begun {
+        let (reqs, shape, page, what) = match self.op_requests(op) {
+            Ok(r) => r,
+            Err(why) => {
+                return Begun::Done(Finished::Results {
+                    results: vec![JsResult::Refused(Refusal::new(why))],
+                    page: None,
+                });
+            }
+        };
+        if !Worker::fits(&reqs) {
+            // Too much to send ahead of the first reply: one part at a
+            // time, here.
+            let results = self.requests(reqs, what, filters);
+            let done = Done {
+                sent: Vec::new(),
+                frames: Vec::new(),
+                asked: Vec::new(),
+                failure: None,
+                what: what.to_string(),
+                shape,
+                page,
+                waited: Duration::ZERO,
+            };
+            return Begun::Done(self.shaped(done, results));
         }
-        self.request(
-            Request {
-                added,
-                handle: Some(f.0),
-                ..Request::new("call", text)
+        match self.send(reqs, what, shape, page) {
+            Ok(ticket) => Begun::Sent(Box::new(ticket)),
+            Err(f) => Begun::Done(Finished::Results {
+                results: vec![JsResult::Failed(f)],
+                page: None,
+            }),
+        }
+    }
+
+    fn finish(&mut self, waited: Waited) -> Finished {
+        match waited.0.downcast::<Done>() {
+            Ok(done) => self.settle(*done),
+            Err(_) => Finished::Results {
+                results: vec![JsResult::Failed(
+                    self.fail("replies that aren't this worker's"),
+                )],
+                page: None,
             },
-            "a data function",
-        )
+        }
     }
 
     fn page_open(
@@ -1293,7 +1788,12 @@ impl JsRuntime for Worker {
     }
 
     fn page_close(&mut self, page: PageId) {
-        let _ = self.request(close_request(page), "a page's data");
+        // Nothing comes back from it.
+        let _ = self.requests(
+            vec![close_request(page)],
+            "a page's data",
+            &mut no_filters(),
+        );
     }
 
     fn page_once(
@@ -1303,106 +1803,26 @@ impl JsRuntime for Worker {
         defaults: &[String],
         f: FnHandle,
     ) -> JsResult<Decoded> {
-        let (page, open) = match self.open_request(data, traps, defaults) {
-            Ok(r) => r,
-            Err(why) => return JsResult::Refused(Refusal::new(why)),
+        let op = Op::PageOnce {
+            data,
+            traps,
+            defaults,
+            f,
         };
-        let reqs = vec![open, call_request(page, f, None), close_request(page)];
-        let mut out = self.requests(reqs, "a permalink function", &mut no_filters());
-        match out.len() {
-            // Opened, called, closed.
-            3 => out.swap_remove(1),
-            // The call, or the open, gave no value.
-            _ => out
-                .pop()
-                .unwrap_or_else(|| JsResult::Failed(self.fail("a request with no reply"))),
-        }
+        self.one(op, &mut no_filters())
     }
 
-    fn page_open_with_vars(
-        &mut self,
-        data: &Value,
-        traps: &[(String, String)],
-        defaults: &[String],
-        functions: &[FnHandle],
-        keys: &[String],
-    ) -> JsResult<(PageId, Vec<Vec<String>>)> {
-        let (page, open) = match self.open_request(data, traps, defaults) {
-            Ok(r) => r,
-            Err(why) => return JsResult::Refused(Refusal::new(why)),
-        };
-        let mut reqs = vec![open];
-        reqs.extend(functions.iter().map(|f| vars_request(page, *f, keys)));
+    fn page_run(&mut self, page: PageId, steps: &[PageStep<'_>]) -> Vec<JsResult<Decoded>> {
         let filters = self.filters.clone();
-        let out = self.requests(
-            reqs,
-            "a computed data function",
+        self.now(
+            Op::PageRun { page, steps },
             &mut |name: &str, args: &[Value]| match &filters {
                 Some(f) => f(name, args),
                 None => Err(format!(
                     "calls `this.{name}` where Brrrty has no filters to run it"
                 )),
             },
-        );
-        let opened = out.first().is_some_and(|r| matches!(r, JsResult::Ok(_)));
-        let mut found = Vec::with_capacity(functions.len());
-        let mut bad = None;
-        for r in out.into_iter().skip(usize::from(opened)) {
-            match r {
-                JsResult::Ok(d) => match strings(&d.value) {
-                    Some(list) => found.push(list),
-                    None => {
-                        bad = Some(JsResult::Failed(
-                            self.fail(&format!("pageVars gave {:?}", d.value)),
-                        ));
-                        break;
-                    }
-                },
-                JsResult::Thrown(e) => bad = Some(JsResult::Thrown(e)),
-                JsResult::Refused(r) => bad = Some(JsResult::Refused(r)),
-                JsResult::Failed(f) => bad = Some(JsResult::Failed(f)),
-            }
-        }
-        match bad {
-            None if opened => JsResult::Ok((page, found)),
-            None => JsResult::Failed(self.fail("pageOpen gave no reply")),
-            Some(bad) => {
-                if opened {
-                    self.page_close(page);
-                }
-                bad
-            }
-        }
-    }
-
-    fn page_run(&mut self, page: PageId, steps: &[PageStep<'_>]) -> Vec<JsResult<Decoded>> {
-        let mut reqs = Vec::with_capacity(steps.len());
-        for step in steps {
-            match step {
-                PageStep::Call(f, set) => reqs.push(call_request(page, *f, *set)),
-                PageStep::Set(key, value) => {
-                    let mut added = Added::default();
-                    let mut text = String::with_capacity(128);
-                    let _ = write!(text, "{{\"op\":\"pageSet\",\"page\":{},\"key\":", page.0);
-                    crate::wire::string(&mut text, key);
-                    text.push_str(",\"value\":");
-                    if let Err(why) = self.table.argument(value, false, &mut text, &mut added) {
-                        // What comes before it still runs; the list ends here.
-                        let mut out = self.run(reqs);
-                        if out.iter().all(|r| matches!(r, JsResult::Ok(_))) {
-                            out.push(JsResult::Refused(Refusal::new(why)));
-                        }
-                        return out;
-                    }
-                    text.push('}');
-                    reqs.push(Request {
-                        added,
-                        ..Request::new("pageSet", text)
-                    });
-                }
-            }
-        }
-        self.run(reqs)
+        )
     }
 
     fn loads_changed(&mut self) -> JsResult<Vec<(PathBuf, Decoded)>> {
@@ -1558,33 +1978,13 @@ impl JsRuntime for Worker {
         traps: &[(String, String)],
         filters: &mut FilterCall<'_>,
     ) -> JsResult<Decoded> {
-        let mut added = Added::default();
-        let mut text = String::with_capacity(1024);
-        let _ = write!(
-            text,
-            "{{\"op\":\"render\",\"template\":{},\"data\":",
-            template.0
-        );
-        if let Err(why) = self.table.page_data(data, true, &mut text, &mut added) {
-            return JsResult::Refused(Refusal::new(why));
-        }
-        text.push_str(",\"traps\":");
-        pairs(&mut text, traps);
-        if let Some(first) = first {
-            text.push_str(",\"first\":");
-            if let Err(why) = self.table.argument(first, true, &mut text, &mut added) {
-                return JsResult::Refused(Refusal::new(why));
-            }
-        }
-        text.push('}');
-        self.request_with(
-            Request {
-                added,
-                ..Request::new("render", text)
-            },
-            "a JavaScript template",
-            filters,
-        )
+        let op = Op::Render {
+            template,
+            data,
+            first,
+            traps,
+        };
+        self.one(op, filters)
     }
 
     fn verify(&mut self) -> JsResult<()> {
@@ -1652,6 +2052,15 @@ impl JsRuntime for Worker {
                 })
             }
             Err(crate::replay::Failure::Runtime(f)) => JsResult::Failed(f),
+            Err(crate::replay::Failure::Again(why)) => {
+                walk_roots().insert(self.root.clone());
+                let mut f = self.fail(&format!(
+                    "the JavaScript worker has to check the data files' values after every call ({why})"
+                ));
+                f.again = true;
+                self.failed = Some(f.clone());
+                JsResult::Failed(f)
+            }
         }
     }
 
@@ -1673,19 +2082,21 @@ impl JsRuntime for Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        if let Some(mut stdin) = self.stdin.take() {
+        if let Some(mut stdin) = locked(&self.mux.stdin).take() {
             let _ = stdin.write_all(b"{\"op\":\"bye\"}\n");
         }
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            match self.child.try_wait() {
+            let mut child = locked(&self.mux.child);
+            match child.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) if Instant::now() < deadline => {
+                    drop(child);
                     std::thread::sleep(Duration::from_millis(5))
                 }
                 _ => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
+                    let _ = child.kill();
+                    let _ = child.wait();
                     break;
                 }
             }
@@ -1840,7 +2251,18 @@ fn signal_of(_: &std::process::ExitStatus) -> Option<i32> {
 /// Read `\x1eBRRRTY <kind> <id> <clock length> <body length>\n<clock><body>`
 /// frames until Node closes its output. Anything else is a protocol error,
 /// sent once.
-fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>, decoding: Arc<AtomicBool>) {
+fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>, decoding: Arc<AtomicBool>, mux: &Mux) {
+    read_frames_to(stdout, &tx, decoding, mux);
+    // No more frames: whoever waits for one learns so.
+    locked(&mux.routes).clear();
+}
+
+fn read_frames_to(
+    stdout: impl Read,
+    tx: &mpsc::Sender<Reply>,
+    decoding: Arc<AtomicBool>,
+    mux: &Mux,
+) {
     let mut r = BufReader::with_capacity(1 << 16, stdout);
     loop {
         let mut header = Vec::new();
@@ -1905,7 +2327,16 @@ fn read_frames(stdout: impl Read, tx: mpsc::Sender<Reply>, decoding: Arc<AtomicB
                 made: kind == "f",
             }
         });
-        if tx.send(parsed).is_err() {
+        // A frame a ticket waits for goes to it; any other to the worker.
+        let route = match &parsed {
+            Ok(f) => locked(&mux.routes).get(&f.id).cloned(),
+            Err(_) => None,
+        };
+        let sent = match route {
+            Some(to) => to.send(parsed).is_ok(),
+            None => tx.send(parsed).is_ok(),
+        };
+        if !sent && locked(&mux.routes).is_empty() {
             return;
         }
     }

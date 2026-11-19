@@ -73,6 +73,17 @@ pub(crate) enum Failure {
     Differs(String, Option<u64>),
     /// A replay's Node couldn't run.
     Runtime(RuntimeFailure),
+    /// A replay's worker asks for the build to be run again, walking (see
+    /// the worker's "Freezing"): why.
+    Again(String),
+}
+
+/// The reply, unless the worker asks for the build again.
+fn heard(frame: Frame) -> Result<Frame, Failure> {
+    match frame.head.get("again") {
+        Some(why) => Err(Failure::Again(why.as_str().unwrap_or("").to_string())),
+        None => Ok(frame),
+    }
 }
 
 enum Msg {
@@ -169,6 +180,7 @@ fn runtime(why: impl Into<String>) -> Failure {
 fn send(w: &mut Worker, text: &str, feed: Option<&str>) -> Result<Frame, Failure> {
     w.exchange(text, feed, "a request of the replay check")
         .map_err(failed)
+        .and_then(heard)
 }
 
 fn failed(f: RuntimeFailure) -> Failure {
@@ -586,6 +598,10 @@ fn ahead(w: &mut Worker, calls: &Calls, sequence: &[usize]) -> Result<(), Failur
                 if ids.pop_front() != Some(got.id) {
                     break 'all Err(runtime("the replay check got a reply out of order"));
                 }
+                let got = match heard(got) {
+                    Ok(got) => got,
+                    Err(e) => break 'all Err(e),
+                };
                 if got.body != r.body {
                     break 'all Err(Failure::Differs(
                         difference(r, &got.body),

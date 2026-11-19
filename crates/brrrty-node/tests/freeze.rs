@@ -107,17 +107,11 @@ fn walked(
 }
 
 #[test]
-fn a_strict_site_is_frozen_and_a_sloppy_one_is_walked() {
+fn a_strict_site_is_frozen() {
     let Some(node) = node() else { return };
     let t = module_site("export default { list: [1, 2], f: () => 1 };");
     let (w, _) = begun(&node, &t);
     assert_eq!(w.exports_frozen(), Ok(()));
-    drop(w);
-
-    let t = site(&[("d.js", "module.exports = { list: [1, 2], f: () => 1 };")]);
-    let (w, _) = begun(&node, &t);
-    let why = w.exports_frozen().unwrap_err();
-    assert!(why.contains("d.js is not in strict mode"), "{why}");
     drop(w);
 
     let t = site(&[(
@@ -126,19 +120,136 @@ fn a_strict_site_is_frozen_and_a_sloppy_one_is_walked() {
     )]);
     let (w, _) = begun(&node, &t);
     assert_eq!(w.exports_frozen(), Ok(()));
-    drop(w);
+}
 
-    // A strict file that requires a sloppy one.
+/// CommonJS with no "use strict", in which strict mode changes nothing
+/// without a sound: loaded as strict, and frozen.
+#[test]
+fn sloppy_commonjs_that_strict_mode_leaves_alone_is_frozen() {
+    let Some(node) = node() else { return };
+    for body in [
+        "module.exports = { list: [1, 2], f: () => 1 };",
+        "#!/usr/bin/env node\nmodule.exports = { list: [1, 2], f: () => 1 };",
+        // `this` read for its properties, in a method and in a constructor.
+        "function Box(n) { this.n = n; }\nBox.prototype.get = function () { return this.n; };\nmodule.exports = { list: [new Box(1).get()], label: 'x', f() { return this.label; } };",
+        // `this` at the top of a module is its exports either way.
+        "var self = this;\nmodule.exports = { list: [typeof self], f: function () { return 1; } };",
+        // A function that is strict already keeps its own rules.
+        "module.exports = { list: [], f: function () { 'use strict'; return this; } };",
+        // A file it requires, sloppy too.
+        "module.exports = { list: require('./lib.js'), f: () => 1 };",
+    ] {
+        let t = site(&[("d.js", body), ("lib.js", "module.exports = [1, 2];")]);
+        let (w, _) = begun(&node, &t);
+        assert_eq!(w.exports_frozen(), Ok(()), "{body}");
+    }
+}
+
+/// CommonJS that strict mode would change in silence, or that it refuses,
+/// stays as written, and its data is walked.
+#[test]
+fn sloppy_commonjs_that_strict_mode_would_change_is_walked() {
+    let Some(node) = node() else { return };
+    for body in [
+        // The arguments object stops tracking the parameters.
+        "module.exports = { list: [], f: function (a) { a = 2; return arguments[0]; } };",
+        // `eval`'s variables stop leaking.
+        "module.exports = { list: [], f: function () { eval('var x = 1'); return typeof x; } };",
+        // `this` as a value: the global object, or undefined.
+        "module.exports = { list: [], f: function () { return this; } };",
+        "module.exports = { list: [], f: function () { return typeof this; } };",
+        "module.exports = { list: [], f: function () { return this?.x; } };",
+        // A function declared in a block leaks out of it.
+        "if (true) { function inner() { return 1; } }\nmodule.exports = { list: [], f: function () { return inner(); } };",
+        // What strict mode refuses outright.
+        "var n = 010;\nmodule.exports = { list: [n], f: () => 1 };",
+        "var o = { a: 1 };\nwith (o) { var b = a; }\nmodule.exports = { list: [b], f: () => 1 };",
+        "var x = 1;\nmodule.exports = { list: [delete x], f: () => 1 };",
+        "module.exports = { list: [], f: function (a, a) { return a; } };",
+    ] {
+        let t = site(&[("d.js", body)]);
+        let (w, _) = begun(&node, &t);
+        let why = w.exports_frozen().unwrap_err();
+        assert!(why.contains("d.js is not in strict mode"), "{body}: {why}");
+    }
+    // A file it requires.
     let t = site(&[
         (
             "d.js",
             "'use strict';\nmodule.exports = { list: require('./lib.js'), f: () => 1 };",
         ),
-        ("lib.js", "module.exports = [1, 2];"),
+        ("lib.js", "module.exports = [arguments.length];"),
     ]);
     let (w, _) = begun(&node, &t);
     let why = w.exports_frozen().unwrap_err();
     assert!(why.contains("lib.js is not in strict mode"), "{why}");
+}
+
+/// Where strict mode throws and sloppy mode goes on, a file loaded as
+/// strict sends the build back: the next one loads every file as written.
+#[test]
+fn what_strict_mode_makes_loud_sends_the_build_back() {
+    let Some(node) = node() else { return };
+    // (the file, what `f` gives as written)
+    let cases: &[(&str, Value)] = &[
+        // An assignment to a name nothing declares makes a global.
+        (
+            "module.exports = { f: function () { leaked = 5; return leaked; } };",
+            Value::Number(5.0),
+        ),
+        // A write a frozen object drops.
+        (
+            "var own = Object.freeze({ n: 1 });\nmodule.exports = { f: function () { own.n = 2; return own.n; } };",
+            Value::Number(1.0),
+        ),
+        // The same, with the error caught.
+        (
+            "var own = Object.freeze({ n: 1 });\nmodule.exports = { f: function () { try { own.n = 2; } catch (e) { return 'threw'; } return own.n; } };",
+            Value::Number(1.0),
+        ),
+        // `this` is the global object in a plain call.
+        (
+            "function plain() { return this.Array === Array; }\nmodule.exports = { f: function () { return plain(); } };",
+            Value::Bool(true),
+        ),
+        // A property set on a string goes nowhere.
+        (
+            "module.exports = { f: function () { var s = 'abc'; s.extra = 1; return s.length; } };",
+            Value::Number(3.0),
+        ),
+    ];
+    for (body, want) in cases {
+        let t = site(&[("d.js", body)]);
+        let (mut w, d) = begun(&node, &t);
+        assert_eq!(w.exports_frozen(), Ok(()), "{body}");
+        assert!(asks_again(&mut w, &d, &["f"]), "{body}");
+        drop(w);
+        let (mut w, d) = begun(&node, &t);
+        assert_eq!(
+            w.exports_frozen(),
+            Err("BRRRTY_JS_EXPORTS=walk".to_string()),
+            "{body}"
+        );
+        assert_eq!(&ok(call(&mut w, &d, "f")).value, want, "{body}");
+        assert_eq!(w.verify(), JsResult::Ok(()), "{body}");
+    }
+    // While the file loads, too.
+    let t = site(&[(
+        "d.js",
+        "leaked = 7;\nmodule.exports = { n: leaked, f: () => 1 };",
+    )]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    match w.load(&t.path().join("d.js"), true) {
+        JsResult::Failed(f) => assert!(f.again, "{f:?}"),
+        other => panic!("{other:?}"),
+    }
+    drop(w);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = ok(w.load(&t.path().join("d.js"), true)).value;
+    match &d {
+        Value::Object(o) => assert_eq!(o["n"], Value::Number(7.0)),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
@@ -269,31 +380,49 @@ fn every_kind_of_write_sends_the_build_back_to_the_walk() {
             false,
         ),
     ];
-    for (body, names, refuses) in cases {
-        let t = site(&[
-            ("package.json", r#"{"type":"module"}"#),
-            ("sloppy.cjs", "module.exports = { n: 1 };"),
-            (
-                "d.js",
-                &format!(
-                    "const item = {{ n: 1 }};\nconst list = [item, {{ n: 2 }}];\nconst when = new Date(0);\nexport default {{ list, when, {body} }};\n"
+    // As an ES module, and as CommonJS with no "use strict" (loaded as
+    // strict: nothing in these files is changed by it in silence).
+    for module in [true, false] {
+        for (body, names, refuses) in cases {
+            // A CommonJS file that says `eval` stays as written, and is
+            // walked from the start.
+            if !module && (body.contains("import(") || body.contains("eval")) {
+                continue;
+            }
+            let (package, open) = if module {
+                (r#"{"type":"module"}"#, "export default")
+            } else {
+                ("{}", "module.exports =")
+            };
+            let t = site(&[
+                ("package.json", package),
+                (
+                    "sloppy.cjs",
+                    "module.exports = { n: (function () { return arguments.length; })() };",
                 ),
-            ),
-        ]);
-        let (mut w, d) = begun(&node, &t);
-        assert_eq!(w.exports_frozen(), Ok(()), "{body}");
-        assert!(
-            asks_again(&mut w, &d, names),
-            "{body}: the frozen build didn't ask again"
-        );
-        drop(w);
-        let again = walked(&node, &t, names);
-        assert_eq!(again.is_err(), *refuses, "{body}: the walk gave {again:?}");
-        if let Err(why) = again {
+                (
+                    "d.js",
+                    &format!(
+                        "const item = {{ n: 1 }};\nconst list = [item, {{ n: 2 }}];\nconst when = new Date(0);\n{open} {{ list, when, {body} }};\n"
+                    ),
+                ),
+            ]);
+            let (mut w, d) = begun(&node, &t);
+            assert_eq!(w.exports_frozen(), Ok(()), "{body} (module: {module})");
             assert!(
-                why.contains("changes the data d.js gives") || why.contains("changes the data"),
-                "{body}: {why}"
+                asks_again(&mut w, &d, names),
+                "{body} (module: {module}): the frozen build didn't ask again"
             );
+            drop(w);
+            let again = walked(&node, &t, names);
+            assert_eq!(
+                again.is_err(),
+                *refuses,
+                "{body} (module: {module}): the walk gave {again:?}"
+            );
+            if let Err(why) = again {
+                assert!(why.contains("changes the data"), "{body}: {why}");
+            }
         }
     }
 }

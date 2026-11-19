@@ -198,6 +198,7 @@ fn remember_ordered(v: &Value) {
 
 /// `v` in JavaScript key order, or `None` when it already is, so data that
 /// pages share (a global data list) stays one shared value.
+#[cfg(test)]
 fn reordered(v: &Value) -> Option<Value> {
     reordered_counting(v, &mut 0)
 }

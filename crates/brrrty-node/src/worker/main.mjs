@@ -20,6 +20,7 @@ import util from "node:util";
 import nodeModule, { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { Worker as Thread } from "node:worker_threads";
+import vm from "node:vm";
 import inspector from "node:inspector";
 import { AsyncLocalStorage } from "node:async_hooks";
 import nodeCrypto from "node:crypto";
@@ -195,7 +196,17 @@ function cantVouch(why) {
   if (exportsMode === "frozen" && again === null) again = why;
 }
 
-if (process.env.BRRRTY_JS_EXPORTS === "walk") cantVouch("BRRRTY_JS_EXPORTS=walk");
+// The build has to run again with every file as it was written, and the
+// walk: strict mode may have changed what a file loaded as strict did.
+function redo(why) {
+  if (again === null) again = why;
+}
+
+// Brrrty asked for the walk (this folder's last build asked to run
+// again, or `BRRRTY_JS_EXPORTS=walk`): nothing is frozen, and no file is
+// loaded as strict that wasn't written so.
+const walkOnly = process.env.BRRRTY_JS_EXPORTS === "walk";
+if (walkOnly) cantVouch("BRRRTY_JS_EXPORTS=walk");
 delete process.env.BRRRTY_JS_EXPORTS;
 if (!loadHooks) cantVouch("this Node has no module load hooks (before 22.15), so the worker can't see every file that loads");
 if (/(^|\s)(-r|--require|--import|--loader|--experimental-loader|--inspect[\w-]*)([=\s]|$)/.test(`${process.execArgv.join(" ")} ${process.env.NODE_OPTIONS || ""}`)) {
@@ -246,6 +257,165 @@ function isStrictSource(text) {
   }
 }
 
+// --- Sloppy CommonJS, run as strict where that changes nothing. ---
+//
+// Most CommonJS data files have no "use strict", and the worker can't
+// freeze under sloppy code (a write to a frozen object does nothing,
+// silently). But strict mode only changes what a file means in a few
+// ways (ECMAScript's Annex C), and the worker can tell, from the file's
+// syntax tree, a file where every one of them is loud:
+// - the constructs strict mode forbids don't compile, so the file is
+//   compiled both ways and left sloppy if strict fails;
+// - a write that sloppy mode drops, an assignment to a name nothing
+//   declares, `caller` and `callee`, a property read on a `this` that
+//   sloppy mode would have made the global object: each throws a
+//   TypeError or ReferenceError, which the watcher thread sees, caught or
+//   not, and the build runs again with every file as it was written;
+// - what strict mode changes without a sound is refused up front: the
+//   `arguments` object (it stops tracking the parameters), `eval` (its
+//   variables stop leaking), `this` used as a value in a function (it
+//   would be `undefined` or a primitive, not the global object or a
+//   wrapper), and a function declared inside a block (its name stops
+//   leaking out).
+// A file that passes is loaded with "use strict" before its first
+// character, on the same line, so every line number stays.
+const rawBinding = typeof process.binding === "function" ? process.binding.bind(process) : null;
+const RawFunction = Function;
+let acornModule;
+
+// Node's own copy of the acorn parser.
+function acornParser() {
+  if (acornModule !== undefined) return acornModule;
+  acornModule = null;
+  try {
+    const source = rawBinding && rawBinding("natives")["internal/deps/acorn/acorn/dist/acorn"];
+    if (typeof source === "string") {
+      const m = { exports: {} };
+      new RawFunction("exports", "module", source)(m.exports, m);
+      if (typeof m.exports.parse === "function") acornModule = m.exports;
+    }
+  } catch {
+    acornModule = null;
+  }
+  return acornModule;
+}
+
+const FUNCTIONS = new Set(["FunctionDeclaration", "FunctionExpression"]);
+
+// Whether the syntax tree of a sloppy script has nothing in it that strict
+// mode changes in silence.
+function sameInStrict(ast) {
+  // (node, the node holding it, the key it is held under, whether inside
+  // a function that has its own `this`)
+  const stack = [[ast, null, "", false]];
+  while (stack.length) {
+    const [node, parent, key, inFunction] = stack.pop();
+    let inside = inFunction;
+    switch (node.type) {
+      case "ClassDeclaration":
+      case "ClassExpression":
+        // Strict already, all of it.
+        continue;
+      case "WithStatement":
+        return false;
+      case "Identifier":
+        if (node.name === "arguments" || node.name === "eval") {
+          const named =
+            parent &&
+            !parent.computed &&
+            ((parent.type === "MemberExpression" && key === "property") ||
+              ((parent.type === "Property" || parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") && key === "key"));
+          if (!named) return false;
+        }
+        continue;
+      case "ThisExpression":
+        if (inFunction && !(parent && parent.type === "MemberExpression" && key === "object" && !parent.optional)) return false;
+        continue;
+      case "FunctionDeclaration":
+        // Only at the top of a script or of a function's body.
+        if (!(parent && (parent.type === "Program" || parent.functionBody === true))) return false;
+        inside = true;
+        break;
+      case "FunctionExpression":
+        inside = true;
+        break;
+      default:
+        break;
+    }
+    if (FUNCTIONS.has(node.type) || node.type === "ArrowFunctionExpression") {
+      const body = node.body;
+      if (body && body.type === "BlockStatement") {
+        // Strict already: nothing in it changes.
+        const first = body.body[0];
+        if (first && first.type === "ExpressionStatement" && first.directive === "use strict") continue;
+        body.functionBody = true;
+      }
+    }
+    for (const k of Object.keys(node)) {
+      const child = node[k];
+      if (child === null || typeof child !== "object") continue;
+      if (Array.isArray(child)) {
+        for (let i = child.length - 1; i >= 0; i--) {
+          const c = child[i];
+          if (c !== null && typeof c === "object" && typeof c.type === "string") stack.push([c, node, k, inside]);
+        }
+      } else if (typeof child.type === "string") {
+        stack.push([child, node, k, inside]);
+      }
+    }
+  }
+  return true;
+}
+
+// `source` with "use strict" ahead of it, after a hashbang line if it has
+// one.
+function withUseStrict(source) {
+  let at = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  if (source.startsWith("#!", at)) {
+    const nl = source.indexOf("\n", at);
+    at = nl === -1 ? source.length : nl + 1;
+  }
+  return `${source.slice(0, at)}"use strict";${source.slice(at)}`;
+}
+
+// The files loaded as strict that were written sloppy, by the hash of
+// their path (see `pathHash`): an error the watcher saw in one of them
+// may be strict mode's doing.
+const strictified = new Set();
+// Whether the watcher is there to see what strict mode makes loud: set
+// before the first file loads.
+let canStrictify = false;
+
+function pathHash(file) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < file.length; i++) {
+    h ^= file.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h | 0;
+}
+
+// Sloppy CommonJS source as strict, when that changes nothing in silence
+// (see above); null when it must stay as written.
+function asStrict(source, file) {
+  if (!canStrictify) return null;
+  const acorn = acornParser();
+  if (acorn === null) return null;
+  try {
+    const options = { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true, allowHashBang: true };
+    if (!sameInStrict(acorn.parse(source, options))) return null;
+    const strict = withUseStrict(source);
+    // It must still be a program, to acorn and to V8, as Node wraps it.
+    acorn.parse(strict, options);
+    const at = strict.indexOf('"use strict";');
+    new vm.Script(`${strict.slice(0, at)}(function (exports, require, module, __filename, __dirname) {${strict.slice(at)}\n})`);
+    if (typeof file === "string") strictified.add(pathHash(file));
+    return strict;
+  } catch {
+    return null;
+  }
+}
+
 // Builtin modules that run code the worker can't see, or change how
 // JavaScript runs.
 const UNSEEN_BUILTINS = new Set(["node:vm", "node:inspector", "node:inspector/promises", "node:repl", "node:v8", "node:wasi"]);
@@ -263,7 +433,7 @@ if (loadHooks) {
     load(url, context, nextLoad) {
       if (url.startsWith("file:")) note(url.split("?")[0]);
       const r = nextLoad(url, context);
-      if (unprovable === null || (exportsMode === "frozen" && again === null)) {
+      if (!walkOnly && (unprovable === null || exportsMode === "frozen")) {
         try {
           const format = r && r.format;
           if (!STRICT_FORMATS.has(format)) {
@@ -274,7 +444,10 @@ if (loadHooks) {
               source = Buffer.from(source.buffer ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength) : source).toString("utf8");
             }
             if (typeof source !== "string" || !isStrictSource(source)) {
-              cantVouch(`${url.startsWith("file:") ? relFile(fileURLToPath(url.split("?")[0])) : url} is not in strict mode`);
+              const file = url.startsWith("file:") ? fileURLToPath(url.split("?")[0]) : null;
+              const strict = typeof source === "string" && file !== null ? asStrict(source, file) : null;
+              if (strict !== null) return { ...r, source: strict };
+              cantVouch(`${file !== null ? relFile(file) : url} is not in strict mode, and has code that strict mode changes`);
             }
           }
         } catch {
@@ -298,8 +471,13 @@ if (loadHooks) {
   const compile = nodeModule.prototype._compile;
   if (typeof compile === "function") {
     nodeModule.prototype._compile = function (content, ...rest) {
-      if (typeof content === "string" && !isStrictSource(content)) {
-        cantVouch(`${typeof rest[0] === "string" ? relFile(rest[0]) : "a script"} is not in strict mode`);
+      if (!walkOnly && (unprovable === null || exportsMode === "frozen") && typeof content === "string" && !isStrictSource(content)) {
+        const strict = asStrict(content, typeof rest[0] === "string" ? rest[0] : null);
+        if (strict !== null) {
+          content = strict;
+        } else {
+          cantVouch(`${typeof rest[0] === "string" ? relFile(rest[0]) : "a script"} is not in strict mode, and has code that strict mode changes`);
+        }
       }
       return compile.call(this, content, ...rest);
     };
@@ -1153,6 +1331,8 @@ for (const [obj, name] of [
 // not, counts the ones a failed write to a frozen object throws, and lets
 // the thread go on. Nothing else slows down: code that throws nothing
 // runs as before.
+// How many of the last errors the watcher keeps the places of.
+const RING = 64;
 const WATCHER = `
 const { workerData, parentPort } = require("node:worker_threads");
 const inspector = require("node:inspector");
@@ -1162,6 +1342,22 @@ session.connectToMainThread();
 // The text of V8's errors for a write a frozen object refuses, and for a
 // Proxy whose target's frozen properties it must show as they are.
 const WRITE = /read only|not extensible|Cannot delete|Cannot redefine|Cannot define|on proxy/;
+// The errors strict mode throws where sloppy mode goes on.
+const STRICT = /^(TypeError|ReferenceError|SyntaxError|EvalError)\\b/;
+const RING = ${RING};
+function pathHash(file) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < file.length; i++) {
+    h ^= file.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h | 0;
+}
+// Every script's file, by the id the inspector gives it.
+const scripts = new Map();
+session.on("Debugger.scriptParsed", (m) => {
+  if (m.params && m.params.url) scripts.set(m.params.scriptId, m.params.url);
+});
 session.on("Debugger.paused", (m) => {
   try {
     const p = m.params || {};
@@ -1169,6 +1365,22 @@ session.on("Debugger.paused", (m) => {
       const d = p.data;
       const text = d && typeof d.description === "string" ? d.description.split("\\n")[0] : null;
       if (text === null ? !d || d.type === "object" : WRITE.test(text)) Atomics.add(flags, 0, 1);
+      if (text === null || STRICT.test(text)) {
+        // Where it was thrown, for the worker to tell whether a file it
+        // loaded as strict threw it.
+        const top = p.callFrames && p.callFrames[0];
+        let file = (top && (top.url || scripts.get(top.location && top.location.scriptId))) || "";
+        const query = file.indexOf("?");
+        if (query !== -1) file = file.slice(0, query);
+        if (file.startsWith("file:")) {
+          try {
+            file = require("node:url").fileURLToPath(file);
+          } catch {}
+        }
+        const n = Atomics.load(flags, 2);
+        Atomics.store(flags, 4 + (n % RING), pathHash(file));
+        Atomics.store(flags, 2, n + 1);
+      }
     }
   } finally {
     session.post("Debugger.resume");
@@ -1197,7 +1409,7 @@ let watcher = null;
 // only: a replay's compares replies), so it is there when the calls begin.
 function launchWatcher() {
   try {
-    const flags = new Int32Array(new SharedArrayBuffer(8));
+    const flags = new Int32Array(new SharedArrayBuffer(4 * (4 + RING)));
     // It takes none of this process's own flags (`--eval` among them).
     const thread = new Thread(WATCHER, { eval: true, workerData: flags, stdout: true, stderr: true, execArgv: [], argv: [] });
     thread.unref();
@@ -1211,7 +1423,7 @@ function launchWatcher() {
     return null;
   }
 }
-const launched = process.env.BRRRTY_ROLE !== "replay" && unprovable === null ? launchWatcher() : null;
+const launched = unprovable === null ? launchWatcher() : null;
 delete process.env.BRRRTY_ROLE;
 
 // Turn the watcher on and try it: each kind of write a frozen object
@@ -1234,7 +1446,7 @@ async function startWatcher() {
       thread.terminate();
       return false;
     }
-    watcher = { thread, flags, seen: 0 };
+    watcher = { thread, flags, seen: 0, strictSeen: 0 };
     const o = objectFreeze({ a: 1, list: objectFreeze([2, 1]) });
     const tries = [
       () => {
@@ -1281,6 +1493,8 @@ async function startWatcher() {
       }
     }
     watcher.seen = Atomics.load(flags, 0);
+    watcher.strictSeen = Atomics.load(flags, 2);
+    canStrictify = !walkOnly && loadHooks;
     return true;
   } catch {
     thread.terminate();
@@ -1306,15 +1520,30 @@ function stopWatcher() {
 }
 process.on("exit", stopWatcher);
 
-// Whether a write to a frozen object failed since the last look.
+// Whether a write to a frozen object failed since the last look, or a
+// file loaded as strict threw what strict mode throws.
 function checkWatcher() {
   if (watcher === null) return;
-  const n = Atomics.load(watcher.flags, 0);
+  const { flags } = watcher;
+  const n = Atomics.load(flags, 0);
   if (n !== watcher.seen) {
     watcher.seen = n;
-    cantVouch("the site's code tries to change a value a data file gave, or shows it through a Proxy");
+    if (exportsMode === "frozen") cantVouch("the site's code tries to change a value a data file gave, or shows it through a Proxy");
+  }
+  const m = Atomics.load(flags, 2);
+  if (m !== watcher.strictSeen) {
+    const from = watcher.strictSeen;
+    watcher.strictSeen = m;
+    if (strictified.size === 0) return;
+    // More than the watcher keeps places for: one of them may be ours.
+    let ours = m - from > RING;
+    for (let i = from; i < m && !ours; i++) ours = strictified.has(Atomics.load(flags, 4 + (i % RING)));
+    if (ours) redo("a CommonJS file with no \"use strict\" throws an error that strict mode may have caused");
   }
 }
+
+// The watcher, turned on and tried, before the first file loads.
+const watching = startWatcher();
 
 function register(fn) {
   let at = handleOf.get(fn);
@@ -1332,6 +1561,18 @@ class Trap {
     this.why = why;
   }
 }
+
+// A request refers to a kept value the worker no longer has: a call
+// changed one since Brrrty wrote the request, and the worker forgot them
+// all. Brrrty sends the request again, the values with it.
+class Stale extends Error {
+  constructor(id) {
+    super(`no kept value ${id}`);
+  }
+}
+// The requests Brrrty sent together with one that was stale: none of the
+// rest runs.
+let staleTicket = null;
 const HOLE = new Trap("a hole");
 
 // A value from its wire form, in place where it can be: what `JSON.parse`
@@ -1371,7 +1612,7 @@ function fromMarker(w, tag, def) {
   switch (tag) {
     case "$R": {
       const v = objects[w.$R];
-      if (v === undefined) throw new Error(`no kept value ${w.$R}`);
+      if (v === undefined) throw new Stale(w.$R);
       return v;
     }
     case "$u":
@@ -1504,6 +1745,7 @@ async function getDataValue(absolutePath, call, state) {
   if (!fs.existsSync(absolutePath)) return {};
   let value = await dynamicImportAbsolutePath(absolutePath, dataType(absolutePath));
   if (call && typeof value === "function") {
+    state.called = true;
     if (argumentText === undefined) argumentText = argumentPrint();
     value = await value(argument || {});
     state.changed = argumentPrint() !== argumentText;
@@ -2074,11 +2316,15 @@ async function handle(req) {
       }
       // A file loaded per template often gives the same data each time:
       // say so instead of sending it again.
+      encodedLive = false;
       const text = JSON.stringify(encodeValue(root, register));
+      // What the module itself exports, with no getter in it, is the
+      // same every time: Brrrty needn't ask again.
+      const fixed = !state.called && !encodedLive ? { fixed: true } : {};
       const key = `${req.call ? "call" : "raw"}:${req.path}`;
-      if (lastSent.get(key) === text) return { same: true };
+      if (lastSent.get(key) === text) return { same: true, ...fixed };
       lastSent.set(key, text);
-      return { okText: text };
+      return { okText: text, ...fixed };
     }
     case "call": {
       const fn = getHandle(req.handle);
@@ -2101,7 +2347,7 @@ async function handle(req) {
         protos = !sameList(protosRecord(), startProtos);
         // Freeze where the worker can vouch for every function, and a
         // failed write will be seen; walk otherwise.
-        const freezing = changed.length === 0 && !protos && unprovable === null && (await startWatcher());
+        const freezing = changed.length === 0 && !protos && unprovable === null && (await watching);
         if (freezing) {
           quickRecords = new Map([...loadedRoots.keys()].map((v) => [v, quickRecord(v, true)]));
           exportsMode = "frozen";
@@ -2311,6 +2557,13 @@ async function handleRequest(line) {
       frame("r", req.id, { again }, null);
       return;
     }
+    if (req.t !== undefined && req.t === staleTicket) {
+      frame("r", req.id, { stale: true }, null);
+      return;
+    }
+    // Site code runs from here on: the watcher is up first, or isn't
+    // coming.
+    if (req.op === "load" || req.op === "templateLoad" || req.op === "preload") await watching;
     let reply;
     // A call's clock and random reads, recorded, or handed back on a replay.
     const calling = clockPhase === "calls";
@@ -2332,13 +2585,16 @@ async function handleRequest(line) {
         reply = await requestContext.run({ id: req.id, template: req.template }, () => handle(req));
       }
     } catch (e) {
-      reply = e && e.brrrtyRefusal
+      if (e instanceof Stale && req.t !== undefined) staleTicket = req.t;
+      reply = e instanceof Stale
+        ? { stale: true }
+        : e && e.brrrtyRefusal
         ? { refused: `a function ${e.brrrtyRefusal}` }
         : e && e.brrrtyInvalid
           ? { invalid: toWellFormed(String(e.message)) }
           : { thrown: thrown(e) };
     }
-    if (exportsMode === "frozen") {
+    if (watcher !== null) {
       checkWatcher();
       if (again !== null) reply = { again };
     }

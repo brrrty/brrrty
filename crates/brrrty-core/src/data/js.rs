@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use brrrty_js::functions::{Caller, Settle, This};
 use brrrty_js::runtime::{
-    Decoded, JsError, JsResult, JsRuntime, LoadedTemplate, PageId, PageStep, PathPart, Refusal,
-    RuntimeFailure, TemplateId, path_text,
+    Begun, Decoded, Finished, JsError, JsResult, JsRuntime, LoadedTemplate, Op, PageId, PageStep,
+    PathPart, Refusal, RuntimeFailure, TemplateId, path_text,
 };
 use brrrty_js::{FnHandle, Value};
 
@@ -156,6 +156,14 @@ impl<'a> JsSession<'a> {
         self.runtime.as_mut()
     }
 
+    /// A runtime that stopped asking for the build to be run again (see
+    /// [`RuntimeFailure::again`]) is why the build will be.
+    fn note_again(&self, failure: &RuntimeFailure) {
+        if failure.again {
+            self.again.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     /// Record what happened to `shown`: a later state replaces an earlier
     /// one only when it says more (a throw over a run, a comparison over a
     /// bare port).
@@ -226,6 +234,7 @@ impl<'a> JsSession<'a> {
                 JsLoad::Thrown(Problem::error(codes::JS_DATA_VALUE, r.why).with_path(shown))
             }
             JsResult::Failed(f) => {
+                self.note_again(&f);
                 self.failed = Some(worker_failed_with(&f).with_path(shown));
                 self.runtime = None;
                 JsLoad::Unavailable
@@ -260,6 +269,7 @@ impl<'a> JsSession<'a> {
                 Problem::error(codes::JS_DATA_VALUE, r.why).with_path(shown),
             ),
             JsResult::Failed(f) => {
+                self.note_again(&f);
                 self.failed = Some(worker_failed_with(&f).with_path(shown));
                 self.runtime = None;
                 JsTemplateLoad::Unavailable
@@ -276,6 +286,7 @@ impl<'a> JsSession<'a> {
         match rt.loads_changed() {
             JsResult::Ok(list) => list,
             JsResult::Failed(f) => {
+                self.note_again(&f);
                 self.failed = Some(worker_failed_with(&f));
                 self.runtime = None;
                 Vec::new()
@@ -298,6 +309,7 @@ impl<'a> JsSession<'a> {
         match runtime.begin_calls() {
             JsResult::Ok(()) => {}
             JsResult::Failed(f) => {
+                self.note_again(&f);
                 self.failed = Some(worker_failed_with(&f));
                 return None;
             }
@@ -551,19 +563,57 @@ impl JsCalls {
         functions: &[FnHandle],
         shown: &'a Path,
     ) -> Result<(JsPage<'a>, Vec<Vec<String>>), Problem> {
-        let (id, found) = self.problem(
-            self.with(|rt| rt.page_open_with_vars(data, traps, defaults, functions, defaults)),
-            shown,
-        )?;
-        Ok((
-            JsPage {
+        let (results, page) = self.run(Op::PageOpenWithVars {
+            data,
+            traps,
+            defaults,
+            functions,
+            keys: defaults,
+        });
+        let mut found = Vec::with_capacity(functions.len());
+        let mut results = results.into_iter();
+        // The open's own reply, then one list per function.
+        let opened = match results.next() {
+            Some(r) => self.problem(r, shown).map(|_| ()),
+            None => Err(worker_failed("a page's data gave no reply").with_path(shown)),
+        };
+        let page = match (opened, page) {
+            (Ok(()), Some(id)) => JsPage {
                 calls: self,
                 id,
                 shown,
                 pending: Vec::new(),
             },
-            found,
-        ))
+            (Err(problem), _) => return Err(problem),
+            (Ok(()), None) => {
+                return Err(worker_failed("a page's data gave no page").with_path(shown));
+            }
+        };
+        for r in results {
+            let d = self.problem(r, shown)?;
+            match &d.value {
+                Value::Array(list) => found.push(
+                    list.iter()
+                        .filter_map(|s| match s {
+                            Value::String(s) => Some(s.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                other => {
+                    return Err(worker_failed(&format!(
+                        "a computed function's reads came as {other:?}"
+                    ))
+                    .with_path(shown));
+                }
+            }
+        }
+        if found.len() != functions.len() {
+            return Err(
+                worker_failed("fewer lists of reads than computed functions").with_path(shown),
+            );
+        }
+        Ok((page, found))
     }
 
     /// Call the permalink function `f` with `data` as a page's data (see
@@ -575,33 +625,89 @@ impl JsCalls {
         f: FnHandle,
         shown: &Path,
     ) -> Result<Value, Problem> {
-        let d = self.problem(self.with(|rt| rt.page_once(data, traps, &[], f)), shown)?;
+        let (mut results, _) = self.run(Op::PageOnce {
+            data,
+            traps,
+            defaults: &[],
+            f,
+        });
+        let r = results
+            .pop()
+            .unwrap_or_else(|| JsResult::Failed(gone("a permalink function gave no reply")));
+        let d = self.problem(r, shown)?;
         returned_value(d, shown)
     }
 
-    /// Several requests of one page, or the problem for a runtime that
-    /// already stopped.
-    fn with_list<T>(
-        &self,
-        f: impl FnOnce(&mut dyn JsRuntime) -> Vec<JsResult<T>>,
-    ) -> Vec<JsResult<T>> {
-        let mut out = Vec::new();
-        let _ = self.with(|rt| {
-            out = f(rt);
-            match out.last() {
-                Some(JsResult::Failed(failure)) => JsResult::Failed::<()>(failure.clone()),
-                _ => JsResult::Ok(()),
+    /// One operation of a page: sent while the runtime is held, waited
+    /// for without it (so the other render threads send theirs meanwhile
+    /// and Node runs them back to back), then settled with it held again.
+    fn run(&self, op: Op<'_>) -> (Vec<JsResult<Decoded>>, Option<PageId>) {
+        let filters = lock(&self.filters).clone();
+        let mut filters = |name: &str, args: &[Value]| match &filters {
+            Some(f) => f(name, args),
+            None => Err(format!("calls `this.{name}`, which Brrrty can't run here")),
+        };
+        let stopped = || {
+            (
+                vec![JsResult::Failed(gone(
+                    "JavaScript data stopped earlier in this build",
+                ))],
+                None,
+            )
+        };
+        // The runtime asks for an operation again when it lost the values
+        // it referred to before running it; that ends.
+        for _ in 0..32 {
+            let begun = {
+                let mut rt = self.take_turn();
+                match rt.as_mut() {
+                    Some(r) => r.begin(op, &mut filters),
+                    None => return stopped(),
+                }
+            };
+            let finished = match begun {
+                Begun::Done(f) => f,
+                Begun::Sent(pending) => {
+                    let waited = pending.wait(&mut filters);
+                    let mut rt = self.take_turn();
+                    match rt.as_mut() {
+                        Some(r) => r.finish(waited),
+                        None => return stopped(),
+                    }
+                }
+            };
+            let Finished::Results { results, page } = finished else {
+                continue;
+            };
+            if let Some(JsResult::Failed(failure)) = results.last() {
+                self.runtime_failed(failure);
             }
-        });
-        if out.is_empty() {
-            out.push(JsResult::Failed(RuntimeFailure {
-                message: "JavaScript data stopped earlier in this build".into(),
-                stderr_tail: Vec::new(),
-                stopped: false,
-                again: false,
-            }));
+            return (results, page);
         }
-        out
+        let failure = gone("JavaScript data kept losing the values a request referred to");
+        self.runtime_failed(&failure);
+        (vec![JsResult::Failed(failure)], None)
+    }
+
+    /// The runtime stopped: nothing more is asked of it.
+    fn runtime_failed(&self, failure: &RuntimeFailure) {
+        if failure.again {
+            self.again.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        *lock(&self.runtime) = None;
+        let mut failed = lock(&self.failed);
+        if failed.is_none() {
+            *failed = Some(worker_failed_with(failure));
+        }
+    }
+}
+
+fn gone(message: &str) -> RuntimeFailure {
+    RuntimeFailure {
+        message: message.into(),
+        stderr_tail: Vec::new(),
+        stopped: false,
+        again: false,
     }
 }
 
@@ -634,12 +740,15 @@ impl JsCalls {
         traps: &[(String, String)],
         shown: &Path,
     ) -> Result<Value, Problem> {
-        let filters = lock(&self.filters).clone();
-        let mut run = |name: &str, args: &[Value]| match &filters {
-            Some(f) => f(name, args),
-            None => Err(format!("calls `this.{name}`, which Brrrty can't run here")),
-        };
-        let r = self.with(|rt| rt.render(t, data, first, traps, &mut run));
+        let (mut results, _) = self.run(Op::Render {
+            template: t,
+            data,
+            first,
+            traps,
+        });
+        let r = results
+            .pop()
+            .unwrap_or_else(|| JsResult::Failed(gone("a JavaScript template gave no reply")));
         let d = match r {
             JsResult::Ok(d) => d,
             JsResult::Thrown(e) => {
@@ -750,7 +859,16 @@ impl Caller for JsCalls {
         args: &[Value],
         settle: Settle,
     ) -> Result<Value, String> {
-        match self.with(|rt| rt.call(f, this, args, settle)) {
+        let (mut results, _) = self.run(Op::Call {
+            f,
+            this,
+            args,
+            settle,
+        });
+        let r = results
+            .pop()
+            .unwrap_or_else(|| JsResult::Failed(gone("a data function gave no reply")));
+        match r {
             JsResult::Ok(d) => match returned_problem(&d) {
                 Some(why) => Err(why),
                 None => Ok(d.value),
@@ -824,7 +942,10 @@ impl JsPage<'_> {
         if steps.is_empty() {
             return Ok(Vec::new());
         }
-        let results = self.calls.with_list(|rt| rt.page_run(id, &steps));
+        let (results, _) = self.calls.run(Op::PageRun {
+            page: id,
+            steps: &steps,
+        });
         let mut values = Vec::with_capacity(calls.len());
         let answered = results.len();
         for (n, r) in results.into_iter().enumerate() {

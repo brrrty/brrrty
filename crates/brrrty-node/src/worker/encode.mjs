@@ -112,6 +112,10 @@ function pathTextRaw(path) {
 // the worker sets it.
 let unwrapHook = (v) => v;
 
+// Set when an encoding read a getter or met a Proxy: the value may read
+// differently next time.
+let encodedLive = false;
+
 // Encode `value`. `register(fn)` returns a handle for a function value.
 function encodeValue(value, register) {
   const stack = [];
@@ -150,7 +154,10 @@ function encodeValue(value, register) {
     // The worker's own view of data it handed a function is the data.
     v = unwrapHook(v);
     // A proxy can answer reads its own properties don't hold.
-    if (utilTypes.isProxy(v)) return { $x: "a Proxy" };
+    if (utilTypes.isProxy(v)) {
+      encodedLive = true;
+      return { $x: "a Proxy" };
+    }
     const at = stack.indexOf(v);
     if (at !== -1) {
       return { $x: `a circular reference to ${pathText(stackPaths[at])}` };
@@ -204,6 +211,7 @@ function encodeValue(value, register) {
         } else {
           const desc = ownDescriptor(v, key);
           if (desc && desc.get) {
+            encodedLive = true;
             // 11ty reads a getter as many times as it copies the data, so
             // one that changes between reads has no single value.
             const first = enc(v[key], byReference);
