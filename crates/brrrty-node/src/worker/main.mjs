@@ -34,6 +34,9 @@ const defineOwn = Object.defineProperty;
 // The clock the worker times its own work by, read before the site's
 // reads of it are recorded.
 const rawPerfNow = performance.now.bind(performance);
+// What the walk after a call uses, as they were before the site's code ran.
+const FunctionCtor = Function;
+const getProto = Object.getPrototypeOf;
 
 // --- Frames, written before anything else can touch stdout. ---
 
@@ -657,9 +660,18 @@ function completeRecord(v, mark, byShape = false) {
   return out;
 }
 
-// The quick record of `v`, as `quickSame` checks it.
+// Whether `for...in` over a plain object or list lists exactly its own
+// enumerable keys, as `Object.keys` does: true while the built-in
+// prototypes add none (the walk checks they haven't changed first).
+let forInClean = false;
+
+// The quick record of `v`, as `quickSame` checks it: `generic` as
+// 5-tuples, and the plain objects without getters grouped by their keys
+// (`shapes`), each group checked by a function made for those keys.
 function quickRecord(v) {
+  forInClean = Object.keys(Object.prototype).length === 0 && Object.keys(Array.prototype).length === 0;
   const out = [];
+  const shapes = new Map();
   const seen = new Set();
   const stack = [v];
   while (stack.length) {
@@ -691,9 +703,36 @@ function quickRecord(v) {
         stack.push(vals[i]);
       }
     }
+    if (forInClean && getters.length === 0 && (proto === Object.prototype || proto === null) && !isProxy(x)) {
+      const sig = keys.join("\u0000") + "\u0000" + keys.length;
+      let shape = shapes.get(sig);
+      if (shape === undefined) {
+        shape = { keys, objs: [], protos: [], vals: [], check: null };
+        shapes.set(sig, shape);
+      }
+      shape.objs.push(x);
+      shape.protos.push(proto);
+      for (const val of vals) shape.vals.push(val);
+      continue;
+    }
     out.push(x, proto, 2, [keys, vals, getters], keys.length);
   }
-  return out;
+  for (const shape of shapes.values()) shape.check = shapeCheck(shape.keys);
+  return { generic: out, shapes: [...shapes.values()] };
+}
+
+// A function that checks objects with `keys`, as `quickSame` checks one:
+// its prototype, each value (read as `x[key]` reads it), then its keys and
+// their order (by `for...in`, see `forInClean`).
+function shapeCheck(keys) {
+  const n = keys.length;
+  const lines = [`for (let i = 0, j = 0; i < objs.length; i++, j += ${n}) {`, "const o = objs[i];", "if (getProto(o) !== protos[i]) return false;", "let a, b;"];
+  keys.forEach((k, at) => {
+    lines.push(`a = o[${JSON.stringify(k)}]; b = vals[j + ${at}]; if (a !== b && !(a !== a && b !== b)) return false;`);
+  });
+  lines.push(`let n = 0; for (const k in o) { if (n >= ${n} || k !== keys[n]) return false; n++; } if (n !== ${n}) return false;`);
+  lines.push("}", "return true;");
+  return new FunctionCtor("objs", "protos", "vals", "keys", "getProto", lines.join("\n"));
 }
 
 // A getter's value, read twice as the encoding reads it: one that gives a
@@ -721,7 +760,11 @@ function readGetter(x, k) {
 }
 
 // Whether every value still is as `rec` (from `quickRecord`) has it.
-function quickSame(rec) {
+function quickSame(record) {
+  for (const sh of record.shapes) {
+    if (!sh.check(sh.objs, sh.protos, sh.vals, sh.keys, getProto)) return false;
+  }
+  const rec = record.generic;
   for (let j = 0; j < rec.length; j += 5) {
     const x = rec[j];
     if (Object.getPrototypeOf(x) !== rec[j + 1]) return false;
@@ -734,7 +777,12 @@ function quickSame(rec) {
         const b = items[i];
         if (a !== b && !(a !== a && b !== b)) return false;
       }
-      if (Object.keys(x).length !== rec[j + 4]) return false;
+      if (forInClean && items.length <= 64) {
+        // Its own enumerable keys, counted without listing them.
+        let n = 0;
+        for (const k in x) n++;
+        if (n !== rec[j + 4]) return false;
+      } else if (Object.keys(x).length !== rec[j + 4]) return false;
     } else if (kind === 1) {
       const t = OriginalDate.prototype.getTime.call(x);
       if (t !== rec[j + 3] && !(t !== t && rec[j + 3] !== rec[j + 3])) return false;
@@ -1553,6 +1601,14 @@ function filtersThis(computed) {
 // blocking, so the event loop turns only while a request that isn't fast
 // waits (see `serve`). A fast call after anything else walks first.
 //
+// A fast call gets its `this` and arguments as they are, not through the
+// membrane that notes a write to them: in V8's side-effect-free mode such
+// a write stops the call anyway. A function could only tell the two apart
+// by comparing one with a membrane an earlier call kept (a value it saved
+// from its data): then its result would differ from the replay check's,
+// which runs every call the usual way, and the build would stop; it can't
+// pass with a wrong result.
+//
 // The data's code also runs in what the worker does with a fast call's
 // result: a getter read as it is encoded, a property on the way to where a
 // computed value is set. So a fast result must encode without one (see
@@ -1577,10 +1633,20 @@ let siteDirty = true;
 let fastHandled = false;
 let walkMs = 0;
 const fastStats = new WeakMap();
-const prewatched = new WeakSet();
 
+// Set when V8 can tell, in its side-effect-free mode, whether a string is
+// well formed: such a string can come back as the inspector's copy.
+let fastStrings = false;
+
+// The call, as `Runtime.evaluate` runs it: a number, boolean, `null`,
+// `undefined` or well-formed string comes back as the inspector's copy,
+// which is exact for these; anything else in a list of one, taken from
+// the worker's side (see `fastEval`).
 function fastRun() {
-  return fastThunk();
+  const v = fastThunk();
+  if (v === null || v === undefined || typeof v === "boolean" || typeof v === "number") return v;
+  if (typeof v === "string" && fastStrings && v.isWellFormed()) return v;
+  return [v];
 }
 defineOwn(fastRun, "take", { value: (v) => { fastTaken = v; } });
 
@@ -1591,6 +1657,11 @@ function fastStart() {
     fastSession = new inspector.Session();
     fastSession.connect();
     defineOwn(globalThis, "__brrrtyFast", { value: fastRun, writable: false, enumerable: false, configurable: false });
+    if (typeof String.prototype.isWellFormed === "function") {
+      fastSession.post("Runtime.evaluate", { expression: "'a'.isWellFormed()", throwOnSideEffect: true, silent: true }, (e, r) => {
+        fastStrings = !e && r && !r.exceptionDetails && r.result && r.result.value === true;
+      });
+    }
   } catch {
     fastSession = null;
     return;
@@ -1653,29 +1724,6 @@ function fastReady(labelOf) {
   return exportChange === null;
 }
 
-// Make, now, the membranes a call's reads would make (so it needn't, in
-// V8's side-effect-free mode, where it can't): of every plain object and
-// list `root` holds.
-function prewatch(root) {
-  const stack = [root];
-  while (stack.length) {
-    const v = stack.pop();
-    if (v === null || typeof v !== "object" || prewatched.has(v)) continue;
-    prewatched.add(v);
-    const target = targetOf.get(v);
-    if (target !== undefined) {
-      stack.push(target);
-      continue;
-    }
-    if (utilTypes.isProxy(v) || (!Array.isArray(v) && !isPlainObject11ty(v))) continue;
-    watch(v);
-    for (const k of Reflect.ownKeys(v)) {
-      const d = Object.getOwnPropertyDescriptor(v, k);
-      if (d && "value" in d) stack.push(d.value);
-    }
-  }
-}
-
 // Run `thunk` in V8's side-effect-free mode, for at most `ms`: what it
 // returns, or NOT_FAST when V8 stopped it, it threw, or it ran too long.
 function fastEval(thunk, ms) {
@@ -1683,7 +1731,7 @@ function fastEval(thunk, ms) {
   fastThunk = thunk;
   fastActive = true;
   try {
-    fastSession.post("Runtime.evaluate", { expression: "[__brrrtyFast()]", throwOnSideEffect: true, objectGroup: "brrrty", timeout: ms, silent: true }, (e, r) => {
+    fastSession.post("Runtime.evaluate", { expression: "__brrrtyFast()", throwOnSideEffect: true, objectGroup: "brrrty", timeout: ms, silent: true }, (e, r) => {
       msg = e ? null : r;
     });
   } catch {
@@ -1692,11 +1740,29 @@ function fastEval(thunk, ms) {
     fastActive = false;
     fastThunk = null;
   }
-  if (msg === null || msg.exceptionDetails || !msg.result || typeof msg.result.objectId !== "string") return NOT_FAST;
+  if (msg === null || msg.exceptionDetails || !msg.result) return NOT_FAST;
+  fastCount += 1;
+  const r = msg.result;
+  switch (r.type) {
+    case "undefined":
+      return undefined;
+    case "boolean":
+    case "string":
+      return r.value;
+    case "number":
+      if (r.unserializableValue === undefined) return r.value;
+      return r.unserializableValue === "-0" ? -0 : Number(r.unserializableValue);
+    case "object":
+      if (r.subtype === "null") return null;
+      break;
+    default:
+      return NOT_FAST;
+  }
+  if (typeof r.objectId !== "string") return NOT_FAST;
   // The value itself, not the inspector's copy of it.
   fastTaken = NOT_FAST;
   fastSession.post("Runtime.callFunctionOn", { objectId: msg.result.objectId, functionDeclaration: "function () { __brrrtyFast.take(this[0]); }", silent: true }, () => {});
-  if (++fastCount % 64 === 0) fastSession.post("Runtime.releaseObjectGroup", { objectGroup: "brrrty" }, () => {});
+  if (fastCount % 64 === 0) fastSession.post("Runtime.releaseObjectGroup", { objectGroup: "brrrty" }, () => {});
   return fastTaken;
 }
 
@@ -1770,9 +1836,8 @@ function fastResult(v) {
 
 // Try `run` (the call, its membranes made) fast for `key`, after the walk
 // it may need: its result, or NOT_FAST.
-function fastTry(key, roots, run, labelOf) {
+function fastTry(key, run, labelOf) {
   if (!fastWorth(key) || !fastReady(labelOf)) return NOT_FAST;
-  for (const r of roots) prewatch(r);
   refusedInCall = null;
   takeWrote();
   const start = rawPerfNow();
@@ -1798,9 +1863,7 @@ function handleCall(req) {
   const settle = req.await ? "await" : "asIs";
   const label = () => describeFn(fn);
   if (fastWorth(fn)) {
-    const wthis = watch(thisArg);
-    const wargs = args.map(watch);
-    const v = fastTry(fn, [thisArg, ...args], () => fn.apply(wthis, wargs), label);
+    const v = fastTry(fn, () => fn.apply(thisArg, args), label);
     if (v !== NOT_FAST) {
       const text = fastText(v);
       if (text !== null) {
@@ -1833,9 +1896,7 @@ function handlePageCall(req) {
   // the worker's own objects, unless an earlier call put one of its own there.
   if (fastWorth(fn) && (set === null || !set.includes(".") || !p.siteObjects)) {
     const thisArg = filtersThis(set !== null);
-    const wthis = watch(thisArg);
-    const wdata = watch(p.data);
-    const v = fastTry(fn, [p.data], () => fn.apply(wthis, [wdata]), label);
+    const v = fastTry(fn, () => fn.apply(thisArg, [p.data]), label);
     if (v !== NOT_FAST) {
       const text = fastText(v);
       if (text !== null) {
@@ -1886,14 +1947,13 @@ function handleRender(req) {
   if (fastWorth(t) && renderQuiet(t.inst)) {
     const label = () => describeRender(t.inst);
     const inst = t.inst;
-    let wdata;
     try {
-      wdata = renderSetup(t, data, first);
+      renderSetup(t, data, first);
     } catch {
       return renderTemplate(t, data, first);
     }
-    const v = fastTry(t, [data, ...(first === undefined ? [] : [first])], () => {
-      const out = inst.render.call(inst, wdata);
+    const v = fastTry(t, () => {
+      const out = inst.render.call(inst, data);
       // A string: anything else goes the usual way.
       return typeof out === "string" ? out : NOT_FAST;
     }, label);
