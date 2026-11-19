@@ -33,7 +33,7 @@ use crate::passthrough::copy_passthrough_avoiding;
 use crate::permalink::{Located, Locator, Permalink};
 use crate::plugins::rss::{FeedOptions, FeedTemplate};
 use crate::problem::{Problem, Severity, codes};
-use crate::random::PageGuard;
+use crate::random::{Drawn, PageGuard};
 use crate::render::{DataEngine, Engines, Job, Pipeline, body_line, engines_for};
 use crate::survey::{Log, Mode};
 use crate::templates::Langs;
@@ -81,6 +81,11 @@ pub struct WrittenPage {
     /// A hash of the bytes written, to tell whether another copy holds the same bytes
     /// without reading it. Only meaningful within one run of the program.
     pub hash: u64,
+    /// 11ty writes it differently on every build: it, or a page whose
+    /// output it shows, calls a random filter.
+    pub random: bool,
+    /// Its path is random too: a random filter placed it.
+    pub random_path: bool,
 }
 
 /// The hash [`WrittenPage::hash`] holds for `bytes`.
@@ -144,6 +149,9 @@ struct Prepared {
     data: IndexMap<String, Value>,
     /// `pagination.pageNumber` of a generated page.
     page_number: Option<usize>,
+    /// What placing it (its permalink and computed data) did that makes
+    /// its data random.
+    drawn: Drawn,
 }
 
 impl Prepared {
@@ -1268,9 +1276,10 @@ fn load_page_inner(
         let mut undefined = BTreeSet::new();
         let unit = UnitGuard::enter(format!("1 load {}", shown.display()));
         let draws = PageGuard::enter(&shown, format!("place {}", shown.display()));
-        let (data, permalink) = place.locate(values, &locator, &mut undefined)?;
-        drop(draws);
+        let located = place.locate(values, &locator, &mut undefined);
+        let drawn = draws.finish();
         drop(unit);
+        let (data, permalink) = located?;
         place.check_undefined(&undefined)?;
         let output_rel = match permalink {
             Permalink::Write { output_rel, .. } => Some(output_rel),
@@ -1281,6 +1290,7 @@ fn load_page_inner(
             output_rel,
             data,
             page_number: None,
+            drawn,
         }]));
     };
     let pagination_line = key_line(&text, "pagination");
@@ -1501,7 +1511,7 @@ impl Place<'_, '_> {
         };
 
         // Every page's first location, for `hrefs` and `links`.
-        type First = (Located, BTreeSet<String>);
+        type First = (Located, BTreeSet<String>, Drawn);
         // A page (none for `permalink: false`) and what it read undefined.
         type Generated = (Option<Prepared>, BTreeSet<String>);
         let first: Vec<Result<First, Problem>> = (0..paging.len())
@@ -1509,7 +1519,7 @@ impl Place<'_, '_> {
             .map(|n| {
                 let _unit =
                     UnitGuard::enter(format!("2 place {} {n}", self.source.shown.display()));
-                let _draws = PageGuard::enter(
+                let draws = PageGuard::enter(
                     &self.source.shown,
                     format!("place {} {n}", self.source.shown.display()),
                 );
@@ -1520,20 +1530,20 @@ impl Place<'_, '_> {
                 };
                 let mut undefined = BTreeSet::new();
                 let found = locator.locate(&data, &mut undefined).map_err(on_page(n))?;
-                Ok((found, undefined))
+                Ok((found, undefined, draws.finish()))
             })
             .collect();
         let first: Vec<First> = first.into_iter().collect::<Result<_, _>>()?;
         let mut undefined = BTreeSet::new();
-        for (_, u) in &first {
+        for (_, u, _) in &first {
             undefined.extend(u.iter().cloned());
         }
         self.check_undefined(&undefined)?;
         let links = Links::new(
-            first.iter().map(|(f, _)| f.url.clone()).collect(),
+            first.iter().map(|(f, _, _)| f.url.clone()).collect(),
             first
                 .iter()
-                .filter_map(|(f, _)| f.link.clone())
+                .filter_map(|(f, _, _)| f.link.clone())
                 .map(|l| Value::String(l.into()))
                 .collect(),
         );
@@ -1541,9 +1551,9 @@ impl Place<'_, '_> {
         let pages: Vec<Result<Generated, Problem>> = first
             .into_par_iter()
             .enumerate()
-            .map(|(n, (found, _))| {
+            .map(|(n, (found, _, placed))| {
                 let _unit = UnitGuard::enter(format!("3 page {} {n}", self.source.shown.display()));
-                let _draws = PageGuard::enter(
+                let draws = PageGuard::enter(
                     &self.source.shown,
                     format!("page {} {n}", self.source.shown.display()),
                 );
@@ -1569,11 +1579,16 @@ impl Place<'_, '_> {
                     Permalink::Write { output_rel, .. } => Some(output_rel),
                     Permalink::Skip => None,
                 };
+                let mut drawn = placed;
+                drawn.add(draws.finish());
+                // A page of a collection reads the collections.
+                drawn.touched |= expand_from.is_some();
                 let page = Some(Prepared {
                     source: self.source.clone(),
                     output_rel,
                     data,
                     page_number: Some(n),
+                    drawn,
                 });
                 Ok((page, undefined))
             })
@@ -3065,6 +3080,10 @@ fn build_once(
         .as_ref()
         .zip(order_unknown.as_ref())
         .map(|(c, why)| UnorderedGuard::new(brrrty_js::traps::object_id(c), why.clone()));
+    // A render that reads the collections may show a random page's data.
+    let _watched = collections_value
+        .as_ref()
+        .map(|c| WatchGuard::new(brrrty_js::traps::object_id(c)));
     for p in &mut prepared {
         match &collections_value {
             Some(c) => {
@@ -3219,7 +3238,7 @@ fn build_once(
     // Every page is rendered before any is written: highlighting may only
     // now have met a language that changes grammars, which the scan didn't
     // see, and then the build is redone instead.
-    type Ready<'p> = Result<(usize, PathBuf, String, &'p Path), Refused>;
+    type Ready<'p> = Result<(usize, PathBuf, String, &'p Path, LayoutDrawn), Refused>;
     // A survey records a page refused for another page's missing content as needing that
     // page, not as a blocker of its own.
     let note = |log: &Log, shown: &Path, p: &Problem, other: Option<usize>| match other {
@@ -3232,7 +3251,7 @@ fn build_once(
         .map(|i| -> Ready<'_> {
             let p = &prepared[i];
             let _unit = UnitGuard::enter(format!("6 layout {}", p.label()));
-            let _draws = PageGuard::enter(&p.source.shown, format!("layout {}", p.label()));
+            let draws = PageGuard::enter(&p.source.shown, format!("layout {}", p.label()));
             if let Some(problem) = unsupported_layout(p) {
                 // A survey also records what the page's content would have been refused for.
                 if let Some(log) = log {
@@ -3268,6 +3287,20 @@ fn build_once(
             let rendered = pipeline.layouts(&jobs[i].job, content);
             let reads = traps::take_item_reads();
             drop(guard);
+            let mut drawn = draws.finish();
+            // A JavaScript layout may read the collections, in Node.
+            drawn.touched |= p
+                .source
+                .layouts
+                .iter()
+                .any(|l| matches!(l.kind, crate::layout::Kind::Js(_)));
+            let layout_drawn = LayoutDrawn {
+                drawn,
+                reads: reads
+                    .iter()
+                    .filter_map(|(id, _)| contents.page_of(*id))
+                    .collect(),
+            };
             if let Some(j) = reads
                 .iter()
                 .find(|(_, o)| *o == Outcome::Refused)
@@ -3325,7 +3358,7 @@ fn build_once(
                 }
                 return Err(Refused::Page(problem.clone(), None));
             }
-            Ok((i, dest, rendered.html, shown.as_path()))
+            Ok((i, dest, rendered.html, shown.as_path(), layout_drawn))
         })
         .collect();
     if let Some(plugin) = &highlight {
@@ -3352,12 +3385,19 @@ fn build_once(
             }
         }
     }
+    // Which pages 11ty writes differently on every build.
+    let mut ready = ready;
+    let mut layout_drawn: Vec<Option<LayoutDrawn>> = (0..prepared.len()).map(|_| None).collect();
+    for (i, _, _, _, d) in ready.iter_mut().flatten() {
+        layout_drawn[*i] = Some(std::mem::take(d));
+    }
+    let randomness = random_pages(&prepared, &contents, &layout_drawn);
     // Written on the writer threads: see `io_threads`.
     let results: Vec<Written> = crate::io_threads::install(|| {
         ready
             .into_par_iter()
             .map(|r| -> Written {
-                let (i, dest, html, shown) = r?;
+                let (i, dest, html, shown, _) = r?;
                 if mode.dry_run {
                     return Ok((i, content_hash(html.as_bytes())));
                 }
@@ -3424,6 +3464,8 @@ fn build_once(
                     url,
                     output: p.output_rel.clone().unwrap_or_default(),
                     hash,
+                    random: randomness[i].is_some(),
+                    random_path: randomness[i].as_ref().is_some_and(|r| r.path),
                 });
             }
             Err(Refused::Page(p, other)) => {
@@ -3440,6 +3482,9 @@ fn build_once(
     report
         .problems
         .extend(shared_problems(from_layouts, "layout"));
+    report
+        .problems
+        .extend(random_notes(&prepared, &randomness, &written_pages));
     let mut explained: BTreeSet<usize> = BTreeSet::new();
     while let Some(j) = pointed.pop() {
         if writes(&prepared[j]) || !contents.renders(j) || !explained.insert(j) {
@@ -3546,6 +3591,202 @@ fn build_once(
         report.survey = Some(crate::survey::Survey { templates, js_keys });
     }
     report
+}
+
+/// What a page's layout render did that makes it random, and the pages
+/// whose content it read.
+#[derive(Debug, Default)]
+struct LayoutDrawn {
+    drawn: Drawn,
+    reads: Vec<usize>,
+}
+
+/// How a page shows another page's random output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    /// It reads that page's content.
+    Content,
+    /// It reads the collections, which hold that page's random data.
+    Collections,
+}
+
+/// Why 11ty writes a page differently on every build.
+#[derive(Debug, Clone)]
+struct Randomness {
+    /// The random filters the page calls itself.
+    filters: BTreeSet<String>,
+    /// When it calls none: the page whose random output it shows, and how.
+    from: Option<(usize, Via)>,
+    /// Its path is random.
+    path: bool,
+}
+
+/// For each page, why its output is random, if it is.
+///
+/// A page is random when it calls a random filter while it is placed (its
+/// permalink and computed data), while its content renders, or in its
+/// layouts. Another page shows that output when it reads the content of a
+/// page whose content is random, or, once some page's data is random, when
+/// it reads the collections at all, which hold every page's data: a
+/// conservative rule, since which item it reads isn't tracked. A JavaScript
+/// template or layout and a feed count as reading them.
+fn random_pages(
+    prepared: &[Prepared],
+    contents: &crate::content::Contents,
+    layouts: &[Option<LayoutDrawn>],
+) -> Vec<Option<Randomness>> {
+    let n = prepared.len();
+    let content = |i: usize| contents.random(i);
+    // The first page whose data is random.
+    let data_from = (0..n).find(|&i| !prepared[i].drawn.filters.is_empty());
+    let by_collections =
+        |touched: bool| data_from.filter(|_| touched).map(|j| (j, Via::Collections));
+    // Whose random output each page's content shows; itself when it calls
+    // a random filter, or its data is random.
+    let mut content_from: Vec<Option<(usize, Via)>> = vec![None; n];
+    let mut placed_from: Vec<Option<(usize, Via)>> = vec![None; n];
+    for i in 0..n {
+        placed_from[i] = if prepared[i].drawn.filters.is_empty() {
+            by_collections(prepared[i].drawn.touched)
+        } else {
+            Some((i, Via::Content))
+        };
+        if let Some((d, _)) = content(i) {
+            content_from[i] = if !d.filters.is_empty() {
+                Some((i, Via::Content))
+            } else {
+                placed_from[i]
+            };
+        }
+    }
+    // Content that shows random content is random too; then content that
+    // read the collections, and what shows that.
+    let spread = |content_from: &mut Vec<Option<(usize, Via)>>| loop {
+        let mut changed = false;
+        for i in 0..n {
+            if content_from[i].is_some() {
+                continue;
+            }
+            if let Some((_, reads)) = content(i)
+                && let Some(&j) = reads.iter().find(|&&j| content_from[j].is_some())
+            {
+                content_from[i] = Some((j, Via::Content));
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    };
+    spread(&mut content_from);
+    for (i, from) in content_from.iter_mut().enumerate() {
+        if from.is_none()
+            && let Some((d, _)) = content(i)
+        {
+            *from = by_collections(d.touched);
+        }
+    }
+    spread(&mut content_from);
+    (0..n)
+        .map(|i| {
+            let mut filters = prepared[i].drawn.filters.clone();
+            if let Some((d, _)) = content(i) {
+                filters.extend(d.filters.iter().cloned());
+            }
+            if let Some(l) = &layouts[i] {
+                filters.extend(l.drawn.filters.iter().cloned());
+            }
+            let path = placed_from[i].is_some();
+            if !filters.is_empty() {
+                return Some(Randomness {
+                    filters,
+                    from: None,
+                    path,
+                });
+            }
+            let from = content_from[i].or(placed_from[i]).or_else(|| {
+                let l = layouts[i].as_ref()?;
+                l.reads
+                    .iter()
+                    .find(|&&j| content_from[j].is_some())
+                    .map(|&j| (j, Via::Content))
+                    .or_else(|| by_collections(l.drawn.touched))
+            })?;
+            Some(Randomness {
+                filters,
+                from: Some(from),
+                path,
+            })
+        })
+        .collect()
+}
+
+/// One `random-output` note for each template with a written page that is
+/// random.
+fn random_notes(
+    prepared: &[Prepared],
+    randomness: &[Option<Randomness>],
+    written: &HashSet<usize>,
+) -> Vec<Problem> {
+    let seeded = crate::random::seeded();
+    // By template: whether the page noted calls a random filter itself.
+    let mut notes: BTreeMap<&Path, (bool, Problem)> = BTreeMap::new();
+    let mut order: Vec<usize> = written.iter().copied().collect();
+    order.sort_unstable();
+    for i in order {
+        let Some(r) = &randomness[i] else { continue };
+        let shown = prepared[i].source.shown.as_path();
+        let own = !r.filters.is_empty();
+        // A page that calls a random filter itself says so, over one that
+        // only shows another's.
+        if notes
+            .get(shown)
+            .is_some_and(|(noted_own, _)| *noted_own || !own)
+        {
+            continue;
+        }
+        let message = match r.from {
+            None => {
+                let names: Vec<String> = r.filters.iter().map(|f| format!("`{f}`")).collect();
+                let (kind, list) = match names.len() {
+                    1 => ("the random filter", names[0].clone()),
+                    _ => ("the random filters", names.join(" and ")),
+                };
+                format!(
+                    "this page calls {kind} {list}, so 11ty writes it differently on every build"
+                )
+            }
+            Some((j, Via::Content)) => format!(
+                "this page shows the content of {}, which a random filter makes, so 11ty writes it differently on every build too",
+                prepared[j].source.shown.display()
+            ),
+            Some((j, Via::Collections)) => format!(
+                "this page reads `collections`, which hold the data of {}, which a random filter makes, so 11ty may write it differently on every build too",
+                prepared[j].source.shown.display()
+            ),
+        };
+        let help = if seeded {
+            format!(
+                "nothing to fix: any result a random filter gives is one 11ty could have written. {} is set, so Brrrty draws the same numbers on every build with that seed and this version of Brrrty",
+                crate::random::SEED_VAR
+            )
+        } else {
+            format!(
+                "nothing to fix: any result a random filter gives is one 11ty could have written. To get the same pages from every Brrrty build, set {} (Brrrty's own; 11ty has no seed)",
+                crate::random::SEED_VAR
+            )
+        };
+        notes.insert(
+            shown,
+            (
+                own,
+                Problem::info(codes::RANDOM_OUTPUT, message)
+                    .with_path(shown)
+                    .with_help(help),
+            ),
+        );
+    }
+    notes.into_values().map(|(_, p)| p).collect()
 }
 
 /// What a JavaScript value is, for a message: "a number (42)".
@@ -3828,6 +4069,22 @@ impl OpenGuard {
 impl Drop for OpenGuard {
     fn drop(&mut self) {
         brrrty_js::traps::close(self.0);
+    }
+}
+
+/// Watches an object (see [`brrrty_js::traps::watch`]) until dropped.
+struct WatchGuard(usize);
+
+impl WatchGuard {
+    fn new(id: usize) -> WatchGuard {
+        brrrty_js::traps::watch(id);
+        WatchGuard(id)
+    }
+}
+
+impl Drop for WatchGuard {
+    fn drop(&mut self) {
+        brrrty_js::traps::unwatch(self.0);
     }
 }
 

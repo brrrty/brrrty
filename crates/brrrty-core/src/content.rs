@@ -26,7 +26,7 @@ use brrrty_js::traps::{self, Content, ContentSource, Outcome};
 
 use crate::plugins::syntaxhighlight::{Record, Recording, YAML_ORDER};
 use crate::problem::{Problem, codes};
-use crate::render::{HIGHLIGHT_HELP, Job, Output, Pipeline};
+use crate::render::{Engines, HIGHLIGHT_HELP, Job, Output, Pipeline};
 
 /// One page, as the content renderer sees it.
 pub(crate) struct ContentPage<'a> {
@@ -59,6 +59,8 @@ enum State {
         /// What its syntax highlighting needs from the pages 11ty renders
         /// before it, and loads for the ones after.
         highlight: Record,
+        /// What its render did that makes its content random.
+        drawn: crate::random::Drawn,
     },
     /// The page's own problem.
     Failed(Problem),
@@ -170,7 +172,10 @@ impl Run<'_, '_> {
         let highlight = recording.finish();
         let reads = traps::take_item_reads();
         drop(guard);
-        drop(draws);
+        let mut drawn = draws.finish();
+        // A feed reads the collections; so may a JavaScript template, in Node.
+        let job = &self.pages[i].job;
+        drawn.touched |= job.feed.is_some() || matches!(job.engines, Engines::Js(_));
         drop(unit);
 
         let mut ready = Vec::new();
@@ -233,6 +238,7 @@ impl Run<'_, '_> {
                     content: js.unwrap_or_else(|| Value::String(html.into())),
                     reads: ready,
                     highlight,
+                    drawn,
                 },
             },
         };
@@ -350,6 +356,15 @@ pub(crate) fn render_all(
 }
 
 impl Contents {
+    /// What page `i`'s content render did that makes it random, and the
+    /// pages whose content it read; `None` when it has no content.
+    pub fn random(&self, i: usize) -> Option<(&crate::random::Drawn, &[usize])> {
+        match &self.states[i] {
+            State::Done { drawn, reads, .. } => Some((drawn, reads)),
+            _ => None,
+        }
+    }
+
     /// The pages that need YAML loaded by a page 11ty renders before them
     /// (in `order`) when none does, with their problems.
     fn yaml_unmet(&self, order: &[usize]) -> Vec<(usize, Problem)> {

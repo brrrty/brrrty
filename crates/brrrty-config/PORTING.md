@@ -83,8 +83,11 @@ only the pages that hit them:
   11ty writes the same every time, so `random()` is an error there.
   `config.add_nondeterministic_filter("name")` still declares such a
   filter without porting it, and refuses the pages that use it.
-  `BRRRTY_RANDOM_SEED` (Brrrty's own) seeds the draws, per page, so
-  builds with one seed write the same pages.
+  A page that shows a random page's output (its content, or, when a
+  random filter gives a page's data, anything from `collections`) gets
+  the note too. `BRRRTY_RANDOM_SEED` (Brrrty's own) seeds the draws, per
+  page, so builds with one seed and one Brrrty version write the same
+  pages.
 - `toLocaleString()` and `localeCompare()` without a locale follow Node's
   default locale, which it takes from the first of `LC_ALL`, `LC_MESSAGES`
   and `LANG` that is set (`de_DE` prints `1.234,5`, `en_IN` prints

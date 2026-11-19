@@ -645,8 +645,12 @@ fn a_random_filter_builds_with_a_note_and_a_seed_repeats_it() {
     // items have 479,001,600 orders, three pages of them.
     let (_, second) = random_build(dir.path(), None);
     assert_ne!(first, second);
+    assert!(err.contains("set BRRRTY_RANDOM_SEED"), "{err}");
     // Seeded, every build writes the same pages, and another seed others.
-    let (_, a) = random_build(dir.path(), Some("porksicle"));
+    let (seeded, a) = random_build(dir.path(), Some("porksicle"));
+    let err = stderr(&seeded);
+    assert!(err.contains("BRRRTY_RANDOM_SEED is set"), "{err}");
+    assert!(!err.contains("set BRRRTY_RANDOM_SEED"), "{err}");
     let (_, b) = random_build(dir.path(), Some("porksicle"));
     assert_eq!(a, b);
     let (_, c) = random_build(dir.path(), Some("other"));

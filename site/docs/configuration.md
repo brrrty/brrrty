@@ -287,11 +287,13 @@ config.add_random_filter("shuffle", |arr| {
 });
 ```
 
-Each page that calls a random filter builds, with a `random-output` note saying its output differs from build to build, as it does in 11ty. The note stops nothing, and `brrrty doctor` lists it with the other notes. A random filter called from a JavaScript template or a permalink or computed function on `this` works too: the replay check of JavaScript data is handed the answers the filter gave the first time.
+Each page that calls a random filter builds, with a `random-output` note saying 11ty writes it differently on every build. A page gets one note, however many random filters it calls. The note stops nothing, and `brrrty doctor` lists it with the other notes. A random filter called from a JavaScript template or a permalink or computed function on `this` works too: the replay check of JavaScript data is handed the answers the filter gave the first time.
+
+A page that shows another page's random output is random too, and gets the note: one that shows a random page's content (`templateContent`), also through another page's content. When a random filter gives a page's data (in its permalink, or computed data), every page that reads `collections` at all, a feed and a page that paginates a collection included, counts as random: Brrrty doesn't track which items a page reads, so it errs on that side. A JavaScript template or layout counts as reading `collections` when it has them.
 
 `random()` works only inside a filter added with `add_random_filter`. Anywhere else (the script's top level, global data, a collection, a filter added with `add_filter`) it is an error, since a random value there would change output that 11ty writes the same on every build.
 
-`BRRRTY_RANDOM_SEED` is Brrrty's own; 11ty has no seed. Set it to any text, and every Brrrty build with the same seed and the same source writes the same pages, which helps when comparing two builds or reviewing a change. Each page draws its own numbers, so the result doesn't depend on which pages render at the same time. Without it, every build draws new ones.
+`BRRRTY_RANDOM_SEED` is Brrrty's own; 11ty has no seed. Set it to any text, and every build with the same seed, the same source and the same version of Brrrty writes the same pages, which helps when comparing two builds or reviewing a change. (Another version of Brrrty may draw other numbers from the same seed.) Each page draws its own numbers, so the result doesn't depend on which pages render at the same time. Without it, every build draws new ones.
 
 Local dates (`date(y, m, d)`, the `get_*` methods, and dates printed in templates) use the time zone in the `TZ` environment variable, or the computer's, as Node does, with the time zone data Node 26 ships (release 2026b) built into Brrrty, so the computer's own, older or newer, data doesn't change your pages. Build with the same zone as your 11ty builds, or set `TZ`. A `TZ` that isn't a zone name (a typo, or a rule like `EST5EDT,M3.2.0,M11.1.0`) stops the build, where Node would quietly use UTC. A site built with another Node version can differ in a zone whose rules changed in between.
 

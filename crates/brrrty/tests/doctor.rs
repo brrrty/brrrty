@@ -1657,7 +1657,7 @@ fn a_page_with_a_random_filter_builds_with_a_note() {
         "{text}"
     );
     assert!(
-        text.contains("note: index.njk: this page calls `pick`, a random filter, so its output differs from build to build, as it does in 11ty"),
+        text.contains("note: index.njk: this page calls the random filter `pick`, so 11ty writes it differently on every build"),
         "{text}"
     );
     assert!(text.ends_with("All 2 pages will build.\n"), "{text}");

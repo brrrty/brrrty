@@ -417,7 +417,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         .filters
         .into_iter()
         .map(|(name, def)| brrrty_core::ConfigFilter {
-            run: filters::make(runtime.clone(), name.clone(), def, late_problems.clone()),
+            run: filters::make(runtime.clone(), name.clone(), def),
             name,
         })
         .collect();

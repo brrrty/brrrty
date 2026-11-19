@@ -63,6 +63,12 @@ static UNORDERED: RwLock<Vec<(usize, Arc<str>, bool)>> = RwLock::new(Vec::new())
 /// known; the rest is why.
 pub const ORDER_PREFIX: &str = "order.";
 
+/// Watched objects, by [`object_id`]: any read of one, or a listing, is
+/// noted on the reading thread (see [`touched`]).
+static WATCHED: RwLock<Vec<usize>> = RwLock::new(Vec::new());
+/// How many objects are watched, so a read can skip the lock when none.
+static WATCHED_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 /// Withholding objects, by [`object_id`], with the keys they lack.
 static WITHHELD: LazyLock<RwLock<HashMap<usize, Arc<[String]>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -101,6 +107,42 @@ thread_local! {
     static HITS: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
     static SOURCE: RefCell<Option<Arc<dyn ContentSource>>> = const { RefCell::new(None) };
     static ITEM_READS: RefCell<Vec<(usize, Outcome)>> = const { RefCell::new(Vec::new()) };
+    static TOUCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Watch an object: a read of any of its properties, or a listing of them,
+/// is noted on the thread that made it. `id` is [`object_id`] of the
+/// object; call [`unwatch`] when done.
+pub fn watch(id: usize) {
+    if let Ok(mut v) = WATCHED.write() {
+        v.push(id);
+        WATCHED_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+pub fn unwatch(id: usize) {
+    if let Ok(mut v) = WATCHED.write()
+        && let Some(i) = v.iter().position(|x| *x == id)
+    {
+        v.swap_remove(i);
+        WATCHED_COUNT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether this thread read a watched object since the flag was last set,
+/// and set it to `to`.
+pub fn swap_touched(to: bool) -> bool {
+    TOUCHED.with(|t| t.replace(to))
+}
+
+fn touch(o: &IndexMap<String, Value>) {
+    if WATCHED_COUNT.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    let id = object_id(o);
+    if WATCHED.read().is_ok_and(|v| v.contains(&id)) {
+        TOUCHED.with(|t| t.set(true));
+    }
 }
 
 /// Register an object: reading a property it doesn't have is a trap.
@@ -310,6 +352,7 @@ fn item_content(o: &IndexMap<String, Value>) -> Option<Content> {
 /// gives. An item's content comes from the installed source; other markers
 /// and missing properties of an open object are recorded as traps.
 pub fn read(o: &IndexMap<String, Value>, key: &str, found: Option<Value>) -> Option<Value> {
+    touch(o);
     match &found {
         Some(Value::Undefined) if CONTENT_KEYS.contains(&key) => match item_content(o) {
             Some(Content::Ready(v)) => Some(v),
@@ -368,6 +411,7 @@ pub fn read_item(item: &Value, key: &str) {
 /// values. An item's names are all there, so only an open object, which
 /// may have more, is a trap. True when it recorded one.
 pub fn keys(o: &IndexMap<String, Value>) -> bool {
+    touch(o);
     if list_withheld(o) {
         return true;
     }
@@ -384,6 +428,7 @@ pub fn keys(o: &IndexMap<String, Value>) -> bool {
 /// Whether `o` has `key` as an own property (`key in o`). A name an open
 /// object doesn't have is a trap: the config may add it.
 pub fn has(o: &IndexMap<String, Value>, key: &str) -> bool {
+    touch(o);
     if o.contains_key(key) {
         return true;
     }
@@ -400,6 +445,7 @@ pub fn has(o: &IndexMap<String, Value>, key: &str) -> bool {
 /// A listing of all of `o`'s properties. True when it recorded a trap: the
 /// caller's result will be refused, so a walk of the data can stop there.
 pub fn entries(o: &IndexMap<String, Value>) -> bool {
+    touch(o);
     let mut trapped = false;
     let mut item_known = None;
     for key in TRAP_KEYS {
@@ -453,6 +499,30 @@ mod tests {
         o.insert("content".to_string(), Value::Undefined);
         o.insert("template".to_string(), Value::Undefined);
         o
+    }
+
+    #[test]
+    fn a_watched_object_notes_reads_and_listings() {
+        let mut o = IndexMap::new();
+        o.insert("post".to_string(), Value::Array(Default::default()));
+        let other = IndexMap::new();
+        swap_touched(false);
+        read(&o, "post", o.get("post").cloned());
+        assert!(!swap_touched(false));
+        watch(object_id(&o));
+        read(&other, "post", None);
+        assert!(!swap_touched(false));
+        read(&o, "post", o.get("post").cloned());
+        assert!(swap_touched(false));
+        has(&o, "x");
+        assert!(swap_touched(false));
+        keys(&o);
+        assert!(swap_touched(false));
+        entries(&o);
+        assert!(swap_touched(false));
+        unwatch(object_id(&o));
+        read(&o, "post", o.get("post").cloned());
+        assert!(!swap_touched(false));
     }
 
     #[test]

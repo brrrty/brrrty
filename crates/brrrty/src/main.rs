@@ -1,5 +1,5 @@
 use std::io::{IsTerminal, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use brrrty::options::{Flags, build_options};
@@ -430,12 +430,14 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
             let report =
                 brrrty_compat::compare_dirs(&out, &ours, &brrrty_compat::AllowList::empty())
                     .map_err(|err| format!("Brrrty could not compare the two builds: {err}"))?;
+            let (random, random_paths) = random_outputs(&diagnosis.report);
             Ok(verify::Verified {
                 eleventy_version: e.version.clone(),
                 eleventy_time,
                 brrrty_time: diagnosis.report.elapsed,
                 report,
-                random: random_outputs(&diagnosis.report),
+                random,
+                random_paths,
             })
         }));
     }
@@ -471,21 +473,26 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
     }
 }
 
-/// The files written for pages that call a random filter (each has a
-/// `random-output` note).
-fn random_outputs(report: &brrrty_core::BuildReport) -> std::collections::BTreeSet<PathBuf> {
-    let sources: std::collections::BTreeSet<&Path> = report
-        .problems
-        .iter()
-        .filter(|p| p.code == brrrty_core::codes::RANDOM_OUTPUT)
-        .filter_map(|p| p.path.as_deref())
-        .collect();
-    report
+/// The files written for random pages, and those of them at a random path.
+fn random_outputs(
+    report: &brrrty_core::BuildReport,
+) -> (
+    std::collections::BTreeSet<PathBuf>,
+    std::collections::BTreeSet<PathBuf>,
+) {
+    let all = report
         .pages
         .iter()
-        .filter(|p| sources.contains(p.source.as_path()))
+        .filter(|p| p.random)
         .map(|p| p.output.clone())
-        .collect()
+        .collect();
+    let paths = report
+        .pages
+        .iter()
+        .filter(|p| p.random_path)
+        .map(|p| p.output.clone())
+        .collect();
+    (all, paths)
 }
 
 /// Stop after a signal: remove the temporary folder, say so and exit 130 or 143.

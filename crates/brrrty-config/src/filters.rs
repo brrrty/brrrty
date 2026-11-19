@@ -13,7 +13,6 @@
 
 use std::sync::Arc;
 
-use brrrty_core::{LateProblems, Problem, codes};
 use brrrty_js::Value;
 use brrrty_liquid::{ArgsFilterFn, FilterCtx};
 use rhai::{AST, Dynamic, Engine, FnPtr};
@@ -62,24 +61,6 @@ impl Drop for RandomScope {
     }
 }
 
-/// The note for a page at `page` that calls the random filter `name`.
-fn random_note(name: &str, page: Option<std::path::PathBuf>) -> Problem {
-    let p = Problem::info(
-        codes::RANDOM_OUTPUT,
-        format!(
-            "this page calls `{name}`, a random filter, so its output differs from build to build, as it does in 11ty"
-        ),
-    )
-    .with_help(format!(
-        "nothing to fix: any result `{name}` gives is one 11ty could have written. To get the same pages from every Brrrty build, set {} (Brrrty's own; 11ty has no seed)",
-        brrrty_core::random::SEED_VAR
-    ));
-    match page {
-        Some(page) => p.with_path(page),
-        None => p,
-    }
-}
-
 /// The script, kept so its filters can run while pages render.
 pub struct Runtime {
     pub engine: Engine,
@@ -102,9 +83,8 @@ fn arity(rt: &Runtime, f: &FnPtr) -> Option<usize> {
         .map(|m| m.params.len().saturating_sub(f.curry().len()))
 }
 
-/// The filter as the Liquid engine runs it. A random filter's notes go to
-/// `notes`.
-pub fn make(rt: Arc<Runtime>, name: String, def: FilterDef, notes: LateProblems) -> ArgsFilterFn {
+/// The filter as the Liquid engine runs it.
+pub fn make(rt: Arc<Runtime>, name: String, def: FilterDef) -> ArgsFilterFn {
     match def {
         FilterDef::Nondeterministic => Arc::new(move |_, _, _: &FilterCtx| {
             Err(format!(
@@ -117,19 +97,16 @@ pub fn make(rt: Arc<Runtime>, name: String, def: FilterDef, notes: LateProblems)
         }
         FilterDef::Random(f) => {
             let arity = arity(&rt, &f);
-            // The pages noted already: a page calls the filter many times.
-            let noted = std::sync::Mutex::new(std::collections::HashSet::new());
             Arc::new(move |input, args, _: &FilterCtx| {
-                let page = brrrty_core::random::current_page();
-                let new = noted
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(page.clone());
-                if new {
-                    notes.add(random_note(&name, page));
+                let out = {
+                    let _scope = RandomScope::enter();
+                    call(&rt, &name, &f, arity, input, args)
+                };
+                // The page is random once the filter gave it a result.
+                if out.is_ok() {
+                    brrrty_core::random::filter_called(&name);
                 }
-                let _scope = RandomScope::enter();
-                call(&rt, &name, &f, arity, input, args)
+                out
             })
         }
     }

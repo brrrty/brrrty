@@ -14,6 +14,7 @@
 //! so every build with the same seed writes the same pages.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -30,6 +31,25 @@ struct Draws {
     label: String,
     /// Not drawn from yet: seeded at the first draw.
     state: Option<u64>,
+    /// The random filters the render called.
+    filters: BTreeSet<String>,
+}
+
+/// What one render did that makes its result random.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Drawn {
+    /// The random filters it called.
+    pub filters: BTreeSet<String>,
+    /// It read the `collections` object (or may have: a JavaScript render,
+    /// a feed), which holds other pages' data.
+    pub touched: bool,
+}
+
+impl Drawn {
+    pub fn add(&mut self, other: Drawn) {
+        self.filters.extend(other.filters);
+        self.touched |= other.touched;
+    }
 }
 
 thread_local! {
@@ -37,8 +57,13 @@ thread_local! {
 }
 
 /// While alive, random draws on this thread are the render `label` of the
-/// page from `shown`, and start a fresh stream.
-pub(crate) struct PageGuard(Option<Draws>);
+/// page from `shown`, and start a fresh stream; [`PageGuard::finish`] says
+/// what the render did.
+pub(crate) struct PageGuard {
+    before: Option<Draws>,
+    touched_before: bool,
+    done: bool,
+}
 
 impl PageGuard {
     pub(crate) fn enter(shown: &Path, label: String) -> PageGuard {
@@ -46,16 +71,51 @@ impl PageGuard {
             shown: shown.to_path_buf(),
             label,
             state: None,
+            filters: BTreeSet::new(),
         };
-        PageGuard(PAGE.with(|p| p.borrow_mut().replace(draws)))
+        PageGuard {
+            before: PAGE.with(|p| p.borrow_mut().replace(draws)),
+            touched_before: brrrty_js::traps::swap_touched(false),
+            done: false,
+        }
+    }
+
+    /// End the render: the random filters it called, and whether it read
+    /// the collections.
+    pub(crate) fn finish(mut self) -> Drawn {
+        self.done = true;
+        let draws = PAGE.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.before.take()));
+        let touched = brrrty_js::traps::swap_touched(self.touched_before);
+        Drawn {
+            filters: draws.map(|d| d.filters).unwrap_or_default(),
+            touched,
+        }
     }
 }
 
 impl Drop for PageGuard {
     fn drop(&mut self) {
-        let before = self.0.take();
-        PAGE.with(|p| *p.borrow_mut() = before);
+        if !self.done {
+            let before = self.before.take();
+            PAGE.with(|p| *p.borrow_mut() = before);
+            brrrty_js::traps::swap_touched(self.touched_before);
+        }
     }
+}
+
+/// Note that the random filter `name` is running for the page rendering on
+/// this thread.
+pub fn filter_called(name: &str) {
+    PAGE.with(|p| {
+        if let Some(d) = p.borrow_mut().as_mut() {
+            d.filters.insert(name.to_string());
+        }
+    });
+}
+
+/// Whether `BRRRTY_RANDOM_SEED` is set (and not empty).
+pub fn seeded() -> bool {
+    std::env::var_os(SEED_VAR).is_some_and(|s| !s.is_empty())
 }
 
 /// The source of the page rendering on this thread (as the report shows
@@ -152,6 +212,21 @@ mod tests {
         }
         assert_eq!(current_page(), Some(PathBuf::from("a.njk")));
         drop(outer);
+        assert_eq!(current_page(), None);
+    }
+
+    #[test]
+    fn finish_gives_the_filters_called_and_restores_the_scope_before() {
+        let outer = PageGuard::enter(Path::new("a.njk"), "a".into());
+        filter_called("pick");
+        let inner = PageGuard::enter(Path::new("b.njk"), "b".into());
+        filter_called("shuffle");
+        let drawn = inner.finish();
+        assert_eq!(drawn.filters.into_iter().collect::<Vec<_>>(), ["shuffle"]);
+        assert!(!drawn.touched);
+        assert_eq!(current_page(), Some(PathBuf::from("a.njk")));
+        let drawn = outer.finish();
+        assert_eq!(drawn.filters.into_iter().collect::<Vec<_>>(), ["pick"]);
         assert_eq!(current_page(), None);
     }
 

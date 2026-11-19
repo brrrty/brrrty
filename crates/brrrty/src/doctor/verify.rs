@@ -128,10 +128,25 @@ pub struct Verified {
     pub eleventy_time: Duration,
     pub brrrty_time: Duration,
     pub report: CompareReport,
-    /// Output files of pages that call a random filter, relative to the
-    /// output folder: 11ty writes them differently on every build, so they
-    /// can't be compared.
+    /// Output files of random pages (that call a random filter, or show
+    /// such a page's output), relative to the output folder: 11ty writes
+    /// them differently on every build, so they can't be compared.
     pub random: BTreeSet<PathBuf>,
+    /// Those of them a random filter placed: 11ty writes them at another
+    /// path on every build.
+    pub random_paths: BTreeSet<PathBuf>,
+}
+
+/// The files of each outcome, random pages' files apart.
+#[derive(Debug, Default, Clone, Copy)]
+struct Tally {
+    identical: usize,
+    random: usize,
+    /// Different, including only in whitespace.
+    different: usize,
+    whitespace: usize,
+    missing: usize,
+    extra: usize,
 }
 
 impl Verified {
@@ -140,66 +155,116 @@ impl Verified {
         self.report.results.len()
     }
 
-    /// A random page's file that both builds wrote, differently.
-    fn varies(&self, r: &FileResult) -> bool {
-        matches!(r.outcome, Outcome::Different { .. } | Outcome::Equivalent)
-            && self.random.contains(&r.path)
+    /// Files 11ty wrote at a path Brrrty didn't, which can be the random
+    /// pages' own: when no more of them are missing than random paths
+    /// Brrrty wrote that 11ty didn't. Which is which can't be told, so
+    /// either all of them count as random, or none.
+    fn missing_random(&self) -> bool {
+        let (mut missing, mut random_extra) = (0, 0);
+        for r in &self.report.results {
+            match r.outcome {
+                Outcome::Missing => missing += 1,
+                Outcome::Extra if self.random_paths.contains(&r.path) => random_extra += 1,
+                _ => {}
+            }
+        }
+        random_extra > 0 && missing <= random_extra
     }
 
-    /// Random pages' files that differ.
-    fn varying(&self) -> usize {
+    /// Whether `r` is a random page's file, not compared.
+    fn is_random(&self, r: &FileResult, missing_random: bool) -> bool {
+        match r.outcome {
+            Outcome::Different { .. } | Outcome::Equivalent => self.random.contains(&r.path),
+            Outcome::Extra => self.random_paths.contains(&r.path),
+            Outcome::Missing => missing_random,
+            Outcome::Identical => false,
+        }
+    }
+
+    fn tally(&self) -> Tally {
+        let missing_random = self.missing_random();
+        let mut t = Tally::default();
+        for r in &self.report.results {
+            if self.is_random(r, missing_random) {
+                t.random += 1;
+                continue;
+            }
+            match r.outcome {
+                Outcome::Identical => t.identical += 1,
+                Outcome::Equivalent => {
+                    t.different += 1;
+                    t.whitespace += 1;
+                }
+                Outcome::Different { .. } => t.different += 1,
+                Outcome::Missing => t.missing += 1,
+                Outcome::Extra => t.extra += 1,
+            }
+        }
+        t
+    }
+
+    /// The files compared, apart from random pages'.
+    fn compared(&self) -> impl Iterator<Item = &FileResult> {
+        let missing_random = self.missing_random();
         self.report
             .results
             .iter()
-            .filter(|r| self.varies(r))
-            .count()
+            .filter(move |r| !self.is_random(r, missing_random))
     }
 
-    /// Every file is byte-identical, or a random page's.
+    /// The random pages' files, not compared.
+    fn random_files(&self) -> Vec<&Path> {
+        let missing_random = self.missing_random();
+        self.report
+            .results
+            .iter()
+            .filter(|r| self.is_random(r, missing_random))
+            .map(|r| r.path.as_path())
+            .collect()
+    }
+
+    /// Every file compared is byte-identical. Random pages' files aren't
+    /// compared.
     pub fn passes(&self) -> bool {
-        let c = self.report.counts();
-        c.identical + self.varying() == self.files()
-    }
-
-    /// Different, including files that differ only in whitespace, and not
-    /// random pages'.
-    fn different(&self) -> usize {
-        let c = self.report.counts();
-        c.different + c.equivalent - self.varying()
-    }
-
-    /// What the verdict adds for random pages' files.
-    fn random_note(&self) -> String {
-        match self.varying() {
-            0 => String::new(),
-            1 => " (1 is a random page, which 11ty writes differently on every build)".to_string(),
-            n => format!(
-                " ({} are random pages, which 11ty writes differently on every build)",
-                thousands(n)
-            ),
-        }
+        let t = self.tally();
+        t.identical + t.random == self.files()
     }
 
     /// The one line to paste into an issue or a post.
     pub fn verdict(&self) -> String {
-        let c = self.report.counts();
-        if self.passes() {
-            format!(
-                "Your site is byte-compatible on Brrrty: {} files{}, {} vs {}",
+        let t = self.tally();
+        if !self.passes() {
+            return format!(
+                "Not byte-compatible yet: {} different, {} missing, {} extra, of {} files",
+                thousands(t.different),
+                thousands(t.missing),
+                thousands(t.extra),
+                thousands(self.files())
+            );
+        }
+        if t.random == 0 {
+            return format!(
+                "Your site is byte-compatible on Brrrty: {} files, {} vs {}",
                 thousands(self.files()),
-                self.random_note(),
                 seconds(self.brrrty_time),
                 seconds(self.eleventy_time)
-            )
+            );
+        }
+        let skipped = if t.random == 1 {
+            "1 file wasn't compared: it is a random page, which 11ty writes differently on every build".to_string()
         } else {
             format!(
-                "Not byte-compatible yet: {} different, {} missing, {} extra, of {} files",
-                thousands(self.different()),
-                thousands(c.missing),
-                thousands(c.extra),
-                thousands(self.files())
+                "{} files weren't compared: they are random pages, which 11ty writes differently on every build",
+                thousands(t.random)
             )
-        }
+        };
+        format!(
+            "Every file compared is byte-identical: {} of {} files, {} vs {}. {skipped}.",
+            thousands(t.identical),
+            thousands(self.files()),
+            seconds(self.brrrty_time),
+            seconds(self.eleventy_time),
+        )
     }
 }
 
@@ -210,7 +275,7 @@ pub fn seconds(d: Duration) -> String {
 
 /// The text report.
 pub fn text(v: &Verified) -> String {
-    let c = v.report.counts();
+    let c = v.tally();
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -218,15 +283,15 @@ pub fn text(v: &Verified) -> String {
         v.eleventy_version,
         env!("CARGO_PKG_VERSION")
     );
-    let whitespace = if c.equivalent > 0 {
-        format!(" ({} only in whitespace)", thousands(c.equivalent))
+    let whitespace = if c.whitespace > 0 {
+        format!(" ({} only in whitespace)", thousands(c.whitespace))
     } else {
         String::new()
     };
-    let random = match v.varying() {
+    let random = match c.random {
         0 => String::new(),
         n => format!(
-            ", {} random (11ty writes {} differently on every build)",
+            ", {} random, not compared (11ty writes {} differently on every build)",
             thousands(n),
             if n == 1 { "it" } else { "them" }
         ),
@@ -236,7 +301,7 @@ pub fn text(v: &Verified) -> String {
         "  {} files: {} byte-identical{random}, {} different{whitespace}, {} missing, {} extra",
         thousands(v.files()),
         thousands(c.identical),
-        thousands(v.different()),
+        thousands(c.different),
         thousands(c.missing),
         thousands(c.extra)
     );
@@ -250,10 +315,7 @@ pub fn text(v: &Verified) -> String {
     let mut diffs = 0;
     let mut missing = Vec::new();
     let mut extra = Vec::new();
-    for r in &v.report.results {
-        if v.varies(r) {
-            continue;
-        }
+    for r in v.compared() {
         match &r.outcome {
             Outcome::Different { diff } => {
                 diffs += 1;
@@ -307,15 +369,10 @@ pub fn text(v: &Verified) -> String {
 
 /// The JSON report.
 pub fn json(v: &Verified) -> Value {
-    let c = v.report.counts();
+    let c = v.tally();
     let files: Vec<Value> = v
-        .report
-        .results
-        .iter()
+        .compared()
         .filter_map(|r| {
-            if v.varies(r) {
-                return None;
-            }
             let (outcome, diff) = match &r.outcome {
                 Outcome::Identical => return None,
                 Outcome::Equivalent => ("whitespace", None),
@@ -330,13 +387,14 @@ pub fn json(v: &Verified) -> Value {
         "eleventy": v.eleventy_version,
         "files": v.files(),
         "identical": c.identical,
-        "different": v.different(),
-        "random": v.report.results.iter().filter(|r| v.varies(r)).map(|r| &r.path).collect::<Vec<_>>(),
+        "different": c.different,
+        "random": v.random_files(),
         "missing": c.missing,
         "extra": c.extra,
         "eleventy_seconds": v.eleventy_time.as_secs_f64(),
         "brrrty_seconds": v.brrrty_time.as_secs_f64(),
-        "byte_compatible": v.passes(),
+        "byte_compatible": v.passes() && c.random == 0,
+        "compared_identical": v.passes(),
         "verdict": v.verdict(),
         "differences": files,
     })
@@ -363,6 +421,7 @@ mod tests {
                     .collect(),
             },
             random: BTreeSet::new(),
+            random_paths: BTreeSet::new(),
         }
     }
 
@@ -392,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn a_random_page_that_differs_still_passes() {
+    fn a_random_page_that_differs_is_not_compared_and_the_verdict_says_so() {
         let mut v = verified(vec![
             Outcome::Identical,
             Outcome::Different {
@@ -402,17 +461,55 @@ mod tests {
         assert!(!v.passes());
         v.random.insert("f1.html".into());
         assert!(v.passes());
+        let verdict = v.verdict();
+        assert!(!verdict.contains("byte-compatible"), "{verdict}");
         assert_eq!(
-            v.verdict(),
-            "Your site is byte-compatible on Brrrty: 2 files (1 is a random page, which 11ty writes differently on every build), 0.85 s vs 2.32 s"
+            verdict,
+            "Every file compared is byte-identical: 1 of 2 files, 0.85 s vs 2.32 s. 1 file wasn't compared: it is a random page, which 11ty writes differently on every build."
         );
         let t = text(&v);
-        assert!(t.contains("1 byte-identical, 1 random"), "{t}");
+        assert!(
+            t.contains("1 byte-identical, 1 random, not compared"),
+            "{t}"
+        );
         assert!(!t.contains("Different: f1.html"), "{t}");
-        assert_eq!(json(&v)["random"], serde_json::json!(["f1.html"]));
+        let j = json(&v);
+        assert_eq!(j["random"], serde_json::json!(["f1.html"]));
+        assert_eq!(j["byte_compatible"], false);
+        assert_eq!(j["compared_identical"], true);
         // A file random pages didn't write still counts.
         v.random.clear();
         v.random.insert("f9.html".into());
         assert!(!v.passes());
+    }
+
+    #[test]
+    fn a_random_page_that_differs_only_in_whitespace_isnt_counted_as_whitespace() {
+        let mut v = verified(vec![Outcome::Equivalent, Outcome::Equivalent]);
+        v.random.insert("f0.html".into());
+        let t = text(&v);
+        assert!(t.contains("1 different (1 only in whitespace)"), "{t}");
+        v.random.insert("f1.html".into());
+        let t = text(&v);
+        assert!(t.contains("0 different, 0 missing"), "{t}");
+    }
+
+    #[test]
+    fn a_random_path_pairs_a_missing_file_with_an_extra_one() {
+        // 11ty wrote f0 and Brrrty f1, each at the path its draw gave.
+        let mut v = verified(vec![Outcome::Missing, Outcome::Extra, Outcome::Identical]);
+        assert!(!v.passes());
+        v.random.insert("f1.html".into());
+        v.random_paths.insert("f1.html".into());
+        assert!(v.passes(), "{}", text(&v));
+        assert_eq!(
+            json(&v)["random"],
+            serde_json::json!(["f0.html", "f1.html"])
+        );
+        // More missing than random paths: which is which can't be told.
+        let mut v = verified(vec![Outcome::Missing, Outcome::Missing, Outcome::Extra]);
+        v.random_paths.insert("f2.html".into());
+        assert!(!v.passes());
+        assert!(text(&v).contains("2 missing, 0 extra"), "{}", text(&v));
     }
 }
