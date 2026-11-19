@@ -8,7 +8,10 @@ use brrrty_js::Value;
 use brrrty_js::runtime::{JsResult, JsRuntime, Settle, This};
 use brrrty_node::{RunMode, Worker, find_node};
 
+mod watch;
+
 fn node() -> Option<brrrty_node::NodeInfo> {
+    watch::started();
     match find_node(None) {
         Ok(n) => {
             // Before 22.15 Node can't show the worker every file that

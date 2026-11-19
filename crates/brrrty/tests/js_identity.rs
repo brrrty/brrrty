@@ -11,7 +11,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn has_node() -> bool {
+    watch::started();
     let ok = Command::new("node").arg("--version").output().is_ok();
     if !ok {
         assert!(std::env::var_os("CI").is_none(), "CI needs Node");

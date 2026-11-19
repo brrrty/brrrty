@@ -40,7 +40,11 @@ fn page(body: &str) -> String {
     format!("---\nlayout: base.liquid\n---\n<p id=\"msg\">{body}</p>\n")
 }
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn site() -> tempfile::TempDir {
+    watch::started();
     let t = tempfile::tempdir().unwrap();
     let root = t.path();
     write(root, "src/_includes/base.liquid", LAYOUT);

@@ -10,8 +10,11 @@ use brrrty_js::Value;
 use brrrty_js::runtime::{JsResult, JsRuntime};
 use brrrty_node::{RunMode, Worker, find_node};
 
+mod watch;
+
 #[test]
 fn the_proxy_port_finds_what_11ty_finds() {
+    watch::started();
     let node = match find_node(None) {
         Ok(n) => n,
         Err(e) => {

@@ -66,8 +66,11 @@ const bad = check(source, { sourceType: "module", allowAwaitOutsideFunction: tru
 if (bad.length) { console.log(bad.join("\n")); process.exit(1); }
 "#;
 
+mod watch;
+
 #[test]
 fn every_line_the_client_strips_is_a_comment() {
+    watch::started();
     if Command::new("node").arg("--version").output().is_err() {
         assert!(std::env::var_os("CI").is_none(), "CI needs Node");
         eprintln!("skipped: no node on PATH");
