@@ -1139,7 +1139,11 @@ fn a_todo_marker_shows_why_until_it_is_deleted() {
     });
 }
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn has_node() -> bool {
+    watch::started();
     let ok = Command::new("node").arg("--version").output().is_ok();
     if !ok {
         assert!(std::env::var_os("CI").is_none(), "CI needs Node");

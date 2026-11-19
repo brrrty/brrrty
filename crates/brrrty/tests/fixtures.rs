@@ -7,7 +7,11 @@ use std::process::Command;
 
 use brrrty_compat::{AllowList, Outcome, compare_dirs};
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn fixtures_dir() -> PathBuf {
+    watch::started();
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
 }
 

@@ -236,7 +236,11 @@ fn usage_errors_exit_2() {
     assert_eq!(run(dir.path(), &["doctor", "--yes"]).status.code(), Some(2));
 }
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn has_node() -> bool {
+    watch::started();
     Command::new("node")
         .arg("--version")
         .output()

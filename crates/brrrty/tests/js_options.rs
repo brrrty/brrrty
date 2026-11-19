@@ -5,7 +5,11 @@ use std::fs;
 use brrrty::options::{Flags, build_options};
 use brrrty_core::{JsData, JsDataSource};
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn site(config: Option<&str>) -> tempfile::TempDir {
+    watch::started();
     let t = tempfile::tempdir().unwrap();
     if let Some(c) = config {
         fs::write(t.path().join("brrrty.config.rhai"), c).unwrap();
