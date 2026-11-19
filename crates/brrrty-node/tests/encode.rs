@@ -9,7 +9,10 @@ use brrrty_node::{ENCODE_SOURCE, decode};
 
 /// `expr` encoded by the worker's code in Node, then decoded. `None` (with
 /// a printed reason) when this machine has no Node; CI has one.
+mod watch;
+
 fn through_node(expr: &str) -> Option<Decoded> {
+    watch::started();
     let source = format!(
         "{ENCODE_SOURCE}\nconst handles = [];\nconst v = ({expr});\nprocess.stdout.write(JSON.stringify(encodeValue(v, (f) => handles.push(f) - 1)));\n"
     );

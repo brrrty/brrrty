@@ -11,7 +11,11 @@ use std::time::{Duration, Instant};
 
 const WAIT: Duration = Duration::from_secs(30);
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn site(files: &[(&str, &str)]) -> tempfile::TempDir {
+    watch::started();
     let dir = tempfile::tempdir().unwrap();
     for (rel, body) in files {
         let p = dir.path().join(rel);

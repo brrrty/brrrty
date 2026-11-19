@@ -33,7 +33,11 @@ fn site(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
+#[path = "support/watch.rs"]
+mod watch;
+
 fn run_in(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    watch::started();
     Command::new(env!("CARGO_BIN_EXE_brrrty"))
         .args(args)
         .current_dir(root)

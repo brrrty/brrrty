@@ -92,6 +92,11 @@ pub fn started() {
                         {
                             let short: String = line.chars().take(170).collect();
                             let _ = writeln!(err, "  {short}");
+                            if let Some(pid) = line.split_whitespace().next()
+                                && let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd"))
+                            {
+                                let _ = writeln!(err, "    in {}", cwd.display());
+                            }
                         }
                     }
                 }
