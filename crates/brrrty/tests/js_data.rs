@@ -2015,3 +2015,39 @@ fn a_definition_written_before_brrrty_hears_of_a_change_is_not_a_protocol_error(
         );
     }
 }
+
+/// A result that only shows when one page's call comes after both of the
+/// others': `x` gets its `X` when `c` and `d` ran before it, as they do
+/// in 11ty (it reaches a page with a layout last) and in name order. A
+/// build that happens to run c, x, d agrees with its own reverse
+/// (d, x, c), and the replay one page at a time in name order is what
+/// shows the difference: the build is refused whatever order its threads
+/// took.
+#[test]
+fn a_result_two_orders_agree_on_is_refused_by_the_third_every_time() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "\"use strict\";\nconst seen = [];\nmodule.exports = { f(name) { const before = seen.slice().sort().join(\"\"); seen.push(name); return name === \"x\" && before === \"cd\" ? \"X\" : \"-\"; } };\n",
+        ),
+        ("src/_includes/base.njk", "B{{ content | safe }}"),
+        (
+            "src/c.html",
+            "---\ntemplateEngineOverride: njk\n---\n{{ h.f(\"c\") }}",
+        ),
+        ("src/d.njk", "{{ h.f(\"d\") }}"),
+        ("src/x.njk", "---\nlayout: base.njk\n---\n{{ h.f(\"x\") }}"),
+    ];
+    let t = site(&files);
+    for run in 0..30 {
+        let o = build(t.path(), &[], &[]);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "run {run}: {out}");
+        assert!(out.contains("js-data-impure"), "{out}");
+        assert!(!t.path().join("_site").exists());
+    }
+}
