@@ -526,14 +526,14 @@ fn a_local_data_function_runs_once_for_each_template_it_applies_to() {
     ]);
     let o = build(t.path(), &[], &[]);
     assert!(o.status.success(), "{}", text(&o));
-    // Once per template, and once more in each of the two checks that load
+    // Once per template, and once more in each of the three checks that load
     // the data again in another order.
     assert_eq!(
         fs::read_to_string(t.path().join("calls"))
             .unwrap()
             .lines()
             .count(),
-        9
+        12
     );
     assert_eq!(
         fs::read_to_string(t.path().join("_site/posts/a/index.html")).unwrap(),
@@ -1609,10 +1609,10 @@ fn a_site_that_changes_nothing_is_frozen_and_built_once() {
         assert!(out.contains(FROZEN), "{file}\n{out}");
         assert!(!out.contains(WALKED), "{file}\n{out}");
         assert_eq!(written(&t, "index.html").as_deref(), Some("AHi 2 2"));
-        // The build's own load, and one for each of the check's two workers.
+        // The build's own load, and one for each of the check's three workers.
         assert_eq!(
             fs::read_to_string(t.path().join("loads")).unwrap(),
-            "xxx",
+            "xxxx",
             "{file}"
         );
     }
@@ -2050,5 +2050,39 @@ fn a_definition_written_before_brrrty_hears_of_a_change_is_not_a_protocol_error(
             out.contains("the function `poke`") && out.contains("changes the data it is given"),
             "run {run}: {out}"
         );
+    }
+}
+
+/// 11ty reaches a page with a layout after the pages without one: on
+/// this site it calls `f` from d, c, x, and `x` gets its `X` only when
+/// both others ran before it. A build that happens to run c, x, d agrees
+/// with its own reverse (d, x, c); the replay in 11ty's order, with `x`
+/// last, is what shows the `X`.
+#[test]
+fn a_result_that_needs_a_page_with_a_layout_to_come_last_is_refused_every_time() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "\"use strict\";\nconst seen = [];\nmodule.exports = { f(name) { const before = seen.slice().sort().join(\"\"); seen.push(name); return name === \"x\" && before === \"cd\" ? \"X\" : \"-\"; } };\n",
+        ),
+        ("src/_includes/base.njk", "B{{ content | safe }}"),
+        (
+            "src/c.html",
+            "---\ntemplateEngineOverride: njk\n---\n{{ h.f(\"c\") }}",
+        ),
+        ("src/d.njk", "{{ h.f(\"d\") }}"),
+        ("src/x.njk", "---\nlayout: base.njk\n---\n{{ h.f(\"x\") }}"),
+    ];
+    let t = site(&files);
+    for run in 0..30 {
+        let o = build(t.path(), &[], &[]);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "run {run}: {out}");
+        assert!(out.contains("js-data-impure"), "{out}");
+        assert!(!t.path().join("_site").exists());
     }
 }

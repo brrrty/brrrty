@@ -118,11 +118,25 @@ impl Drop for Handle {
     }
 }
 
+/// Which order a replay runs the build's renders in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Order {
+    /// One request from each render in turn, the renders in the reverse
+    /// of the order the build first called from them.
+    Reversed,
+    /// Each render whole, in the order 11ty reaches them (see
+    /// [`like_11ty`]).
+    Like11ty,
+    /// Each render whole, in the order of their names.
+    Named,
+}
+
 impl Handle {
     /// Start a worker that loads the data again with the template and
-    /// directory data modules in the reverse of the build's order
-    /// (`reverse`) or rotated by one, then waits for the calls.
-    pub fn start(loads: Arc<Loads>, reverse: bool) -> Handle {
+    /// directory data modules in the reverse of the build's order (for
+    /// [`Order::Reversed`]) or rotated by one, then waits for the calls
+    /// and runs them in `order`.
+    pub fn start(loads: Arc<Loads>, order: Order) -> Handle {
         let (tx, rx) = mpsc::channel();
         let (done, result) = mpsc::channel();
         let live = Arc::new(Mutex::new(None));
@@ -136,7 +150,7 @@ impl Handle {
                 let done = done.clone();
                 let (live, cancelled) = (live.clone(), cancelled.clone());
                 move || {
-                    let _ = done.send(work(&loads, reverse, rx, &live, &cancelled));
+                    let _ = done.send(work(&loads, order, rx, &live, &cancelled));
                 }
             });
         if let Err(e) = spawned {
@@ -223,7 +237,7 @@ fn floor() -> Duration {
 
 fn work(
     loads: &Loads,
-    reverse: bool,
+    order: Order,
     rx: Receiver<Msg>,
     live: &Mutex<Option<u32>>,
     cancelled: &AtomicBool,
@@ -234,7 +248,7 @@ fn work(
     let mut w = Worker::start_as(&loads.node, &loads.root, loads.run_mode, Some(loads))
         .map_err(|e| runtime(format!("the replay check couldn't start Node: {e}")))?;
     *live.lock().unwrap_or_else(|e| e.into_inner()) = Some(w.pid());
-    let out = work_with(&mut w, loads, reverse, rx, cancelled);
+    let out = work_with(&mut w, loads, order, rx, cancelled);
     // Its process id is no longer this worker's once it is dropped.
     *live.lock().unwrap_or_else(|e| e.into_inner()) = None;
     // Nothing of it is needed any more: no waiting for Node to wind down.
@@ -245,7 +259,7 @@ fn work(
 fn work_with(
     w: &mut Worker,
     loads: &Loads,
-    reverse: bool,
+    order: Order,
     rx: Receiver<Msg>,
     cancelled: &AtomicBool,
 ) -> Result<(), Failure> {
@@ -262,7 +276,7 @@ fn work_with(
     // reverse of the build's order in one worker, and rotated by one
     // (the first last) in the other: a rotation moves every module's
     // place, which the reverse leaves alone for the middle one.
-    let mut early = loads_reordered(w, loads, reverse, cancelled).and_then(|()| {
+    let mut early = loads_reordered(w, loads, order == Order::Reversed, cancelled).and_then(|()| {
         let begun = send(w, r#"{"op":"callsBegin"}"#, None)?;
         if begun.head.get("handles").and_then(Json::as_u64) != Some(loads.load_handles) {
             return Err(Failure::Differs(
@@ -283,7 +297,7 @@ fn work_with(
             }
             Ok(Msg::Run(calls)) => {
                 early?;
-                return replay(w, &calls, reverse);
+                return replay(w, &calls, order);
             }
             // The build ended without the check.
             Err(_) => return Ok(()),
@@ -506,21 +520,46 @@ impl Calls {
     }
 }
 
+/// The second word of the name of a content render whose page has a
+/// layout ("5 laid-out src/a.njk"; "5 content src/b.njk" without one).
+const LAID_OUT: &str = "laid-out";
+
+/// The order of the renders' names as text, but for the word that says
+/// whether a page has a layout: computed data and permalinks before any
+/// content, content before any layout, each by file.
+fn by_name(a: &str, b: &str) -> std::cmp::Ordering {
+    fn plain(label: &str) -> (&str, &str) {
+        let (stage, rest) = label.split_once(' ').unwrap_or((label, ""));
+        (stage, rest.split_once(' ').map_or(rest, |(_, r)| r))
+    }
+    plain(a).cmp(&plain(b)).then_with(|| a.cmp(b))
+}
+
 /// The order 11ty runs the build's renders in, as near as their names
 /// say it: computed data and permalinks before any content, content
-/// before any layout, and within the content the template languages in
-/// the order 11ty 3.1.8 reaches their first call (Liquid, Nunjucks, HTML,
-/// Markdown, then JavaScript templates), each in input order (a folder's
-/// files before its folders, by name; a template's pages by number).
+/// before any layout, and the content in the order 11ty 3.1.8 reaches
+/// each page's first call:
 ///
-/// 11ty's true order has more to it (a page with a layout waits on the
-/// layout file being read, a page that reads another's content renders
-/// twice), so this is the nearest fixed order, not a promise of 11ty's.
+/// 1. pages without a layout, by template language: Liquid, Nunjucks,
+///    HTML, Markdown;
+/// 2. those languages' pages with a layout (11ty reads the layout file
+///    first, and they fall behind);
+/// 3. JavaScript templates without a layout, then with one.
+///
+/// Each group is in input order (a folder's files before its folders, by
+/// name; a template's pages by number).
+///
+/// 11ty's true order has more to it (where exactly a page with a layout
+/// lands follows when the layout file was read, a Markdown page without
+/// a layout can come after a Liquid one with, and a page that reads
+/// another's content renders twice), so this is the nearest fixed order,
+/// not a promise of 11ty's.
 fn like_11ty(a: &str, b: &str) -> std::cmp::Ordering {
-    /// (stage, language, file, page number) of a render's name.
+    /// (stage, class, file, page number) of a render's name.
     fn key(label: &str) -> (&str, u8, &str, u64) {
         let (stage, rest) = label.split_once(' ').unwrap_or((label, ""));
-        let rest = rest.split_once(' ').map_or(rest, |(_, r)| r);
+        let (kind, rest) = rest.split_once(' ').unwrap_or(("", rest));
+        let laid_out = kind == LAID_OUT;
         let (file, n) = match rest.rsplit_once(" (pagination page ") {
             Some((file, n)) => (file, n.trim_end_matches(')').parse().ok()),
             None => match rest.rsplit_once(' ') {
@@ -532,20 +571,27 @@ fn like_11ty(a: &str, b: &str) -> std::cmp::Ordering {
             Some(n) => (file, n),
             None => (rest, 0),
         };
-        let language = if stage != "5" {
+        let script = !(file.ends_with(".liquid")
+            || file.ends_with(".njk")
+            || file.ends_with(".html")
+            || file.ends_with(".md"));
+        let class = if stage != "5" {
             0
+        } else if script {
+            // After every other page, its own pages with a layout last.
+            10 + u8::from(laid_out)
+        } else if laid_out {
+            5
         } else if file.ends_with(".liquid") {
             1
         } else if file.ends_with(".njk") {
             2
         } else if file.ends_with(".html") {
             3
-        } else if file.ends_with(".md") {
-            4
         } else {
-            5
+            4
         };
-        (stage, language, file, n)
+        (stage, class, file, n)
     }
     /// A folder's files before its folders, each by name.
     fn files_first(a: &str, b: &str) -> std::cmp::Ordering {
@@ -576,7 +622,8 @@ fn like_11ty(a: &str, b: &str) -> std::cmp::Ordering {
         .then_with(|| a.cmp(b))
 }
 
-fn replay(w: &mut Worker, calls: &Calls, interleave: bool) -> Result<(), Failure> {
+fn replay(w: &mut Worker, calls: &Calls, how: Order) -> Result<(), Failure> {
+    let interleave = how == Order::Reversed;
     w.deadline = Some(deadline(calls.slowest));
     // The clock and random values the first run's calls read, by kind,
     // in the order it read them.
@@ -602,12 +649,15 @@ fn replay(w: &mut Worker, calls: &Calls, interleave: bool) -> Result<(), Failure
     )?;
     let plain = calls.plain();
     let units = calls.units(!plain);
-    let order: Vec<usize> = if interleave {
-        (0..units.len()).rev().collect()
-    } else {
-        let mut named: Vec<usize> = (0..units.len()).collect();
-        named.sort_by(|a, b| like_11ty(&units[*a].label, &units[*b].label).then(a.cmp(b)));
-        named
+    let sorted = |by: fn(&str, &str) -> std::cmp::Ordering| {
+        let mut sorted: Vec<usize> = (0..units.len()).collect();
+        sorted.sort_by(|a, b| by(&units[*a].label, &units[*b].label).then(a.cmp(b)));
+        sorted
+    };
+    let order: Vec<usize> = match how {
+        Order::Reversed => (0..units.len()).rev().collect(),
+        Order::Like11ty => sorted(like_11ty),
+        Order::Named => sorted(by_name),
     };
     if plain {
         let mut sequence = Vec::with_capacity(calls.records.len());
@@ -962,7 +1012,11 @@ fn where_(label: &str) -> Option<String> {
             "computing the data of {}",
             page(rest.strip_prefix("page ")?)
         ),
-        "5" => format!("in the content of {}", rest.strip_prefix("content ")?),
+        "5" => format!(
+            "in the content of {}",
+            rest.strip_prefix("content ")
+                .or_else(|| rest.strip_prefix("laid-out "))?
+        ),
         "6" => format!("in the layouts of {}", rest.strip_prefix("layout ")?),
         _ => return None,
     })
@@ -970,11 +1024,11 @@ fn where_(label: &str) -> Option<String> {
 
 #[cfg(test)]
 mod order_tests {
-    use super::like_11ty;
+    use super::{by_name, like_11ty};
 
     /// The order 11ty 3.1.8 made its first call from each of these in
-    /// (a probe site, the pages without layouts, in a `node:22`
-    /// container), from names given in name order.
+    /// (probe sites in a `node:22` container), from names given in
+    /// name order.
     #[test]
     fn renders_sort_in_the_order_11ty_reaches_them() {
         let mut names = vec![
@@ -992,6 +1046,9 @@ mod order_tests {
             "5 content src/x1.html",
             "5 content src/y1.njk",
             "5 content src/z1.liquid",
+            "5 laid-out src/a2.njk",
+            "5 laid-out src/a3.11ty.js",
+            "5 laid-out src/a4.md",
             "5 content src/p.njk (pagination page 10)",
             "5 content src/p.njk (pagination page 2)",
             "3 page src/z1.liquid 0",
@@ -1002,6 +1059,13 @@ mod order_tests {
             "",
         ];
         names.sort();
+        // By name, the word for a layout doesn't count.
+        let mut named = names.clone();
+        named.sort_by(|a, b| by_name(a, b));
+        let at = |n: &str| named.iter().position(|x| *x == n).unwrap();
+        assert!(at("5 content src/a1.11ty.js") < at("5 laid-out src/a2.njk"));
+        assert!(at("5 laid-out src/a4.md") < at("5 content src/b1.md"));
+        assert!(at("5 content src/z1.liquid") < at("6 layout src/a1.njk"));
         names.sort_by(|a, b| like_11ty(a, b));
         assert_eq!(
             names,
@@ -1025,8 +1089,11 @@ mod order_tests {
                 "5 content src/b1.md",
                 "5 content src/w1.md",
                 "5 content src/sub/m3.md",
+                "5 laid-out src/a2.njk",
+                "5 laid-out src/a4.md",
                 "5 content src/a1.11ty.js",
                 "5 content src/v1.11ty.js",
+                "5 laid-out src/a3.11ty.js",
                 "6 layout src/a1.njk",
             ]
         );

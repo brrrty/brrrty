@@ -527,7 +527,7 @@ pub struct Worker {
     load_handles: u64,
     /// The replay check's two workers, started as soon as there is
     /// something for them to check.
-    replays: Option<[crate::replay::Handle; 2]>,
+    replays: Option<Vec<crate::replay::Handle>>,
     /// The replay check runs (see [`Worker::start_with`]).
     order_check: bool,
     /// The longest a request took.
@@ -1565,10 +1565,13 @@ impl Worker {
             // none of it should take longer than all of it did here.
             took: self.stats.started.map(|t| t.elapsed()).unwrap_or_default(),
         });
-        let replays = [
-            crate::replay::Handle::start(loads.clone(), true),
-            crate::replay::Handle::start(loads, false),
+        use crate::replay::{Handle, Order};
+        let mut replays = vec![
+            Handle::start(loads.clone(), Order::Reversed),
+            Handle::start(loads.clone(), Order::Like11ty),
         ];
+        // Main's page-at-a-time order as well: what it caught is still caught.
+        replays.push(Handle::start(loads, Order::Named));
         for (line, dynamic) in &self.table.lines {
             if !dynamic {
                 for r in &replays {
@@ -2160,17 +2163,20 @@ impl JsRuntime for Worker {
             self.trace("the pages' calls ended");
         }
         let checking = Instant::now();
-        let [a, b] = replays;
-        a.run(calls.clone());
-        b.run(calls);
-        let (a, b) = (a.finish(), b.finish());
+        for r in &replays {
+            r.run(calls.clone());
+        }
+        drop(calls);
+        // The first that failed, in the replays' own order.
+        let checked: Vec<_> = replays.into_iter().map(|r| r.finish()).collect();
+        let checked = checked.into_iter().find(|r| r.is_err()).unwrap_or(Ok(()));
         if trace() {
             eprintln!(
                 "note: the replay check took {:.3} s after the build's own calls",
                 checking.elapsed().as_secs_f64()
             );
         }
-        match a.and(b) {
+        match checked {
             Ok(()) => JsResult::Ok(()),
             Err(crate::replay::Failure::Differs(why, handle)) => {
                 let named = handle

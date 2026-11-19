@@ -160,8 +160,17 @@ struct Run<'a, 'p> {
 
 impl Run<'_, '_> {
     fn render<'s>(&'s self, i: usize, scope: &rayon::Scope<'s>) {
-        let unit =
-            brrrty_js::functions::UnitGuard::enter(format!("5 content {}", self.pages[i].label()));
+        let unit = brrrty_js::functions::UnitGuard::enter(format!(
+            "5 {} {}",
+            // 11ty reaches a page with a layout after the pages
+            // without one: the replay check orders by it.
+            if self.pages[i].job.layouts.is_empty() {
+                "content"
+            } else {
+                "laid-out"
+            },
+            self.pages[i].label()
+        ));
         let draws = crate::random::PageGuard::enter(
             self.pages[i].job.shown,
             format!("content {}", self.pages[i].label()),
