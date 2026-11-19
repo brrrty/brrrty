@@ -250,7 +250,24 @@ fn reordered_object_counting(o: &Data, seen: &mut usize) -> Option<Data> {
     let has_index = o.keys().any(|k| brrrty_js::array_index(k).is_some());
     let inner: Vec<Option<Value>> = o.values().map(|v| reordered_counting(v, seen)).collect();
     *seen += o.len();
-    if !has_index && inner.iter().all(Option::is_none) {
+    // In order already (index-like keys first, ascending, as JavaScript
+    // lists them), and nothing inside changed: the same object.
+    let ordered = !has_index || {
+        let mut last: Option<u32> = None;
+        let mut after_index = false;
+        o.keys().all(|k| match brrrty_js::array_index(k) {
+            Some(i) => {
+                let rising = !after_index && last.is_none_or(|l| l < i);
+                last = Some(i);
+                rising
+            }
+            None => {
+                after_index = true;
+                true
+            }
+        })
+    };
+    if ordered && inner.iter().all(Option::is_none) {
         return None;
     }
     let fresh: Data = o
