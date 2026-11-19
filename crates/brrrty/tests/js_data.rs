@@ -1958,3 +1958,39 @@ fn the_order_check_can_be_skipped_and_doctor_still_runs_it() {
         assert!(!out.contains(skipped), "{out}");
     }
 }
+
+/// 11ty renders Nunjucks pages before JavaScript templates: on this site
+/// it calls `f` from a, c, b, and only that order gives `c` an `X`. One
+/// of the check's replays runs the pages in 11ty's order of template
+/// languages, so it sees the `X`; and the other runs them in the reverse
+/// of the build's own order, which never gives one. Whatever order the
+/// build's threads took, some run differs: the build is refused every
+/// time, where it used to be written without the `X` on most.
+#[test]
+fn a_result_only_11tys_order_of_languages_gives_is_refused_every_time() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("brrrty.config.rhai", ON),
+        (
+            "src/_data/h.js",
+            "\"use strict\";\nconst seen = [];\nmodule.exports = {\n  f(name) { const before = seen.join(\"\"); seen.push(name); return name === \"c\" && before === \"a\" ? \"X\" : \"-\"; },\n};\n",
+        ),
+        ("src/a.njk", "{{ h.f(\"a\") }}"),
+        (
+            "src/b.11ty.js",
+            "module.exports = class { render(data) { return data.h.f(\"b\"); } };",
+        ),
+        ("src/c.njk", "{{ h.f(\"c\") }}"),
+    ];
+    for run in 0..10 {
+        let t = site(&files);
+        let o = build(t.path(), &[], &[]);
+        let out = text(&o);
+        assert_eq!(o.status.code(), Some(1), "run {run}: {out}");
+        assert!(out.contains("js-data-impure"), "{out}");
+        assert_eq!(written(&t, "c/index.html"), None);
+        assert!(!t.path().join("_site").exists());
+    }
+}

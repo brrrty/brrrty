@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `brrrty build --no-order-check` (and `serve`), or `config.set_order_check(false)`, builds without the order check: the site's JavaScript runs once, and Brrrty does not run it again in other orders to check that no page depends on the order pages are built in. The build says so in one line. The check stays on by default, and `brrrty doctor` always runs it.
+- The order check's page-at-a-time replay runs the pages in 11ty's order of template languages (Liquid, Nunjucks, HTML, Markdown, then JavaScript templates) instead of name order. A result that only that order gives (a Nunjucks page that 11ty renders before a JavaScript template named ahead of it) was written without it on most builds and refused on some; it is now refused on every build.
 
 ## 0.0.27 - 2026-11-19
 
