@@ -33,6 +33,25 @@ const WORKER_SOURCE: &str = concat!(
     include_str!("worker/main.mjs"),
 );
 
+/// The worker's source as Node is handed it: without its comment lines.
+/// Linux takes no single argument longer than 128 KiB (`MAX_ARG_STRLEN`),
+/// and the comments are a quarter of the file. Each one leaves its line
+/// behind, empty, so a line number in a stack trace is the file's.
+fn worker_source() -> &'static str {
+    static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut out = String::with_capacity(WORKER_SOURCE.len());
+        for line in WORKER_SOURCE.split('\n') {
+            if !line.trim_start().starts_with("//") {
+                out.push_str(line);
+            }
+            out.push('\n');
+        }
+        out.pop();
+        out
+    });
+    &SOURCE
+}
+
 /// The 11ty version the worker tells data files it is (`ELEVENTY_VERSION`).
 const ELEVENTY_VERSION: &str = "3.1.8";
 
@@ -590,7 +609,7 @@ impl Worker {
             None => walk_roots().starting(root),
         };
         let mut cmd = Command::new(&node.path);
-        cmd.args(["--input-type=module", "--eval", WORKER_SOURCE])
+        cmd.args(["--input-type=module", "--eval", worker_source()])
             .current_dir(root)
             .env("ELEVENTY_ROOT", root)
             .env("ELEVENTY_SOURCE", "cli")
@@ -2531,6 +2550,25 @@ pub fn encode(v: &Value) -> Json {
         }
         Value::Date(d) => json!({"$d": d.timestamp_millis()}),
         Value::Function(h) => json!({"$f": h.0}),
+    }
+}
+
+#[cfg(test)]
+mod source {
+    /// Linux refuses an argument of 128 KiB or more ("Argument list too
+    /// long"), on any machine, whatever else is on the command line.
+    /// macOS doesn't, so this is where a worker grown too long shows.
+    #[test]
+    fn the_worker_fits_in_one_argument_with_room_to_grow() {
+        let source = super::worker_source();
+        assert!(
+            source.len() < 120 * 1024,
+            "the worker's source is {} bytes without its comments",
+            source.len()
+        );
+        // Line numbers are the file's.
+        assert_eq!(source.lines().count(), super::WORKER_SOURCE.lines().count());
+        assert!(!source.lines().any(|l| l.trim_start().starts_with("//")));
     }
 }
 
