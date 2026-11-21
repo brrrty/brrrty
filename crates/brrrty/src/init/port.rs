@@ -1567,9 +1567,25 @@ impl<'o, 'l> Reader<'o, 'l> {
         let p = self
             .config_named(scope, a, b)
             .unwrap_or_else(|| "the config object".to_string());
+        let at = self.stops_at(a, b);
         self.give_up(format!(
-            "code Brrrty can't port uses `{p}`, and could change any setting, so nothing here is certain"
+            "code Brrrty can't port{at} uses `{p}`, and could change any setting, so nothing here is certain"
         ));
+    }
+
+    /// ` at file, line N (`code`)` for the tokens `toks[a..b]`, or nothing.
+    fn stops_at(&self, a: usize, b: usize) -> String {
+        let (s, e) = self.m.span(a, b);
+        if s >= e || e > self.m.src.len() {
+            return String::new();
+        }
+        let text = self.m.src[s..e].lines().next().unwrap_or("").trim();
+        let text = text.trim_end_matches(';').trim_end();
+        let text = match text.char_indices().nth(80) {
+            Some((i, _)) => format!("{}...", &text[..i]),
+            None => text.to_string(),
+        };
+        format!(" at {}, line {} (`{text}`)", self.m.file, self.m.line_of(s))
     }
 
     /// The names a top-level declaration at `toks[a..b]` declares, with the
@@ -1871,8 +1887,9 @@ impl<'o, 'l> Reader<'o, 'l> {
             if let Some(p) = self.config_named(scope, x, y)
                 && !self.inert(scope, x, y)
             {
+                let at = self.stops_at(x, y);
                 self.give_up(format!(
-                    "code Brrrty can't port uses `{p}`, and could change any setting, so nothing here is certain"
+                    "code Brrrty can't port{at} uses `{p}`, and could change any setting, so nothing here is certain"
                 ));
                 break;
             }
@@ -4119,6 +4136,38 @@ module.exports = function (eleventyConfig) {
         // The watcher setting is left out, not a TODO: it changes nothing 11ty writes.
         assert_eq!(p.todos, 3, "{t}");
         assert_eq!(p.input.as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn says_which_statement_stops_porting() {
+        let cases = [
+            // `config_escapes`: config handed to an imported function.
+            (
+                "import setup from \"some-package\";\nexport default function (config) {\n  setup(config);\n}\n",
+                "at eleventy.config.js, line 3 (`setup(config)`) uses `config`",
+            ),
+            // `config_escapes`: config stored where init can't follow.
+            (
+                "export default function (config) {\n  const c = config;\n  globalThis.cfg = c;\n}\n",
+                "at eleventy.config.js, line 3 (`globalThis.cfg = c`) uses `c`",
+            ),
+            // The statement loop.
+            (
+                "export default function (config) {\n  config.on(\"x\", () => {});\n  Object.assign(config, { a: 1 });\n}\n",
+                "at eleventy.config.js, line 3 (`Object.assign(config, { a: 1 })`) uses `config`",
+            ),
+        ];
+        for (src, want) in cases {
+            let p = port(src, "eleventy.config.js");
+            assert!(p.text.contains("TODO(brrrty-file)"), "{src}\n{}", p.text);
+            assert!(
+                p.text.contains(&format!(
+                    "can't port {want}, and could change any setting, so nothing here is certain"
+                )),
+                "{src}\n{}",
+                p.text
+            );
+        }
     }
 
     #[test]
