@@ -276,8 +276,30 @@ fn tail(path: &Path, n: usize) -> String {
 /// Run `cmd` with stdout and stderr in `log`, stopping it at `limit`. A
 /// Docker command passes its container name so the container is killed too.
 fn run(cmd: &mut Command, limit: Duration, container: Option<&str>, log: &Path) -> Step {
+    run_to(cmd, limit, container, log, None)
+}
+
+/// Like `run`, but stderr goes to its own file, so stdout stays parseable
+/// (doctor prints a status line on stderr before its JSON).
+fn run_split(cmd: &mut Command, limit: Duration, out: &Path, err: &Path) -> Step {
+    run_to(cmd, limit, None, out, Some(err))
+}
+
+fn run_to(
+    cmd: &mut Command,
+    limit: Duration,
+    container: Option<&str>,
+    log: &Path,
+    err_log: Option<&Path>,
+) -> Step {
     let start = Instant::now();
-    let opened = File::create(log).and_then(|f| Ok((f.try_clone()?, f)));
+    let opened = File::create(log).and_then(|f| {
+        let e = match err_log {
+            Some(p) => File::create(p)?,
+            None => f.try_clone()?,
+        };
+        Ok((f, e))
+    });
     let (out, err) = match opened {
         Ok(p) => p,
         Err(e) => return failed(format!("cannot write {}: {e}", log.display())),
@@ -296,7 +318,7 @@ fn run(cmd: &mut Command, limit: Duration, container: Option<&str>, log: &Path) 
                     exit: status.code(),
                     timed_out: false,
                     secs: start.elapsed().as_secs_f64(),
-                    error: (!ok).then(|| tail(log, 25)),
+                    error: (!ok).then(|| tail(err_log.unwrap_or(log), 25)),
                 };
             }
             Ok(None) if start.elapsed() >= limit => {
@@ -317,7 +339,7 @@ fn run(cmd: &mut Command, limit: Duration, container: Option<&str>, log: &Path) 
                     error: Some(format!(
                         "timed out after {}s\n{}",
                         limit.as_secs(),
-                        tail(log, 15)
+                        tail(err_log.unwrap_or(log), 15)
                     )),
                 };
             }
@@ -1121,7 +1143,7 @@ fn site_steps(ctx: &mut Ctx, entry: &SiteEntry, r: &mut SiteResult, d: &Dirs, de
         .args(["doctor", "--json"])
         .current_dir(&host);
     let log = d.logs.join("doctor.json");
-    let step = run(&mut c, left(deadline), None, &log);
+    let step = run_split(&mut c, left(deadline), &log, &d.logs.join("doctor.err"));
     match parse_doctor(&fs::read_to_string(&log).unwrap_or_default()) {
         Ok(doc) => r.doctor = Some(doc),
         Err(e) => r.doctor_error = Some(format!("{e}; {}", step.error.unwrap_or_default())),
@@ -1695,6 +1717,20 @@ mod tests {
         let s = run(&mut c, Duration::from_millis(200), None, &d.join("log"));
         assert!(s.timed_out && !s.ok);
         assert!(s.secs < 4.0);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn split_run_keeps_stderr_out_of_the_stdout_log() {
+        let d = std::env::temp_dir().join(format!("xtask-corpus-sp-{}", std::process::id()));
+        fs::create_dir_all(&d).unwrap();
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo note >&2; echo '{}'"]);
+        let (out, err) = (d.join("out"), d.join("err"));
+        let s = run_split(&mut c, Duration::from_secs(5), &out, &err);
+        assert!(s.ok);
+        assert_eq!(fs::read_to_string(&out).unwrap(), "{}\n");
+        assert_eq!(fs::read_to_string(&err).unwrap(), "note\n");
         fs::remove_dir_all(&d).unwrap();
     }
 }
