@@ -9,7 +9,9 @@ name: Release
 # packs the npm packages and tests them there. Do not add another.
 #
 # Run by hand (workflow_dispatch) it is a dry run: the same builds and tests,
-# then `npm publish --dry-run`. It creates no release and publishes nothing.
+# then `npm publish --dry-run` and `cargo publish --dry-run`. It creates no
+# release and publishes nothing. On a tag it also publishes the crates to
+# crates.io (trusted publishing, no stored token).
 
 on:
   push:
@@ -337,3 +339,37 @@ jobs:
             || { echo "npm $v is too old for trusted publishing (needs 11.5.1+)"; exit 1; }
       - name: Publish
         run: node npm/publish.mjs packs --provenance
+
+  # crates.io, through trusted publishing: the auth action trades this job's
+  # GitHub OIDC token (id-token: write) for a short-lived crates.io token and
+  # revokes it when the job ends, so no crates.io token is stored anywhere.
+  # Crates already on crates.io at this version are skipped, so re-running
+  # this job after a failure is safe. Run by hand it is a dry run.
+  crates:
+    name: Publish to crates.io
+    needs: [version, build, npm-test, release]
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # crates.io trusted publishing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+      - name: Dry-run publish
+        if: github.event_name != 'push'
+        run: .github/scripts/cargo-publish.sh --dry-run
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'brrrty/brrrty'
+        id: auth
+      - name: Publish
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'brrrty/brrrty'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: .github/scripts/cargo-publish.sh
