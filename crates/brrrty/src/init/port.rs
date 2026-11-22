@@ -1981,8 +1981,16 @@ impl<'o, 'l> Reader<'o, 'l> {
             let args = js::split_commas(t, start + 4, b - 1);
             return match args.as_slice() {
                 [_] => true,
-                [_, (x, y)] => js::object_props(t, *x, *y)
-                    .is_some_and(|props| props.iter().all(|p| p.key != "immediate")),
+                [_, (x, y)] => match js::object_props(t, *x, *y) {
+                    Some(props) => props.iter().all(|p| p.key != "immediate"),
+                    // An identifier bound to a pure object works the same way.
+                    None => {
+                        let mark = self.out.mark();
+                        let r = self.side_free(scope, *x, *y);
+                        self.out.drop_touched(mark);
+                        matches!(r, Ok(Val::Obj(es)) if es.iter().all(|e| e.key != "immediate"))
+                    }
+                },
                 _ => false,
             };
         }
@@ -5178,6 +5186,32 @@ module.exports = function (eleventyConfig) {
             "{}",
             p.text
         );
+    }
+
+    #[test]
+    fn plugin_options_in_a_pure_const_still_port_the_rest() {
+        let src = "import somePlugin from \"some-third-party-plugin\";\nexport default async function (eleventyConfig) {\n\tconst pluginConfig = { minify: true };\n\televentyConfig.addPlugin(somePlugin, pluginConfig);\n\televentyConfig.addPassthroughCopy(\"src/img\");\n\treturn { dir: { input: \"src\" } };\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(!p.text.contains("TODO(brrrty-file)"), "{}", p.text);
+        assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"src/img\");"),
+            "{}",
+            p.text
+        );
+        assert!(p.text.contains("input: \"src\""), "{}", p.text);
+        // Options that run code, or could hold `immediate`, still give up.
+        for opts in [
+            "{ minify: process.env.X }",
+            "{ minify: build() }",
+            "{ immediate: true }",
+        ] {
+            let src = format!(
+                "import somePlugin from \"some-third-party-plugin\";\nexport default async function (eleventyConfig) {{\n\tconst pluginConfig = {opts};\n\televentyConfig.addPlugin(somePlugin, pluginConfig);\n\televentyConfig.addPassthroughCopy(\"src/img\");\n}}\n"
+            );
+            let p = port(&src, "eleventy.config.js");
+            assert!(live(&p).is_empty(), "{src}\n{}", p.text);
+        }
     }
 
     #[test]
