@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.30 - 2026-11-21
+
+- `brrrty init` ports the rest of a config file whose `addPlugin` call takes its options from a `const` bound to a plain object (it used to give up the whole file). Options that run code, or hold `immediate`, still give it up.
+
 ## 0.0.29 - 2026-11-21
 
 - When `brrrty init` can't port a whole config file, its message (and `brrrty doctor`'s `config-todo` blocker) now says which statement stopped it: the file, the line and the code, instead of only naming the config object.
