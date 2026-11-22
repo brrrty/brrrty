@@ -1981,8 +1981,16 @@ impl<'o, 'l> Reader<'o, 'l> {
             let args = js::split_commas(t, start + 4, b - 1);
             return match args.as_slice() {
                 [_] => true,
-                [_, (x, y)] => js::object_props(t, *x, *y)
-                    .is_some_and(|props| props.iter().all(|p| p.key != "immediate")),
+                [_, (x, y)] => match js::object_props(t, *x, *y) {
+                    Some(props) => props.iter().all(|p| p.key != "immediate"),
+                    // An identifier bound to a pure object works the same way.
+                    None => {
+                        let mark = self.out.mark();
+                        let r = self.side_free(scope, *x, *y);
+                        self.out.drop_touched(mark);
+                        matches!(r, Ok(Val::Obj(es)) if es.iter().all(|e| e.key != "immediate"))
+                    }
+                },
                 _ => false,
             };
         }
