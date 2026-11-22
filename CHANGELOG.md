@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0 - 2026-11-22
+
+The first milestone: the author's own 11ty sites, a blog and data-driven sites with thousands of pages, run on Brrrty with output byte-identical to 11ty's. From here, each minor version tracks how much of a public corpus of 11ty 3.x sites Brrrty builds identically with no hand edits; 1.0 is about 80% of it.
+
+- `brrrty init` gives a `config.htmlTransformer` call (such as `addPosthtmlPlugin`) its own TODO instead of giving up the whole config. Brrrty doesn't run posthtml plugins; the rest of the config still ports.
+
 ## 0.0.30 - 2026-11-21
 
 - `brrrty init` ports the rest of a config file whose `addPlugin` call takes its options from a `const` bound to a plain object (it used to give up the whole file). Options that run code, or hold `immediate`, still give it up.
