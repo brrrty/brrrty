@@ -4403,6 +4403,22 @@ module.exports = function (eleventyConfig) {
     }
 
     #[test]
+    fn html_transformer_call_gets_its_own_todo() {
+        let plain = "export default function (config) {\n  config.htmlTransformer.addPosthtmlPlugin('html', (context) => {\n    return function (tree) { return tree; };\n  });\n  config.addPassthroughCopy(\"img\");\n}\n";
+        let guarded = "export default function (config) {\n  if (config.htmlTransformer && 'addPosthtmlPlugin' in config.htmlTransformer) {\n    config.htmlTransformer.addPosthtmlPlugin('html', (context) => {\n      return function (tree) { return tree; };\n    }, { priority: 10 });\n  }\n  config.addPassthroughCopy(\"img\");\n}\n";
+        for src in [plain, guarded] {
+            let p = port(src, "eleventy.config.js");
+            assert!(!p.text.contains("TODO(brrrty-file)"), "{}", p.text);
+            assert_eq!(todos(&p).len(), 1, "{}", p.text);
+            assert!(
+                live(&p).contains(&"config.add_passthrough_copy(\"img\");"),
+                "{}",
+                p.text
+            );
+        }
+    }
+
+    #[test]
     fn a_conditional_is_one_todo() {
         let src = "module.exports = function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"a\");\n  if (process.env.ELEVENTY_ENV === \"production\") {\n    eleventyConfig.addTransform(\"min\", (c) => c);\n    eleventyConfig.addPassthroughCopy(\"prod-only\");\n  } else eleventyConfig.addPassthroughCopy(\"dev-only\");\n  return { dir: { input: \"src\" } };\n};\n";
         let p = port(src, "eleventy.config.js");
