@@ -868,3 +868,28 @@ fn javascript_templates_turn_javascript_on() {
         "{rhai}"
     );
 }
+
+/// `dir.data` is ported as a setting, not a TODO.
+#[test]
+fn init_ports_the_data_folder_setting() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        (
+            "eleventy.config.js",
+            "export default function (config) { return { dir: { input: 'src', output: 'dist', data: 'data' } }; }\n",
+        ),
+        ("src/data/site.json", "{\"greeting\":\"hello\"}"),
+        (
+            "src/index.njk",
+            "---\npermalink: /index.html\n---\n{{ site.greeting }}",
+        ),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    assert!(rhai.contains("data: \"data\""), "{rhai}");
+    let built = run_in(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(read(dir.path(), "dist/index.html"), "hello");
+}
