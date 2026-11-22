@@ -1963,9 +1963,21 @@ impl<'o, 'l> Reader<'o, 'l> {
                 .ident()
                 .is_some_and(|n| matches!(scope.vars.get(n), Some(Val::Config)))
             || !t[start + 1].is(".")
-            || !t[start + 3].is("(")
-            || js::matching(t, start + 3) != Some(b - 1)
         {
+            return false;
+        }
+        // `config.htmlTransformer.method(...)` only registers posthtml
+        // plugins; it can't change a folder or template engine.
+        if b > start + 6
+            && t[start + 2].is_ident("htmlTransformer")
+            && t[start + 3].is(".")
+            && t[start + 4].ident().is_some()
+            && t[start + 5].is("(")
+            && js::matching(t, start + 5) == Some(b - 1)
+        {
+            return !self.mentions_config(scope, start + 6, b - 1);
+        }
+        if !t[start + 3].is("(") || js::matching(t, start + 3) != Some(b - 1) {
             return false;
         }
         let Some(method) = t[start + 2].ident() else {
@@ -3387,6 +3399,15 @@ impl<'o, 'l> Reader<'o, 'l> {
                 }
                 false
             }
+            m if m.starts_with("htmlTransformer.") => {
+                self.todo(
+                    a,
+                    b,
+                    "Brrrty doesn't run posthtml plugins; port what this changes in the HTML to a Rhai transform, or delete it if it changes nothing you compare",
+                    PORTING,
+                );
+                false
+            }
             _ => self.todo_added(scope, a, b, args, "port this to Rhai", PORTING.to_string()),
         }
     }
@@ -4400,6 +4421,22 @@ module.exports = function (eleventyConfig) {
         );
         assert!(t.contains("// lib/filters.js, lines 1-3:\n"), "{t}");
         assert!(t.contains("        input: \"src\",\n"), "{t}");
+    }
+
+    #[test]
+    fn html_transformer_call_gets_its_own_todo() {
+        let plain = "export default function (config) {\n  config.htmlTransformer.addPosthtmlPlugin('html', (context) => {\n    return function (tree) { return tree; };\n  });\n  config.addPassthroughCopy(\"img\");\n}\n";
+        let guarded = "export default function (config) {\n  if (config.htmlTransformer && 'addPosthtmlPlugin' in config.htmlTransformer) {\n    config.htmlTransformer.addPosthtmlPlugin('html', (context) => {\n      return function (tree) { return tree; };\n    }, { priority: 10 });\n  }\n  config.addPassthroughCopy(\"img\");\n}\n";
+        for src in [plain, guarded] {
+            let p = port(src, "eleventy.config.js");
+            assert!(!p.text.contains("TODO(brrrty-file)"), "{}", p.text);
+            assert_eq!(todos(&p).len(), 1, "{}", p.text);
+            assert!(
+                live(&p).contains(&"config.add_passthrough_copy(\"img\");"),
+                "{}",
+                p.text
+            );
+        }
     }
 
     #[test]
