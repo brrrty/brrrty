@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-js"
-version = "0.0.29"
+version = "0.0.30"
 description = "JavaScript-semantics values shared by Brrrty's template engines, for an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
