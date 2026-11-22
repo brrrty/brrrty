@@ -58,6 +58,8 @@ pub(crate) struct Port {
     pub input: Option<String>,
     /// `dir.output`, when the config sets it.
     pub output: Option<String>,
+    /// `dir.data`, when the config sets it.
+    pub data: Option<String>,
     /// The site's own modules read while porting, by path, with their text.
     pub modules: Vec<(String, String)>,
     /// It adds the RSS plugin, whose version a build checks.
@@ -3747,15 +3749,6 @@ impl<'o, 'l> Reader<'o, 'l> {
             "data" => "dir.data",
             _ => "dir.layouts",
         };
-        if key == "dir.data" && value.trim_start_matches("./").trim_end_matches('/') != "_data" {
-            self.todo(
-                a,
-                b,
-                "Brrrty reads only the default `_data` folder for `dir.data` so far; move the files there",
-                format!("{DOCS}#what-the-script-returns"),
-            );
-            return false;
-        }
         self.out.settings.push(Setting {
             key,
             value: js::rhai_string(&value),
@@ -3976,6 +3969,7 @@ impl Out<'_> {
                 todos,
                 input: None,
                 output: None,
+                data: None,
                 modules: Vec::new(),
                 uses_rss: false,
             };
@@ -4110,6 +4104,7 @@ impl Out<'_> {
             todos,
             input: dir("dir.input"),
             output: dir("dir.output"),
+            data: dir("dir.data"),
             modules: std::mem::take(&mut self.read),
             uses_rss: items
                 .iter()

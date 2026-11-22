@@ -235,6 +235,7 @@ impl SiteConfig {
             rss_filters: self.rss_filters,
             includes: self.dir.includes.clone(),
             layouts: self.dir.layouts.clone(),
+            data_folder: self.dir.data.clone(),
             layout_aliases: self.layout_aliases.clone(),
             template_engines: self.template_engines,
             reads: self.reads.clone(),
@@ -697,22 +698,9 @@ fn read_returned(
             }
         }
     }
-    // Brrrty reads `_data` only.
-    if let Some(v) = &dir.data
-        && v.trim_start_matches("./").trim_end_matches('/') != "_data"
-    {
-        return Err(vec![
-            Problem::error(
-                codes::CONFIG_UNSUPPORTED,
-                format!(
-                    "`dir.data` is `{v}`, and Brrrty only reads the default `_data` folder so far"
-                ),
-            )
-            .with_help("rename the folder to `_data` inside the input folder"),
-        ]);
-    }
-    // Includes and layouts: a folder inside the input folder.
+    // Includes, layouts and data: a folder inside the input folder.
     for (name, value) in [
+        ("data", &mut dir.data),
         ("includes", &mut dir.includes),
         ("layouts", &mut dir.layouts),
     ] {

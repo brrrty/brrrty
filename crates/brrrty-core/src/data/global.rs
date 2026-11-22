@@ -64,6 +64,7 @@ const EXTENSIONS: [&str; 5] = ["json", "mjs", "cjs", "js", "rhai"];
 /// on, one file at a time in this order, as 11ty runs them.
 pub(crate) fn load_global(
     input: &Path,
+    data_folder: &str,
     root: &Path,
     runner: Option<&DataRunner>,
     initial: &Data,
@@ -77,7 +78,7 @@ pub(crate) fn load_global(
         problems: Vec::new(),
         unavailable: BTreeSet::new(),
     };
-    let data_dir = input.join("_data");
+    let data_dir = input.join(data_folder);
     let mut files = Vec::new();
     let start = data_dir.canonicalize().unwrap_or_else(|_| data_dir.clone());
     collect(
@@ -432,7 +433,14 @@ mod tests {
             t.path(),
             Value::Undefined,
         );
-        load_global(&t.path().join("src"), t.path(), None, &Data::new(), &mut js)
+        load_global(
+            &t.path().join("src"),
+            "_data",
+            t.path(),
+            None,
+            &Data::new(),
+            &mut js,
+        )
     }
 
     fn j(v: serde_json::Value) -> Value {

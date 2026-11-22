@@ -2438,6 +2438,7 @@ fn build_once(
                 global_data: &opts.config.global_data,
                 includes: Path::new(opts.config.includes_dir()),
                 layouts: Path::new(opts.config.layouts_dir()),
+                data: Path::new(opts.config.data_dir()),
             },
         );
         all.extend(found.iter().cloned());
@@ -2511,7 +2512,7 @@ fn build_once(
         PathBuf::from(opts.config.layouts_dir()),
         opts.config.layout_aliases.clone(),
     );
-    let data_dir = input_rel.join("_data");
+    let data_dir = input_rel.join(opts.config.data_dir());
     let (globals, output_shown) = globals(opts, &root, &input_rel);
     // 11ty sets the config's `addGlobalData` values, adds its `eleventy`
     // data, and merges that over `_data` (deeply); then it replaces `pkg`
@@ -2568,7 +2569,14 @@ fn build_once(
         notes: data_notes,
         problems: data_problems,
         unavailable,
-    } = load_global(&input, &root, opts.config.data.as_ref(), &initial, &mut js);
+    } = load_global(
+        &input,
+        opts.config.data_dir(),
+        &root,
+        opts.config.data.as_ref(),
+        &initial,
+        &mut js,
+    );
     report.problems.extend(data_notes);
     report.problems.extend(data_problems);
     if let Some(p) = js.failed.take() {
