@@ -1,6 +1,6 @@
 [package]
 name = "brrrty"
-version = "0.0.28"
+version = "0.0.29"
 description = "Brrrty, a fast static site generator compatible with Eleventy (11ty) projects."
 edition.workspace = true
 rust-version.workspace = true
@@ -21,13 +21,13 @@ name = "brrrty"
 path = "src/main.rs"
 
 [dependencies]
-brrrty-compat = { path = "../brrrty-compat", version = "0.0.28" }
-brrrty-config = { path = "../brrrty-config", version = "0.0.28" }
-brrrty-core = { path = "../brrrty-core", version = "0.0.28" }
-brrrty-js = { path = "../brrrty-js", version = "0.0.28" }
-brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.28" }
-brrrty-node = { path = "../brrrty-node", version = "0.0.28" }
-brrrty-serve = { path = "../brrrty-serve", version = "0.0.28" }
+brrrty-compat = { path = "../brrrty-compat", version = "0.0.29" }
+brrrty-config = { path = "../brrrty-config", version = "0.0.29" }
+brrrty-core = { path = "../brrrty-core", version = "0.0.29" }
+brrrty-js = { path = "../brrrty-js", version = "0.0.29" }
+brrrty-markdown = { path = "../brrrty-markdown", version = "0.0.29" }
+brrrty-node = { path = "../brrrty-node", version = "0.0.29" }
+brrrty-serve = { path = "../brrrty-serve", version = "0.0.29" }
 clap = { version = "4.6.7", features = ["derive"] }
 miette = { version = "7.6.0", features = ["fancy"] }
 # 8.2.2 is newer than two weeks; stay on 8.2.1.

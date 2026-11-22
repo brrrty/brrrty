@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.29 - 2026-11-21
+
+- When `brrrty init` can't port a whole config file, its message (and `brrrty doctor`'s `config-todo` blocker) now says which statement stopped it: the file, the line and the code, instead of only naming the config object.
+
 ## 0.0.28 - 2026-11-19
 
 - `brrrty build --no-order-check` (and `serve`), or `config.set_order_check(false)`, builds without the order check: the site's JavaScript runs once, and Brrrty does not run it again in other orders to check that no page depends on the order pages are built in. The build says so in one line. The check stays on by default, and `brrrty doctor` always runs it.
