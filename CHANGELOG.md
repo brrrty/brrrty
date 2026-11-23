@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 - 2026-11-23
+
+- A config can name its global data folder with `dir.data` (a folder inside the input folder, like `_includes`). Brrrty reads global data from it, doesn't build it as pages, and sets `eleventy.directories.data` to it. `brrrty init` ports the setting instead of leaving a TODO.
+
 ## 0.1.0 - 2026-11-22
 
 The first milestone: the author's own 11ty sites, a blog and data-driven sites with thousands of pages, run on Brrrty with output byte-identical to 11ty's. From here, each minor version tracks how much of a public corpus of 11ty 3.x sites Brrrty builds identically with no hand edits; 1.0 is about 80% of it.
