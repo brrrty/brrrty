@@ -626,7 +626,10 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
     // 11ty's `directories`: `layouts` only when the config sets it.
     let mut directories = serde_json::Map::new();
     directories.insert("input".into(), input.clone().into());
-    directories.insert("data".into(), format!("{input}_data/").into());
+    directories.insert(
+        "data".into(),
+        format!("{input}{}/", opts.config.data_dir()).into(),
+    );
     directories.insert(
         "includes".into(),
         format!("{input}{}/", opts.config.includes_dir()).into(),

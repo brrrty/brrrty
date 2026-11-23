@@ -249,7 +249,7 @@ pub fn feed(options: &Value) -> Result<FeedOptions, String> {
         || input_path.starts_with("_data/")
     {
         return Err(format!(
-            "{call}: `input_path` is `{input_path}`; Brrrty supports a `.njk` path inside the input folder, outside the includes, layouts and `_data` folders"
+            "{call}: `input_path` is `{input_path}`; Brrrty supports a `.njk` path inside the input folder, outside the includes, layouts and data folders"
         ));
     }
 
