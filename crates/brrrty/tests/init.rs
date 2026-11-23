@@ -893,3 +893,47 @@ fn init_ports_the_data_folder_setting() {
     assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
     assert_eq!(read(dir.path(), "dist/index.html"), "hello");
 }
+
+/// `templateFormats` is ported as a setting, not a TODO.
+#[test]
+fn init_ports_the_template_formats_setting() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        (
+            "eleventy.config.js",
+            "export default function (config) { return { dir: { input: 'src', output: 'dist' }, templateFormats: ['njk', 'md'] }; }\n",
+        ),
+        ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
+        ("src/raw.html", "x"),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    let built = run_in(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(read(dir.path(), "dist/index.html"), "hi");
+    assert!(!dir.path().join("dist/raw.html").exists());
+}
+
+/// `setTemplateFormats` and `addTemplateFormats` calls are ported too.
+#[test]
+fn init_ports_template_format_calls() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        (
+            "eleventy.config.js",
+            "export default function (config) { config.setTemplateFormats(['njk']); config.addTemplateFormats('liquid'); return { dir: { input: 'src', output: 'dist' } }; }\n",
+        ),
+        ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
+        ("src/raw.html", "x"),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    let built = run_in(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(read(dir.path(), "dist/index.html"), "hi");
+    assert!(!dir.path().join("dist/raw.html").exists());
+}

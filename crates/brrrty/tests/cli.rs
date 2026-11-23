@@ -713,3 +713,69 @@ fn a_nested_data_folder_is_read_and_reported() {
     assert_eq!(html, "hello ./src/content/data/");
     assert!(!d.path().join("dist/content").exists());
 }
+
+fn formats_site(config: &str) -> tempfile::TempDir {
+    site(&[
+        ("brrrty.config.rhai", config),
+        ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
+        ("src/raw.html", "x"),
+        ("src/note.md", "---\npermalink: /note.html\n---\nm"),
+        ("src/l.liquid", "---\npermalink: /l.html\n---\nl"),
+    ])
+}
+
+/// `templateFormats` picks which templates 11ty builds; a file in another
+/// format is neither rendered nor copied.
+#[test]
+fn the_config_can_limit_the_template_formats() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"njk\", \"md\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/note.html").exists());
+    assert!(!d.path().join("dist/raw.html").exists());
+    assert!(!d.path().join("dist/l.html").exists());
+}
+
+/// A list that has `html` builds `.html` files too.
+#[test]
+fn template_formats_with_html_build_html_files() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"njk\", \"html\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("dist/raw.html")).unwrap(),
+        "x"
+    );
+    assert!(!d.path().join("dist/note.html").exists());
+}
+
+/// `set_template_formats` replaces the list; `add_template_formats` adds to it.
+#[test]
+fn add_template_formats_is_additive() {
+    let d = formats_site(
+        "config.set_template_formats([\"njk\"]);\nconfig.add_template_formats(\"liquid\");\n#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/l.html").exists());
+    assert!(!d.path().join("dist/note.html").exists());
+    assert!(!d.path().join("dist/raw.html").exists());
+}
+
+/// Adding a format to the defaults changes nothing that was already built.
+#[test]
+fn add_template_formats_keeps_the_defaults() {
+    let d = formats_site(
+        "config.add_template_formats(\"liquid\");\n#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/raw.html").exists());
+    assert!(d.path().join("dist/note.html").exists());
+}
