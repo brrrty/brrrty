@@ -3366,13 +3366,35 @@ impl<'o, 'l> Reader<'o, 'l> {
                 format!("{DOCS}#the-config-object"),
             ),
             "setTemplateFormats" | "addTemplateFormats" => {
-                self.todo(
-                    a,
-                    b,
-                    "Brrrty builds 11ty's default template formats (Liquid, Markdown, Nunjucks and HTML) and doesn't read this setting yet",
-                    format!("{DOCS}#what-the-script-returns"),
-                );
-                false
+                let formats = match args {
+                    [one] => self
+                        .lit(scope, *one)
+                        .and_then(|l| template_format_names(&l)),
+                    _ => None,
+                };
+                match formats {
+                    Some(names) => {
+                        let call = if method == "setTemplateFormats" {
+                            "set_template_formats"
+                        } else {
+                            "add_template_formats"
+                        };
+                        self.out.items.push(Item::Rhai(format!(
+                            "config.{call}({});",
+                            rhai_names(&names)
+                        )));
+                        true
+                    }
+                    None => {
+                        self.todo(
+                            a,
+                            b,
+                            "port these template formats to config.set_template_formats or config.add_template_formats; Brrrty builds liquid, md, njk, html and 11ty.js",
+                            format!("{DOCS}#what-the-script-returns"),
+                        );
+                        false
+                    }
+                }
             }
             "setQuietMode"
             | "setWatchThrottleWaitTime"
@@ -3826,16 +3848,67 @@ impl<'o, 'l> Reader<'o, 'l> {
                     }
                 }
                 "dataTemplateEngine" => self.out.left_data_engine = true,
-                "templateFormats" => self.todo(
-                    x,
-                    y,
-                    "Brrrty builds 11ty's default template formats (Liquid, Markdown, Nunjucks and HTML) and doesn't read this setting yet",
-                    link.clone(),
-                ),
+                "templateFormats" => match self
+                    .lit(scope, p.value)
+                    .and_then(|l| template_format_names(&l))
+                {
+                    Some(names) => {
+                        let at = Some(self.src(x, y));
+                        self.out.settings.push(Setting {
+                            key: "templateFormats",
+                            value: rhai_names(&names),
+                            raw: None,
+                            at,
+                        });
+                    }
+                    None => self.todo(
+                        x,
+                        y,
+                        "port these template formats; Brrrty builds liquid, md, njk, html and 11ty.js",
+                        link.clone(),
+                    ),
+                },
                 _ => self.todo(x, y, "Brrrty doesn't support this setting yet", link.clone()),
             }
         }
     }
+}
+
+/// The template format names in a literal: a list of names, or one string
+/// of names separated by commas. `None` when it isn't one, or names a format
+/// Brrrty doesn't build.
+fn template_format_names(l: &Lit) -> Option<Vec<String>> {
+    let raw: Vec<String> = match l {
+        Lit::Str(s) => s.split(',').map(str::to_string).collect(),
+        Lit::Array(items) => items
+            .iter()
+            .map(|i| match i {
+                Lit::Str(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    let names: Vec<String> = raw
+        .iter()
+        .map(|n| n.trim().trim_start_matches('.').to_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+    names
+        .iter()
+        .all(|n| {
+            matches!(
+                n.as_str(),
+                "liquid" | "md" | "njk" | "html" | "11ty.js" | "11ty.cjs" | "11ty.mjs"
+            )
+        })
+        .then_some(names)
+}
+
+/// Names as a Rhai array of strings.
+fn rhai_names(names: &[String]) -> String {
+    let each: Vec<String> = names.iter().map(|n| js::rhai_string(n)).collect();
+    format!("[{}]", each.join(", "))
 }
 
 /// Quote the lines `at` covers, whole, each as its own `//` line.
@@ -4156,9 +4229,9 @@ module.exports = function (eleventyConfig) {
         assert!(t.contains("// TODO(brrrty): port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 15:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n"), "{t}");
         assert!(t.contains("globs"), "{t}");
         assert!(t.contains("// Left out: this is for 11ty's watcher"), "{t}");
-        assert!(t.contains("#{\n    dir: #{\n        input: \"src\",\n        output: \"dist\",\n        includes: \"_partials\",\n    },\n    markdownTemplateEngine: \"njk\",\n}\n"), "{t}");
+        assert!(t.contains("#{\n    dir: #{\n        input: \"src\",\n        output: \"dist\",\n        includes: \"_partials\",\n    },\n    markdownTemplateEngine: \"njk\",\n    templateFormats: [\"md\", \"njk\"],\n}\n"), "{t}");
         // The watcher setting is left out, not a TODO: it changes nothing 11ty writes.
-        assert_eq!(p.todos, 3, "{t}");
+        assert_eq!(p.todos, 2, "{t}");
         assert_eq!(p.input.as_deref(), Some("src"));
     }
 

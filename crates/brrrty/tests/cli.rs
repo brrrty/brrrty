@@ -718,7 +718,7 @@ fn formats_site(config: &str) -> tempfile::TempDir {
     site(&[
         ("brrrty.config.rhai", config),
         ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
-        ("src/raw.html", "x"),
+        ("src/raw.html", "---\npermalink: /raw.html\n---\nx"),
         ("src/note.md", "---\npermalink: /note.html\n---\nm"),
         ("src/l.liquid", "---\npermalink: /l.html\n---\nl"),
     ])

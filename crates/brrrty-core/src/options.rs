@@ -184,6 +184,9 @@ pub struct ConfigOptions {
     pub layouts: Option<String>,
     /// `dir.data`, relative to the input folder; `None` is `_data`.
     pub data_folder: Option<String>,
+    /// The template formats to build; `None` is 11ty's defaults (`liquid`,
+    /// `md`, `njk`, `html`, `11ty.js`).
+    pub template_formats: Option<Vec<String>>,
     /// `addLayoutAlias` aliases: a layout name and the file it stands for,
     /// relative to the layouts folder.
     pub layout_aliases: indexmap::IndexMap<String, String>,
@@ -207,6 +210,14 @@ impl ConfigOptions {
     /// The includes folder, relative to the input folder.
     pub fn includes_dir(&self) -> &str {
         self.includes.as_deref().unwrap_or("_includes")
+    }
+
+    /// Whether `format` (`md`, `njk`, `11ty.js`...) is one of the template formats.
+    pub fn has_format(&self, format: &str) -> bool {
+        match &self.template_formats {
+            None => matches!(format, "liquid" | "md" | "njk" | "html" | "11ty.js"),
+            Some(f) => f.iter().any(|x| x == format),
+        }
     }
 
     /// The global data folder, relative to the input folder.

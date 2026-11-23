@@ -115,9 +115,14 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
         let name = entry.file_name().to_string_lossy().to_lowercase();
         if PLUGIN_ONLY_EXTS.iter().any(|x| name.ends_with(x)) {
             found.plugin_only.push(rel);
-        } else if UNSUPPORTED_EXTS.iter().any(|x| name.ends_with(x)) {
+        } else if let Some(x) = UNSUPPORTED_EXTS.iter().find(|x| name.ends_with(**x))
+            // `11ty.js` is the format for `.11ty.cjs` and `.11ty.mjs` too.
+            && (opts.config.has_format("11ty.js") || opts.config.has_format(&x[1..]))
+        {
             found.unsupported.push(rel);
-        } else if TEMPLATE_EXTS.iter().any(|x| name.ends_with(x)) {
+        } else if let Some(x) = TEMPLATE_EXTS.iter().find(|x| name.ends_with(**x))
+            && opts.config.has_format(&x[1..])
+        {
             found.templates.push(rel);
         }
     }

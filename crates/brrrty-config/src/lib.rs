@@ -180,6 +180,10 @@ pub struct SiteConfig {
     pub dir: DirOptions,
     /// `markdownTemplateEngine` and `htmlTemplateEngine`, as returned.
     pub template_engines: brrrty_core::TemplateEngines,
+    /// The template formats to build: `templateFormats` as returned, or
+    /// `set_template_formats`, plus `add_template_formats`; `None` builds
+    /// 11ty's defaults.
+    pub template_formats: Option<Vec<String>>,
     /// `add_passthrough_copy` entries, in 11ty's order: one per source as
     /// written, the last target winning.
     pub passthrough: Vec<PassthroughEntry>,
@@ -238,6 +242,7 @@ impl SiteConfig {
             data_folder: self.dir.data.clone(),
             layout_aliases: self.layout_aliases.clone(),
             template_engines: self.template_engines,
+            template_formats: self.template_formats.clone(),
             reads: self.reads.clone(),
             late_problems: self.late_problems.clone(),
             unported: self.unported.clone(),
@@ -392,7 +397,27 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
     let global_data = api::resolve_global_data(&engine, &ast, state.global_data)
         .map_err(|e| vec![runtime_problem(*e)])?;
     let mut problems = Vec::new();
-    let (dir, template_engines) = read_returned(returned, &mut problems)?;
+    let (dir, template_engines, returned_formats) = read_returned(returned, &mut problems)?;
+    // 11ty: the returned `templateFormats` wins over `setTemplateFormats`;
+    // `addTemplateFormats` adds to either.
+    let template_formats = match returned_formats.or(state.template_formats) {
+        Some(f) => Some(f),
+        // Added to the defaults.
+        None if !state.added_template_formats.is_empty() => Some(
+            ["liquid", "md", "njk", "html", "11ty.js"]
+                .map(String::from)
+                .to_vec(),
+        ),
+        None => None,
+    }
+    .map(|mut f| {
+        for a in &state.added_template_formats {
+            if !f.contains(a) {
+                f.push(a.clone());
+            }
+        }
+        f
+    });
     // A feed's template can't live where 11ty keeps includes and layouts.
     let includes = dir.includes.as_deref().unwrap_or("_includes");
     let layouts = dir.layouts.as_deref().unwrap_or(includes);
@@ -447,6 +472,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         file: PathBuf::from(CONFIG_FILE),
         dir,
         template_engines,
+        template_formats,
         passthrough: state
             .passthrough
             .into_iter()
@@ -618,15 +644,19 @@ fn template_engine(
     }
 }
 
+/// What the returned object sets: the folders, the template engines and `templateFormats`.
+type Returned = (
+    DirOptions,
+    brrrty_core::TemplateEngines,
+    Option<Vec<String>>,
+);
+
 /// The returned object: `()` or a map with `dir` and the template engines.
-fn read_returned(
-    v: Dynamic,
-    problems: &mut Vec<Problem>,
-) -> Result<(DirOptions, brrrty_core::TemplateEngines), Vec<Problem>> {
+fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<Returned, Vec<Problem>> {
     let invalid = |m: String| vec![Problem::error(codes::CONFIG_INVALID, m)];
     let mut engines = brrrty_core::TemplateEngines::default();
     if v.is_unit() {
-        return Ok((DirOptions::default(), engines));
+        return Ok((DirOptions::default(), engines, None));
     }
     let type_name = v.type_name();
     let Some(map) = v.try_cast::<Map>() else {
@@ -635,8 +665,16 @@ fn read_returned(
         )));
     };
     let mut dir = DirOptions::default();
+    let mut formats = None;
     for (key, value) in map {
         match key.as_str() {
+            "templateFormats" => {
+                formats = Some(
+                    api::template_formats("`templateFormats`", value)
+                        .map_err(|m| vec![Problem::error(codes::CONFIG_INVALID, m)])?,
+                );
+                continue;
+            }
             "markdownTemplateEngine" => {
                 engines.markdown = template_engine(&key, value)?;
                 continue;
@@ -723,7 +761,7 @@ fn read_returned(
             }
         }
     }
-    Ok((dir, engines))
+    Ok((dir, engines, formats))
 }
 
 /// `folder`, relative to the input folder, written plainly (`./parts/` is
