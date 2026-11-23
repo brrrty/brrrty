@@ -182,6 +182,8 @@ pub struct ConfigOptions {
     pub includes: Option<String>,
     /// `dir.layouts`, relative to the input folder; `None` is the includes folder.
     pub layouts: Option<String>,
+    /// `dir.data`, relative to the input folder; `None` is `_data`.
+    pub data_folder: Option<String>,
     /// `addLayoutAlias` aliases: a layout name and the file it stands for,
     /// relative to the layouts folder.
     pub layout_aliases: indexmap::IndexMap<String, String>,
@@ -205,6 +207,11 @@ impl ConfigOptions {
     /// The includes folder, relative to the input folder.
     pub fn includes_dir(&self) -> &str {
         self.includes.as_deref().unwrap_or("_includes")
+    }
+
+    /// The global data folder, relative to the input folder.
+    pub fn data_dir(&self) -> &str {
+        self.data_folder.as_deref().unwrap_or("_data")
     }
 
     /// The layouts folder, relative to the input folder: `dir.layouts`, or

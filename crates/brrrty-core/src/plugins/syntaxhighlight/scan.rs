@@ -62,6 +62,8 @@ pub struct Context<'a> {
     /// The includes and layouts folders, relative to the input folder.
     pub includes: &'a Path,
     pub layouts: &'a Path,
+    /// The global data folder, relative to the input folder.
+    pub data: &'a Path,
 }
 
 /// Larger files aren't templates anyone writes by hand; they are skipped.
@@ -144,7 +146,7 @@ pub fn scan(input: &Path, input_rel: &Path, skip: &Path, cx: Context<'_>) -> Vec
             body: Readers::default(),
         });
     }
-    let global = Global::of(&files, cx.global_data);
+    let global = Global::of(&files, cx.global_data, cx.data);
     for f in &mut files {
         decide(f, input, input_rel, &cx, &global);
     }
@@ -193,7 +195,7 @@ struct Global {
 }
 
 impl Global {
-    fn of(files: &[File], config: &Data) -> Global {
+    fn of(files: &[File], config: &Data, data: &Path) -> Global {
         let mut g = Global {
             engine: false,
             layout_unknown: false,
@@ -216,9 +218,8 @@ impl Global {
         }
         // A `_data` file's top-level key is its name.
         for f in files {
-            let mut parts = f.rel.components();
-            if parts.next().is_some_and(|c| c.as_os_str() == "_data")
-                && let Some(first) = parts.next()
+            if let Ok(inside) = f.rel.strip_prefix(data)
+                && let Some(first) = inside.components().next()
             {
                 let name = first.as_os_str().to_string_lossy();
                 key(name.split('.').next().unwrap_or(""), None);
@@ -272,14 +273,13 @@ fn is_page_ext(ext: &str) -> bool {
 /// What reads `f`, before anything includes it.
 fn decide(f: &mut File, input: &Path, input_rel: &Path, cx: &Context<'_>, g: &Global) {
     let engines = cx.engines;
-    let top = f.rel.components().next().map(|c| c.as_os_str().to_owned());
     let ext = extension(&f.rel);
     // Includes and layouts are read by whatever includes them; data by
     // the language a page's permalink or computed values, or
     // `dataTemplateEngine`, runs; JavaScript could be a template.
     if f.rel.starts_with(cx.includes)
         || f.rel.starts_with(cx.layouts)
-        || top.as_deref().is_some_and(|t| t == "_data")
+        || f.rel.starts_with(cx.data)
         || matches!(ext.as_str(), "json" | "js" | "cjs" | "mjs" | "rhai")
     {
         f.front = Readers::ANY;
@@ -884,6 +884,7 @@ mod tests {
             global_data: global,
             includes: Path::new("_includes"),
             layouts: Path::new("_includes"),
+            data: Path::new("_data"),
         };
         let mut got: Vec<String> =
             scan(dir.path(), Path::new("src"), &dir.path().join("_site"), cx)

@@ -668,3 +668,48 @@ fn a_random_filter_builds_with_a_note_and_a_seed_repeats_it() {
         assert_eq!(n, (1..=12).collect::<Vec<_>>());
     }
 }
+
+/// 11ty reads `dir.data` for global data, whatever the folder is called.
+#[test]
+fn the_config_can_name_the_data_folder() {
+    let d = site(&[
+        (
+            "brrrty.config.rhai",
+            "#{ dir: #{ input: \"src\", output: \"dist\", data: \"data\" } }\n",
+        ),
+        ("src/data/site.json", "{\"greeting\":\"hello\"}"),
+        ("src/data/nested/deep.json", "{\"word\":\"deep\"}"),
+        (
+            "src/index.njk",
+            "---\npermalink: /index.html\n---\n{{ site.greeting }} {{ nested.deep.word }}",
+        ),
+    ]);
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let html = std::fs::read_to_string(d.path().join("dist/index.html")).unwrap();
+    assert_eq!(html, "hello deep");
+    // The data folder is not built as pages.
+    assert!(!d.path().join("dist/data").exists());
+}
+
+/// `eleventy.directories.data` follows `dir.data`, and a data folder can sit
+/// below the input folder's top level.
+#[test]
+fn a_nested_data_folder_is_read_and_reported() {
+    let d = site(&[
+        (
+            "brrrty.config.rhai",
+            "#{ dir: #{ input: \"src\", output: \"dist\", data: \"content/data\" } }\n",
+        ),
+        ("src/content/data/site.json", "{\"greeting\":\"hello\"}"),
+        (
+            "src/index.njk",
+            "---\npermalink: /index.html\n---\n{{ site.greeting }} {{ eleventy.directories.data }}",
+        ),
+    ]);
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let html = std::fs::read_to_string(d.path().join("dist/index.html")).unwrap();
+    assert_eq!(html, "hello ./src/content/data/");
+    assert!(!d.path().join("dist/content").exists());
+}

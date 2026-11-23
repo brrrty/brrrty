@@ -106,9 +106,6 @@ fn unsupported_returned_keys_are_refused() {
     let p = err(r#"#{ dir: #{ input: "src" }, pathPrefix: "/x/" }"#);
     assert_eq!(p.code, codes::CONFIG_UNSUPPORTED);
     assert!(p.message.contains("pathPrefix"), "{}", p.message);
-    let p = err(r#"#{ dir: #{ data: "data" } }"#);
-    assert_eq!(p.code, codes::CONFIG_UNSUPPORTED);
-    assert!(p.message.contains("data"), "{}", p.message);
     let p = err(r#"#{ dir: #{ input: 3 } }"#);
     assert_eq!(p.code, codes::CONFIG_INVALID);
     let p = err(r#""src""#);
@@ -563,4 +560,16 @@ fn set_js_data_names_the_two_values_it_takes() {
     );
     assert_eq!(p.line, Some(2));
     assert!(p.column.is_some());
+}
+
+/// `dir.data` is a folder inside the input folder, like includes.
+#[test]
+fn data_folder_is_read() {
+    let c = ok(r#"#{ dir: #{ data: "./data/" } }"#);
+    assert_eq!(c.dir.data.as_deref(), Some("data"));
+    assert_eq!(c.build_options().data_dir(), "data");
+    assert_eq!(ok("").build_options().data_dir(), "_data");
+    let p = err(r#"#{ dir: #{ data: "../data" } }"#);
+    assert_eq!(p.code, codes::CONFIG_UNSUPPORTED);
+    assert!(p.message.contains("dir.data"), "{}", p.message);
 }

@@ -328,6 +328,7 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
             .find(|n| present(&root, n))
             .map(|n| (*n).to_string()),
     };
+    let mut data_folder: Option<String> = None;
     let (mut rhai, todos, input, output) = match &config {
         Some(name) => {
             let outside = !brrrty_config::markers::is_inside(name);
@@ -398,6 +399,7 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
                     return Err(Refusal::Refused(format!("{why}, so nothing was written.")));
                 }
             };
+            data_folder = p.data.clone();
             (p.text, p.todos, p.input, p.output)
         }
         None if cli.is_some() => {
@@ -417,10 +419,10 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
 
     let js_data = match &input {
         Some(i) => match fs::canonicalize(root.join(i)) {
-            Ok(input) if input.starts_with(&root) => js_data_files(&root, &input),
+            Ok(input) if input.starts_with(&root) => js_data_files(&root, &input, &data_folder),
             _ => Vec::new(),
         },
-        None => js_data_files(&root, &root),
+        None => js_data_files(&root, &root, &data_folder),
     };
     let mut js_translated = Vec::new();
     let mut js_hand = Vec::new();
@@ -905,7 +907,12 @@ fn edit_package(src: &str) -> Result<Edited, Refusal> {
 
 /// JavaScript data files without a `.rhai` next to them: in `_data`, and
 /// `*.11tydata.js` files anywhere in the input folder.
-fn js_data_files(root: &Path, input: &Path) -> Vec<String> {
+fn js_data_files(root: &Path, input: &Path, data_folder: &Option<String>) -> Vec<String> {
+    let data = data_folder
+        .as_deref()
+        .map(|d| d.trim_start_matches("./").trim_end_matches('/'))
+        .filter(|d| !d.is_empty() && !d.starts_with('/') && !d.split('/').any(|c| c == ".."))
+        .unwrap_or("_data");
     let mut found = Vec::new();
     let mut budget = 100_000usize;
     walk(input, 0, &mut budget, &mut |p| {
@@ -916,7 +923,7 @@ fn js_data_files(root: &Path, input: &Path) -> Vec<String> {
         if !matches!(ext, "js" | "cjs" | "mjs") {
             return;
         }
-        let in_data = p.starts_with(input.join("_data"));
+        let in_data = p.starts_with(input.join(data));
         if !in_data && !stem.ends_with(".11tydata") {
             return;
         }
