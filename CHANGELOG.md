@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 - 2026-11-24
+
+- `config.set_js_config("node")` (or `--js-config=node` on `build`, `serve` and `doctor`; off by default) runs the site's 11ty config file in Node against a recording `eleventyConfig`. Brrrty then applies passthrough copy, ignores, template formats, global data, `dir` and the template engines from it, along with what the config returns and an ESM `export const config`. Lines in `brrrty.config.rhai` win for the same setting. Config files are found in 11ty's order, `.eleventy.js` first. Brrrty doesn't call config-defined filters, shortcodes and transforms yet. Any method it skips gets a warning with the file and line, any returned key it skips gets a warning naming the file, and `brrrty doctor` lists them all.
+
 ## 0.1.2 - 2026-11-24
 
 - Brrrty reads `templateFormats` from a config's returned object, plus `config.set_template_formats` and `config.add_template_formats`, and builds only the formats listed, as 11ty does. A file in a format that isn't listed is neither rendered nor copied. As in 11ty, the set call wins over the returned key, an empty string means the defaults, and names are lowercased. A layout named without an extension is looked up in the listed formats, in the listed order. A format Brrrty doesn't build (such as `css` or `webc`) is refused with a config error instead of being ignored. `brrrty init` ports all three instead of leaving a TODO.
