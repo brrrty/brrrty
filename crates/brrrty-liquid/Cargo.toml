@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-liquid"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Liquid template engine that matches LiquidJS as Eleventy configures it, for an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +13,7 @@ readme = false
 exclude = ["tests/conformance.rs", "tests/filters.rs", "tests/probes/conformance_parse_errors.json", "tests/probes/filters.json", "tools"]
 
 [dependencies]
-brrrty-js = { version = "0.1.1", path = "../brrrty-js" }
+brrrty-js = { version = "0.1.2", path = "../brrrty-js" }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc", "clock"] }
 indexmap = "2"
 regex = "1.13.1"
