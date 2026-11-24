@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - 2026-11-24
+
+- Brrrty reads `templateFormats` from a config's returned object, plus `config.set_template_formats` and `config.add_template_formats`, and builds only the formats listed, as 11ty does. A file in a format that isn't listed is neither rendered nor copied. As in 11ty, the set call wins over the returned key, an empty string means the defaults, and names are lowercased. A layout named without an extension is looked up in the listed formats, in the listed order. A format Brrrty doesn't build (such as `css` or `webc`) is refused with a config error instead of being ignored. `brrrty init` ports all three instead of leaving a TODO.
+
 ## 0.1.1 - 2026-11-23
 
 - A config can name its global data folder with `dir.data` (a folder inside the input folder, like `_includes`). Brrrty reads global data from it, doesn't build it as pages, and sets `eleventy.directories.data` to it. `brrrty init` ports the setting instead of leaving a TODO.
