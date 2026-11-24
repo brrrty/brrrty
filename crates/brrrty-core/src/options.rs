@@ -220,6 +220,26 @@ impl ConfigOptions {
         }
     }
 
+    /// The extensions an extensionless layout name is tried with, in order:
+    /// the template formats as listed, with `11ty.js` standing for the three
+    /// JavaScript spellings.
+    pub fn layout_extensions(&self) -> Vec<String> {
+        let default = ["liquid", "md", "njk", "html", "11ty.js"];
+        let list: Vec<&str> = match &self.template_formats {
+            None => default.to_vec(),
+            Some(f) => f.iter().map(String::as_str).collect(),
+        };
+        let mut out = Vec::new();
+        for f in list {
+            if f == "11ty.js" {
+                out.extend(["11ty.js", "11ty.cjs", "11ty.mjs"].map(String::from));
+            } else {
+                out.push(f.to_string());
+            }
+        }
+        out
+    }
+
     /// The global data folder, relative to the input folder.
     pub fn data_dir(&self) -> &str {
         self.data_folder.as_deref().unwrap_or("_data")

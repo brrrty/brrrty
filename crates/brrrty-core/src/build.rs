@@ -2514,6 +2514,7 @@ fn build_once(
         input_rel.clone(),
         PathBuf::from(opts.config.layouts_dir()),
         opts.config.layout_aliases.clone(),
+        opts.config.layout_extensions(),
     );
     let data_dir = input_rel.join(opts.config.data_dir());
     let (globals, output_shown) = globals(opts, &root, &input_rel);

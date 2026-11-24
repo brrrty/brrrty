@@ -841,14 +841,15 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<Stri
     };
     let mut out = Vec::new();
     for n in names {
-        let n = n.trim().to_string();
+        // 11ty trims and lowercases the names.
+        let n = n.trim().to_lowercase();
         if n.is_empty() {
             continue;
         }
-        if n.starts_with('.') || n.chars().any(|c| c.is_uppercase()) {
+        if n.starts_with('.') {
             return Err(format!(
-                "{what}: `{n}` matches no files; 11ty wants the bare lowercase name, like \"{}\"",
-                n.trim_start_matches('.').to_lowercase()
+                "{what}: `{n}` matches no files; 11ty wants the bare name, like \"{}\"",
+                n.trim_start_matches('.')
             ));
         }
         if !KNOWN_FORMATS.contains(&n.as_str()) {
