@@ -80,7 +80,7 @@ pub fn apply(
                 codes::CONFIG_UNSUPPORTED,
                 "config.set_js_config(\"node\") is on, but there is no 11ty config file here",
             )
-            .with_help("looked for eleventy.config.js, eleventy.config.mjs, eleventy.config.cjs and .eleventy.js"),
+            .with_help(format!("looked for {}", CONFIG_FILES.join(", "))),
         );
         return Ok(());
     };

@@ -127,6 +127,18 @@ function configRecorder() {
   };
 }
 
+// 11ty's `Merge(local, exported)`: plain objects recurse, the exported value wins.
+function isPlain(v) {
+  return v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
+}
+function deepMerge(target, source) {
+  const out = { ...target };
+  for (const [k, v] of Object.entries(source)) {
+    out[k] = isPlain(v) && isPlain(out[k]) ? deepMerge(out[k], v) : v;
+  }
+  return out;
+}
+
 async function loadConfig(file) {
   let fn;
   let exported;
@@ -146,7 +158,7 @@ async function loadConfig(file) {
   const rec = configRecorder();
   let returned = await fn(rec.proxy);
   if (exported && typeof exported === "object") {
-    returned = Object.assign({}, exported, returned && typeof returned === "object" ? returned : {});
+    returned = deepMerge(returned && typeof returned === "object" ? returned : {}, exported);
   }
   return rec.done(returned);
 }
