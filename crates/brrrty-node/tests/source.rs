@@ -81,6 +81,8 @@ fn every_line_the_client_strips_is_a_comment() {
         "\n",
         include_str!("../src/worker/proxy.mjs"),
         "\n",
+        include_str!("../src/worker/config.mjs"),
+        "\n",
         include_str!("../src/worker/main.mjs"),
     );
     use std::io::Write;

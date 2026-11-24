@@ -30,6 +30,8 @@ const WORKER_SOURCE: &str = concat!(
     "\n",
     include_str!("worker/proxy.mjs"),
     "\n",
+    include_str!("worker/config.mjs"),
+    "\n",
     include_str!("worker/main.mjs"),
 );
 
@@ -73,7 +75,13 @@ const AGAIN: usize = 16;
 fn logged(op: &str) -> bool {
     !matches!(
         op,
-        "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
+        "reads"
+            | "info"
+            | "callsBegin"
+            | "loadsChanged"
+            | "exportsFinal"
+            | "describe"
+            | "configLoad"
     )
 }
 
@@ -1797,6 +1805,22 @@ impl JsRuntime for Worker {
             self.last_loaded.insert(key, d.clone());
         }
         r
+    }
+
+    fn load_config(&mut self, file: &Path) -> JsResult<Decoded> {
+        let what = self.shown(file);
+        let text = op_text("configLoad", |t| {
+            t.push_str(",\"path\":");
+            crate::wire::string(t, &file.to_string_lossy());
+        });
+        self.earlier = None;
+        self.request(
+            Request {
+                path: Some(file),
+                ..Request::new("configLoad", text)
+            },
+            &what,
+        )
     }
 
     fn call(

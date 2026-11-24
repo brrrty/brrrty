@@ -260,6 +260,14 @@ pub trait JsRuntime: Send {
     /// Import `file` (absolute) as 11ty does; when `call` and the export is
     /// a function, call it with the argument and await it.
     fn load(&mut self, file: &Path, call: bool) -> JsResult<Decoded>;
+    /// Import the site's 11ty config file (absolute) as 11ty does and call
+    /// its export with a recording `eleventyConfig`. The value is
+    /// `{ returned, values, functions, unsupported }`.
+    fn load_config(&mut self, _file: &Path) -> JsResult<Decoded> {
+        JsResult::Refused(Refusal::new(
+            "this runtime can't load an 11ty config".to_string(),
+        ))
+    }
     /// Call a function value from a template with `this` and `args`.
     fn call(
         &mut self,
