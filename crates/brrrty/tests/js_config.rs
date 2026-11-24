@@ -308,3 +308,57 @@ fn passthrough_options_are_a_warning() {
     let s = text(&o);
     assert!(s.contains("filter") || s.contains("options"), "{s}");
 }
+
+#[test]
+fn an_esm_config_export_is_deep_merged_into_the_return_value() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("package.json", r#"{"type":"module"}"#),
+            (
+                "eleventy.config.js",
+                "export default function () { return { dir: { output: \"out\" } }; }\nexport const config = { dir: { input: \"src\" } };\n",
+            ),
+            ("src/index.md", "src"),
+            ("other/index.md", "other"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(t.path().join("out/index.html").is_file(), "{}", text(&o));
+    assert!(!t.path().join("out/other/index.html").exists());
+}
+
+#[test]
+fn an_esm_config_export_wins_over_the_return_value() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("package.json", r#"{"type":"module"}"#),
+            (
+                "eleventy.config.js",
+                "export default function () { return { dir: { input: \"other\" } }; }\nexport const config = { dir: { input: \"src\" } };\n",
+            ),
+            ("src/index.md", "src"),
+            ("other/index.md", "other"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let html = fs::read_to_string(t.path().join("_site/index.html")).unwrap();
+    assert!(html.contains("src"), "{html}");
+}
+
+#[test]
+fn the_missing_config_help_lists_the_files_in_lookup_order() {
+    let t = site(&[("brrrty.config.rhai", "config.set_js_config(\"node\");\n")]);
+    let o = run(t.path(), "build", &[]);
+    let out = text(&o);
+    let a = out.find(".eleventy.js").expect(&out);
+    let b = out.find("eleventy.config.js").expect(&out);
+    assert!(a < b, "{out}");
+}
