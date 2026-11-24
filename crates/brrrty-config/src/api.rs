@@ -424,8 +424,9 @@ pub fn engine_for(
             let formats = template_formats("set_template_formats", list).map_err(|m| {
                 Box::new(EvalAltResult::ErrorRuntime(m.into(), ctx.call_position()))
             })?;
+            // An empty string leaves the setting unset, as in 11ty.
             open(&c.0, "config.set_template_formats", ctx.call_position()).template_formats =
-                Some(formats);
+                formats;
             Ok(())
         },
     );
@@ -440,7 +441,7 @@ pub fn engine_for(
             })?;
             open(&c.0, "config.add_template_formats", ctx.call_position())
                 .added_template_formats
-                .extend(formats);
+                .extend(formats.unwrap_or_default());
             Ok(())
         },
     );
@@ -811,9 +812,13 @@ const KNOWN_FORMATS: &[&str] = &[
 
 /// A list of template formats: an array of names, or one string of names
 /// separated by commas, as 11ty reads them. `what` names the setting in errors.
-pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Vec<String>, String> {
+/// An empty string is `None`: 11ty treats it as not set, so the defaults build.
+pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<String>>, String> {
     let type_name = v.type_name();
     let names: Vec<String> = if let Some(s) = v.clone().try_cast::<ImmutableString>() {
+        if s.is_empty() {
+            return Ok(None);
+        }
         s.split(',').map(str::to_string).collect()
     } else if let Some(a) = v.try_cast::<rhai::Array>() {
         let mut names = Vec::new();
@@ -836,9 +841,15 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Vec<String>, St
     };
     let mut out = Vec::new();
     for n in names {
-        let n = n.trim().trim_start_matches('.').to_lowercase();
+        let n = n.trim().to_string();
         if n.is_empty() {
             continue;
+        }
+        if n.starts_with('.') || n.chars().any(|c| c.is_uppercase()) {
+            return Err(format!(
+                "{what}: `{n}` matches no files; 11ty wants the bare lowercase name, like \"{}\"",
+                n.trim_start_matches('.').to_lowercase()
+            ));
         }
         if !KNOWN_FORMATS.contains(&n.as_str()) {
             return Err(format!(
@@ -849,7 +860,7 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Vec<String>, St
             out.push(n);
         }
     }
-    Ok(out)
+    Ok(Some(out))
 }
 
 #[cfg(test)]

@@ -45,7 +45,7 @@ Nothing runs until the whole script has. An error in the script stops the build 
 | `config.add_nondeterministic_filter(name)` | Stands in for a filter that uses `Math.random` in your JavaScript config, without porting it: pages that use it are refused. `add_random_filter` ports it instead. |
 | `config.add_collection(name, fn)` | `addCollection`. Adds a collection. |
 | `config.add_layout_alias(name, file)` | `addLayoutAlias`. `layout: name` uses `file`, relative to the layouts folder. |
-| `config.set_template_formats(list)` | `setTemplateFormats`. Replaces the list of formats to build. The returned `templateFormats` wins over it. |
+| `config.set_template_formats(list)` | `setTemplateFormats`. Replaces the list of formats to build. It wins over the returned `templateFormats`. |
 | `config.add_template_formats(list)` | `addTemplateFormats`. Adds formats to the list (the default one, if none was set). |
 | `config.add_plugin(name, options)` | `addPlugin`, for the plugins Brrrty has its own version of: `rss` and `syntaxhighlight`. `options` is optional. |
 

@@ -3879,6 +3879,8 @@ impl<'o, 'l> Reader<'o, 'l> {
 /// Brrrty doesn't build.
 fn template_format_names(l: &Lit) -> Option<Vec<String>> {
     let raw: Vec<String> = match l {
+        // An empty string means "not set" in 11ty; leave it for the user.
+        Lit::Str(s) if s.is_empty() => return None,
         Lit::Str(s) => s.split(',').map(str::to_string).collect(),
         Lit::Array(items) => items
             .iter()
@@ -3891,7 +3893,7 @@ fn template_format_names(l: &Lit) -> Option<Vec<String>> {
     };
     let names: Vec<String> = raw
         .iter()
-        .map(|n| n.trim().trim_start_matches('.').to_lowercase())
+        .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .collect();
     names

@@ -398,9 +398,9 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         .map_err(|e| vec![runtime_problem(*e)])?;
     let mut problems = Vec::new();
     let (dir, template_engines, returned_formats) = read_returned(returned, &mut problems)?;
-    // 11ty: the returned `templateFormats` wins over `setTemplateFormats`;
+    // 11ty: the `setTemplateFormats` call wins over the returned `templateFormats`;
     // `addTemplateFormats` adds to either.
-    let template_formats = match returned_formats.or(state.template_formats) {
+    let template_formats = match state.template_formats.or(returned_formats) {
         Some(f) => Some(f),
         // Added to the defaults.
         None if !state.added_template_formats.is_empty() => Some(
@@ -669,10 +669,8 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<Returned, Ve
     for (key, value) in map {
         match key.as_str() {
             "templateFormats" => {
-                formats = Some(
-                    api::template_formats("`templateFormats`", value)
-                        .map_err(|m| vec![Problem::error(codes::CONFIG_INVALID, m)])?,
-                );
+                formats = api::template_formats("`templateFormats`", value)
+                    .map_err(|m| vec![Problem::error(codes::CONFIG_INVALID, m)])?;
                 continue;
             }
             "markdownTemplateEngine" => {
