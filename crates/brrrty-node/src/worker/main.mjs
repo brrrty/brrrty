@@ -3199,6 +3199,11 @@ async function handle(req) {
       lastSent.set(key, text);
       return { okText: text, ...fixed };
     }
+    case "configLoad": {
+      const reply = await loadConfig(req.path);
+      encodedLive = false;
+      return { okText: JSON.stringify(encodeValue(reply, register)) };
+    }
     case "call": {
       const fn = getHandle(req.handle);
       const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this);
