@@ -1101,7 +1101,9 @@ fn site_steps(ctx: &mut Ctx, entry: &SiteEntry, r: &mut SiteResult, d: &Dirs, de
         return;
     }
 
-    // 4. A host copy for Brrrty, which never runs JavaScript.
+    // 4. A host copy for Brrrty. Natively it gets the installed
+    // `node_modules` too: Brrrty runs JS data files in Node, and their
+    // imports (luxon, zod, ...) must resolve as they do for 11ty.
     let host = d.work.join("host");
     let _ = fs::remove_dir_all(&host);
     let copied = Command::new("cp")
@@ -1117,16 +1119,15 @@ fn site_steps(ctx: &mut Ctx, entry: &SiteEntry, r: &mut SiteResult, d: &Dirs, de
         )));
         return;
     }
-    if config_mentions_node_modules(&host) {
-        if native {
-            let _ = Command::new("cp")
-                .arg("-R")
-                .arg(d.build().join("node_modules"))
-                .arg(&host)
-                .status();
-        } else if let Some(image) = r.node_image.clone() {
-            copy_node_modules(&image, d, &host, &r.slug, left(deadline));
+    if native {
+        let nm = d.build().join("node_modules");
+        if nm.is_dir() {
+            let _ = Command::new("cp").arg("-a").arg(&nm).arg(&host).status();
         }
+    } else if config_mentions_node_modules(&host)
+        && let Some(image) = r.node_image.clone()
+    {
+        copy_node_modules(&image, d, &host, &r.slug, left(deadline));
     }
 
     let mut c = Command::new(&ctx.brrrty);
