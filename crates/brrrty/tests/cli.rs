@@ -779,3 +779,57 @@ fn add_template_formats_keeps_the_defaults() {
     assert!(d.path().join("dist/raw.html").exists());
     assert!(d.path().join("dist/note.html").exists());
 }
+
+/// 11ty: the `setTemplateFormats` call wins over the returned `templateFormats`.
+#[test]
+fn set_template_formats_wins_over_the_returned_key() {
+    let d = formats_site(
+        "config.set_template_formats([\"njk\"]);\n#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"md\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(!d.path().join("dist/note.html").exists());
+}
+
+/// 11ty: an empty string is falsy, so the defaults build.
+#[test]
+fn an_empty_returned_template_formats_string_builds_the_defaults() {
+    let d =
+        formats_site("#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: \"\" }\n");
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/raw.html").exists());
+}
+
+#[test]
+fn an_empty_set_template_formats_string_builds_the_defaults() {
+    let d = formats_site(
+        "config.set_template_formats(\"\");\n#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/raw.html").exists());
+}
+
+/// An empty list is truthy in 11ty: it builds nothing.
+#[test]
+fn an_empty_template_formats_list_builds_nothing() {
+    let d = formats_site("#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [] }\n");
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(!d.path().join("dist/index.html").exists());
+}
+
+/// 11ty only trims names: `.njk` and `NJK` match nothing there, so refuse them.
+#[test]
+fn a_template_format_with_a_dot_or_capitals_is_refused() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\".njk\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("`.njk`"), "{}", stderr(&o));
+}
