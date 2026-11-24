@@ -217,6 +217,8 @@ pub struct SiteConfig {
     pub unported: Option<Problem>,
     /// `config.set_js_data(...)`: the last call's mode and line.
     pub js_data: Option<(brrrty_core::JsData, Option<usize>)>,
+    /// `config.set_js_config(...)`: the last call's mode and line.
+    pub js_config: Option<(brrrty_core::JsData, Option<usize>)>,
     /// `config.set_order_check(...)`, when the config calls it.
     pub order_check: Option<bool>,
 }
@@ -247,6 +249,7 @@ impl SiteConfig {
             late_problems: self.late_problems.clone(),
             unported: self.unported.clone(),
             js_data: self.js_data,
+            js_config: self.js_config,
             order_check: self.order_check,
         }
     }
@@ -492,6 +495,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         late_problems,
         unported: None,
         js_data: state.js_data,
+        js_config: state.js_config,
         order_check: state.order_check,
     })
 }

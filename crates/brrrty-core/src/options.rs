@@ -199,6 +199,8 @@ pub struct ConfigOptions {
     pub late_problems: LateProblems,
     /// `config.set_js_data(...)`: the mode and the line of the call.
     pub js_data: Option<(JsData, Option<usize>)>,
+    /// `config.set_js_config(...)`: the mode and the line of the call.
+    pub js_config: Option<(JsData, Option<usize>)>,
     /// `config.set_order_check(...)`, when the config calls it.
     pub order_check: Option<bool>,
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
