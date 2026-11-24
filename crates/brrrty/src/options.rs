@@ -20,6 +20,8 @@ pub struct Flags {
     pub strict: bool,
     /// `--js-data`; the config's `set_js_data`, or off, when not given.
     pub js_data: Option<JsData>,
+    /// `--js-config`; the config's `set_js_config`, or off, when not given.
+    pub js_config: Option<JsData>,
     /// `--no-order-check` is `Some(false)`; `Some(true)` runs the check
     /// whatever the config says (`brrrty doctor`); `None` leaves it to the
     /// config's `set_order_check`, or on.
@@ -30,8 +32,21 @@ pub struct Flags {
 /// 11ty's do. The config's problems come back as the error.
 pub fn build_options(root: &Path, flags: &Flags) -> Result<BuildOptions, Vec<Problem>> {
     let site = brrrty_config::load(root)?;
-    let dir = site.as_ref().map(|s| s.dir.clone()).unwrap_or_default();
+    let mut dir = site.as_ref().map(|s| s.dir.clone()).unwrap_or_default();
     let mut config = site.map(|s| s.build_options()).unwrap_or_default();
+    // `--js-config` over `config.set_js_config`: run the 11ty config in Node first.
+    let js_config = flags.js_config.or(config.js_config.map(|(m, _)| m));
+    if js_config == Some(JsData::Node) {
+        match brrrty_node::find_node(std::env::var_os("BRRRTY_NODE").as_deref()) {
+            Ok(node) => crate::js_config::apply(root, &node, &mut config, &mut dir)?,
+            Err(missing) => {
+                return Err(vec![Problem::error(
+                    brrrty_core::codes::CONFIG_ERROR,
+                    format!("the 11ty config can't run: {missing}"),
+                )]);
+            }
+        }
+    }
     // `.rhai` data files work with or without a config file.
     config.data = Some(brrrty_config::data_runner(
         brrrty_config::Clock::from_env().unwrap_or(brrrty_config::Clock::System),

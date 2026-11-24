@@ -127,17 +127,38 @@ function configRecorder() {
   };
 }
 
+// 11ty's `Merge(local, exported)`: plain objects recurse, the exported value wins.
+function isPlain(v) {
+  return v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
+}
+function deepMerge(target, source) {
+  const out = { ...target };
+  for (const [k, v] of Object.entries(source)) {
+    out[k] = isPlain(v) && isPlain(out[k]) ? deepMerge(out[k], v) : v;
+  }
+  return out;
+}
+
 async function loadConfig(file) {
   let fn;
+  let exported;
   try {
     fn = await dynamicImportAbsolutePath(file, dataType(file));
   } catch (e) {
     throw placeSyntaxError(e, file);
   }
+  // 11ty merges an ESM `export const config = {...}` into what the function returns.
+  if (fn && typeof fn === "object" && typeof fn.default === "function") {
+    exported = fn.config;
+    fn = fn.default;
+  }
   if (typeof fn !== "function") {
     throw new Error(`The config ${relFile(file)} must export a function, as 11ty's does`);
   }
   const rec = configRecorder();
-  const returned = await fn(rec.proxy);
+  let returned = await fn(rec.proxy);
+  if (exported && typeof exported === "object") {
+    returned = deepMerge(returned && typeof returned === "object" ? returned : {}, exported);
+  }
   return rec.done(returned);
 }

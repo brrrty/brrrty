@@ -95,6 +95,8 @@ pub struct State {
     pub closed: Option<brrrty_core::LateProblems>,
     /// `set_js_data(...)`: the last call's mode and line.
     pub js_data: Option<(brrrty_core::JsData, Option<usize>)>,
+    /// `set_js_config(...)`: the last call's mode and line.
+    pub js_config: Option<(brrrty_core::JsData, Option<usize>)>,
     /// `set_order_check(...)`: the last call's answer.
     pub order_check: Option<bool>,
 }
@@ -387,6 +389,29 @@ pub fn engine_for(
                 .into());
             };
             open(&c.0, "config.set_js_data", pos).js_data = Some((m, pos.line()));
+            Ok(())
+        },
+    );
+    // Brrrty's own: whether the site's 11ty config runs in Node and what it
+    // sets is applied to the build.
+    e.register_fn(
+        "set_js_config",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         mode: ImmutableString|
+         -> Result<(), Box<EvalAltResult>> {
+            let pos = ctx.call_position();
+            let Some(m) = brrrty_core::JsData::parse(mode.as_str()) else {
+                return Err(EvalAltResult::ErrorRuntime(
+                    Dynamic::from(InvalidJsData(format!(
+                        "config.set_js_config({}): use \"node\" (run the site's 11ty config in its own Node) or \"off\"",
+                        serde_json::Value::String(mode.to_string())
+                    ))),
+                    pos,
+                )
+                .into());
+            };
+            open(&c.0, "config.set_js_config", pos).js_config = Some((m, pos.line()));
             Ok(())
         },
     );
@@ -839,6 +864,11 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<Stri
             "{what}: got a {type_name}; it should be a list of template formats, like [\"njk\", \"md\"]"
         ));
     };
+    normalize_template_formats(what, names).map(Some)
+}
+
+/// Trim, lowercase and check template format names, as 11ty reads them.
+pub fn normalize_template_formats(what: &str, names: Vec<String>) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for n in names {
         // 11ty trims and lowercases the names.
@@ -861,7 +891,7 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<Stri
             out.push(n);
         }
     }
-    Ok(Some(out))
+    Ok(out)
 }
 
 #[cfg(test)]

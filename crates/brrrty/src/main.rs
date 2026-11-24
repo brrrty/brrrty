@@ -81,6 +81,10 @@ struct DoctorArgs {
     /// need them (`off`) [default: `config.set_js_data(...)`, or off]
     #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
     js_data: Option<String>,
+    /// Run the site's 11ty config in its own Node and apply what it sets (`node`), or not
+    /// (`off`) [default: `config.set_js_config(...)`, or off]
+    #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
+    js_config: Option<String>,
     /// File or folder to copy as-is, relative to the current folder (repeatable)
     #[arg(long)]
     passthrough: Vec<PathBuf>,
@@ -106,6 +110,10 @@ struct ServeArgs {
     /// need them (`off`) [default: `config.set_js_data(...)`, or off]
     #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
     js_data: Option<String>,
+    /// Run the site's 11ty config in its own Node and apply what it sets (`node`), or not
+    /// (`off`) [default: `config.set_js_config(...)`, or off]
+    #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
+    js_config: Option<String>,
     /// Run the site's JavaScript once, without running it again in other orders to
     /// check that pages don't depend on the order they are built in
     #[arg(long)]
@@ -135,6 +143,10 @@ struct BuildArgs {
     /// need them (`off`) [default: `config.set_js_data(...)`, or off]
     #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
     js_data: Option<String>,
+    /// Run the site's 11ty config in its own Node and apply what it sets (`node`), or not
+    /// (`off`) [default: `config.set_js_config(...)`, or off]
+    #[arg(long, value_name = "MODE", value_parser = ["node", "off"])]
+    js_config: Option<String>,
     /// Run the site's JavaScript once, without running it again in other orders to
     /// check that pages don't depend on the order they are built in
     #[arg(long)]
@@ -178,6 +190,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
         passthrough: args.passthrough,
         strict: args.strict,
         js_data: js_data_flag(args.js_data.as_deref()),
+        js_config: js_data_flag(args.js_config.as_deref()),
         order_check: args.no_order_check.then_some(false),
     };
     let opts = match build_options(&root, &flags) {
@@ -233,6 +246,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             passthrough: args.passthrough,
             strict: args.strict,
             js_data: js_data_flag(args.js_data.as_deref()),
+            js_config: js_data_flag(args.js_config.as_deref()),
             order_check: args.no_order_check.then_some(false),
         },
         quiet,
@@ -398,6 +412,7 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         passthrough: args.passthrough,
         strict: false,
         js_data: js_data_flag(args.js_data.as_deref()),
+        js_config: js_data_flag(args.js_config.as_deref()),
         // Doctor always runs the check, whatever the config says.
         order_check: Some(true),
     };

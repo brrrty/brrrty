@@ -187,6 +187,10 @@ pub struct ConfigOptions {
     /// The template formats to build; `None` is 11ty's defaults (`liquid`,
     /// `md`, `njk`, `html`, `11ty.js`).
     pub template_formats: Option<Vec<String>>,
+    /// `template_formats` was set, not just added to.
+    pub template_formats_set: bool,
+    /// `add_template_formats` names, in order.
+    pub added_template_formats: Vec<String>,
     /// `addLayoutAlias` aliases: a layout name and the file it stands for,
     /// relative to the layouts folder.
     pub layout_aliases: indexmap::IndexMap<String, String>,
@@ -199,6 +203,8 @@ pub struct ConfigOptions {
     pub late_problems: LateProblems,
     /// `config.set_js_data(...)`: the mode and the line of the call.
     pub js_data: Option<(JsData, Option<usize>)>,
+    /// `config.set_js_config(...)`: the mode and the line of the call.
+    pub js_config: Option<(JsData, Option<usize>)>,
     /// `config.set_order_check(...)`, when the config calls it.
     pub order_check: Option<bool>,
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and

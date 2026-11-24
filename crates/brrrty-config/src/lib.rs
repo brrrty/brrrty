@@ -145,7 +145,7 @@ use std::sync::Arc;
 
 pub use api::{
     MAX_ARRAY_SIZE, MAX_CALL_LEVELS, MAX_MAP_SIZE, MAX_OPERATIONS, MAX_SECONDS, MAX_STRING_SIZE,
-    utc_string,
+    normalize_template_formats, utc_string,
 };
 pub use brrrty_core::PassthroughEntry;
 use brrrty_core::frontmatter::Data;
@@ -184,6 +184,11 @@ pub struct SiteConfig {
     /// `set_template_formats`, plus `add_template_formats`; `None` builds
     /// 11ty's defaults.
     pub template_formats: Option<Vec<String>>,
+    /// `template_formats` was set (by `set_template_formats` or a returned
+    /// `templateFormats`), not just added to.
+    pub template_formats_set: bool,
+    /// `add_template_formats` names, in order.
+    pub added_template_formats: Vec<String>,
     /// `add_passthrough_copy` entries, in 11ty's order: one per source as
     /// written, the last target winning.
     pub passthrough: Vec<PassthroughEntry>,
@@ -217,6 +222,8 @@ pub struct SiteConfig {
     pub unported: Option<Problem>,
     /// `config.set_js_data(...)`: the last call's mode and line.
     pub js_data: Option<(brrrty_core::JsData, Option<usize>)>,
+    /// `config.set_js_config(...)`: the last call's mode and line.
+    pub js_config: Option<(brrrty_core::JsData, Option<usize>)>,
     /// `config.set_order_check(...)`, when the config calls it.
     pub order_check: Option<bool>,
 }
@@ -243,10 +250,13 @@ impl SiteConfig {
             layout_aliases: self.layout_aliases.clone(),
             template_engines: self.template_engines,
             template_formats: self.template_formats.clone(),
+            template_formats_set: self.template_formats_set,
+            added_template_formats: self.added_template_formats.clone(),
             reads: self.reads.clone(),
             late_problems: self.late_problems.clone(),
             unported: self.unported.clone(),
             js_data: self.js_data,
+            js_config: self.js_config,
             order_check: self.order_check,
         }
     }
@@ -400,6 +410,8 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
     let (dir, template_engines, returned_formats) = read_returned(returned, &mut problems)?;
     // 11ty: the `setTemplateFormats` call wins over the returned `templateFormats`;
     // `addTemplateFormats` adds to either.
+    let template_formats_set = state.template_formats.is_some() || returned_formats.is_some();
+    let added_template_formats = state.added_template_formats.clone();
     let template_formats = match state.template_formats.or(returned_formats) {
         Some(f) => Some(f),
         // Added to the defaults.
@@ -473,6 +485,8 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         dir,
         template_engines,
         template_formats,
+        template_formats_set,
+        added_template_formats,
         passthrough: state
             .passthrough
             .into_iter()
@@ -492,6 +506,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         late_problems,
         unported: None,
         js_data: state.js_data,
+        js_config: state.js_config,
         order_check: state.order_check,
     })
 }
