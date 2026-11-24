@@ -713,3 +713,191 @@ fn a_nested_data_folder_is_read_and_reported() {
     assert_eq!(html, "hello ./src/content/data/");
     assert!(!d.path().join("dist/content").exists());
 }
+
+fn formats_site(config: &str) -> tempfile::TempDir {
+    site(&[
+        ("brrrty.config.rhai", config),
+        ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
+        ("src/raw.html", "---\npermalink: /raw.html\n---\nx"),
+        ("src/note.md", "---\npermalink: /note.html\n---\nm"),
+        ("src/l.liquid", "---\npermalink: /l.html\n---\nl"),
+    ])
+}
+
+/// `templateFormats` picks which templates 11ty builds; a file in another
+/// format is neither rendered nor copied.
+#[test]
+fn the_config_can_limit_the_template_formats() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"njk\", \"md\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/note.html").exists());
+    assert!(!d.path().join("dist/raw.html").exists());
+    assert!(!d.path().join("dist/l.html").exists());
+}
+
+/// A list that has `html` builds `.html` files too.
+#[test]
+fn template_formats_with_html_build_html_files() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"njk\", \"html\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(
+        std::fs::read_to_string(d.path().join("dist/raw.html")).unwrap(),
+        "x"
+    );
+    assert!(!d.path().join("dist/note.html").exists());
+}
+
+/// `set_template_formats` replaces the list; `add_template_formats` adds to it.
+#[test]
+fn add_template_formats_is_additive() {
+    let d = formats_site(
+        "config.set_template_formats([\"njk\"]);\nconfig.add_template_formats(\"liquid\");\n#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/l.html").exists());
+    assert!(!d.path().join("dist/note.html").exists());
+    assert!(!d.path().join("dist/raw.html").exists());
+}
+
+/// Adding a format to the defaults changes nothing that was already built.
+#[test]
+fn add_template_formats_keeps_the_defaults() {
+    let d = formats_site(
+        "config.add_template_formats(\"liquid\");\n#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/raw.html").exists());
+    assert!(d.path().join("dist/note.html").exists());
+}
+
+/// 11ty: the `setTemplateFormats` call wins over the returned `templateFormats`.
+#[test]
+fn set_template_formats_wins_over_the_returned_key() {
+    let d = formats_site(
+        "config.set_template_formats([\"njk\"]);\n#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"md\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(!d.path().join("dist/note.html").exists());
+}
+
+/// 11ty: an empty string is falsy, so the defaults build.
+#[test]
+fn an_empty_returned_template_formats_string_builds_the_defaults() {
+    let d =
+        formats_site("#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: \"\" }\n");
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/raw.html").exists());
+}
+
+#[test]
+fn an_empty_set_template_formats_string_builds_the_defaults() {
+    let d = formats_site(
+        "config.set_template_formats(\"\");\n#{ dir: #{ input: \"src\", output: \"dist\" } }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/raw.html").exists());
+}
+
+/// An empty list is truthy in 11ty: it builds nothing.
+#[test]
+fn an_empty_template_formats_list_builds_nothing() {
+    let d = formats_site("#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [] }\n");
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(!d.path().join("dist/index.html").exists());
+}
+
+/// 11ty trims and lowercases names: `NJK` builds `.njk` files.
+#[test]
+fn template_format_names_are_lowercased() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\" NJK \", \"md\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/note.html").exists());
+    assert!(!d.path().join("dist/raw.html").exists());
+}
+
+/// 11ty treats `.njk` as a passthrough key that matches nothing, so refuse it.
+#[test]
+fn a_template_format_with_a_dot_is_refused() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\".njk\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(!o.status.success());
+    assert!(stderr(&o).contains("`.njk`"), "{}", stderr(&o));
+}
+
+fn layout_site(config: &str, layouts: &[&str]) -> tempfile::TempDir {
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), config.into()),
+        (
+            "src/index.md".into(),
+            "---\nlayout: base\npermalink: /index.html\n---\nhi".into(),
+        ),
+        (
+            "src/other.md".into(),
+            "---\nlayout: base.liquid\npermalink: /other.html\n---\nhi".into(),
+        ),
+    ];
+    for l in layouts {
+        let tag = l.rsplit('.').next().unwrap().to_uppercase();
+        files.push((
+            format!("src/_includes/{l}"),
+            format!("{tag} {{{{ content }}}}"),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    site(&refs)
+}
+
+/// 11ty's extensionless layout lookup tries the listed formats in the listed order.
+#[test]
+fn an_extensionless_layout_follows_the_template_formats_order() {
+    let d = layout_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"njk\", \"md\", \"liquid\"] }\n",
+        &["base.liquid", "base.njk"],
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = std::fs::read_to_string(d.path().join("dist/index.html")).unwrap();
+    assert!(out.starts_with("NJK"), "{out}");
+}
+
+/// A layout whose format is not listed is not found by name, but is by its extension.
+#[test]
+fn an_extensionless_layout_needs_its_format_in_the_list() {
+    let d = layout_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"md\"] }\n",
+        &["base.liquid"],
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(!o.status.success());
+    let e = stderr(&o);
+    assert!(e.contains("templateFormats"), "{e}");
+    // The page naming the extension still resolves.
+    let out = std::fs::read_to_string(d.path().join("dist/other.html")).unwrap();
+    assert!(out.starts_with("LIQUID"), "{out}");
+}

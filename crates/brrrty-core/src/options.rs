@@ -184,6 +184,9 @@ pub struct ConfigOptions {
     pub layouts: Option<String>,
     /// `dir.data`, relative to the input folder; `None` is `_data`.
     pub data_folder: Option<String>,
+    /// The template formats to build; `None` is 11ty's defaults (`liquid`,
+    /// `md`, `njk`, `html`, `11ty.js`).
+    pub template_formats: Option<Vec<String>>,
     /// `addLayoutAlias` aliases: a layout name and the file it stands for,
     /// relative to the layouts folder.
     pub layout_aliases: indexmap::IndexMap<String, String>,
@@ -207,6 +210,34 @@ impl ConfigOptions {
     /// The includes folder, relative to the input folder.
     pub fn includes_dir(&self) -> &str {
         self.includes.as_deref().unwrap_or("_includes")
+    }
+
+    /// Whether `format` (`md`, `njk`, `11ty.js`...) is one of the template formats.
+    pub fn has_format(&self, format: &str) -> bool {
+        match &self.template_formats {
+            None => matches!(format, "liquid" | "md" | "njk" | "html" | "11ty.js"),
+            Some(f) => f.iter().any(|x| x == format),
+        }
+    }
+
+    /// The extensions an extensionless layout name is tried with, in order:
+    /// the template formats as listed, with `11ty.js` standing for the three
+    /// JavaScript spellings.
+    pub fn layout_extensions(&self) -> Vec<String> {
+        let default = ["liquid", "md", "njk", "html", "11ty.js"];
+        let list: Vec<&str> = match &self.template_formats {
+            None => default.to_vec(),
+            Some(f) => f.iter().map(String::as_str).collect(),
+        };
+        let mut out = Vec::new();
+        for f in list {
+            if f == "11ty.js" {
+                out.extend(["11ty.js", "11ty.cjs", "11ty.mjs"].map(String::from));
+            } else {
+                out.push(f.to_string());
+            }
+        }
+        out
     }
 
     /// The global data folder, relative to the input folder.

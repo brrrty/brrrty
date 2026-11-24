@@ -83,6 +83,10 @@ pub struct State {
     pub rss_filters: bool,
     /// `add_layout_alias(from, to)`, by alias; a later one replaces an earlier one.
     pub layout_aliases: IndexMap<String, String>,
+    /// `set_template_formats(...)`: the last call's list.
+    pub template_formats: Option<Vec<String>>,
+    /// `add_template_formats(...)`: the formats added, in order.
+    pub added_template_formats: Vec<String>,
     /// 11ty's markdown-it, once `amend_library("md", ...)` has been called.
     pub markdown_lib: Option<crate::markdown_rules::MdLib>,
     /// Where a `config` call made once the script has run (from a filter, a collection or a
@@ -407,6 +411,37 @@ pub fn engine_for(
             state
                 .layout_aliases
                 .insert(from.to_string(), to.to_string());
+            Ok(())
+        },
+    );
+    // 11ty's `setTemplateFormats` and `addTemplateFormats`.
+    e.register_fn(
+        "set_template_formats",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         list: Dynamic|
+         -> Result<(), Box<EvalAltResult>> {
+            let formats = template_formats("set_template_formats", list).map_err(|m| {
+                Box::new(EvalAltResult::ErrorRuntime(m.into(), ctx.call_position()))
+            })?;
+            // An empty string leaves the setting unset, as in 11ty.
+            open(&c.0, "config.set_template_formats", ctx.call_position()).template_formats =
+                formats;
+            Ok(())
+        },
+    );
+    e.register_fn(
+        "add_template_formats",
+        |ctx: rhai::NativeCallContext,
+         c: &mut Config,
+         list: Dynamic|
+         -> Result<(), Box<EvalAltResult>> {
+            let formats = template_formats("add_template_formats", list).map_err(|m| {
+                Box::new(EvalAltResult::ErrorRuntime(m.into(), ctx.call_position()))
+            })?;
+            open(&c.0, "config.add_template_formats", ctx.call_position())
+                .added_template_formats
+                .extend(formats.unwrap_or_default());
             Ok(())
         },
     );
@@ -768,6 +803,65 @@ pub fn resolve_global_data(
         out.insert(name, value);
     }
     Ok(out)
+}
+
+/// The template formats Brrrty builds, in 11ty's default order.
+const KNOWN_FORMATS: &[&str] = &[
+    "liquid", "md", "njk", "html", "11ty.js", "11ty.cjs", "11ty.mjs",
+];
+
+/// A list of template formats: an array of names, or one string of names
+/// separated by commas, as 11ty reads them. `what` names the setting in errors.
+/// An empty string is `None`: 11ty treats it as not set, so the defaults build.
+pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<String>>, String> {
+    let type_name = v.type_name();
+    let names: Vec<String> = if let Some(s) = v.clone().try_cast::<ImmutableString>() {
+        if s.is_empty() {
+            return Ok(None);
+        }
+        s.split(',').map(str::to_string).collect()
+    } else if let Some(a) = v.try_cast::<rhai::Array>() {
+        let mut names = Vec::new();
+        for item in a {
+            let t = item.type_name();
+            match item.try_cast::<ImmutableString>() {
+                Some(s) => names.push(s.to_string()),
+                None => {
+                    return Err(format!(
+                        "{what}: a list of template formats holds a {t}; it should hold names, like \"njk\""
+                    ));
+                }
+            }
+        }
+        names
+    } else {
+        return Err(format!(
+            "{what}: got a {type_name}; it should be a list of template formats, like [\"njk\", \"md\"]"
+        ));
+    };
+    let mut out = Vec::new();
+    for n in names {
+        // 11ty trims and lowercases the names.
+        let n = n.trim().to_lowercase();
+        if n.is_empty() {
+            continue;
+        }
+        if n.starts_with('.') {
+            return Err(format!(
+                "{what}: `{n}` matches no files; 11ty wants the bare name, like \"{}\"",
+                n.trim_start_matches('.')
+            ));
+        }
+        if !KNOWN_FORMATS.contains(&n.as_str()) {
+            return Err(format!(
+                "{what}: `{n}` is not a template format Brrrty builds; it builds liquid, md, njk, html and 11ty.js"
+            ));
+        }
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    Ok(Some(out))
 }
 
 #[cfg(test)]

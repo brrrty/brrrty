@@ -219,14 +219,12 @@ fn sets_up_an_esm_site() {
         "Brrrty copies files and folders, not globs",
         "//     \televentyConfig.addPlugin(EleventyHtmlBasePlugin);\n",
         "config.add_plugin(\"rss\", #{\n    type: \"atom\",\n    output_path: \"/feed.xml\",\n    collection: #{ name: \"post\", limit: 10 },\n    metadata: #{ title: \"Blog\", base: \"https://example.com/\" },\n});\n",
-        "Brrrty builds 11ty's default template formats",
-        "//     \ttemplateFormats: [\"md\", \"html\"],\n",
-        "#{\n    dir: #{\n        input: \"content\",\n    },\n    htmlTemplateEngine: false,\n}\n",
+        "#{\n    dir: #{\n        input: \"content\",\n    },\n    htmlTemplateEngine: false,\n    templateFormats: [\"md\", \"html\"],\n}\n",
     ] {
         assert!(rhai.contains(want), "missing {want:?} in:\n{rhai}");
     }
     assert!(
-        stdout(&out).contains("has 4 TODO(brrrty) markers"),
+        stdout(&out).contains("has 3 TODO(brrrty) markers"),
         "{}",
         stdout(&out)
     );
@@ -892,4 +890,48 @@ fn init_ports_the_data_folder_setting() {
     let built = run_in(dir.path(), &["build"]);
     assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
     assert_eq!(read(dir.path(), "dist/index.html"), "hello");
+}
+
+/// `templateFormats` is ported as a setting, not a TODO.
+#[test]
+fn init_ports_the_template_formats_setting() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        (
+            "eleventy.config.js",
+            "export default function (config) { return { dir: { input: 'src', output: 'dist' }, templateFormats: ['njk', 'md'] }; }\n",
+        ),
+        ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
+        ("src/raw.html", "---\npermalink: /raw.html\n---\nx"),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    let built = run_in(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(read(dir.path(), "dist/index.html"), "hi");
+    assert!(!dir.path().join("dist/raw.html").exists());
+}
+
+/// `setTemplateFormats` and `addTemplateFormats` calls are ported too.
+#[test]
+fn init_ports_template_format_calls() {
+    let dir = site(&[
+        ("package.json", PACKAGE),
+        (
+            "eleventy.config.js",
+            "export default function (config) { config.setTemplateFormats(['njk']); config.addTemplateFormats('liquid'); return { dir: { input: 'src', output: 'dist' } }; }\n",
+        ),
+        ("src/index.njk", "---\npermalink: /index.html\n---\nhi"),
+        ("src/raw.html", "---\npermalink: /raw.html\n---\nx"),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    let built = run_in(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    assert_eq!(read(dir.path(), "dist/index.html"), "hi");
+    assert!(!dir.path().join("dist/raw.html").exists());
 }

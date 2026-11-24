@@ -85,11 +85,6 @@ pub(crate) enum ChainError {
     Layout(Problem),
 }
 
-/// Template extensions in 11ty's default `templateFormats` order.
-const EXTENSIONS: &[&str] = &[
-    "liquid", "md", "njk", "html", "11ty.js", "11ty.cjs", "11ty.mjs",
-];
-
 /// Resolves and parses layouts, each once per build.
 pub(crate) struct Layouts<'a> {
     langs: &'a Langs<'a>,
@@ -102,6 +97,8 @@ pub(crate) struct Layouts<'a> {
     dir: PathBuf,
     /// `addLayoutAlias` aliases.
     aliases: indexmap::IndexMap<String, String>,
+    /// The extensions tried after a bare layout name, in `templateFormats` order.
+    extensions: Vec<String>,
     cache: Mutex<HashMap<PathBuf, Result<Arc<LayoutFile>, Failure>>>,
     /// JavaScript layouts loaded in Node, by canonical path: the instance
     /// and its data, or why it can't be used. `None` when JavaScript
@@ -130,6 +127,7 @@ impl<'a> Layouts<'a> {
         input_shown: PathBuf,
         dir: PathBuf,
         aliases: indexmap::IndexMap<String, String>,
+        extensions: Vec<String>,
     ) -> Layouts<'a> {
         Layouts {
             langs,
@@ -138,6 +136,7 @@ impl<'a> Layouts<'a> {
             input_shown,
             dir,
             aliases,
+            extensions,
             cache: Mutex::new(HashMap::new()),
             js: None,
         }
@@ -177,7 +176,7 @@ impl<'a> Layouts<'a> {
         let name = self.aliases.get(name).map_or(name, String::as_str);
         let rel = lexical(&format!("{}/{name}", self.dir.display()))?;
         let mut candidates = vec![rel.clone()];
-        for ext in EXTENSIONS {
+        for ext in &self.extensions {
             let mut with = rel.as_os_str().to_os_string();
             with.push(format!(".{ext}"));
             candidates.push(PathBuf::from(with));
@@ -221,7 +220,7 @@ impl<'a> Layouts<'a> {
                             codes::LAYOUT_MISSING,
                             format!("layout `{name}` not found"),
                             format!(
-                                "layouts are looked up in {}; tried: {}",
+                                "layouts are looked up in {}; tried: {}; a name without an extension only matches the formats in `templateFormats`, so name the file's extension to use another format",
                                 self.dir_shown().display(),
                                 tried.join(", ")
                             ),
@@ -291,7 +290,7 @@ impl<'a> Layouts<'a> {
     fn load(&self, rel: &Path) -> Result<Arc<LayoutFile>, Failure> {
         let mut tried = Vec::new();
         let mut candidates = vec![rel.to_path_buf()];
-        for ext in EXTENSIONS {
+        for ext in &self.extensions {
             let mut with = rel.as_os_str().to_os_string();
             with.push(format!(".{ext}"));
             candidates.push(PathBuf::from(with));

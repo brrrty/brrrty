@@ -45,6 +45,8 @@ Nothing runs until the whole script has. An error in the script stops the build 
 | `config.add_nondeterministic_filter(name)` | Stands in for a filter that uses `Math.random` in your JavaScript config, without porting it: pages that use it are refused. `add_random_filter` ports it instead. |
 | `config.add_collection(name, fn)` | `addCollection`. Adds a collection. |
 | `config.add_layout_alias(name, file)` | `addLayoutAlias`. `layout: name` uses `file`, relative to the layouts folder. |
+| `config.set_template_formats(list)` | `setTemplateFormats`. Replaces the list of formats to build. It wins over the returned `templateFormats`. |
+| `config.add_template_formats(list)` | `addTemplateFormats`. Adds formats to the list (the default one, if none was set). |
 | `config.add_plugin(name, options)` | `addPlugin`, for the plugins Brrrty has its own version of: `rss` and `syntaxhighlight`. `options` is optional. |
 
 Passthrough copy takes a file or folder, not a glob; a glob is refused with `passthrough-unsupported`.
@@ -58,6 +60,7 @@ The script's last expression is a map with these keys, all optional. A script ca
 | `dir` | `input` and `output` folders, and `includes` and `layouts`: folders inside the input folder, relative to it. `layouts` defaults to the includes folder. `data` is accepted only as `_data`. |
 | `markdownTemplateEngine` | `"liquid"` (the default), `"njk"` or `false` |
 | `htmlTemplateEngine` | `"liquid"` (the default), `"njk"` or `false` |
+| `templateFormats` | A list of formats to build, from `liquid`, `md`, `njk`, `html` and `11ty.js`, or one string with commas between them. The default is all five. A file in another format is neither rendered nor copied, as in 11ty. |
 
 `dataTemplateEngine` is ignored with a warning, since 11ty 3 doesn't read it. Any other key is refused, so a setting Brrrty doesn't support never goes unnoticed.
 
