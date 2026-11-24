@@ -57,3 +57,7 @@ toml = "1.2.1"
 # mimalloc, and keep their own allocators.
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "=0.1.43", default-features = false }
+
+[[bench]]
+name = "js_call"
+harness = false
