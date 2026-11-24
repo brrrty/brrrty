@@ -129,15 +129,24 @@ function configRecorder() {
 
 async function loadConfig(file) {
   let fn;
+  let exported;
   try {
     fn = await dynamicImportAbsolutePath(file, dataType(file));
   } catch (e) {
     throw placeSyntaxError(e, file);
   }
+  // 11ty merges an ESM `export const config = {...}` into what the function returns.
+  if (fn && typeof fn === "object" && typeof fn.default === "function") {
+    exported = fn.config;
+    fn = fn.default;
+  }
   if (typeof fn !== "function") {
     throw new Error(`The config ${relFile(file)} must export a function, as 11ty's does`);
   }
   const rec = configRecorder();
-  const returned = await fn(rec.proxy);
+  let returned = await fn(rec.proxy);
+  if (exported && typeof exported === "object") {
+    returned = Object.assign({}, exported, returned && typeof returned === "object" ? returned : {});
+  }
   return rec.done(returned);
 }

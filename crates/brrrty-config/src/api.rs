@@ -864,6 +864,11 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<Stri
             "{what}: got a {type_name}; it should be a list of template formats, like [\"njk\", \"md\"]"
         ));
     };
+    normalize_template_formats(what, names).map(Some)
+}
+
+/// Trim, lowercase and check template format names, as 11ty reads them.
+pub fn normalize_template_formats(what: &str, names: Vec<String>) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for n in names {
         // 11ty trims and lowercases the names.
@@ -886,7 +891,7 @@ pub(crate) fn template_formats(what: &str, v: Dynamic) -> Result<Option<Vec<Stri
             out.push(n);
         }
     }
-    Ok(Some(out))
+    Ok(out)
 }
 
 #[cfg(test)]

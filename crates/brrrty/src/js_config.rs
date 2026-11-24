@@ -12,12 +12,12 @@ use brrrty_core::{ConfigOptions, PassthroughEntry, Problem, codes};
 use brrrty_js::Value;
 use brrrty_js::runtime::{JsResult, JsRuntime};
 
-/// 11ty's config file lookup order.
+/// 11ty 3.1.8's config file lookup order (`src/TemplateConfig.js`): `.eleventy.js` first.
 const CONFIG_FILES: &[&str] = &[
+    ".eleventy.js",
     "eleventy.config.js",
     "eleventy.config.mjs",
     "eleventy.config.cjs",
-    ".eleventy.js",
 ];
 
 fn get<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
@@ -135,6 +135,17 @@ pub fn apply(
             let Some(from) = text(get(c, "input")) else {
                 continue;
             };
+            if matches!(get(c, "options"), Some(Value::Object(o)) if !o.is_empty()) {
+                config.problems.push(
+                    Problem::warning(
+                        codes::CONFIG_UNSUPPORTED,
+                        format!(
+                            "addPassthroughCopy(\"{from}\") options (like `filter` or `expand`) are not supported by Brrrty yet, so they were ignored"
+                        ),
+                    )
+                    .with_path(shown.clone()),
+                );
+            }
             match get(c, "output") {
                 Some(Value::String(to)) => passthrough.push(PassthroughEntry {
                     from,
@@ -161,24 +172,104 @@ pub fn apply(
         }
     }
 
-    if config.template_formats.is_none() {
-        let mut formats = val("templateFormats").map(|f| strings(Some(f)));
-        if let Some(Value::Array(added)) = val("templateFormatsAdded") {
-            let mut all = formats.unwrap_or_else(|| {
+    // Template formats: a Rhai `set_template_formats` (or returned list) wins; otherwise the JS
+    // set (or the defaults) plus both sides' additions.
+    let fmt_err = |m: String| vec![problem(m, Some(&shown), None)];
+    let js_returned = get(v, "returned");
+    let normalize = |what: &str, v: &Value| -> Result<Vec<String>, Vec<Problem>> {
+        brrrty_config::normalize_template_formats(what, strings(Some(v))).map_err(fmt_err)
+    };
+    if !config.template_formats_set {
+        let set = match val("templateFormats") {
+            Some(f) => Some(normalize("`setTemplateFormats`", f)?),
+            None => match js_returned.and_then(|r| get(r, "templateFormats")) {
+                Some(f) => Some(normalize("`templateFormats`", f)?),
+                None => None,
+            },
+        };
+        let mut added = Vec::new();
+        if let Some(Value::Array(a)) = val("templateFormatsAdded") {
+            for x in a.iter() {
+                added.extend(normalize("`addTemplateFormats`", x)?);
+            }
+        }
+        added.extend(config.added_template_formats.iter().cloned());
+        let formats = match set {
+            Some(f) => Some(f),
+            None if !added.is_empty() => Some(
                 ["liquid", "md", "njk", "html", "11ty.js"]
                     .map(String::from)
-                    .to_vec()
-            });
-            for a in added.iter() {
-                for f in strings(Some(a)) {
-                    if !all.contains(&f) {
-                        all.push(f);
-                    }
+                    .to_vec(),
+            ),
+            None => None,
+        }
+        .map(|mut f| {
+            for a in added {
+                if !f.contains(&a) {
+                    f.push(a);
                 }
             }
-            formats = Some(all);
-        }
+            f
+        });
         config.template_formats = formats.filter(|f| !f.is_empty());
+    }
+
+    // Template engines from the returned object, unless the Rhai config changed them.
+    if config.template_engines == brrrty_core::TemplateEngines::default() {
+        for (key, slot) in [("markdownTemplateEngine", 0), ("htmlTemplateEngine", 1)] {
+            let Some(e) = js_returned.and_then(|r| get(r, key)) else {
+                continue;
+            };
+            let lang = match e {
+                Value::Bool(false) => None,
+                Value::String(n) => match brrrty_core::TemplateLanguage::from_name(n) {
+                    Some(l) => Some(l),
+                    None => {
+                        return Err(vec![problem(
+                            format!(
+                                "`{key}` is `{n}`, which Brrrty doesn't run there (use \"liquid\", \"njk\" or false)"
+                            ),
+                            Some(&shown),
+                            None,
+                        )]);
+                    }
+                },
+                _ => {
+                    return Err(vec![problem(
+                        format!("`{key}` should be a template language, like \"njk\", or false"),
+                        Some(&shown),
+                        None,
+                    )]);
+                }
+            };
+            if slot == 0 {
+                config.template_engines.markdown = lang;
+            } else {
+                config.template_engines.html = lang;
+            }
+        }
+    }
+    // Every other returned key is skipped loudly.
+    if let Some(Value::Object(o)) = js_returned {
+        for (k, _) in o.iter() {
+            if !matches!(
+                k.as_str(),
+                "dir" | "templateFormats" | "markdownTemplateEngine" | "htmlTemplateEngine"
+            ) {
+                let why = if k == "dataTemplateEngine" {
+                    "11ty 3 doesn't read it"
+                } else {
+                    "Brrrty doesn't support it yet"
+                };
+                config.problems.push(
+                    Problem::warning(
+                        codes::CONFIG_UNSUPPORTED,
+                        format!("the config returns `{k}`, which was skipped: {why}"),
+                    )
+                    .with_path(shown.clone()),
+                );
+            }
+        }
     }
 
     // `dir`: the setters, then what the config function returned.

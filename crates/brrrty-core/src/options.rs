@@ -187,6 +187,10 @@ pub struct ConfigOptions {
     /// The template formats to build; `None` is 11ty's defaults (`liquid`,
     /// `md`, `njk`, `html`, `11ty.js`).
     pub template_formats: Option<Vec<String>>,
+    /// `template_formats` was set, not just added to.
+    pub template_formats_set: bool,
+    /// `add_template_formats` names, in order.
+    pub added_template_formats: Vec<String>,
     /// `addLayoutAlias` aliases: a layout name and the file it stands for,
     /// relative to the layouts folder.
     pub layout_aliases: indexmap::IndexMap<String, String>,

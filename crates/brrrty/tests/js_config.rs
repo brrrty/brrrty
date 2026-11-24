@@ -177,7 +177,10 @@ fn a_returned_key_brrrty_does_not_apply_is_a_warning() {
         &[],
     );
     let s = text(&o);
-    assert!(s.contains("pathPrefix") && s.contains("somethingNew"), "{s}");
+    assert!(
+        s.contains("pathPrefix") && s.contains("somethingNew"),
+        "{s}"
+    );
 }
 
 #[test]
