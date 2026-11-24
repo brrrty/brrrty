@@ -823,13 +823,81 @@ fn an_empty_template_formats_list_builds_nothing() {
     assert!(!d.path().join("dist/index.html").exists());
 }
 
-/// 11ty only trims names: `.njk` and `NJK` match nothing there, so refuse them.
+/// 11ty trims and lowercases names: `NJK` builds `.njk` files.
 #[test]
-fn a_template_format_with_a_dot_or_capitals_is_refused() {
+fn template_format_names_are_lowercased() {
+    let d = formats_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\" NJK \", \"md\"] }\n",
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(d.path().join("dist/index.html").exists());
+    assert!(d.path().join("dist/note.html").exists());
+    assert!(!d.path().join("dist/raw.html").exists());
+}
+
+/// 11ty treats `.njk` as a passthrough key that matches nothing, so refuse it.
+#[test]
+fn a_template_format_with_a_dot_is_refused() {
     let d = formats_site(
         "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\".njk\"] }\n",
     );
     let o = run_in(d.path(), &["build", "--quiet"]);
     assert!(!o.status.success());
     assert!(stderr(&o).contains("`.njk`"), "{}", stderr(&o));
+}
+
+fn layout_site(config: &str, layouts: &[&str]) -> tempfile::TempDir {
+    let mut files: Vec<(String, String)> = vec![
+        ("brrrty.config.rhai".into(), config.into()),
+        (
+            "src/index.md".into(),
+            "---\nlayout: base\npermalink: /index.html\n---\nhi".into(),
+        ),
+        (
+            "src/other.md".into(),
+            "---\nlayout: base.liquid\npermalink: /other.html\n---\nhi".into(),
+        ),
+    ];
+    for l in layouts {
+        let tag = l.rsplit('.').next().unwrap().to_uppercase();
+        files.push((
+            format!("src/_includes/{l}"),
+            format!("{tag} {{{{ content }}}}"),
+        ));
+    }
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    site(&refs)
+}
+
+/// 11ty's extensionless layout lookup tries the listed formats in the listed order.
+#[test]
+fn an_extensionless_layout_follows_the_template_formats_order() {
+    let d = layout_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"njk\", \"md\", \"liquid\"] }\n",
+        &["base.liquid", "base.njk"],
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = std::fs::read_to_string(d.path().join("dist/index.html")).unwrap();
+    assert!(out.starts_with("NJK"), "{out}");
+}
+
+/// A layout whose format is not listed is not found by name, but is by its extension.
+#[test]
+fn an_extensionless_layout_needs_its_format_in_the_list() {
+    let d = layout_site(
+        "#{ dir: #{ input: \"src\", output: \"dist\" }, templateFormats: [\"md\"] }\n",
+        &["base.liquid"],
+    );
+    let o = run_in(d.path(), &["build", "--quiet"]);
+    assert!(!o.status.success());
+    let e = stderr(&o);
+    assert!(e.contains("templateFormats"), "{e}");
+    // The page naming the extension still resolves.
+    let out = std::fs::read_to_string(d.path().join("dist/other.html")).unwrap();
+    assert!(out.starts_with("LIQUID"), "{out}");
 }
