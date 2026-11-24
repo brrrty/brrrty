@@ -126,3 +126,182 @@ fn doctor_lists_unsupported_methods_with_file_and_line() {
     assert!(s.contains("setSomethingNew"), "{s}");
     assert!(s.contains("eleventy.config.js:4"), "{s}");
 }
+
+fn build_with(files: &[(&str, &str)], args: &[&str]) -> (tempfile::TempDir, Output) {
+    let mut all = vec![("brrrty.config.rhai", "config.set_js_config(\"node\");\n")];
+    all.extend_from_slice(files);
+    let t = site(&all);
+    let o = run(t.path(), "build", args);
+    (t, o)
+}
+
+#[test]
+fn returned_formats_and_engines_are_applied() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = () => ({ dir: { input: "src" }, markdownTemplateEngine: "njk", templateFormats: [" MD "] });"#,
+            ),
+            ("src/index.md", "{% set x = \"nj\" %}{{ x }}"),
+            ("src/other.html", "other"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let out = t.path().join("_site");
+    assert!(
+        fs::read_to_string(out.join("index.html"))
+            .unwrap()
+            .contains("nj")
+    );
+    assert!(!out.join("other.html").exists() && !out.join("other/index.html").exists());
+}
+
+#[test]
+fn a_returned_key_brrrty_does_not_apply_is_a_warning() {
+    if !has_node() {
+        return;
+    }
+    let (_t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = () => ({ dir: { input: "src" }, pathPrefix: "/x/", somethingNew: 1 });"#,
+            ),
+            ("src/index.html", "hi"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("pathPrefix") && s.contains("somethingNew"), "{s}");
+}
+
+#[test]
+fn the_dot_eleventy_js_file_is_looked_up_first() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = () => ({ dir: { input: "src" } });"#,
+            ),
+            (
+                ".eleventy.js",
+                r#"module.exports = () => ({ dir: { input: "other" } });"#,
+            ),
+            ("src/a.html", "src"),
+            ("other/b.html", "other"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(t.path().join("_site/b/index.html").exists() || t.path().join("_site/b.html").exists());
+    assert!(!t.path().join("_site/a/index.html").exists());
+}
+
+#[test]
+fn an_esm_config_export_is_merged_into_the_return_value() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.mjs",
+                "export default function () {}\nexport const config = { dir: { input: \"src\" } };\n",
+            ),
+            ("src/index.html", "hi"),
+            ("index.html", "wrong"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "hi"
+    );
+}
+
+#[test]
+fn js_format_names_are_checked_like_rhai_ones() {
+    if !has_node() {
+        return;
+    }
+    let (_t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = (c) => { c.setTemplateFormats([".md"]); };"#,
+            ),
+            ("index.md", "x"),
+        ],
+        &[],
+    );
+    assert!(!o.status.success(), "{}", text(&o));
+    assert!(text(&o).contains(".md"), "{}", text(&o));
+}
+
+#[test]
+fn rhai_added_formats_merge_with_js_set_formats() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = (c) => { c.setTemplateFormats(["md"]); };"#,
+            ),
+            ("index.md", "md"),
+            ("p.njk", "njk"),
+            ("q.html", "html"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(!t.path().join("_site/q/index.html").exists());
+    // Rhai adds njk on top of the JS set.
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.add_template_formats(\"njk\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            r#"module.exports = (c) => { c.setTemplateFormats(["md"]); };"#,
+        ),
+        ("index.md", "md"),
+        ("p.njk", "njk"),
+        ("q.html", "html"),
+    ]);
+    let o = run(t.path(), "build", &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert!(t.path().join("_site/p/index.html").exists());
+    assert!(!t.path().join("_site/q/index.html").exists());
+}
+
+#[test]
+fn passthrough_options_are_a_warning() {
+    if !has_node() {
+        return;
+    }
+    let (_t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = (c) => { c.addPassthroughCopy("a", { filter: "*.txt" }); };"#,
+            ),
+            ("a/x.txt", "x"),
+            ("index.html", "hi"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("filter") || s.contains("options"), "{s}");
+}
