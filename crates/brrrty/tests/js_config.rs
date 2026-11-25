@@ -362,3 +362,103 @@ fn the_missing_config_help_lists_the_files_in_lookup_order() {
     let b = out.find("eleventy.config.js").expect(&out);
     assert!(a < b, "{out}");
 }
+
+const FILTER_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addFilter("shout", (s) => String(s).toUpperCase() + "!");
+  eleventyConfig.addAsyncFilter("later", async (s) => { await null; return s + "?"; });
+  eleventyConfig.addFilter("pageUrl", function () { return this.page.url; });
+  eleventyConfig.addNunjucksFilter("njkOnly", (s) => "njk:" + s);
+  eleventyConfig.addLiquidFilter("liqOnly", (s) => "liq:" + s);
+  eleventyConfig.addNunjucksFilter("kw", (s, n, o) => s + n + o.sep);
+  eleventyConfig.addFilter("boom", (s) => { throw new Error("nope " + s); });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn config_filters_run_in_node_for_each_engine() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", FILTER_CONFIG),
+            (
+                "src/a.njk",
+                "{{ 'a' | shout }}|{{ 'b' | later }}|{{ '' | pageUrl }}|{{ 'c' | njkOnly }}|{{ 'x' | kw(1, sep='-') }}",
+            ),
+            (
+                "src/b.liquid",
+                "{{ 'a' | shout }}|{{ 'b' | later }}|{{ '' | pageUrl }}|{{ 'c' | liqOnly }}",
+            ),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let a = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap();
+    assert_eq!(a, "A!|b?|/a/|njk:c|x1-");
+    let b = fs::read_to_string(t.path().join("_site/b/index.html")).unwrap();
+    assert_eq!(b, "A!|b?|/b/|liq:c");
+}
+
+#[test]
+fn an_engine_only_filter_is_not_in_the_other_engine() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", FILTER_CONFIG),
+            ("src/b.liquid", "{{ 'c' | njkOnly }}"),
+        ],
+        &[],
+    );
+    assert!(!o.status.success(), "{}", text(&o));
+    assert!(!t.path().join("_site/b/index.html").exists());
+}
+
+#[test]
+fn a_rhai_filter_of_the_same_name_wins() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "brrrty.config.rhai",
+                "config.set_js_config(\"node\");\nconfig.add_filter(\"shout\", |s| `rhai ${s}`);\n",
+            ),
+            ("eleventy.config.js", FILTER_CONFIG),
+            ("src/a.njk", "{{ 'a' | shout }}"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/a/index.html")).unwrap(),
+        "rhai a"
+    );
+}
+
+#[test]
+fn a_throwing_filter_refuses_its_page_naming_filter_and_place() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", FILTER_CONFIG),
+            ("src/a.njk", "{{ 'a' | boom }}"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("boom"), "{s}");
+    assert!(s.contains("nope a"), "{s}");
+    assert!(s.contains("eleventy.config.js:7"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+}
