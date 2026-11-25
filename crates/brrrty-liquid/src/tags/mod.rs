@@ -61,6 +61,9 @@ pub(crate) fn render(r: &mut Renderer<'_>, tag: &Tag, out: &mut String) -> R<()>
             })?;
             r.write(out, &html)
         }
+        TagKind::Shortcode { args, body } => {
+            variable::shortcode(r, &tag.name, args, body.as_deref(), out)
+        }
         TagKind::Liquid { body } => r.render_nodes(body, out),
         TagKind::Layout(l) => layout::layout(r, l, out),
         TagKind::Block { body, .. } => layout::block(r, body, out),

@@ -290,7 +290,17 @@ impl Renderer<'_> {
         scope: &Rc<Scope>,
     ) -> R<Val> {
         let filter = crate::filters::lookup(self.engine, name)?;
-        let argv = self.eval_args(args, kwargs, scope)?;
+        // A paired shortcode's body is the first argument, but 11ty evaluates it last.
+        let paired = name
+            .strip_prefix(crate::parser::SHORTCODE_PREFIX)
+            .is_some_and(|n| matches!(self.engine.shortcodes.get(n), Some(Some(_))));
+        let argv = if paired && !args.is_empty() {
+            let mut argv = self.eval_args(&args[1..], kwargs, scope)?;
+            argv.insert(0, self.eval(&args[0], scope)?);
+            argv
+        } else {
+            self.eval_args(args, kwargs, scope)?
+        };
         crate::filters::run(self, &filter, name, &argv, scope)
     }
 }

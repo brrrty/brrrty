@@ -10,7 +10,7 @@ use std::sync::Arc;
 use brrrty_js::FilterFn;
 use brrrty_nunjucks::Engine;
 
-use crate::options::{ConfigFilter, FilterEngine, JsConfigFilter};
+use crate::options::{ConfigFilter, FilterEngine, JsConfigFilter, JsConfigShortcode};
 use crate::plugins::rss;
 
 /// A filter written for the Liquid engine, as a shared one. It takes its
@@ -60,6 +60,16 @@ pub fn register_nunjucks_filters(
         }
         for (name, f) in rss::nunjucks_filters() {
             engine.register_filter(name, f);
+        }
+    }
+}
+
+/// Registers the JS config's shortcodes as tags in Nunjucks. A later one replaces an earlier
+/// one of the same name.
+pub fn register_nunjucks_shortcodes(engine: &mut Engine, shortcodes: &[JsConfigShortcode]) {
+    for s in shortcodes {
+        if s.engine != FilterEngine::Liquid {
+            engine.register_shortcode(&s.name, s.paired, shared(&s.name, s.run.clone()));
         }
     }
 }

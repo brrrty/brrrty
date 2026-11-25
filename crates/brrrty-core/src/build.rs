@@ -2424,6 +2424,9 @@ fn build_once(
         timezone: Tz::Local,
     });
     engine.register_eleventy_filters();
+    for s in &opts.config.js_liquid_shortcodes {
+        engine.register_shortcode(&s.name, s.paired, s.run.clone());
+    }
     for f in &opts.config.js_filters {
         if f.engine != crate::options::FilterEngine::Nunjucks {
             engine.register_args_filter(&f.name, f.run.clone());
@@ -2497,6 +2500,7 @@ fn build_once(
         &opts.config.filters,
         rss,
     );
+    crate::filters::register_nunjucks_shortcodes(&mut nunjucks, &opts.config.js_shortcodes);
     let includes_rel = opts.config.includes_dir();
     let includes = input.join(includes_rel);
     let includes = includes.canonicalize().unwrap_or(includes);

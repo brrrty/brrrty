@@ -7,7 +7,8 @@ use crate::ast::{
 };
 use crate::error::{ErrorKind, Located, ParseErr};
 use crate::lexer::{
-    Cursor, LineIndex, MAX_DEPTH, Spanner, TagToken, Token, grow, json_string, slice, tokenize,
+    Cursor, LineIndex, MAX_DEPTH, Spanner, TagToken, Token, grow, is_blank, json_string, slice,
+    tokenize,
 };
 
 /// The tags LiquidJS 10.30.1 registers by default.
@@ -57,6 +58,8 @@ pub(crate) struct Parser<'f> {
     check: Check<'f>,
     /// The names of the raw block tags the engine has.
     raw_blocks: &'f [String],
+    /// The shortcode tags the engine has, and whether each is paired.
+    shortcodes: &'f [(String, bool)],
 }
 
 type Res<T> = Result<T, ParseErr>;
@@ -74,11 +77,16 @@ fn checked(check: Check<'_>, value: FilteredValue) -> Res<FilteredValue> {
 }
 
 impl<'f> Parser<'f> {
-    pub fn new(check: Check<'f>, raw_blocks: &'f [String]) -> Parser<'f> {
+    pub fn new(
+        check: Check<'f>,
+        raw_blocks: &'f [String],
+        shortcodes: &'f [(String, bool)],
+    ) -> Parser<'f> {
         Parser {
             depth: 0,
             check,
             raw_blocks,
+            shortcodes,
         }
     }
 
@@ -195,8 +203,50 @@ impl<'f> Parser<'f> {
             "liquid" => self.liquid(src, c),
             "#" => inline_comment(src, t),
             name if self.raw_blocks.iter().any(|b| b == name) => raw_block(src, t, stream),
+            name if self.shortcodes.iter().any(|(b, _)| b == name) => {
+                let paired = self.shortcodes.iter().any(|(b, p)| b == name && *p);
+                self.shortcode(src, t, c, stream, paired)
+            }
             _ => Err(unknown_tag(&t.name)),
         }
+    }
+
+    /// A shortcode: 11ty's legacy argument parsing, values separated by commas or blanks.
+    fn shortcode(
+        &mut self,
+        src: &Source<'_>,
+        t: &TagToken,
+        mut c: Cursor<'_>,
+        stream: &mut Stream,
+        paired: bool,
+    ) -> Res<TagKind> {
+        let mut args = Vec::new();
+        loop {
+            while c.peek().is_some_and(|ch| ch == ',' || is_blank(ch)) {
+                c.advance();
+            }
+            if c.end() {
+                break;
+            }
+            match c.read_value()? {
+                Some(e) => args.push(e),
+                None => {
+                    return Err(c
+                        .error(
+                            ErrorKind::Syntax,
+                            format!("invalid argument of the shortcode `{}`", t.name),
+                            c.p,
+                        )
+                        .into());
+                }
+            }
+        }
+        let body = if paired {
+            Some(self.body_until(src, t, &format!("end{}", t.name), stream)?)
+        } else {
+            None
+        };
+        Ok(TagKind::Shortcode { args, body })
     }
 
     /// The next node of a block body, or `None` when `handle` took the token.

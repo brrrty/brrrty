@@ -156,6 +156,10 @@ fn run_user(
     scope: &Rc<Scope>,
 ) -> R<Val> {
     let ops = r.ops();
+    // A shortcode: its result is a `SafeString` of the text, and its errors say so.
+    let shortcode = name.strip_prefix(crate::parser::SHORTCODE_PREFIX);
+    let paired = shortcode.is_some_and(|n| matches!(r.engine.shortcodes.get(n), Some(Some(_))));
+    let name = shortcode.unwrap_or(name);
     let mut values = Vec::with_capacity(args.len());
     let mut safe = Vec::with_capacity(args.len());
     for (i, a) in args.iter().enumerate() {
@@ -190,6 +194,16 @@ fn run_user(
         // Eleventy wraps what a filter throws.
         if m.starts_with(brrrty_js::REFUSAL_PREFIX) {
             RenderErr::new(ErrorKind::Unsupported, m)
+        } else if shortcode.is_some() {
+            let kind = if paired {
+                "paired shortcode"
+            } else {
+                "shortcode"
+            };
+            RenderErr::new(
+                ErrorKind::Render,
+                format!("Error with Nunjucks {kind} `{name}`: {m}"),
+            )
         } else {
             RenderErr::new(
                 ErrorKind::Render,
@@ -201,6 +215,22 @@ fn run_user(
         && s.len() > ops.limit
     {
         return Err(jsops::too_big(ops));
+    }
+    if shortcode.is_some() {
+        // A plain one writes `"" + ret`; a paired one `new SafeString(ret)`. For a string
+        // that is safe; for an array or object (or date) `new` returns the value itself, which
+        // prints as its escaped `toString()`; any other value is an empty SafeString, which
+        // prints `undefined`.
+        if paired {
+            match &out {
+                Value::String(_) => {}
+                Value::Array(_) | Value::Object(_) | Value::Date(_) => {
+                    return Ok(Val::safe(jsops::escape(&out.to_js_string())));
+                }
+                _ => return Ok(Val::safe("undefined".to_string())),
+            }
+        }
+        return Ok(Val::safe(out.to_js_string()));
     }
     if env.did_return_input() && env.input_safe {
         // `return input`: the `SafeString` itself.

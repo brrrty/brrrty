@@ -467,7 +467,7 @@ fn range(low: f64, high: f64) -> R<Val> {
 /// (`JSON.stringify` gives `{}`, `String` gives `[object Object]`, and it is truthy), but `+`
 /// gives `"null"` or `""` and a `forloop` stringifies its fields, so no Brrrty value acts the
 /// same. A filter written in Rhai (or one of the RSS plugin's) given one refuses the page.
-fn drop_arg(filter: &str, what: &str, v: &Val) -> R<()> {
+pub(crate) fn drop_arg(filter: &str, what: &str, v: &Val) -> R<()> {
     let drop = match v {
         Val::V(_) => return Ok(()),
         Val::Nil => "`nil` or `null`, LiquidJS's NullDrop",

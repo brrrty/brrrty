@@ -66,6 +66,11 @@ pub type FilterFn = Arc<
 pub type ArgsFilterFn =
     Arc<dyn Fn(&Value, &[Value], &FilterCtx) -> Result<Value, String> + Send + Sync>;
 
+/// A shortcode: every argument as written, in order (a body first, when paired). 11ty's
+/// Liquid passes no keyword arguments, so there are none. An `Err` becomes a render error at
+/// the tag.
+pub type ShortcodeFn = Arc<dyn Fn(&[Value], &FilterCtx) -> Result<Value, String> + Send + Sync>;
+
 /// A raw block tag's renderer: `(arguments, body) -> output`, each as
 /// written in the template. An `Err` becomes a render error at the tag.
 pub type RawBlockFn = Arc<dyn Fn(&str, &str) -> Result<String, TagError> + Send + Sync>;
@@ -112,6 +117,9 @@ pub struct Engine {
     /// Raw block tags, by name, and their names in the order added.
     pub(crate) raw_blocks: HashMap<String, RawBlockFn>,
     raw_block_names: Vec<String>,
+    /// Shortcode tags, by name, with whether each is paired.
+    pub(crate) shortcodes: HashMap<String, (bool, ShortcodeFn)>,
+    shortcode_names: Vec<(String, bool)>,
 }
 
 /// The most a render may write: 512 MiB.
@@ -127,6 +135,8 @@ impl Engine {
             output_limit: OUTPUT_LIMIT,
             raw_blocks: HashMap::new(),
             raw_block_names: Vec::new(),
+            shortcodes: HashMap::new(),
+            shortcode_names: Vec::new(),
         }
     }
 
@@ -167,6 +177,16 @@ impl Engine {
         }
     }
 
+    /// Adds the tag `{% name args %}`, or with `paired` `{% name args %}body{% endname %}`, as
+    /// 11ty's `addShortcode` and `addPairedShortcode` do in LiquidJS. The arguments are values
+    /// separated by commas or blanks; a paired tag's body is rendered first and is the first
+    /// argument. What `f` returns is written as it is. A later one of the same name replaces it.
+    pub fn register_shortcode(&mut self, name: &str, paired: bool, f: ShortcodeFn) {
+        self.shortcodes.insert(name.to_string(), (paired, f));
+        self.shortcode_names.retain(|(n, _)| n != name);
+        self.shortcode_names.push((name.to_string(), paired));
+    }
+
     /// Adds Eleventy's own filters: `slug`, `slugify`, `url` and `log`.
     /// `slugify` replaces the standard Liquid filter of that name, as it
     /// does in Eleventy.
@@ -181,7 +201,13 @@ impl Engine {
     /// come in source order with LiquidJS's message and position.
     pub fn parse(&self, template_name: &str, source: &str) -> Result<Template, LiquidError> {
         if !self.options.strict_filters {
-            return crate::parse_checked(template_name, source, None, &self.raw_block_names);
+            return crate::parse_checked(
+                template_name,
+                source,
+                None,
+                &self.raw_block_names,
+                &self.shortcode_names,
+            );
         }
         let check = |value: &FilteredValue| -> Result<(), ParseErr> {
             for f in &value.filters {
@@ -196,7 +222,13 @@ impl Engine {
             }
             Ok(())
         };
-        crate::parse_checked(template_name, source, Some(&check), &self.raw_block_names)
+        crate::parse_checked(
+            template_name,
+            source,
+            Some(&check),
+            &self.raw_block_names,
+            &self.shortcode_names,
+        )
     }
 
     /// Parses `source` without checking its filters, so every filter in
@@ -207,7 +239,13 @@ impl Engine {
         template_name: &str,
         source: &str,
     ) -> Result<Template, LiquidError> {
-        crate::parse_checked(template_name, source, None, &self.raw_block_names)
+        crate::parse_checked(
+            template_name,
+            source,
+            None,
+            &self.raw_block_names,
+            &self.shortcode_names,
+        )
     }
 
     /// Whether a filter named `name` is registered.

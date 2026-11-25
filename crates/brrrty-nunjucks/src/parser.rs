@@ -64,8 +64,9 @@ fn leaf(expr: Expr) -> P {
     P { expr, height: 1 }
 }
 
-pub(crate) fn parse(source: &str) -> Res<Vec<Node>> {
+pub(crate) fn parse(source: &str, shortcodes: &Shortcodes) -> Res<Vec<Node>> {
     let mut parser = Parser {
+        shortcodes,
         tokens: Lexer::new(source),
         peeked: None,
         break_on_blocks: None,
@@ -77,7 +78,16 @@ pub(crate) fn parse(source: &str) -> Res<Vec<Node>> {
     parser.parse_nodes()
 }
 
+/// The shortcodes the config added, by name: `None` for a plain one, the names that end the
+/// body (`end<name>`) for a paired one.
+pub type Shortcodes = std::collections::HashMap<String, Option<&'static [&'static str]>>;
+
+/// What a shortcode's call is named in the tree: a filter of this prefix
+/// and the shortcode's name. The engine registers each shortcode under it.
+pub(crate) const SHORTCODE_PREFIX: &str = "\u{0}shortcode:";
+
 struct Parser<'a> {
+    shortcodes: &'a Shortcodes,
     tokens: Lexer<'a>,
     peeked: Option<Token>,
     break_on_blocks: Option<&'static [&'static str]>,
@@ -720,12 +730,83 @@ impl Parser<'_> {
                     "`{name}` is a tag 11ty adds to Nunjucks; Brrrty does not run it"
                 )));
             }
+            name if self.shortcodes.contains_key(name) => self.parse_shortcode(name)?,
             name => {
                 let msg = format!("unknown block tag: {name}");
                 return self.fail(msg, Some(tok.at()));
             }
         };
         Ok(Some(node))
+    }
+
+    /// 11ty's `addShortcode` and `addPairedShortcode` tags (`src/Engines/Nunjucks.js`,
+    /// `_getShortcodeFn` and `_getPairedShortcodeFn`): `parseSignature(true, true)`, then for a
+    /// plain one an empty string argument when there are none, for a paired one the body up
+    /// to `end<name>` as the first argument.
+    fn parse_shortcode(&mut self, name: &str) -> Res<Node> {
+        let paired = self.shortcodes[name];
+        let tok = self.peek_known()?;
+        self.take()?;
+        let mut args = self.parse_signature_no_parens()?;
+        let span = tok.span;
+        if paired.is_none() && args.positional.is_empty() && args.keyword.is_empty() {
+            args.positional.push(Expr::Literal {
+                span,
+                value: Literal::String(String::new()),
+            });
+        }
+        self.advance_after_block_end(Some(&tok.value))?;
+        if let Some(end) = paired {
+            let body = self.parse_until_blocks(end, span)?;
+            self.advance_after_block_end(None)?;
+            args.positional
+                .insert(0, Expr::Capture(Capture { span, body }));
+        }
+        let expr = Expr::Filter {
+            span,
+            name: format!("{SHORTCODE_PREFIX}{name}"),
+            args,
+        };
+        Ok(Node::Output(Output { span, expr }))
+    }
+
+    /// `parseSignature(true, true)`: arguments up to the block end, an opening `(` skipped.
+    fn parse_signature_no_parens(&mut self) -> Res<Args> {
+        let Some(tok) = self.peek_cloned()? else {
+            return Err(Fail::null_read("type"));
+        };
+        if tok.kind == Kind::LeftParen {
+            self.take()?;
+        }
+        let mut args = Args::default();
+        let mut check_comma = false;
+        loop {
+            let Some(tok) = self.peek_cloned()? else {
+                return Err(Fail::null_read("type"));
+            };
+            if tok.kind == Kind::BlockEnd {
+                break;
+            }
+            if check_comma && !self.skip(Kind::Comma)? {
+                return self.fail(
+                    "parseSignature: expected comma after expression",
+                    Some(tok.at()),
+                );
+            }
+            let arg = self.parse_expression()?;
+            if self.skip_value(Kind::Operator, "=")? {
+                let value = self.parse_expression()?;
+                args.keyword.push(Pair {
+                    span: arg.expr.span(),
+                    key: arg.expr,
+                    value: value.expr,
+                });
+            } else {
+                args.positional.push(arg.expr);
+            }
+            check_comma = true;
+        }
+        Ok(args)
     }
 
     fn parse_raw(&mut self, tag_name: &str) -> Res<Node> {

@@ -209,6 +209,10 @@ pub struct ConfigOptions {
     pub js_config: Option<(JsData, Option<usize>)>,
     /// Filters from the JS config, in the order added.
     pub js_filters: Vec<JsConfigFilter>,
+    /// Shortcodes from the JS config, in the order added.
+    pub js_shortcodes: Vec<JsConfigShortcode>,
+    /// Shortcodes from the JS config for Liquid, in the order added.
+    pub js_liquid_shortcodes: Vec<JsLiquidShortcode>,
     /// The Node that loaded the JS config, when it did.
     pub js_started: Option<StartedJs>,
     /// `config.set_order_check(...)`, when the config calls it.
@@ -437,6 +441,44 @@ impl std::fmt::Debug for JsConfigFilter {
         f.debug_struct("JsConfigFilter")
             .field("name", &self.name)
             .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A shortcode the JS config added (`addShortcode`, `addPairedShortcode` and their async and
+/// engine-only forms): it runs in Node. `run` gets the body first when `paired`.
+#[derive(Clone)]
+pub struct JsConfigShortcode {
+    pub name: String,
+    pub paired: bool,
+    pub engine: FilterEngine,
+    pub run: brrrty_liquid::ArgsFilterFn,
+}
+
+impl std::fmt::Debug for JsConfigShortcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsConfigShortcode")
+            .field("name", &self.name)
+            .field("paired", &self.paired)
+            .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A shortcode the JS config added for Liquid: `run` gets every argument, the body first when
+/// `paired`.
+#[derive(Clone)]
+pub struct JsLiquidShortcode {
+    pub name: String,
+    pub paired: bool,
+    pub run: brrrty_liquid::ShortcodeFn,
+}
+
+impl std::fmt::Debug for JsLiquidShortcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsLiquidShortcode")
+            .field("name", &self.name)
+            .field("paired", &self.paired)
             .finish_non_exhaustive()
     }
 }

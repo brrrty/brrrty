@@ -57,6 +57,8 @@ pub struct Engine {
     pub(crate) options: EngineOptions,
     pub(crate) filters: HashMap<String, FilterFn>,
     pub(crate) globals: HashMap<String, Value>,
+    /// The tags the config's shortcodes add.
+    pub(crate) shortcodes: crate::parser::Shortcodes,
     /// Bytes a render may write in all, captures and macros included.
     pub(crate) output_limit: usize,
     /// The most items a loop or `range()` may have.
@@ -75,6 +77,7 @@ impl Engine {
             options,
             filters: HashMap::new(),
             globals: HashMap::new(),
+            shortcodes: HashMap::new(),
             output_limit: OUTPUT_LIMIT,
             item_limit: crate::render::MAX_ITEMS,
             step_limit: crate::render::MAX_STEPS,
@@ -89,6 +92,20 @@ impl Engine {
     /// Nunjucks filter of the same name, as `addFilter` does.
     pub fn register_filter(&mut self, name: &str, f: FilterFn) {
         self.filters.insert(name.to_string(), f);
+    }
+
+    /// Adds a tag `{% name args %}`, or with `paired` `{% name args %}body{% endname %}`, as
+    /// 11ty's `addShortcode` and `addPairedShortcode` do. `f` gets the body (when paired), then
+    /// the arguments written, with keyword arguments as a last object, and returns what the tag
+    /// writes, which is not escaped. A shortcode takes the place of one of the same name.
+    pub fn register_shortcode(&mut self, name: &str, paired: bool, f: FilterFn) {
+        let end = paired.then(|| {
+            let end: &'static str = Box::leak(format!("end{name}").into_boxed_str());
+            &*Box::leak(vec![end].into_boxed_slice())
+        });
+        self.shortcodes.insert(name.to_string(), end);
+        self.filters
+            .insert(format!("{}{name}", crate::parser::SHORTCODE_PREFIX), f);
     }
 
     /// Adds an engine-neutral filter, such as one of Eleventy's.
@@ -140,6 +157,11 @@ impl Engine {
         self.filters.contains_key(name) || crate::filters::is_builtin(name)
     }
 
+    /// Parses `source` as [`crate::parse`] does, with this engine's shortcodes as tags.
+    pub fn parse(&self, name: &str, source: &str) -> Result<crate::Template, NunjucksError> {
+        crate::parse_with(name, source, &self.shortcodes)
+    }
+
     /// Parses and compiles `source`. `name` names the template in errors.
     pub fn compile(&self, name: &str, source: &str) -> Result<Compiled, NunjucksError> {
         Ok(Compiled {
@@ -168,7 +190,7 @@ impl Engine {
         path: Option<&str>,
         source: &str,
     ) -> Result<Arc<Program>, NunjucksError> {
-        let t = crate::parse(name, source)?;
+        let t = crate::parse_with(name, source, &self.shortcodes)?;
         let program = crate::compile::compile(name, path, &t.nodes).map_err(|e| e.named(name))?;
         Ok(Arc::new(program))
     }

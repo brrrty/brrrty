@@ -160,7 +160,7 @@ impl<'a> Scanner<'a> {
                     Ok(t) => liquid::nodes(&t.nodes, &mut found),
                     Err(_) => continue,
                 },
-                Lang::Nunjucks => match brrrty_nunjucks::parse(&name, text) {
+                Lang::Nunjucks => match self.langs.nunjucks.parse(&name, text) {
                     Ok(t) => nunjucks::nodes(&t.nodes, &mut found),
                     Err(_) => continue,
                 },
@@ -247,7 +247,7 @@ impl<'a> Scanner<'a> {
                     return out;
                 }
             },
-            Lang::Nunjucks => match brrrty_nunjucks::parse(&name, body) {
+            Lang::Nunjucks => match self.langs.nunjucks.parse(&name, body) {
                 Ok(t) => {
                     let mut f = Found::default();
                     nunjucks::nodes(&t.nodes, &mut f);
@@ -429,6 +429,14 @@ mod liquid {
             TagKind::Echo { value: v } => {
                 if let Some(v) = v {
                     value(v, f);
+                }
+            }
+            TagKind::Shortcode { args: a, body } => {
+                for e in a {
+                    expr(e, f);
+                }
+                if let Some(b) = body {
+                    nodes(b, f);
                 }
             }
             TagKind::Break
