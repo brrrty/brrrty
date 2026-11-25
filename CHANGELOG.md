@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5 - 2026-11-25
+
+- With `set_js_config("node")`, shortcodes added in the 11ty config (`addShortcode`, `addPairedShortcode`, `addAsyncShortcode`, `addPairedAsyncShortcode`, and the Nunjucks- and Liquid-only forms) now run in Node from Nunjucks and Liquid templates. Nunjucks parses arguments like 11ty, with keyword arguments as a last object. Liquid uses 11ty's argument parsing, with values separated by commas or spaces. A paired shortcode gets its rendered body as the first argument. Return values print as 11ty prints them, including falsy and non-string returns. A shortcode that throws refuses its page, naming the shortcode and the config file and line. Shortcodes that read `this.ctx`/`this.env` refuse, as filters do.
+
 ## 0.1.4 - 2026-11-25
 
 - With `set_js_config("node")`, filters added in the 11ty config (`addFilter`, `addAsyncFilter`, `addNunjucksFilter`, `addNunjucksAsyncFilter`, `addLiquidFilter`) now run in Node from Nunjucks and Liquid templates. Async filters are awaited. Inside a filter, `this` has `page` and `eleventy` (with `env.runMode` set to `serve` under `brrrty serve`). Engine-specific filters register only in their own engine, and a Rhai `add_filter` with the same name wins. A filter that throws refuses its page, naming the filter and its file and line. A filter that reads `this.ctx`/`this.env` (Nunjucks) or `this.context`/`this.liquid` (Liquid), or gets a `safe` string, refuses its page with a message naming the filter. Unless `--js-data` or `set_js_data` says otherwise, the Node that loaded the config runs JavaScript data files too.
