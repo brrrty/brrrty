@@ -69,6 +69,8 @@ pub fn apply(
     node: &brrrty_node::NodeInfo,
     config: &mut ConfigOptions,
     dir: &mut DirOptions,
+    run_mode: brrrty_node::RunMode,
+    order_check: bool,
 ) -> Result<(), Vec<Problem>> {
     let Some(file) = CONFIG_FILES
         .iter()
@@ -85,8 +87,8 @@ pub fn apply(
         return Ok(());
     };
     let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
-    let worker =
-        brrrty_node::Worker::start(node, root, brrrty_node::RunMode::Build).map_err(|e| {
+    let mut worker =
+        brrrty_node::Worker::start_with(node, root, run_mode, order_check).map_err(|e| {
             vec![problem(
                 format!(
                     "Brrrty could not start Node to load {}: {e}",
@@ -96,7 +98,6 @@ pub fn apply(
                 None,
             )]
         })?;
-    let mut worker = worker;
     let loaded = match worker.load_config(&file) {
         JsResult::Ok(d) => d,
         JsResult::Thrown(e) => {
@@ -126,7 +127,7 @@ pub fn apply(
         }
     };
     let v = &loaded.value;
-    add_filters(v, &shown, root, config);
+    add_filters(v, &shown, root, run_mode, config);
     let values = get(v, "values");
     let val = |k: &str| values.and_then(|x| get(x, k));
 
@@ -324,36 +325,58 @@ pub fn apply(
             config.problems.push(p);
         }
     }
+    // The 11ty config ran: nothing is left unchecked against it.
+    config
+        .problems
+        .retain(|p| p.code != brrrty_core::codes::CONFIG_UNVERIFIED);
     config.js_started = Some(brrrty_core::StartedJs(std::sync::Arc::new(
         std::sync::Mutex::new(Some(Box::new(worker))),
     )));
     Ok(())
 }
 
-/// What `this` is inside a config filter: 11ty's `page` and `eleventy`.
-fn filter_this(root: &Path) -> Value {
+/// What `this` is inside a config filter: 11ty's `page` (the template's own) and `eleventy`
+/// (src/Engines/Nunjucks.js `wrapFilter` and Liquid.js `wrapFilter` both `augmentObject` them
+/// onto `this`).
+fn filter_this(eleventy: &Value) -> Value {
     let mut o = indexmap::IndexMap::new();
     if let Some((page, _)) = brrrty_js::functions::own_page() {
         o.insert("page".to_string(), page);
     }
-    o.insert(
-        "eleventy".to_string(),
-        Value::from_json(&serde_json::json!({
-            "version": "3.1.8",
-            "generator": "Eleventy v3.1.8",
-            "env": { "source": "cli", "runMode": "build", "root": root.display().to_string() },
-        })),
-    );
+    o.insert("eleventy".to_string(), eleventy.clone());
     Value::Object(std::sync::Arc::new(o))
 }
 
+/// The parts of a filter's `this` Brrrty can't give, per engine. Nunjucks's filter `this` is
+/// its render `Context`: `ctx` (the template's variables) and `env` (the `Environment`).
+/// LiquidJS's is its filter context: `context` and `liquid`.
+const NUNJUCKS_THIS: &[(&str, &str)] = &[
+    ("ctx", "Nunjucks's render context"),
+    ("env", "the Nunjucks environment"),
+];
+const LIQUID_THIS: &[(&str, &str)] = &[
+    ("context", "LiquidJS's variable scope"),
+    ("liquid", "the LiquidJS engine"),
+];
+
 /// Turn the recorded filter functions into filters that call Node.
-fn add_filters(v: &Value, shown: &Path, root: &Path, config: &mut ConfigOptions) {
+fn add_filters(
+    v: &Value,
+    shown: &Path,
+    root: &Path,
+    run_mode: brrrty_node::RunMode,
+    config: &mut ConfigOptions,
+) {
     use brrrty_core::{FilterEngine, JsConfigFilter};
     use brrrty_js::functions::{Settle, This};
     let Some(Value::Array(fns)) = get(v, "functions") else {
         return;
     };
+    let eleventy = Value::from_json(&serde_json::json!({
+        "version": "3.1.8",
+        "generator": "Eleventy v3.1.8",
+        "env": { "source": "cli", "runMode": run_mode.as_str(), "root": root.display().to_string() },
+    }));
     for f in fns.iter() {
         if text(get(f, "kind")).as_deref() != Some("filter") {
             continue;
@@ -369,11 +392,13 @@ fn add_filters(v: &Value, shown: &Path, root: &Path, config: &mut ConfigOptions)
             _ => continue,
         };
         let is_async = matches!(get(f, "async"), Some(Value::Bool(true)));
-        let make = |settle: Settle| -> brrrty_liquid::ArgsFilterFn {
-            let (h, n, root, shown) = (
+        let make = |settle: Settle,
+                    guard: &'static [(&'static str, &'static str)]|
+         -> brrrty_liquid::ArgsFilterFn {
+            let (h, n, eleventy, shown) = (
                 *h,
                 name.clone(),
-                root.to_path_buf(),
+                eleventy.clone(),
                 shown.display().to_string(),
             );
             std::sync::Arc::new(move |input, args, _| {
@@ -386,9 +411,9 @@ fn add_filters(v: &Value, shown: &Path, root: &Path, config: &mut ConfigOptions)
                 let mut all = Vec::with_capacity(args.len() + 1);
                 all.push(input.clone());
                 all.extend_from_slice(args);
-                let this = filter_this(&root);
+                let this = filter_this(&eleventy);
                 caller
-                    .call(h, This::Value(&this), &all, settle)
+                    .call(h, This::Guarded(&this, guard), &all, settle)
                     .map_err(|why| {
                         format!(
                             "{}the filter `{n}` (from {shown}) failed: {why}",
@@ -405,7 +430,7 @@ fn add_filters(v: &Value, shown: &Path, root: &Path, config: &mut ConfigOptions)
             Settle::AsIs
         };
         if engine != FilterEngine::Liquid {
-            let run = make(njk);
+            let run = make(njk, NUNJUCKS_THIS);
             config.js_filters.push(JsConfigFilter {
                 name: name.clone(),
                 engine: FilterEngine::Nunjucks,
@@ -413,7 +438,7 @@ fn add_filters(v: &Value, shown: &Path, root: &Path, config: &mut ConfigOptions)
             });
         }
         if engine != FilterEngine::Nunjucks {
-            let run = make(Settle::Await);
+            let run = make(Settle::Await, LIQUID_THIS);
             config.js_filters.push(JsConfigFilter {
                 name,
                 engine: FilterEngine::Liquid,

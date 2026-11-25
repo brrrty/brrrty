@@ -26,6 +26,8 @@ pub struct Flags {
     /// whatever the config says (`brrrty doctor`); `None` leaves it to the
     /// config's `set_order_check`, or on.
     pub order_check: Option<bool>,
+    /// The build is `brrrty serve`'s: `eleventy.env.runMode` is `serve`.
+    pub serve: bool,
 }
 
 /// Read the config in `root` and combine it with `flags`. Flags on the command line win, as
@@ -36,9 +38,17 @@ pub fn build_options(root: &Path, flags: &Flags) -> Result<BuildOptions, Vec<Pro
     let mut config = site.map(|s| s.build_options()).unwrap_or_default();
     // `--js-config` over `config.set_js_config`: run the 11ty config in Node first.
     let js_config = flags.js_config.or(config.js_config.map(|(m, _)| m));
+    let run_mode = if flags.serve {
+        brrrty_node::RunMode::Serve
+    } else {
+        brrrty_node::RunMode::Build
+    };
+    let order_check = flags.order_check.or(config.order_check).unwrap_or(true);
     if js_config == Some(JsData::Node) {
         match brrrty_node::find_node(std::env::var_os("BRRRTY_NODE").as_deref()) {
-            Ok(node) => crate::js_config::apply(root, &node, &mut config, &mut dir)?,
+            Ok(node) => {
+                crate::js_config::apply(root, &node, &mut config, &mut dir, run_mode, order_check)?
+            }
             Err(missing) => {
                 return Err(vec![Problem::error(
                     brrrty_core::codes::CONFIG_ERROR,
@@ -91,15 +101,11 @@ fn js_options(
                 line,
             },
         ),
+        (None, None) if config.js_started.is_some() => (JsData::Node, JsDataSource::JsConfig),
         (None, None) => (JsData::Off, JsDataSource::Default),
     };
-    // The 11ty config's functions live in the Node that loaded it, so that one runs the
-    // build's JavaScript, data files included (11ty runs them too).
-    let (mode, source) = if mode == JsData::Off && config.js_started.is_some() {
-        (JsData::Node, JsDataSource::Flag)
-    } else {
-        (mode, source)
-    };
+    // With no say from the flag or the config, the Node that loaded the 11ty config runs the
+    // build's JavaScript, data files included (11ty runs them too); an explicit `off` stays off.
     let started = config.js_started.clone();
     let mut js = JsOptions {
         order_check,

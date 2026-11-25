@@ -68,6 +68,7 @@ fn the_recorded_config_is_applied_to_the_build() {
     let t = fixture("config.set_js_config(\"node\");\n");
     let o = run(t.path(), "build", &[]);
     assert!(o.status.success(), "{}", text(&o));
+    assert!(!text(&o).contains("config-unverified"), "{}", text(&o));
     let out = t.path().join("_site");
     assert_eq!(
         fs::read_to_string(out.join("index.html")).unwrap(),

@@ -258,6 +258,7 @@ impl JsReport {
         match &self.source {
             brrrty_core::JsDataSource::Default => String::new(),
             brrrty_core::JsDataSource::Flag => " (--js-data)".to_string(),
+            brrrty_core::JsDataSource::JsConfig => " (on because set_js_config is)".to_string(),
             brrrty_core::JsDataSource::Config { file, line } => match line {
                 Some(l) => format!(" ({} line {l})", file.display()),
                 None => format!(" ({})", file.display()),
@@ -364,6 +365,7 @@ impl JsReport {
             "source": match self.source {
                 brrrty_core::JsDataSource::Default => "default",
                 brrrty_core::JsDataSource::Flag => "flag",
+                brrrty_core::JsDataSource::JsConfig => "js-config",
                 brrrty_core::JsDataSource::Config { .. } => "config",
             },
             "node": match &self.node {

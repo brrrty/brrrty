@@ -65,6 +65,8 @@ pub enum JsDataSource {
     Config { file: PathBuf, line: Option<usize> },
     /// `--js-data` on the command line.
     Flag,
+    /// On because the JS config ran in Node: its Node runs the data files too.
+    JsConfig,
 }
 
 /// The Node found to run JavaScript data, as doctor shows it.
