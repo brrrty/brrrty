@@ -259,6 +259,7 @@ impl SiteConfig {
             js_config: self.js_config,
             js_filters: Vec::new(),
             js_shortcodes: Vec::new(),
+            js_liquid_shortcodes: Vec::new(),
             js_started: None,
             order_check: self.order_check,
         }

@@ -211,6 +211,8 @@ pub struct ConfigOptions {
     pub js_filters: Vec<JsConfigFilter>,
     /// Shortcodes from the JS config, in the order added.
     pub js_shortcodes: Vec<JsConfigShortcode>,
+    /// Shortcodes from the JS config for Liquid, in the order added.
+    pub js_liquid_shortcodes: Vec<JsLiquidShortcode>,
     /// The Node that loaded the JS config, when it did.
     pub js_started: Option<StartedJs>,
     /// `config.set_order_check(...)`, when the config calls it.
@@ -459,6 +461,24 @@ impl std::fmt::Debug for JsConfigShortcode {
             .field("name", &self.name)
             .field("paired", &self.paired)
             .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A shortcode the JS config added for Liquid: `run` gets every argument, the body first when
+/// `paired`.
+#[derive(Clone)]
+pub struct JsLiquidShortcode {
+    pub name: String,
+    pub paired: bool,
+    pub run: brrrty_liquid::ShortcodeFn,
+}
+
+impl std::fmt::Debug for JsLiquidShortcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsLiquidShortcode")
+            .field("name", &self.name)
+            .field("paired", &self.paired)
             .finish_non_exhaustive()
     }
 }

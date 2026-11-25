@@ -367,7 +367,7 @@ fn add_filters(
     run_mode: brrrty_node::RunMode,
     config: &mut ConfigOptions,
 ) {
-    use brrrty_core::{FilterEngine, JsConfigFilter, JsConfigShortcode};
+    use brrrty_core::{FilterEngine, JsConfigFilter, JsConfigShortcode, JsLiquidShortcode};
     use brrrty_js::functions::{Settle, This};
     let Some(Value::Array(fns)) = get(v, "functions") else {
         return;
@@ -398,7 +398,7 @@ fn add_filters(
         let is_async = matches!(get(f, "async"), Some(Value::Bool(true)));
         let make = |settle: Settle,
                     guard: &'static [(&'static str, &'static str)]|
-         -> brrrty_liquid::ArgsFilterFn {
+         -> brrrty_liquid::ShortcodeFn {
             let (h, n, eleventy, shown, what) = (
                 *h,
                 name.clone(),
@@ -406,19 +406,16 @@ fn add_filters(
                 shown.display().to_string(),
                 what,
             );
-            std::sync::Arc::new(move |input, args, _| {
+            std::sync::Arc::new(move |all: &[Value], _| {
                 let Some(caller) = brrrty_js::functions::installed() else {
                     return Err(format!(
                         "{}the {what} `{n}` (from {shown}) can't run: Node isn't running",
                         brrrty_js::REFUSAL_PREFIX
                     ));
                 };
-                let mut all = Vec::with_capacity(args.len() + 1);
-                all.push(input.clone());
-                all.extend_from_slice(args);
                 let this = filter_this(&eleventy);
                 caller
-                    .call(h, This::Guarded(&this, guard), &all, settle)
+                    .call(h, This::Guarded(&this, guard), all, settle)
                     .map_err(|why| {
                         format!(
                             "{}the {what} `{n}` (from {shown}) failed: {why}",
@@ -434,33 +431,46 @@ fn add_filters(
         } else {
             Settle::AsIs
         };
+        // A filter's input is the first of the arguments the function gets.
+        let as_filter = |run: brrrty_liquid::ShortcodeFn| -> brrrty_liquid::ArgsFilterFn {
+            std::sync::Arc::new(move |input, args, ctx| {
+                let mut all = Vec::with_capacity(args.len() + 1);
+                all.push(input.clone());
+                all.extend_from_slice(args);
+                run(&all, ctx)
+            })
+        };
         if engine != FilterEngine::Liquid {
             let run = make(njk, NUNJUCKS_THIS);
             match shortcode {
+                // Nunjucks calls a shortcode as a filter of its input and arguments.
                 Some(paired) => config.js_shortcodes.push(JsConfigShortcode {
                     name: name.clone(),
                     paired,
                     engine: FilterEngine::Nunjucks,
-                    run,
+                    run: as_filter(run),
                 }),
                 None => config.js_filters.push(JsConfigFilter {
                     name: name.clone(),
                     engine: FilterEngine::Nunjucks,
-                    run,
+                    run: as_filter(run),
                 }),
             }
         }
-        if shortcode.is_some() {
-            // Liquid's shortcodes come with its tags.
-            continue;
-        }
         if engine != FilterEngine::Nunjucks {
             let run = make(Settle::Await, LIQUID_THIS);
-            config.js_filters.push(JsConfigFilter {
-                name,
-                engine: FilterEngine::Liquid,
-                run,
-            });
+            match shortcode {
+                Some(paired) => {
+                    config
+                        .js_liquid_shortcodes
+                        .push(JsLiquidShortcode { name, paired, run })
+                }
+                None => config.js_filters.push(JsConfigFilter {
+                    name,
+                    engine: FilterEngine::Liquid,
+                    run: as_filter(run),
+                }),
+            }
         }
     }
 }

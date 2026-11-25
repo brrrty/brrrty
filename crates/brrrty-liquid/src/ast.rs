@@ -150,6 +150,12 @@ pub enum TagKind {
         args: String,
         body: String,
     },
+    /// A shortcode the embedder added with [`crate::Engine::register_shortcode`]: its
+    /// arguments, and its body when paired.
+    Shortcode {
+        args: Vec<Expr>,
+        body: Option<Vec<Node>>,
+    },
 }
 
 /// One `if`, `elsif` or `unless` branch.

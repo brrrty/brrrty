@@ -431,6 +431,14 @@ mod liquid {
                     value(v, f);
                 }
             }
+            TagKind::Shortcode { args: a, body } => {
+                for e in a {
+                    expr(e, f);
+                }
+                if let Some(b) = body {
+                    nodes(b, f);
+                }
+            }
             TagKind::Break
             | TagKind::Continue
             | TagKind::Raw { .. }

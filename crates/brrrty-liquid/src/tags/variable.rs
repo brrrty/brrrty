@@ -50,3 +50,37 @@ pub(super) fn echo(r: &mut Renderer<'_>, value: Option<&FilteredValue>, out: &mu
     let v = r.eval_filtered(value)?;
     r.write_value(out, &v)
 }
+
+/// A shortcode: the arguments are evaluated, a paired one's body is rendered and goes first,
+/// and what the function returns is written as it is.
+pub(super) fn shortcode(
+    r: &mut Renderer<'_>,
+    name: &str,
+    args: &[crate::ast::Expr],
+    body: Option<&[Node]>,
+    out: &mut String,
+) -> R<()> {
+    let f = r
+        .engine
+        .shortcodes
+        .get(name)
+        .expect("a shortcode is parsed only when the engine has it")
+        .1
+        .clone();
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    if let Some(body) = body {
+        let mut buf = String::new();
+        r.render_nodes(body, &mut buf)?;
+        argv.push(Value::String(buf.as_str().into()));
+    }
+    for (i, e) in args.iter().enumerate() {
+        let a = r.eval(e)?;
+        crate::render::drop_arg(name, &format!("argument {}", i + 1), &a)?;
+        argv.push(a.to_value());
+    }
+    brrrty_js::functions::check_filter_args(name, argv.iter());
+    let ctx = crate::FilterCtx::new(r.tz());
+    let v =
+        f(&argv, &ctx).map_err(|m| crate::render::RenderErr::new(crate::ErrorKind::Render, m))?;
+    r.write_value(out, &Val::V(v))
+}
