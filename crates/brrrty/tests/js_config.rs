@@ -700,6 +700,10 @@ const SHORTCODE_EDGE_CONFIG: &str = r#"module.exports = function (eleventyConfig
   eleventyConfig.addShortcode("f", () => false);
   eleventyConfig.addPairedShortcode("show", (b, a) => `[${b}|${a}]`);
   eleventyConfig.addPairedShortcode("pnum", () => 3);
+  eleventyConfig.addPairedShortcode("parr", () => ["<b>", 2]);
+  eleventyConfig.addPairedShortcode("pobj", () => ({a: 1}));
+  eleventyConfig.addPairedShortcode("pnull", () => null);
+  eleventyConfig.addPairedAsyncShortcode("pasync", async () => [1, 2]);
   return { dir: { input: "src" } };
 };
 "#;
@@ -751,5 +755,19 @@ fn nunjucks_paired_shortcode_non_string_return_prints_undefined() {
     assert_eq!(
         edge_build("src/a.njk", "{% pnum %}x{% endpnum %}"),
         "undefined"
+    );
+}
+
+#[test]
+fn nunjucks_paired_shortcode_array_and_object_return_print_escaped_to_string() {
+    if !has_node() {
+        return;
+    }
+    assert_eq!(
+        edge_build(
+            "src/a.njk",
+            "{% parr %}x{% endparr %}|{% pobj %}x{% endpobj %}|{% pnull %}x{% endpnull %}|{% pasync %}x{% endpasync %}"
+        ),
+        "&lt;b&gt;,2|[object Object]|undefined|1,2"
     );
 }
