@@ -735,7 +735,10 @@ fn paired_shortcode_args_are_evaluated_before_the_body() {
         "[|undefined]"
     );
     assert_eq!(
-        edge_build("src/a.liquid", "{% show w %}{% assign w = \"in\" %}{% endshow %}"),
+        edge_build(
+            "src/a.liquid",
+            "{% show w %}{% assign w = \"in\" %}{% endshow %}"
+        ),
         "[|undefined]"
     );
 }
@@ -745,5 +748,8 @@ fn nunjucks_paired_shortcode_non_string_return_prints_undefined() {
     if !has_node() {
         return;
     }
-    assert_eq!(edge_build("src/a.njk", "{% pnum %}x{% endpnum %}"), "undefined");
+    assert_eq!(
+        edge_build("src/a.njk", "{% pnum %}x{% endpnum %}"),
+        "undefined"
+    );
 }

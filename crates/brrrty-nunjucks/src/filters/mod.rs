@@ -217,6 +217,11 @@ fn run_user(
         return Err(jsops::too_big(ops));
     }
     if shortcode.is_some() {
+        // A plain one writes `"" + ret`; a paired one `new SafeString(ret)`, and for anything
+        // but a string that is an empty SafeString, which prints `undefined`.
+        if paired && !matches!(out, Value::String(_)) {
+            return Ok(Val::safe("undefined".to_string()));
+        }
         return Ok(Val::safe(out.to_js_string()));
     }
     if env.did_return_input() && env.input_safe {

@@ -67,20 +67,32 @@ pub(super) fn shortcode(
         .expect("a shortcode is parsed only when the engine has it")
         .1
         .clone();
+    // The arguments are evaluated before the body is rendered.
     let mut argv = Vec::with_capacity(args.len() + 1);
-    if let Some(body) = body {
-        let mut buf = String::new();
-        r.render_nodes(body, &mut buf)?;
-        argv.push(Value::String(buf.as_str().into()));
-    }
     for (i, e) in args.iter().enumerate() {
         let a = r.eval(e)?;
         crate::render::drop_arg(name, &format!("argument {}", i + 1), &a)?;
         argv.push(a.to_value());
     }
+    if let Some(body) = body {
+        let mut buf = String::new();
+        r.render_nodes(body, &mut buf)?;
+        argv.insert(0, Value::String(buf.as_str().into()));
+    }
     brrrty_js::functions::check_filter_args(name, argv.iter());
     let ctx = crate::FilterCtx::new(r.tz());
     let v =
         f(&argv, &ctx).map_err(|m| crate::render::RenderErr::new(crate::ErrorKind::Render, m))?;
+    // LiquidJS writes the result only when it is truthy: `html && emitter.write(html)`.
+    let falsy = match &v {
+        Value::Bool(b) => !*b,
+        Value::Number(n) => *n == 0.0 || n.is_nan(),
+        Value::String(s) => s.is_empty(),
+        Value::Null | Value::Undefined => true,
+        _ => false,
+    };
+    if falsy {
+        return Ok(());
+    }
     r.write_value(out, &Val::V(v))
 }
