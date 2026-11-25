@@ -582,3 +582,67 @@ fn a_safestring_given_to_a_config_filter_refuses_naming_it() {
         "X"
     );
 }
+
+const SHORTCODE_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addShortcode("sum", (a, b) => a + b);
+  eleventyConfig.addShortcode("greet", function (name, o) {
+    return `hi ${name}${o && o.punct ? o.punct : ""}|${this.page.url}`;
+  });
+  eleventyConfig.addShortcode("blank", (x) => `[${JSON.stringify(x)}]`);
+  eleventyConfig.addShortcode("html", () => "<b>");
+  eleventyConfig.addAsyncShortcode("later", async (s) => { await null; return s + "?"; });
+  eleventyConfig.addPairedShortcode("box", (body, cls) => `<div class="${cls}">${body}</div>`);
+  eleventyConfig.addPairedAsyncShortcode("abox", async (body, cls) => { await null; return `<p ${cls}>${body}</p>`; });
+  eleventyConfig.addNunjucksShortcode("njkOnly", () => "njk");
+  eleventyConfig.addShortcode("boom", () => { throw new Error("nope"); });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn nunjucks_shortcodes_run_in_node_sync_async_and_paired() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", SHORTCODE_CONFIG),
+            (
+                "src/a.njk",
+                concat!(
+                    "{% sum 1, 2 %}|{% greet \"A, B\", punct=\"!\" %}|{% blank %}|{% later \"b\" %}|{% html %}|{% njkOnly %}|",
+                    "{% box \"c\" %}{% set v = \"a&b\" %}{{ v }}{% if v %}!{% endif %}{% endbox %}|{% abox \"d\" %}x{% endabox %}"
+                ),
+            ),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let a = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap();
+    assert_eq!(
+        a,
+        "3|hi A, B!|/a/|[\"\"]|b?|<b>|njk|<div class=\"c\">a&amp;b!</div>|<p d>x</p>"
+    );
+}
+
+#[test]
+fn a_throwing_shortcode_refuses_its_page_naming_shortcode_and_place() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", SHORTCODE_CONFIG),
+            ("src/a.njk", "{% boom %}"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("Error with Nunjucks shortcode `boom`"), "{s}");
+    assert!(s.contains("nope"), "{s}");
+    assert!(s.contains("eleventy.config.js:10"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+}
