@@ -217,10 +217,18 @@ fn run_user(
         return Err(jsops::too_big(ops));
     }
     if shortcode.is_some() {
-        // A plain one writes `"" + ret`; a paired one `new SafeString(ret)`, and for anything
-        // but a string that is an empty SafeString, which prints `undefined`.
-        if paired && !matches!(out, Value::String(_)) {
-            return Ok(Val::safe("undefined".to_string()));
+        // A plain one writes `"" + ret`; a paired one `new SafeString(ret)`. For a string
+        // that is safe; for an array or object (or date) `new` returns the value itself, which
+        // prints as its escaped `toString()`; any other value is an empty SafeString, which
+        // prints `undefined`.
+        if paired {
+            match &out {
+                Value::String(_) => {}
+                Value::Array(_) | Value::Object(_) | Value::Date(_) => {
+                    return Ok(Val::safe(jsops::escape(&out.to_js_string())));
+                }
+                _ => return Ok(Val::safe("undefined".to_string())),
+            }
         }
         return Ok(Val::safe(out.to_js_string()));
     }
