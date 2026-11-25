@@ -85,7 +85,7 @@ pub fn apply(
         return Ok(());
     };
     let shown = file.strip_prefix(root).unwrap_or(&file).to_path_buf();
-    let mut worker =
+    let worker =
         brrrty_node::Worker::start(node, root, brrrty_node::RunMode::Build).map_err(|e| {
             vec![problem(
                 format!(
@@ -96,6 +96,7 @@ pub fn apply(
                 None,
             )]
         })?;
+    let mut worker = worker;
     let loaded = match worker.load_config(&file) {
         JsResult::Ok(d) => d,
         JsResult::Thrown(e) => {
@@ -125,6 +126,7 @@ pub fn apply(
         }
     };
     let v = &loaded.value;
+    add_filters(v, &shown, root, config);
     let values = get(v, "values");
     let val = |k: &str| values.and_then(|x| get(x, k));
 
@@ -322,5 +324,101 @@ pub fn apply(
             config.problems.push(p);
         }
     }
+    config.js_started = Some(brrrty_core::StartedJs(std::sync::Arc::new(
+        std::sync::Mutex::new(Some(Box::new(worker))),
+    )));
     Ok(())
+}
+
+/// What `this` is inside a config filter: 11ty's `page` and `eleventy`.
+fn filter_this(root: &Path) -> Value {
+    let mut o = indexmap::IndexMap::new();
+    if let Some((page, _)) = brrrty_js::functions::own_page() {
+        o.insert("page".to_string(), page);
+    }
+    o.insert(
+        "eleventy".to_string(),
+        Value::from_json(&serde_json::json!({
+            "version": "3.1.8",
+            "generator": "Eleventy v3.1.8",
+            "env": { "source": "cli", "runMode": "build", "root": root.display().to_string() },
+        })),
+    );
+    Value::Object(std::sync::Arc::new(o))
+}
+
+/// Turn the recorded filter functions into filters that call Node.
+fn add_filters(v: &Value, shown: &Path, root: &Path, config: &mut ConfigOptions) {
+    use brrrty_core::{FilterEngine, JsConfigFilter};
+    use brrrty_js::functions::{Settle, This};
+    let Some(Value::Array(fns)) = get(v, "functions") else {
+        return;
+    };
+    for f in fns.iter() {
+        if text(get(f, "kind")).as_deref() != Some("filter") {
+            continue;
+        }
+        let (Some(name), Some(Value::Function(h))) = (text(get(f, "name")), get(f, "fn")) else {
+            continue;
+        };
+        let engine = match text(get(f, "engine")).as_deref() {
+            Some("all") => FilterEngine::All,
+            Some("nunjucks") => FilterEngine::Nunjucks,
+            Some("liquid") => FilterEngine::Liquid,
+            // `addJavaScriptFilter`: for JavaScript templates only.
+            _ => continue,
+        };
+        let is_async = matches!(get(f, "async"), Some(Value::Bool(true)));
+        let make = |settle: Settle| -> brrrty_liquid::ArgsFilterFn {
+            let (h, n, root, shown) = (
+                *h,
+                name.clone(),
+                root.to_path_buf(),
+                shown.display().to_string(),
+            );
+            std::sync::Arc::new(move |input, args, _| {
+                let Some(caller) = brrrty_js::functions::installed() else {
+                    return Err(format!(
+                        "{}the filter `{n}` (from {shown}) can't run: Node isn't running",
+                        brrrty_js::REFUSAL_PREFIX
+                    ));
+                };
+                let mut all = Vec::with_capacity(args.len() + 1);
+                all.push(input.clone());
+                all.extend_from_slice(args);
+                let this = filter_this(&root);
+                caller
+                    .call(h, This::Value(&this), &all, settle)
+                    .map_err(|why| {
+                        format!(
+                            "{}the filter `{n}` (from {shown}) failed: {why}",
+                            brrrty_js::REFUSAL_PREFIX
+                        )
+                    })
+            })
+        };
+        // Liquid awaits a returned promise; Nunjucks takes what the function returns, unless
+        // it was added as async.
+        let njk = if is_async {
+            Settle::Await
+        } else {
+            Settle::AsIs
+        };
+        if engine != FilterEngine::Liquid {
+            let run = make(njk);
+            config.js_filters.push(JsConfigFilter {
+                name: name.clone(),
+                engine: FilterEngine::Nunjucks,
+                run,
+            });
+        }
+        if engine != FilterEngine::Nunjucks {
+            let run = make(Settle::Await);
+            config.js_filters.push(JsConfigFilter {
+                name,
+                engine: FilterEngine::Liquid,
+                run,
+            });
+        }
+    }
 }

@@ -205,6 +205,10 @@ pub struct ConfigOptions {
     pub js_data: Option<(JsData, Option<usize>)>,
     /// `config.set_js_config(...)`: the mode and the line of the call.
     pub js_config: Option<(JsData, Option<usize>)>,
+    /// Filters from the JS config, in the order added.
+    pub js_filters: Vec<JsConfigFilter>,
+    /// The Node that loaded the JS config, when it did.
+    pub js_started: Option<StartedJs>,
     /// `config.set_order_check(...)`, when the config calls it.
     pub order_check: Option<bool>,
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
@@ -403,6 +407,48 @@ impl std::fmt::Debug for ConfigFilter {
         f.debug_struct("ConfigFilter")
             .field("name", &self.name)
             .finish_non_exhaustive()
+    }
+}
+
+/// Which template engines a filter from the JS config is registered in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterEngine {
+    /// `addFilter`, `addAsyncFilter`: Nunjucks and Liquid.
+    All,
+    /// `addNunjucksFilter`, `addNunjucksAsyncFilter`.
+    Nunjucks,
+    /// `addLiquidFilter`.
+    Liquid,
+}
+
+/// A filter the JS config added: it runs in Node. Rhai filters of the same
+/// name replace it.
+#[derive(Clone)]
+pub struct JsConfigFilter {
+    pub name: String,
+    pub engine: FilterEngine,
+    pub run: brrrty_liquid::ArgsFilterFn,
+}
+
+impl std::fmt::Debug for JsConfigFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsConfigFilter")
+            .field("name", &self.name)
+            .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The Node runtime that loaded the JS config, kept for the build: the
+/// config's functions live in it. The first user takes it.
+#[derive(Clone, Default)]
+pub struct StartedJs(
+    pub std::sync::Arc<std::sync::Mutex<Option<Box<dyn brrrty_js::runtime::JsRuntime>>>>,
+);
+
+impl std::fmt::Debug for StartedJs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StartedJs")
     }
 }
 

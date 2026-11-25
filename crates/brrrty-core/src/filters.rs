@@ -10,7 +10,7 @@ use std::sync::Arc;
 use brrrty_js::FilterFn;
 use brrrty_nunjucks::Engine;
 
-use crate::options::ConfigFilter;
+use crate::options::{ConfigFilter, FilterEngine, JsConfigFilter};
 use crate::plugins::rss;
 
 /// A filter written for the Liquid engine, as a shared one. It takes its
@@ -39,8 +39,18 @@ fn shared(name: &str, f: brrrty_liquid::ArgsFilterFn) -> FilterFn {
 /// filters for every engine and those for Nunjucks alone. A later filter
 /// replaces an earlier one of the same name, so a plugin's win over the
 /// config's, as in 11ty.
-pub fn register_nunjucks_filters(engine: &mut Engine, config: &[ConfigFilter], rss: bool) {
+pub fn register_nunjucks_filters(
+    engine: &mut Engine,
+    js: &[JsConfigFilter],
+    config: &[ConfigFilter],
+    rss: bool,
+) {
     engine.register_eleventy_filters();
+    for f in js {
+        if f.engine != FilterEngine::Liquid {
+            engine.register_filter(&f.name, shared(&f.name, f.run.clone()));
+        }
+    }
     for f in config {
         engine.register_filter(&f.name, shared(&f.name, f.run.clone()));
     }

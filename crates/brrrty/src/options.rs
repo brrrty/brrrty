@@ -93,6 +93,14 @@ fn js_options(
         ),
         (None, None) => (JsData::Off, JsDataSource::Default),
     };
+    // The 11ty config's functions live in the Node that loaded it, so that one runs the
+    // build's JavaScript, data files included (11ty runs them too).
+    let (mode, source) = if mode == JsData::Off && config.js_started.is_some() {
+        (JsData::Node, JsDataSource::Flag)
+    } else {
+        (mode, source)
+    };
+    let started = config.js_started.clone();
     let mut js = JsOptions {
         order_check,
         mode,
@@ -113,6 +121,12 @@ fn js_options(
             }));
             let root = root.to_path_buf();
             js.start = Some(std::sync::Arc::new(move |run_mode| {
+                if let Some(rt) = started
+                    .as_ref()
+                    .and_then(|s| s.0.lock().unwrap_or_else(|e| e.into_inner()).take())
+                {
+                    return Ok(rt);
+                }
                 let mode = match run_mode {
                     RunMode::Build => brrrty_node::RunMode::Build,
                     RunMode::Serve => brrrty_node::RunMode::Serve,

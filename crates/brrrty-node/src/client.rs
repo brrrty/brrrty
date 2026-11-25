@@ -75,13 +75,7 @@ const AGAIN: usize = 16;
 fn logged(op: &str) -> bool {
     !matches!(
         op,
-        "reads"
-            | "info"
-            | "callsBegin"
-            | "loadsChanged"
-            | "exportsFinal"
-            | "describe"
-            | "configLoad"
+        "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
     )
 }
 

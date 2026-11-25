@@ -302,6 +302,12 @@ impl<'a> JsSession<'a> {
         }
     }
 
+    /// Start the runtime now, when no data file has: the JS config's
+    /// functions are in it, and pages call them.
+    pub fn start(&mut self) {
+        let _ = self.runtime();
+    }
+
     /// Hand the runtime over for the pages to call the functions in the
     /// data: `None` when no file ran.
     pub fn take_calls(&mut self) -> Option<Arc<JsCalls>> {

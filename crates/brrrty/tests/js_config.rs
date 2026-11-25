@@ -459,6 +459,6 @@ fn a_throwing_filter_refuses_its_page_naming_filter_and_place() {
     let s = text(&o);
     assert!(s.contains("boom"), "{s}");
     assert!(s.contains("nope a"), "{s}");
-    assert!(s.contains("eleventy.config.js:7"), "{s}");
+    assert!(s.contains("eleventy.config.js:8"), "{s}");
     assert!(!t.path().join("_site/a/index.html").exists());
 }

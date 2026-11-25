@@ -2424,6 +2424,11 @@ fn build_once(
         timezone: Tz::Local,
     });
     engine.register_eleventy_filters();
+    for f in &opts.config.js_filters {
+        if f.engine != crate::options::FilterEngine::Nunjucks {
+            engine.register_args_filter(&f.name, f.run.clone());
+        }
+    }
     for f in &opts.config.filters {
         engine.register_args_filter(&f.name, f.run.clone());
     }
@@ -2486,7 +2491,12 @@ fn build_once(
         timezone: Tz::Local,
         autoescape: true,
     });
-    crate::filters::register_nunjucks_filters(&mut nunjucks, &opts.config.filters, rss);
+    crate::filters::register_nunjucks_filters(
+        &mut nunjucks,
+        &opts.config.js_filters,
+        &opts.config.filters,
+        rss,
+    );
     let includes_rel = opts.config.includes_dir();
     let includes = input.join(includes_rel);
     let includes = includes.canonicalize().unwrap_or(includes);
@@ -2729,6 +2739,9 @@ fn build_once(
     }
     // The pages call the functions in the data through the runtime, from
     // every render thread.
+    if opts.config.js_started.is_some() {
+        js.start();
+    }
     let js_calls = js.take_calls();
     if let Some(p) = js.failed.take() {
         report.problems.push(p);
