@@ -462,3 +462,122 @@ fn a_throwing_filter_refuses_its_page_naming_filter_and_place() {
     assert!(s.contains("eleventy.config.js:8"), "{s}");
     assert!(!t.path().join("_site/a/index.html").exists());
 }
+
+const RUN_MODE_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addFilter("mode", function () { return this.eleventy.env.runMode; });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn an_explicit_js_data_off_is_kept_with_a_js_config() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("eleventy.config.js", RUN_MODE_CONFIG),
+        ("src/_data/env.js", "module.exports = { v: 'ran' };"),
+        ("src/a.njk", "[{{ env.v }}]"),
+    ];
+    // Without a say, the config's Node runs data files too.
+    let (t, o) = build_with(&files, &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/a/index.html")).unwrap(),
+        "[ran]"
+    );
+    // Said off, in the flag or the config: they stay off.
+    let (t, o) = build_with(&files, &["--js-data=off"]);
+    let html = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap_or_default();
+    assert!(!html.contains("ran"), "flag: {html}\n{}", text(&o));
+    let mut all = files.to_vec();
+    all.push((
+        "brrrty.config.rhai",
+        "config.set_js_config(\"node\");\nconfig.set_js_data(\"off\");\n",
+    ));
+    let t = site(&all);
+    let o = run(t.path(), "build", &[]);
+    let html = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap_or_default();
+    assert!(!html.contains("ran"), "config: {html}\n{}", text(&o));
+}
+
+#[test]
+fn the_kept_node_runs_in_the_builds_run_mode() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        ("eleventy.config.js", RUN_MODE_CONFIG),
+        (
+            "src/_data/env.js",
+            "module.exports = { v: process.env.ELEVENTY_RUN_MODE };",
+        ),
+        ("src/a.njk", "{{ env.v }}|{{ '' | mode }}"),
+    ]);
+    let flags = brrrty::options::Flags {
+        serve: true,
+        ..Default::default()
+    };
+    let mut opts = brrrty::options::build_options(t.path(), &flags).expect("options");
+    opts.run_mode = brrrty_core::RunMode::Serve;
+    opts.write_to = Some(t.path().join("_serve"));
+    let report = brrrty_core::build(&opts, &brrrty_markdown::MarkdownIt::new());
+    assert!(!report.has_errors(), "{:?}", report.problems);
+    assert_eq!(
+        fs::read_to_string(t.path().join("_serve/a/index.html")).unwrap(),
+        "serve|serve"
+    );
+}
+
+const THIS_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addFilter("shout", (s) => String(s).toUpperCase());
+  eleventyConfig.addFilter("readCtx", function () { return this.ctx; });
+  eleventyConfig.addFilter("readEnv", function () { return this.env; });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn this_ctx_and_this_env_refuse_naming_the_filter() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("eleventy.config.js", THIS_CONFIG),
+            ("src/a.njk", "{{ '' | readCtx }}"),
+            ("src/b.njk", "{{ '' | readEnv }}"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("this.ctx"), "{s}");
+    assert!(s.contains("this.env"), "{s}");
+    assert!(s.contains("readCtx"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+    assert!(!t.path().join("_site/b/index.html").exists());
+}
+
+#[test]
+fn a_safestring_given_to_a_config_filter_refuses_naming_it() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("eleventy.config.js", THIS_CONFIG),
+            ("src/a.njk", "{{ 'x' | safe | shout }}"),
+            ("src/ok.njk", "{{ 'x' | shout }}"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("SafeString") && s.contains("shout"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/ok/index.html")).unwrap(),
+        "X"
+    );
+}
