@@ -646,3 +646,51 @@ fn a_throwing_shortcode_refuses_its_page_naming_shortcode_and_place() {
     assert!(s.contains("eleventy.config.js:12"), "{s}");
     assert!(!t.path().join("_site/a/index.html").exists());
 }
+
+#[test]
+fn liquid_shortcodes_run_in_node_sync_async_and_paired() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", SHORTCODE_CONFIG),
+            (
+                "src/a.liquid",
+                concat!(
+                    "{% sum 1, 2 %}|{% greet \"A, B\" v %}|{% blank %}|{% later \"b\" %}|{% html %}|",
+                    "{% box \"c\" %}{% assign w = \"a&b\" %}{{ w }}{% if w %}!{% endif %}{% endbox %}|{% abox v %}x{% endabox %}"
+                ),
+            ),
+            ("src/_data/v.json", "\"V\""),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let a = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap();
+    assert_eq!(
+        a,
+        "3|hi A, B|/a/|[undefined]|b?|<b>|<div class=\"c\">a&b!</div>|<p V>x</p>"
+    );
+}
+
+#[test]
+fn a_throwing_liquid_shortcode_refuses_its_page() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", SHORTCODE_CONFIG),
+            ("src/a.liquid", "{% boom %}"),
+            ("src/ok.liquid", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("the shortcode `boom`"), "{s}");
+    assert!(s.contains("nope"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+}
