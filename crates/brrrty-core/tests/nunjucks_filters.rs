@@ -51,7 +51,7 @@ fn engine(config: &[ConfigFilter], rss: bool) -> Engine {
         timezone: Tz::Utc,
         autoescape: true,
     });
-    register_nunjucks_filters(&mut e, config, rss);
+    register_nunjucks_filters(&mut e, &[], config, rss);
     e
 }
 

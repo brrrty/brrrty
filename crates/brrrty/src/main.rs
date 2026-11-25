@@ -192,6 +192,7 @@ fn run_build(args: BuildArgs) -> ExitCode {
         js_data: js_data_flag(args.js_data.as_deref()),
         js_config: js_data_flag(args.js_config.as_deref()),
         order_check: args.no_order_check.then_some(false),
+        serve: false,
     };
     let opts = match build_options(&root, &flags) {
         Ok(opts) => opts,
@@ -248,6 +249,7 @@ fn run_serve(args: ServeArgs) -> ExitCode {
             js_data: js_data_flag(args.js_data.as_deref()),
             js_config: js_data_flag(args.js_config.as_deref()),
             order_check: args.no_order_check.then_some(false),
+            serve: true,
         },
         quiet,
         color,
@@ -415,6 +417,7 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         js_config: js_data_flag(args.js_config.as_deref()),
         // Doctor always runs the check, whatever the config says.
         order_check: Some(true),
+        serve: false,
     };
     let opts = match build_options(&root, &flags) {
         Ok(opts) => opts,

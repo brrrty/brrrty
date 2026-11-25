@@ -2993,6 +2993,18 @@ function opaqueThis(what) {
   });
 }
 
+// `this` where only some keys are something Brrrty doesn't model: reading one refuses.
+function guardedThis(target, guard) {
+  const what = new Map(guard);
+  const fail = (key) => {
+    throw refuse(`reads \`this.${key}\`, which is ${what.get(key)} in 11ty`);
+  };
+  return new Proxy(target, {
+    get: (t, k, r) => (what.has(k) ? fail(k) : Reflect.get(t, k, r)),
+    has: (t, k) => (what.has(k) ? fail(k) : Reflect.has(t, k)),
+  });
+}
+
 // Where a function is defined, as `file:line:column` relative to the
 // project, found with the inspector (only when a message needs it).
 function fnPlace(fn) {
@@ -3206,7 +3218,12 @@ async function handle(req) {
     }
     case "call": {
       const fn = getHandle(req.handle);
-      const thisArg = req.opaque !== undefined ? opaqueThis(req.opaque) : fromWire(req.this);
+      const thisArg =
+        req.opaque !== undefined
+          ? opaqueThis(req.opaque)
+          : req.guard !== undefined
+            ? guardedThis(fromWire(req.this), req.guard)
+            : fromWire(req.this);
       const args = (req.args || []).map((a) => fromWire(a));
       let own = null;
       if (req.own !== undefined) {

@@ -24,6 +24,9 @@ pub enum This<'a> {
     /// The object the function was read from (`fmt.money(1)`, and Liquid's
     /// `{{ fmt.who }}`), as the page sees it.
     Value(&'a Value),
+    /// An object as the page sees it, but reading any of these keys (`key`, and what it is in
+    /// 11ty) refuses the page: parts of 11ty's `this` Brrrty doesn't model.
+    Guarded(&'a Value, &'a [(&'a str, &'a str)]),
     /// Something Brrrty doesn't model (Nunjucks's render context, 11ty's
     /// filter collection): reading any property of it refuses the page.
     Opaque(&'static str),

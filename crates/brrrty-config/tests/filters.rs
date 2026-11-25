@@ -1827,7 +1827,7 @@ fn render_njk(cfg: &SiteConfig, tpl: &str, json: &str) -> Result<String, String>
         timezone: brrrty_nunjucks::Tz::Utc,
         autoescape: true,
     });
-    brrrty_core::register_nunjucks_filters(&mut e, &cfg.filters, false);
+    brrrty_core::register_nunjucks_filters(&mut e, &[], &cfg.filters, false);
     let t = e.compile("t.njk", tpl).map_err(|e| e.to_string())?;
     e.render(&t, &data(json), &NoIncludes)
         .map_err(|e| e.to_string())

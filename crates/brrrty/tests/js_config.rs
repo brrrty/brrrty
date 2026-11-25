@@ -68,6 +68,7 @@ fn the_recorded_config_is_applied_to_the_build() {
     let t = fixture("config.set_js_config(\"node\");\n");
     let o = run(t.path(), "build", &[]);
     assert!(o.status.success(), "{}", text(&o));
+    assert!(!text(&o).contains("config-unverified"), "{}", text(&o));
     let out = t.path().join("_site");
     assert_eq!(
         fs::read_to_string(out.join("index.html")).unwrap(),
@@ -361,4 +362,223 @@ fn the_missing_config_help_lists_the_files_in_lookup_order() {
     let a = out.find(".eleventy.js").expect(&out);
     let b = out.find("eleventy.config.js").expect(&out);
     assert!(a < b, "{out}");
+}
+
+const FILTER_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addFilter("shout", (s) => String(s).toUpperCase() + "!");
+  eleventyConfig.addAsyncFilter("later", async (s) => { await null; return s + "?"; });
+  eleventyConfig.addFilter("pageUrl", function () { return this.page.url; });
+  eleventyConfig.addNunjucksFilter("njkOnly", (s) => "njk:" + s);
+  eleventyConfig.addLiquidFilter("liqOnly", (s) => "liq:" + s);
+  eleventyConfig.addNunjucksFilter("kw", (s, n, o) => s + n + o.sep);
+  eleventyConfig.addFilter("boom", (s) => { throw new Error("nope " + s); });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn config_filters_run_in_node_for_each_engine() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", FILTER_CONFIG),
+            (
+                "src/a.njk",
+                "{{ 'a' | shout }}|{{ 'b' | later }}|{{ '' | pageUrl }}|{{ 'c' | njkOnly }}|{{ 'x' | kw(1, sep='-') }}",
+            ),
+            (
+                "src/b.liquid",
+                "{{ 'a' | shout }}|{{ 'b' | later }}|{{ '' | pageUrl }}|{{ 'c' | liqOnly }}",
+            ),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let a = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap();
+    assert_eq!(a, "A!|b?|/a/|njk:c|x1-");
+    let b = fs::read_to_string(t.path().join("_site/b/index.html")).unwrap();
+    assert_eq!(b, "A!|b?|/b/|liq:c");
+}
+
+#[test]
+fn an_engine_only_filter_is_not_in_the_other_engine() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", FILTER_CONFIG),
+            ("src/b.liquid", "{{ 'c' | njkOnly }}"),
+        ],
+        &[],
+    );
+    assert!(!o.status.success(), "{}", text(&o));
+    assert!(!t.path().join("_site/b/index.html").exists());
+}
+
+#[test]
+fn a_rhai_filter_of_the_same_name_wins() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "brrrty.config.rhai",
+                "config.set_js_config(\"node\");\nconfig.add_filter(\"shout\", |s| `rhai ${s}`);\n",
+            ),
+            ("eleventy.config.js", FILTER_CONFIG),
+            ("src/a.njk", "{{ 'a' | shout }}"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/a/index.html")).unwrap(),
+        "rhai a"
+    );
+}
+
+#[test]
+fn a_throwing_filter_refuses_its_page_naming_filter_and_place() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", FILTER_CONFIG),
+            ("src/a.njk", "{{ 'a' | boom }}"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("boom"), "{s}");
+    assert!(s.contains("nope a"), "{s}");
+    assert!(s.contains("eleventy.config.js:8"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+}
+
+const RUN_MODE_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addFilter("mode", function () { return this.eleventy.env.runMode; });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn an_explicit_js_data_off_is_kept_with_a_js_config() {
+    if !has_node() {
+        return;
+    }
+    let files = [
+        ("eleventy.config.js", RUN_MODE_CONFIG),
+        ("src/_data/env.js", "module.exports = { v: 'ran' };"),
+        ("src/a.njk", "[{{ env.v }}]"),
+    ];
+    // Without a say, the config's Node runs data files too.
+    let (t, o) = build_with(&files, &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/a/index.html")).unwrap(),
+        "[ran]"
+    );
+    // Said off, in the flag or the config: they stay off.
+    let (t, o) = build_with(&files, &["--js-data=off"]);
+    let html = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap_or_default();
+    assert!(!html.contains("ran"), "flag: {html}\n{}", text(&o));
+    let mut all = files.to_vec();
+    all.push((
+        "brrrty.config.rhai",
+        "config.set_js_config(\"node\");\nconfig.set_js_data(\"off\");\n",
+    ));
+    let t = site(&all);
+    let o = run(t.path(), "build", &[]);
+    let html = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap_or_default();
+    assert!(!html.contains("ran"), "config: {html}\n{}", text(&o));
+}
+
+#[test]
+fn the_kept_node_runs_in_the_builds_run_mode() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        ("eleventy.config.js", RUN_MODE_CONFIG),
+        (
+            "src/_data/env.js",
+            "module.exports = { v: process.env.ELEVENTY_RUN_MODE };",
+        ),
+        ("src/a.njk", "{{ env.v }}|{{ '' | mode }}"),
+    ]);
+    let flags = brrrty::options::Flags {
+        serve: true,
+        ..Default::default()
+    };
+    let mut opts = brrrty::options::build_options(t.path(), &flags).expect("options");
+    opts.run_mode = brrrty_core::RunMode::Serve;
+    opts.write_to = Some(t.path().join("_serve"));
+    let report = brrrty_core::build(&opts, &brrrty_markdown::MarkdownIt::new());
+    assert!(!report.has_errors(), "{:?}", report.problems);
+    assert_eq!(
+        fs::read_to_string(t.path().join("_serve/a/index.html")).unwrap(),
+        "serve|serve"
+    );
+}
+
+const THIS_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addFilter("shout", (s) => String(s).toUpperCase());
+  eleventyConfig.addFilter("readCtx", function () { return this.ctx; });
+  eleventyConfig.addFilter("readEnv", function () { return this.env; });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn this_ctx_and_this_env_refuse_naming_the_filter() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("eleventy.config.js", THIS_CONFIG),
+            ("src/a.njk", "{{ '' | readCtx }}"),
+            ("src/b.njk", "{{ '' | readEnv }}"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("this.ctx"), "{s}");
+    assert!(s.contains("this.env"), "{s}");
+    assert!(s.contains("readCtx"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+    assert!(!t.path().join("_site/b/index.html").exists());
+}
+
+#[test]
+fn a_safestring_given_to_a_config_filter_refuses_naming_it() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("eleventy.config.js", THIS_CONFIG),
+            ("src/a.njk", "{{ 'x' | safe | shout }}"),
+            ("src/ok.njk", "{{ 'x' | shout }}"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("SafeString") && s.contains("shout"), "{s}");
+    assert!(!t.path().join("_site/a/index.html").exists());
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/ok/index.html")).unwrap(),
+        "X"
+    );
 }

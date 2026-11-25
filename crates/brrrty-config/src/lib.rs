@@ -257,6 +257,8 @@ impl SiteConfig {
             unported: self.unported.clone(),
             js_data: self.js_data,
             js_config: self.js_config,
+            js_filters: Vec::new(),
+            js_started: None,
             order_check: self.order_check,
         }
     }

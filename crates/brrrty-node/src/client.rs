@@ -75,13 +75,7 @@ const AGAIN: usize = 16;
 fn logged(op: &str) -> bool {
     !matches!(
         op,
-        "reads"
-            | "info"
-            | "callsBegin"
-            | "loadsChanged"
-            | "exportsFinal"
-            | "describe"
-            | "configLoad"
+        "reads" | "info" | "callsBegin" | "loadsChanged" | "exportsFinal" | "describe"
     )
 }
 
@@ -107,7 +101,7 @@ pub enum RunMode {
 }
 
 impl RunMode {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             RunMode::Build => "build",
             RunMode::Serve => "serve",
@@ -1220,6 +1214,22 @@ impl Worker {
                     This::Value(v) => {
                         text.push_str(",\"this\":");
                         self.table.argument(v, false, &mut text, &mut added)?;
+                    }
+                    This::Guarded(v, keys) => {
+                        text.push_str(",\"this\":");
+                        self.table.argument(v, false, &mut text, &mut added)?;
+                        text.push_str(",\"guard\":[");
+                        for (i, (k, what)) in keys.iter().enumerate() {
+                            if i > 0 {
+                                text.push(',');
+                            }
+                            text.push('[');
+                            crate::wire::string(&mut text, k);
+                            text.push(',');
+                            crate::wire::string(&mut text, what);
+                            text.push(']');
+                        }
+                        text.push(']');
                     }
                     This::Opaque(what) => {
                         text.push_str(",\"opaque\":");
