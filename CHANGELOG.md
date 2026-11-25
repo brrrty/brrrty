@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 - 2026-11-25
+
+- With `set_js_config("node")`, filters added in the 11ty config (`addFilter`, `addAsyncFilter`, `addNunjucksFilter`, `addNunjucksAsyncFilter`, `addLiquidFilter`) now run in Node from Nunjucks and Liquid templates. Async filters are awaited. Inside a filter, `this` has `page` and `eleventy` (with `env.runMode` set to `serve` under `brrrty serve`). Engine-specific filters register only in their own engine, and a Rhai `add_filter` with the same name wins. A filter that throws refuses its page, naming the filter and its file and line. A filter that reads `this.ctx`/`this.env` (Nunjucks) or `this.context`/`this.liquid` (Liquid), or gets a `safe` string, refuses its page with a message naming the filter. Unless `--js-data` or `set_js_data` says otherwise, the Node that loaded the config runs JavaScript data files too.
+
 ## 0.1.3 - 2026-11-24
 
 - `config.set_js_config("node")` (or `--js-config=node` on `build`, `serve` and `doctor`; off by default) runs the site's 11ty config file in Node against a recording `eleventyConfig`. Brrrty then applies passthrough copy, ignores, template formats, global data, `dir` and the template engines from it, along with what the config returns and an ESM `export const config`. Lines in `brrrty.config.rhai` win for the same setting. Config files are found in 11ty's order, `.eleventy.js` first. Brrrty doesn't call config-defined filters, shortcodes and transforms yet. Any method it skips gets a warning with the file and line, any returned key it skips gets a warning naming the file, and `brrrty doctor` lists them all.
