@@ -36,7 +36,15 @@ pub use symbols::symbols;
 /// This is Nunjucks's parser. The checks Nunjucks makes when it compiles
 /// the parsed template, such as for unknown filters, come later.
 pub fn parse(template_name: &str, source: &str) -> Result<Template, NunjucksError> {
-    match parser::parse(source) {
+    parse_with(template_name, source, &parser::Shortcodes::new())
+}
+
+pub(crate) fn parse_with(
+    template_name: &str,
+    source: &str,
+    shortcodes: &parser::Shortcodes,
+) -> Result<Template, NunjucksError> {
+    match parser::parse(source, shortcodes) {
         Ok(nodes) => Ok(Template {
             name: template_name.to_string(),
             nodes,

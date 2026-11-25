@@ -641,8 +641,8 @@ fn a_throwing_shortcode_refuses_its_page_naming_shortcode_and_place() {
         &[],
     );
     let s = text(&o);
-    assert!(s.contains("Error with Nunjucks shortcode `boom`"), "{s}");
+    assert!(s.contains("the shortcode `boom`"), "{s}");
     assert!(s.contains("nope"), "{s}");
-    assert!(s.contains("eleventy.config.js:10"), "{s}");
+    assert!(s.contains("eleventy.config.js:12"), "{s}");
     assert!(!t.path().join("_site/a/index.html").exists());
 }

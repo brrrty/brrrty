@@ -42,15 +42,15 @@ pub use build::{
 };
 pub use data::JsFileState;
 pub use discover::{Discovery, discover};
-pub use filters::register_nunjucks_filters;
+pub use filters::{register_nunjucks_filters, register_nunjucks_shortcodes};
 pub use frontmatter::split_front_matter;
 pub use js::js_truthy;
 pub use options::{
     BuildOptions, CollectionError, CollectionFn, CollectionInput, CollectionPage, ConfigCollection,
     ConfigFilter, ConfigOptions, DataFn, DataRequest, DataRunner, FileReads, FilterEngine,
-    JsConfigFilter, JsData, JsDataSource, JsNode, JsNodeMissing, JsOptions, JsStarter,
-    LateProblems, MarkdownRules, PassthroughEntry, RunMode, SERVE_STAGING_DIR, StartedJs,
-    TemplateEngines, TemplateLanguage, UndatedPage,
+    JsConfigFilter, JsConfigShortcode, JsData, JsDataSource, JsNode, JsNodeMissing, JsOptions,
+    JsStarter, LateProblems, MarkdownRules, PassthroughEntry, RunMode, SERVE_STAGING_DIR,
+    StartedJs, TemplateEngines, TemplateLanguage, UndatedPage,
 };
 pub use page::{Page, file_path_stem, file_slug, resolve_date};
 pub use passthrough::copy_passthrough;

@@ -359,7 +359,7 @@ const LIQUID_THIS: &[(&str, &str)] = &[
     ("liquid", "the LiquidJS engine"),
 ];
 
-/// Turn the recorded filter functions into filters that call Node.
+/// Turn the recorded filter and shortcode functions into ones that call Node.
 fn add_filters(
     v: &Value,
     shown: &Path,
@@ -367,7 +367,7 @@ fn add_filters(
     run_mode: brrrty_node::RunMode,
     config: &mut ConfigOptions,
 ) {
-    use brrrty_core::{FilterEngine, JsConfigFilter};
+    use brrrty_core::{FilterEngine, JsConfigFilter, JsConfigShortcode};
     use brrrty_js::functions::{Settle, This};
     let Some(Value::Array(fns)) = get(v, "functions") else {
         return;
@@ -378,9 +378,13 @@ fn add_filters(
         "env": { "source": "cli", "runMode": run_mode.as_str(), "root": root.display().to_string() },
     }));
     for f in fns.iter() {
-        if text(get(f, "kind")).as_deref() != Some("filter") {
-            continue;
-        }
+        // `Some(paired)` for a shortcode, `None` for a filter.
+        let (what, shortcode) = match text(get(f, "kind")).as_deref() {
+            Some("filter") => ("filter", None),
+            Some("shortcode") => ("shortcode", Some(false)),
+            Some("pairedShortcode") => ("shortcode", Some(true)),
+            _ => continue,
+        };
         let (Some(name), Some(Value::Function(h))) = (text(get(f, "name")), get(f, "fn")) else {
             continue;
         };
@@ -388,23 +392,24 @@ fn add_filters(
             Some("all") => FilterEngine::All,
             Some("nunjucks") => FilterEngine::Nunjucks,
             Some("liquid") => FilterEngine::Liquid,
-            // `addJavaScriptFilter`: for JavaScript templates only.
+            // `addJavaScriptFilter` and the like: for JavaScript templates only.
             _ => continue,
         };
         let is_async = matches!(get(f, "async"), Some(Value::Bool(true)));
         let make = |settle: Settle,
                     guard: &'static [(&'static str, &'static str)]|
          -> brrrty_liquid::ArgsFilterFn {
-            let (h, n, eleventy, shown) = (
+            let (h, n, eleventy, shown, what) = (
                 *h,
                 name.clone(),
                 eleventy.clone(),
                 shown.display().to_string(),
+                what,
             );
             std::sync::Arc::new(move |input, args, _| {
                 let Some(caller) = brrrty_js::functions::installed() else {
                     return Err(format!(
-                        "{}the filter `{n}` (from {shown}) can't run: Node isn't running",
+                        "{}the {what} `{n}` (from {shown}) can't run: Node isn't running",
                         brrrty_js::REFUSAL_PREFIX
                     ));
                 };
@@ -416,7 +421,7 @@ fn add_filters(
                     .call(h, This::Guarded(&this, guard), &all, settle)
                     .map_err(|why| {
                         format!(
-                            "{}the filter `{n}` (from {shown}) failed: {why}",
+                            "{}the {what} `{n}` (from {shown}) failed: {why}",
                             brrrty_js::REFUSAL_PREFIX
                         )
                     })
@@ -431,11 +436,23 @@ fn add_filters(
         };
         if engine != FilterEngine::Liquid {
             let run = make(njk, NUNJUCKS_THIS);
-            config.js_filters.push(JsConfigFilter {
-                name: name.clone(),
-                engine: FilterEngine::Nunjucks,
-                run,
-            });
+            match shortcode {
+                Some(paired) => config.js_shortcodes.push(JsConfigShortcode {
+                    name: name.clone(),
+                    paired,
+                    engine: FilterEngine::Nunjucks,
+                    run,
+                }),
+                None => config.js_filters.push(JsConfigFilter {
+                    name: name.clone(),
+                    engine: FilterEngine::Nunjucks,
+                    run,
+                }),
+            }
+        }
+        if shortcode.is_some() {
+            // Liquid's shortcodes come with its tags.
+            continue;
         }
         if engine != FilterEngine::Nunjucks {
             let run = make(Settle::Await, LIQUID_THIS);

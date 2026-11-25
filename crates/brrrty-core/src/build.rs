@@ -2497,6 +2497,7 @@ fn build_once(
         &opts.config.filters,
         rss,
     );
+    crate::filters::register_nunjucks_shortcodes(&mut nunjucks, &opts.config.js_shortcodes);
     let includes_rel = opts.config.includes_dir();
     let includes = input.join(includes_rel);
     let includes = includes.canonicalize().unwrap_or(includes);
