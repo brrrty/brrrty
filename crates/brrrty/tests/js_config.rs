@@ -694,3 +694,56 @@ fn a_throwing_liquid_shortcode_refuses_its_page() {
     assert!(s.contains("nope"), "{s}");
     assert!(!t.path().join("_site/a/index.html").exists());
 }
+
+const SHORTCODE_EDGE_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addShortcode("num", () => 0);
+  eleventyConfig.addShortcode("f", () => false);
+  eleventyConfig.addPairedShortcode("show", (b, a) => `[${b}|${a}]`);
+  eleventyConfig.addPairedShortcode("pnum", () => 3);
+  return { dir: { input: "src" } };
+};
+"#;
+
+fn edge_build(file: &str, body: &str) -> String {
+    let (t, o) = build_with(
+        &[
+            ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+            ("eleventy.config.js", SHORTCODE_EDGE_CONFIG),
+            (file, body),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    fs::read_to_string(t.path().join("_site/a/index.html")).unwrap()
+}
+
+#[test]
+fn liquid_shortcode_falsy_return_writes_nothing() {
+    if !has_node() {
+        return;
+    }
+    assert_eq!(edge_build("src/a.liquid", "{% num %}|{% f %}"), "|");
+}
+
+#[test]
+fn paired_shortcode_args_are_evaluated_before_the_body() {
+    if !has_node() {
+        return;
+    }
+    assert_eq!(
+        edge_build("src/a.njk", "{% show w %}{% set w = \"in\" %}{% endshow %}"),
+        "[|undefined]"
+    );
+    assert_eq!(
+        edge_build("src/a.liquid", "{% show w %}{% assign w = \"in\" %}{% endshow %}"),
+        "[|undefined]"
+    );
+}
+
+#[test]
+fn nunjucks_paired_shortcode_non_string_return_prints_undefined() {
+    if !has_node() {
+        return;
+    }
+    assert_eq!(edge_build("src/a.njk", "{% pnum %}x{% endpnum %}"), "undefined");
+}
