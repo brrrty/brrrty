@@ -70,10 +70,16 @@ function configRecorder() {
       functions.push({ kind, name: String(name), engine, async: isAsync, fn });
     };
   }
+  // 11ty 3.1.8 `UserConfig.addPlugin`: a plugin (a function, or `{ configFunction }`) is
+  // called with the config and its options after the config function returns, in the
+  // order added, unless `options.immediate` runs it now.
+  const queue = [];
+  const runPlugin = (fn, options) => fn(proxy, options);
   methods.addPlugin = (plugin, options = {}) => {
     const fn = typeof plugin === "function" ? plugin : plugin && plugin.configFunction;
     if (typeof fn !== "function") return notedAt("addPlugin");
-    functions.push({ kind: "plugin", name: fn.name || "", engine: "all", async: false, fn, options });
+    if (options && options.immediate) return runPlugin(fn, options);
+    queue.push({ fn, options });
   };
   methods.addPassthroughCopy = function (input, options = {}) {
     if (typeof input === "string") {
@@ -120,6 +126,9 @@ function configRecorder() {
   });
   return {
     proxy,
+    async runPlugins() {
+      for (let i = 0; i < queue.length; i++) await runPlugin(queue[i].fn, queue[i].options);
+    },
     done(returned) {
       values.ignores = [...ignores];
       return { returned, values, functions, unsupported };
@@ -157,6 +166,7 @@ async function loadConfig(file) {
   }
   const rec = configRecorder();
   let returned = await fn(rec.proxy);
+  await rec.runPlugins();
   if (exported && typeof exported === "object") {
     returned = deepMerge(returned && typeof returned === "object" ? returned : {}, exported);
   }

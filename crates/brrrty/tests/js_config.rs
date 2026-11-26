@@ -902,7 +902,10 @@ module.exports = function (c) {
 "#,
             ),
             ("assets/a.txt", "asset"),
-            ("src/a.njk", "{{ 'x' | greet }}|{{ 'y' | viaObject }}|{{ order }}"),
+            (
+                "src/a.njk",
+                "{{ 'x' | greet }}|{{ 'y' | viaObject }}|{{ order }}",
+            ),
         ],
         &[],
     );
