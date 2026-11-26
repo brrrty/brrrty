@@ -25,7 +25,6 @@ use brrrty_js::Value;
 
 use crate::data::{json_text, key_line};
 use crate::frontmatter::{Data, split_front_matter};
-use crate::loader::lexical;
 use crate::options::TemplateEngines;
 use crate::problem::{Problem, codes};
 use crate::render::body_line;
@@ -174,7 +173,7 @@ impl<'a> Layouts<'a> {
     /// without parsing or caching it: `None` when there is none.
     pub fn find_file(&self, name: &str) -> Option<PathBuf> {
         let name = self.aliases.get(name).map_or(name, String::as_str);
-        let rel = lexical(&format!("{}/{name}", self.dir.display()))?;
+        let rel = self.in_dir(name)?;
         let mut candidates = vec![rel.clone()];
         for ext in &self.extensions {
             let mut with = rel.as_os_str().to_os_string();
@@ -193,9 +192,56 @@ impl<'a> Layouts<'a> {
         self.js = Some(js);
     }
 
+    /// How many folders the layouts folder climbs out of the input folder
+    /// (`../src` is 1).
+    fn climb(&self) -> usize {
+        self.dir
+            .components()
+            .take_while(|c| matches!(c, std::path::Component::ParentDir))
+            .count()
+    }
+
+    /// The folder layouts must stay inside: the input folder, or the
+    /// folder the layouts folder climbs up to.
+    fn boundary(&self) -> PathBuf {
+        let mut up = self.input.clone();
+        for _ in 0..self.climb() {
+            up.pop();
+        }
+        up
+    }
+
+    /// `name` in the layouts folder, relative to the input folder, with `..`
+    /// resolved; `None` when it is absolute or leaves the boundary.
+    fn in_dir(&self, name: &str) -> Option<PathBuf> {
+        if name.starts_with('/') || Path::new(name).is_absolute() {
+            return None;
+        }
+        let climb = self.climb();
+        // Parts below the boundary, after the folder's leading `..`.
+        let mut parts: Vec<String> = self
+            .dir
+            .components()
+            .skip(climb)
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        for part in name.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                p => parts.push(p.to_string()),
+            }
+        }
+        let mut out: PathBuf = std::iter::repeat_n("..", climb).collect();
+        out.extend(parts);
+        Some(out)
+    }
+
     /// The layouts folder, relative to the project root.
     pub fn dir_shown(&self) -> PathBuf {
-        self.input_shown.join(&self.dir)
+        crate::options::normalize(&self.input_shown.join(&self.dir))
     }
 
     /// The layout chain for a page whose front matter has `layout: name`,
@@ -275,7 +321,7 @@ impl<'a> Layouts<'a> {
         // An alias stands for a file's name; names are relative to the
         // layouts folder, which is inside the input folder.
         let name = self.aliases.get(name).map_or(name, String::as_str);
-        let rel = lexical(&format!("{}/{name}", self.dir.display())).ok_or(Failure::Outside)?;
+        let rel = self.in_dir(name).ok_or(Failure::Outside)?;
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(found) = cache.get(&rel) {
             return found.clone();
@@ -325,7 +371,7 @@ impl<'a> Layouts<'a> {
                 "check the file's permissions",
             )
         })?;
-        if !real.starts_with(&self.input) {
+        if !real.starts_with(self.boundary()) {
             return Err(file(
                 codes::LAYOUT_INVALID,
                 format!(

@@ -772,7 +772,7 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<Returned, Ve
                             ),
                         )
                         .with_help(format!(
-                            "give `dir.{name}` a folder inside the input folder, like `_includes`, relative to it"
+                            "give `dir.{name}` a folder inside the input folder, like `_includes` (or `../src`), relative to it"
                         )),
                     ]);
                 }
@@ -783,7 +783,9 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<Returned, Ve
 }
 
 /// `folder`, relative to the input folder, written plainly (`./parts/` is
-/// `parts`); `None` when it isn't a folder inside the input folder.
+/// `parts`); it may lead out of the input folder with leading `..` parts, as
+/// 11ty allows (`../src`). `None` for an absolute path, a backslash, an empty
+/// folder, or a `..` after a name.
 fn inside_input(folder: &str) -> Option<String> {
     if folder.starts_with('/') || folder.contains('\\') {
         return None;
@@ -792,7 +794,8 @@ fn inside_input(folder: &str) -> Option<String> {
         .split('/')
         .filter(|p| !p.is_empty() && *p != ".")
         .collect();
-    if parts.is_empty() || parts.contains(&"..") {
+    let named = parts.iter().position(|p| *p != "..").unwrap_or(parts.len());
+    if parts.is_empty() || parts[named..].contains(&"..") || named == parts.len() {
         return None;
     }
     Some(parts.join("/"))

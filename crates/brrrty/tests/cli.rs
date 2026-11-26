@@ -912,7 +912,7 @@ fn includes_and_layouts_outside_the_input_folder_build() {
             "---\nlayout: base.njk\n---\nhi {% include \"part.njk\" %}\n",
         ),
         ("pages/two.md", "---\nlayout: other.njk\n---\ntwo\n"),
-        ("src/_includes/base.njk", "<html>{{ content | safe }}</html>"),
+        ("shared/base.njk", "<html>{{ content | safe }}</html>"),
         ("src/_includes/part.njk", "[part]"),
         ("shared/other.njk", "<main>{{ content | safe }}</main>"),
         (
