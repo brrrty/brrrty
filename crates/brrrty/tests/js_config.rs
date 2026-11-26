@@ -917,3 +917,111 @@ module.exports = function (c) {
         "asset"
     );
 }
+
+/// Doctor reports the JS config: mode, config file, each JS function (hottest first, with its
+/// calls and time) and each unsupported method with its place.
+#[test]
+fn doctor_reports_the_js_config_functions_and_unsupported_methods() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        (
+            "eleventy.config.js",
+            "module.exports = function (c) {\n  c.addFilter(\"shout\", (s) => String(s).toUpperCase());\n  c.addFilter(\"idle\", (s) => s);\n  c.addShortcode(\"hi\", () => \"hi\");\n  c.addCollection(\"x\", () => []);\n};\n",
+        ),
+        (
+            "index.njk",
+            "{{ 'a' | shout }}{{ 'b' | shout }}{{ 'c' | shout }}{% hi %}",
+        ),
+    ]);
+    let out = run(t.path(), "doctor", &[]);
+    let s = text(&out);
+    assert!(s.contains("JavaScript config: on"), "{s}");
+    assert!(s.contains("eleventy.config.js"), "{s}");
+    assert!(s.contains("filter shout"), "{s}");
+    assert!(
+        s.contains("eleventyConfig.addCollection") && s.contains("eleventy.config.js:5"),
+        "{s}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&run(t.path(), "doctor", &["--json"]).stdout).unwrap();
+    let js = &json["jsConfig"];
+    assert_eq!(js["mode"], "node", "{json}");
+    assert_eq!(js["file"], "eleventy.config.js", "{json}");
+    let fns = js["functions"].as_array().unwrap();
+    assert_eq!(fns[0]["kind"], "filter", "{json}");
+    assert_eq!(fns[0]["name"], "shout", "{json}");
+    assert_eq!(fns[0]["calls"], 3, "{json}");
+    assert!(fns[0]["ms"].is_number(), "{json}");
+    let idle = fns.iter().find(|f| f["name"] == "idle").unwrap();
+    assert_eq!(idle["calls"], 0, "{json}");
+    assert!(
+        fns.iter()
+            .any(|f| f["kind"] == "shortcode" && f["name"] == "hi")
+    );
+    let un = js["unsupported"].as_array().unwrap();
+    assert_eq!(un[0]["method"], "addCollection", "{json}");
+    assert_eq!(un[0]["file"], "eleventy.config.js", "{json}");
+    assert_eq!(un[0]["line"], 5, "{json}");
+}
+
+/// Without the JS config there is no report.
+#[test]
+fn doctor_has_no_js_config_section_when_it_is_off() {
+    let t = site(&[("index.md", "hi\n")]);
+    let json: serde_json::Value =
+        serde_json::from_slice(&run(t.path(), "doctor", &["--json"]).stdout).unwrap();
+    assert_eq!(json["jsConfig"]["mode"], "off", "{json}");
+    assert_eq!(json["jsConfig"]["functions"], serde_json::json!([]));
+}
+
+/// A method the JS config can't run and that changes the output blocks the build, wherever the
+/// call sits (here: inside a helper module the config calls).
+#[test]
+fn an_unrun_output_changing_method_blocks_the_build() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"const addHelpers = require("eleventy-helpers"); module.exports = function (c) { addHelpers(c); return { dir: { input: "src" } }; };"#,
+            ),
+            (
+                "node_modules/eleventy-helpers/index.js",
+                r#"module.exports = function (c) { c.addFilter("shout", s => s); c.amendLibrary("md", md => md.disable("emphasis")); };"#,
+            ),
+            ("src/index.md", "*x*"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(!o.status.success(), "{s}");
+    assert!(s.contains("amendLibrary"), "{s}");
+    assert!(!t.path().join("_site/index.html").exists(), "{s}");
+}
+
+/// A config that throws still gives doctor a report, with the error as the blocker.
+#[test]
+fn doctor_json_reports_a_config_that_throws() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        (
+            "eleventy.config.js",
+            "module.exports = function () { throw new Error(\"boom\"); };\n",
+        ),
+        ("index.md", "hi\n"),
+    ]);
+    let out = run(t.path(), "doctor", &["--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("not JSON ({e}): {}", text(&out)));
+    assert_eq!(json["jsConfig"]["mode"], "node", "{json}");
+    assert!(json.to_string().contains("boom"), "{json}");
+    assert!(!json["groups"].as_array().unwrap().is_empty(), "{json}");
+}

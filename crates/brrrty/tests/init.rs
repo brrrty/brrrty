@@ -122,7 +122,8 @@ fn sets_up_a_cjs_site() {
         "config.add_passthrough_copy(\"src/images\");\n",
         "config.add_passthrough_copy(#{ \"src/favicon.svg\": \"favicon.svg\" });\n",
         "config.add_plugin(\"syntaxhighlight\");\n",
-        "// TODO(brrrty): port this filter to Rhai with config.add_filter.\n// See https://brrrty.com/docs/configuration/#filters\n// eleventy.config.js, line 7:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n",
+        "config.set_js_config(\"node\");\n",
+        "// Left out: Brrrty runs this in your own Node, as 11ty does (config.set_js_config).\n// See https://brrrty.com/docs/configuration/\n// eleventy.config.js, line 7:\n//       eleventyConfig.addFilter(\"shout\", (s) => s.toUpperCase() + \"!\");\n",
         "//       eleventyConfig.addShortcode(\"year\", () => `${new Date().getFullYear()}`);\n",
         "#{\n    dir: #{\n        input: \"src\",\n        output: \"dist\",\n    },\n    markdownTemplateEngine: \"njk\",\n}\n",
     ] {
@@ -133,10 +134,8 @@ fn sets_up_a_cjs_site() {
         text.contains("Wrote brrrty.config.rhai, package.json and src/_data/site.rhai."),
         "{text}"
     );
-    assert!(
-        text.contains("brrrty.config.rhai has 2 TODO(brrrty) markers"),
-        "{text}"
-    );
+    // The filter and the shortcode run in Node: no marker is left.
+    assert!(!text.contains("TODO(brrrty) marker"), "{text}");
     // A literal data file is translated beside itself.
     assert!(
         text.contains("      src/_data/site.js -> site.rhai\n"),
@@ -167,16 +166,17 @@ fn sets_up_a_cjs_site() {
         "{rhai}"
     );
 
-    // While the TODOs are left, Brrrty writes nothing, and says why.
-    let refused = run_in(dir.path(), &["build"]);
-    assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
-    assert!(
-        stderr(&refused).contains("config-todo"),
-        "{}",
-        stderr(&refused)
-    );
-    assert!(!dir.path().join("dist").exists());
-
+    // Nothing is left to port by hand: the config runs in Node, which needs the site's
+    // packages, as 11ty does.
+    let plugin = dir
+        .path()
+        .join("node_modules/@11ty/eleventy-plugin-syntaxhighlight");
+    std::fs::create_dir_all(&plugin).unwrap();
+    std::fs::write(
+        plugin.join("index.js"),
+        "module.exports = function () {};\n",
+    )
+    .unwrap();
     // Deleting the markers says they are dealt with: Brrrty builds with the new config.
     let ported: String = rhai
         .lines()
@@ -224,7 +224,7 @@ fn sets_up_an_esm_site() {
         assert!(rhai.contains(want), "missing {want:?} in:\n{rhai}");
     }
     assert!(
-        stdout(&out).contains("has 3 TODO(brrrty) markers"),
+        stdout(&out).contains("has 2 TODO(brrrty) markers"),
         "{}",
         stdout(&out)
     );
@@ -432,7 +432,10 @@ fn ported_fixtures_match_eleventy() {
         }
         brrrty_config::load(&root)
             .unwrap_or_else(|p| panic!("{name}: the config doesn't load: {p:?}"));
-        if read(&root, "brrrty.config.rhai").contains("// TODO") {
+        let written = read(&root, "brrrty.config.rhai");
+        // A config that runs in Node uses the real clock, so `new Date()` can't be frozen to
+        // 11ty's: tests/js_config.rs covers those.
+        if written.contains("// TODO") || written.contains("set_js_config") {
             continue;
         }
 
@@ -672,7 +675,7 @@ fn a_helper_module_is_followed_and_recorded() {
         ),
         (
             "eleventy.config.js",
-            "const setup = require(\"./lib/setup\");\n\nmodule.exports = function (eleventyConfig) {\n  setup(eleventyConfig);\n  if (process.env.ELEVENTY_ENV === \"production\") {\n    eleventyConfig.addPassthroughCopy(\"prod\");\n  }\n  return { dir: { input: \"src\" } };\n};\n",
+            "const setup = require(\"./lib/setup\");\n\nmodule.exports = function (eleventyConfig) {\n  setup(eleventyConfig);\n  if (process.env.ELEVENTY_ENV === \"production\") {\n    eleventyConfig.addCollection(\"prod\", () => []);\n  }\n  return { dir: { input: \"src\" } };\n};\n",
         ),
         (
             "lib/setup.js",
@@ -684,6 +687,7 @@ fn a_helper_module_is_followed_and_recorded() {
     let out = run_in(dir.path(), &["init", "--yes"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(!rhai.contains("set_js_config"), "{rhai}");
     assert!(
         rhai.contains("// Also ported from: lib/setup.js sha256:"),
         "{rhai}"
