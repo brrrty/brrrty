@@ -768,13 +768,25 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<Returned, Ve
                     return Err(vec![
                         Problem::error(
                             codes::CONFIG_UNSUPPORTED,
-                            format!(
-                                "`dir.{name}` is `{v}`, and Brrrty only reads a folder inside the input folder for it so far"
-                            ),
+                            if v.split('/').all(|p| p.is_empty() || p == "." || p == "..")
+                                && v.contains("..")
+                            {
+                                format!(
+                                    "`dir.{name}` is `{v}`, a folder that contains the input folder, and Brrrty does not read that for it"
+                                )
+                            } else {
+                                format!(
+                                    "`dir.{name}` is `{v}`, and Brrrty only reads a folder inside the input folder for it so far"
+                                )
+                            },
                         )
-                        .with_help(format!(
-                            "give `dir.{name}` a folder inside the input folder, like `_includes` (or `../src`), relative to it"
-                        )),
+                        .with_help(if name == "data" {
+                            "give `dir.data` a folder inside the input folder, like `_data`, relative to it".to_string()
+                        } else {
+                            format!(
+                                "give `dir.{name}` a folder inside the input folder, like `_includes` (or `../src`), relative to it"
+                            )
+                        }),
                     ]);
                 }
             }

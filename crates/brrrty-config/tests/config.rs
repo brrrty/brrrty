@@ -133,8 +133,16 @@ fn includes_and_layouts_folders_are_read() {
         "{}",
         p.message
     );
+    let p = err(r#"#{ dir: #{ includes: "../" } }"#);
+    assert!(
+        p.message.contains("contains the input folder"),
+        "{}",
+        p.message
+    );
+    let p = err(r#"#{ dir: #{ data: "../_data" } }"#);
+    assert!(!p.help.unwrap_or_default().contains("../src"));
     for (v, part) in [
-        ("..", "inside the input folder"),
+        ("..", "contains the input folder"),
         ("../a/../b", "inside the input folder"),
         ("/abs", "inside the input folder"),
         ("", "inside the input folder"),
