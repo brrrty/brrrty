@@ -377,7 +377,20 @@ fn add_filters(
         "generator": "Eleventy v3.1.8",
         "env": { "source": "cli", "runMode": run_mode.as_str(), "root": root.display().to_string() },
     }));
+    let mut transforms: Vec<(String, brrrty_core::JsConfigTransform)> = Vec::new();
     for f in fns.iter() {
+        if text(get(f, "kind")).as_deref() == Some("transform") {
+            if let (Some(name), Some(Value::Function(h))) = (text(get(f, "name")), get(f, "fn")) {
+                let t = transform(*h, &name, shown);
+                // 11ty keeps transforms in an object: a name added again replaces the
+                // function and keeps its place.
+                match transforms.iter_mut().find(|(n, _)| *n == name) {
+                    Some(slot) => slot.1 = t,
+                    None => transforms.push((name, t)),
+                }
+            }
+            continue;
+        }
         // `Some(paired)` for a shortcode, `None` for a filter.
         let (what, shortcode) = match text(get(f, "kind")).as_deref() {
             Some("filter") => ("filter", None),
@@ -473,4 +486,52 @@ fn add_filters(
             }
         }
     }
+    // An object's integer-like keys come first, ascending, then the rest as added.
+    let index = |n: &str| {
+        n.parse::<u32>()
+            .ok()
+            .filter(|i| i.to_string() == n && *i != u32::MAX)
+    };
+    transforms.sort_by_key(|(n, _)| index(n).map_or((1, 0), |i| (0, i)));
+    config
+        .js_transforms
+        .extend(transforms.into_iter().map(|(_, t)| t));
+}
+
+/// A transform from the JS config, called as 11ty's `TransformsUtil.runAll` does: with
+/// `this = { inputPath, outputPath, url, page }` and `(content, outputPath)`, awaited.
+fn transform(h: brrrty_js::FnHandle, name: &str, shown: &Path) -> brrrty_core::JsConfigTransform {
+    use brrrty_js::functions::{Settle, This};
+    let (name, shown) = (name.to_string(), shown.display().to_string());
+    let n = name.clone();
+    let run = std::sync::Arc::new(move |content: &str, page: &Value| {
+        let fail = |why: String| {
+            format!(
+                "{}the transform `{n}` (from {shown}) failed: {why}",
+                brrrty_js::REFUSAL_PREFIX
+            )
+        };
+        let Some(caller) = brrrty_js::functions::installed() else {
+            return Err(fail("Node isn't running".to_string()));
+        };
+        let field = |k: &str| get(page, k).cloned().unwrap_or(Value::Undefined);
+        let (input, output, url) = (field("inputPath"), field("outputPath"), field("url"));
+        let mut o = indexmap::IndexMap::new();
+        o.insert("inputPath".to_string(), input);
+        o.insert("outputPath".to_string(), output.clone());
+        o.insert("url".to_string(), url);
+        o.insert("page".to_string(), page.clone());
+        o.insert("baseHref".to_string(), Value::Undefined);
+        let this = Value::Object(std::sync::Arc::new(o));
+        let args = [Value::String(content.into()), output];
+        match caller.call(h, This::Value(&this), &args, Settle::Await) {
+            Ok(Value::String(s)) => Ok(s.to_string()),
+            Ok(other) => Err(fail(format!(
+                "it gave {}, not text, and 11ty can't write that",
+                other.to_js_string()
+            ))),
+            Err(why) => Err(fail(why)),
+        }
+    });
+    brrrty_core::JsConfigTransform { name, run }
 }

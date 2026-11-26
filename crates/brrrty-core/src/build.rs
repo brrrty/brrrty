@@ -3305,6 +3305,19 @@ fn build_once(
             }
             let src = &p.source;
             let shown = &src.shown;
+            // 11ty's feed plugin runs the site's transforms on each entry's content too
+            // (`renderTransforms`); Brrrty only does its own `<base>` step there.
+            if src.feed.is_some() && !opts.config.js_transforms.is_empty() {
+                let problem = Problem::error(
+                    codes::JS_DATA_FUNCTION,
+                    "this feed's entries run through the transforms from the JS config in 11ty (`renderTransforms`), which Brrrty doesn't do yet",
+                )
+                .with_path(shown);
+                if let Some(log) = log {
+                    log.problem(shown, &problem);
+                }
+                return Err(Refused::Page(problem, None));
+            }
             let output_rel = p.output_rel.as_deref().unwrap_or(Path::new(""));
             let Some(dest) = contained_output_path(&out, output_rel) else {
                 return Err(Refused::Page(
@@ -3399,7 +3412,28 @@ fn build_once(
                 }
                 return Err(Refused::Page(problem.clone(), None));
             }
-            Ok((i, dest, rendered.html, shown.as_path(), layout_drawn))
+            // 11ty runs the config's transforms, in order, on what the layouts gave.
+            let mut html = rendered.html;
+            for t in &opts.config.js_transforms {
+                let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
+                match (t.run)(&html, &page) {
+                    Ok(out) => html = out,
+                    Err(why) => {
+                        let problem = Problem::error(
+                            codes::JS_DATA_FUNCTION,
+                            why.strip_prefix(brrrty_js::REFUSAL_PREFIX)
+                                .unwrap_or(&why)
+                                .to_string(),
+                        )
+                        .with_path(shown);
+                        if let Some(log) = log {
+                            log.problem(shown, &problem);
+                        }
+                        return Err(Refused::Page(problem, None));
+                    }
+                }
+            }
+            Ok((i, dest, html, shown.as_path(), layout_drawn))
         })
         .collect();
     if let Some(plugin) = &highlight {
