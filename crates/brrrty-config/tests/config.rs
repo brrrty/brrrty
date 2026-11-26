@@ -127,6 +127,12 @@ fn includes_and_layouts_folders_are_read() {
     let c = ok(r#"#{ dir: #{ includes: "../src/_includes/", layouts: "../../x" } }"#);
     assert_eq!(c.build_options().includes_dir(), "../src/_includes");
     assert_eq!(c.build_options().layouts_dir(), "../../x");
+    let p = err(r#"#{ dir: #{ data: "../_data" } }"#);
+    assert!(
+        p.message.contains("inside the input folder"),
+        "{}",
+        p.message
+    );
     for (v, part) in [
         ("..", "inside the input folder"),
         ("../a/../b", "inside the input folder"),

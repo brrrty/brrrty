@@ -761,7 +761,8 @@ fn read_returned(v: Dynamic, problems: &mut Vec<Problem>) -> Result<Returned, Ve
         ("layouts", &mut dir.layouts),
     ] {
         if let Some(v) = value.as_mut() {
-            match inside_input(v) {
+            let clean = inside_input(v).filter(|c| name != "data" || !c.starts_with(".."));
+            match clean {
                 Some(clean) => *v = clean,
                 None => {
                     return Err(vec![
