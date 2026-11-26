@@ -41,6 +41,50 @@ const DECLARED: &str = "port this code along with the code that uses it";
 /// The TODO for code a call runs in its arguments, which Brrrty doesn't port.
 const ARGUMENTS: &str = "this runs code in its arguments that Brrrty doesn't port (it follows the rest of the call); port what that code does";
 
+/// The config line that turns the JS config on.
+const JS_CONFIG_LINE: &str = "config.set_js_config(\"node\");";
+/// Why a statement isn't ported when the JS config runs it.
+const JS_RUNS_WHY: &str = "Brrrty runs this in your own Node, as 11ty does (config.set_js_config)";
+/// The config methods the JS config applies.
+const JS_RUNS: &[&str] = &[
+    "addFilter",
+    "addAsyncFilter",
+    "addLiquidFilter",
+    "addNunjucksFilter",
+    "addNunjucksAsyncFilter",
+    "addJavaScriptFilter",
+    "addTransform",
+    "addGlobalData",
+    "addPassthroughCopy",
+    "ignores",
+    "setTemplateFormats",
+    "addTemplateFormats",
+    "addPlugin",
+    "setInputDirectory",
+    "setOutputDirectory",
+    "setIncludesDirectory",
+    "setDataDirectory",
+    "setLayoutsDirectory",
+];
+/// Config methods it records as unsupported: a TODO stays for them.
+pub(crate) const JS_NOT_RUN: &[&str] = &[
+    "addCollection",
+    "addPreprocessor",
+    "addExtension",
+    "addDataExtension",
+    "addJavaScriptFunction",
+    "addBundle",
+    "addTemplate",
+    "setLibrary",
+    "amendLibrary",
+    "setFrontMatterParsingOptions",
+    "setDataFileBaseName",
+    "on",
+    "htmlTransformer",
+    "addLayoutAlias",
+    "addLinter",
+];
+
 /// How deep helpers, plugins and modules are followed.
 const MAX_FOLLOW: usize = 16;
 /// How many statements (loop turns included) are read before Brrrty stops.
@@ -64,6 +108,8 @@ pub(crate) struct Port {
     pub modules: Vec<(String, String)>,
     /// It adds the RSS plugin, whose version a build checks.
     pub uses_rss: bool,
+    /// The config needs `config.set_js_config("node")`, and the text says so.
+    pub js: bool,
 }
 
 /// Reads one of the site's files by its path from the site's folder.
@@ -82,6 +128,8 @@ pub(crate) struct Site<'l> {
     pub load: Option<Load<'l>>,
     /// The major version of `@11ty/eleventy-plugin-rss` the site installs.
     pub rss: Option<u64>,
+    /// Port for `config.set_js_config("node")`: what the JS config runs is not a TODO.
+    pub js: bool,
 }
 
 /// How a module was brought in.
@@ -315,6 +363,10 @@ struct Out<'l> {
     no_config: bool,
     /// Flags from the build script.
     cli: Option<Cli>,
+    /// Something was left to the JS config (`Site::js`).
+    js_ran: bool,
+    /// In js mode, the reason nothing here could be read: the JS config runs it all.
+    js_whole: Option<String>,
 }
 
 struct Reader<'o, 'l> {
@@ -1254,12 +1306,19 @@ impl<'l> Out<'l> {
             touched_decls: Vec::new(),
             keep: false,
             no_config: false,
+            js_ran: false,
+            js_whole: None,
         }
     }
 
     fn give_up(&mut self, why: impl Into<String>) {
-        if self.whole.is_none() {
-            self.whole = Some(why.into());
+        let slot = if self.site.js {
+            &mut self.js_whole
+        } else {
+            &mut self.whole
+        };
+        if slot.is_none() {
+            *slot = Some(why.into());
         }
     }
 
@@ -1378,10 +1437,51 @@ impl<'o, 'l> Reader<'o, 'l> {
         }
     }
 
-    fn todo(&mut self, a: usize, b: usize, why: impl Into<String>, link: impl Into<String>) {
+    /// In js mode, a statement the JS config runs is left to it, not a TODO: `true` when
+    /// `toks[a..b]` calls what the recorder applies and nothing it doesn't.
+    fn left_to_js(&mut self, a: usize, b: usize) -> bool {
+        if !self.out.site.js {
+            return false;
+        }
+        let idents = || {
+            self.m.toks[a.min(b)..b.min(self.m.toks.len())]
+                .iter()
+                .filter_map(|t| t.ident())
+        };
+        let runs = idents().any(|i| {
+            JS_RUNS.contains(&i)
+                || (i.starts_with("add") && i.ends_with("Shortcode"))
+                || (i.starts_with("addPaired") && i.contains("Shortcode"))
+        });
+        if !runs || idents().any(|i| JS_NOT_RUN.contains(&i)) {
+            return false;
+        }
+        self.js_note(a, b);
+        true
+    }
+
+    /// A statement left to the JS config: noted, and what it reads is used.
+    fn js_note(&mut self, a: usize, b: usize) {
         let at = Some(self.src(a, b));
         self.out.items.push(Item::Todo {
-            why: why.into(),
+            why: JS_RUNS_WHY.to_string(),
+            link: DOCS.to_string(),
+            at,
+            marker: false,
+        });
+        self.out.js_ran = true;
+        self.out.keep = true;
+    }
+
+    fn todo(&mut self, a: usize, b: usize, why: impl Into<String>, link: impl Into<String>) {
+        let why = why.into();
+        // A glob isn't copied on the JS config path either.
+        if !why.starts_with("Brrrty copies files and folders, not globs") && self.left_to_js(a, b) {
+            return;
+        }
+        let at = Some(self.src(a, b));
+        self.out.items.push(Item::Todo {
+            why,
             link: link.into(),
             at,
             marker: true,
@@ -3135,6 +3235,9 @@ impl<'o, 'l> Reader<'o, 'l> {
         why: &str,
         link: String,
     ) -> bool {
+        if self.left_to_js(a, b) {
+            return false;
+        }
         if let Some(lp) = scope.in_loop.clone()
             && self.out.cond == 0
         {
@@ -3780,6 +3883,17 @@ impl<'o, 'l> Reader<'o, 'l> {
         true
     }
 
+    /// A TODO for a setting the config returns; in js mode, the JS config applies it.
+    fn returned_todo(&mut self, a: usize, b: usize, why: &str, link: String) {
+        let refused = why.starts_with("Brrrty doesn't support this setting yet")
+            || why.starts_with("Brrrty runs Liquid or Nunjucks here");
+        if self.out.site.js && !refused {
+            self.js_note(a, b);
+        } else {
+            self.todo(a, b, why, link);
+        }
+    }
+
     /// The object the config returns, in `toks[a..b]`.
     fn returned(&mut self, scope: &Scope, a: usize, b: usize) {
         let link = format!("{DOCS}#what-the-script-returns");
@@ -3794,7 +3908,7 @@ impl<'o, 'l> Reader<'o, 'l> {
             match p.key.as_str() {
                 "dir" => {
                     let Some(dirs) = js::object_props(&m.toks, p.value.0, p.value.1) else {
-                        self.todo(x, y, "port `dir`", link.clone());
+                        self.returned_todo(x, y, "port `dir`", link.clone());
                         continue;
                     };
                     for d in dirs {
@@ -3805,7 +3919,7 @@ impl<'o, 'l> Reader<'o, 'l> {
                             "data" => "data",
                             "layouts" => "layouts",
                             _ => {
-                                self.todo(d.range.0, d.range.1, "11ty doesn't read this folder", link.clone());
+                                self.returned_todo(d.range.0, d.range.1, "11ty doesn't read this folder", link.clone());
                                 continue;
                             }
                         };
@@ -3813,7 +3927,7 @@ impl<'o, 'l> Reader<'o, 'l> {
                             Some(Lit::Str(v)) => {
                                 self.set_dir(key, v, d.range.0, d.range.1);
                             }
-                            _ => self.todo(d.range.0, d.range.1, "port this folder", link.clone()),
+                            _ => self.returned_todo(d.range.0, d.range.1, "port this folder", link.clone()),
                         }
                     }
                 }
@@ -3839,7 +3953,7 @@ impl<'o, 'l> Reader<'o, 'l> {
                             raw: None,
                             at,
                         }),
-                        _ => self.todo(
+                        _ => self.returned_todo(
                             x,
                             y,
                             "Brrrty runs Liquid or Nunjucks here, or nothing (false)",
@@ -3861,14 +3975,14 @@ impl<'o, 'l> Reader<'o, 'l> {
                             at,
                         });
                     }
-                    None => self.todo(
+                    None => self.returned_todo(
                         x,
                         y,
                         "port these template formats; Brrrty builds liquid, md, njk, html and 11ty.js",
                         link.clone(),
                     ),
                 },
-                _ => self.todo(x, y, "Brrrty doesn't support this setting yet", link.clone()),
+                _ => self.returned_todo(x, y, "Brrrty doesn't support this setting yet", link.clone()),
             }
         }
     }
@@ -4024,6 +4138,24 @@ impl Out<'_> {
                  // Reference: {DOCS}\n"
             )
         };
+        if let Some(why) = self.js_whole.take() {
+            // Nothing could be read, so nothing is ported: the JS config runs it all.
+            out.push_str(&format!(
+                "\n// Brrrty can't port all of this file to Rhai ({}),\n// so it runs {file} in your own Node, as 11ty does.\n// See {DOCS}\n{JS_CONFIG_LINE}\n",
+                one_line(&why)
+            ));
+            let todos = self.cli_todos(&mut out, true);
+            return Port {
+                text: out,
+                todos,
+                input: None,
+                output: None,
+                data: None,
+                modules: Vec::new(),
+                uses_rss: false,
+                js: true,
+            };
+        }
         if let Some(why) = self.whole.take() {
             out.push_str(&format!(
                 "\n// {TODO_FILE}: port all of this file by hand: {}.\n// Brrrty builds no pages until you port it and delete this line.\n// See {DOCS}\n",
@@ -4047,6 +4179,7 @@ impl Out<'_> {
                 data: None,
                 modules: Vec::new(),
                 uses_rss: false,
+                js: false,
             };
         }
         // `--input` and `--output` in the build script win over the config.
@@ -4087,9 +4220,31 @@ impl Out<'_> {
         let mut todos = 0;
         let mut last_single = false;
         let mut body = String::new();
+        // Code that runs when a module loads runs in Node, too.
+        let js = self.site.js;
+        let loaded: Vec<Item> = std::mem::take(&mut self.loaded_items)
+            .into_iter()
+            .map(|i| match i {
+                Item::Todo {
+                    link,
+                    at,
+                    marker: true,
+                    ..
+                } if js => {
+                    self.js_ran = true;
+                    Item::Todo {
+                        why: JS_RUNS_WHY.to_string(),
+                        link,
+                        at,
+                        marker: false,
+                    }
+                }
+                i => i,
+            })
+            .collect();
         let items: Vec<Item> = std::mem::take(&mut self.items)
             .into_iter()
-            .chain(std::mem::take(&mut self.loaded_items))
+            .chain(loaded)
             .chain(todos_after)
             .filter_map(Out::settle)
             .collect();
@@ -4125,6 +4280,11 @@ impl Out<'_> {
                 }
                 Item::Decl { .. } | Item::Local { .. } => {}
             }
+        }
+        if self.js_ran {
+            out.push_str(&format!(
+                "\n// Some of {file} runs in your own Node, as 11ty does; what is ported below wins.\n{JS_CONFIG_LINE}\n"
+            ));
         }
         out.push_str(&body);
         todos += self.cli_todos(&mut out, false);
@@ -4184,6 +4344,7 @@ impl Out<'_> {
             uses_rss: items
                 .iter()
                 .any(|i| matches!(i, Item::Rhai(l) if l.starts_with("config.add_plugin(\"rss\""))),
+            js: self.js_ran,
         }
     }
 }
@@ -5408,5 +5569,100 @@ module.exports = function (eleventyConfig) {
             p.text
         );
         assert!(p.text.contains("        input: \"src\",\n"), "{}", p.text);
+    }
+
+    /// [`port_files`] with `js` on, as `brrrty init` does when Rhai can't hold it all.
+    fn port_js(src: &str, files: &[(&str, &str)]) -> Port {
+        let map: HashMap<String, String> = files
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let load = move |p: &str| -> Result<Option<String>, String> { Ok(map.get(p).cloned()) };
+        port_site(
+            src,
+            "eleventy.config.js",
+            Site {
+                load: Some(&load),
+                rss: Some(3),
+                js: true,
+                ..Site::default()
+            },
+        )
+    }
+
+    #[test]
+    fn js_mode_runs_filters_shortcodes_transforms_and_the_rest_in_node() {
+        let src = "module.exports = function (c) {\n  c.addFilter(\"shout\", (s) => s.toUpperCase());\n  c.addShortcode(\"b\", () => \"x\");\n  c.addPairedShortcode(\"p\", (body) => body);\n  c.addTransform(\"t\", (h) => h);\n  c.addGlobalData(\"g\", () => 1);\n  c.addPassthroughCopy(\"a\");\n  c.addTemplateFormats(compute());\n  return { dir: { input: \"src\" } };\n};\n";
+        let p = port_js(src, &[]);
+        assert!(p.js, "{}", p.text);
+        assert_eq!(p.todos, 0, "{}", p.text);
+        assert!(!p.text.contains("TODO(brrrty"), "{}", p.text);
+        assert!(
+            p.text.contains("config.set_js_config(\"node\");"),
+            "{}",
+            p.text
+        );
+        // What Rhai can hold is still ported.
+        assert!(
+            p.text.contains("config.add_passthrough_copy(\"a\");"),
+            "{}",
+            p.text
+        );
+        assert_eq!(p.input.as_deref(), Some("src"));
+    }
+
+    #[test]
+    fn js_mode_does_not_give_up_on_chained_calls_or_helpers_that_take_the_config() {
+        let chained =
+            "export default function (c) { c.addPassthroughCopy('a').addPassthroughCopy('b'); }";
+        let p = port_js(chained, &[]);
+        assert!(p.js, "{}", p.text);
+        assert!(!p.text.contains("TODO(brrrty"), "{}", p.text);
+        assert!(
+            p.text.contains("config.set_js_config(\"node\");"),
+            "{}",
+            p.text
+        );
+
+        let src = "const { registerFilters } = require('./lib/filters')\nmodule.exports = (eleventyConfig) => {\n  registerFilters(eleventyConfig)\n  eleventyConfig.addPassthroughCopy('assets')\n  return { dir: { input: 'app' } }\n}\n";
+        let lib = "const names = ['upper2']\nconst registerFilters = (eleventyConfig) => {\n  names.forEach((n) => {\n    try {\n      eleventyConfig.addFilter(n, require(`./f/${n}`))\n    } catch (e) { throw e }\n  })\n}\nmodule.exports = { registerFilters }\n";
+        let p = port_js(src, &[("lib/filters", lib), ("lib/filters.js", lib)]);
+        assert!(p.js, "{}", p.text);
+        assert!(!p.text.contains("TODO(brrrty"), "{}", p.text);
+        assert!(
+            p.text.contains("config.set_js_config(\"node\");"),
+            "{}",
+            p.text
+        );
+    }
+
+    #[test]
+    fn js_mode_keeps_todos_for_what_the_js_config_does_not_run() {
+        let src = "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s);\n  c.addCollection(\"all2\", (api) => api.getAll());\n};\n";
+        let p = port_js(src, &[]);
+        assert!(p.js, "{}", p.text);
+        assert_eq!(todos(&p).len(), 1, "{}", p.text);
+        assert!(todos(&p)[0].contains("collection"), "{}", p.text);
+    }
+
+    #[test]
+    fn js_mode_keeps_the_glob_todo_because_the_js_config_copies_no_globs_either() {
+        let p = port_js(
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s);\n  c.addPassthroughCopy(\"*.png\");\n};\n",
+            &[],
+        );
+        assert!(p.js, "{}", p.text);
+        assert_eq!(todos(&p).len(), 1, "{}", p.text);
+        assert!(todos(&p)[0].contains("not globs"), "{}", p.text);
+    }
+
+    #[test]
+    fn js_mode_is_off_when_nothing_needed_it() {
+        let p = port_js(
+            "module.exports = (c) => { c.addPassthroughCopy('a'); };",
+            &[],
+        );
+        assert!(!p.js, "{}", p.text);
+        assert!(!p.text.contains("set_js_config"), "{}", p.text);
     }
 }

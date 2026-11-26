@@ -217,6 +217,12 @@ pub struct ConfigOptions {
     pub js_transforms: Vec<JsConfigTransform>,
     /// The Node that loaded the JS config, when it did.
     pub js_started: Option<StartedJs>,
+    /// The 11ty config file the JS config loaded, from the project folder.
+    pub js_config_file: Option<String>,
+    /// Every function the JS config added, with its call count and time.
+    pub js_functions: Vec<std::sync::Arc<JsFunctionStats>>,
+    /// Methods the JS config called that Brrrty doesn't support yet.
+    pub js_unsupported: Vec<JsUnsupported>,
     /// `config.set_order_check(...)`, when the config calls it.
     pub order_check: Option<bool>,
     /// The config still has `brrrty init`'s TODO markers: this error refuses every page, and
@@ -427,6 +433,52 @@ pub enum FilterEngine {
     Nunjucks,
     /// `addLiquidFilter`.
     Liquid,
+}
+
+/// A function the JS config added (a filter, shortcode or transform), and what it has cost.
+#[derive(Debug)]
+pub struct JsFunctionStats {
+    /// `filter`, `shortcode`, `pairedShortcode` or `transform`.
+    pub kind: &'static str,
+    pub name: String,
+    calls: std::sync::atomic::AtomicU64,
+    nanos: std::sync::atomic::AtomicU64,
+}
+
+impl JsFunctionStats {
+    pub fn new(kind: &'static str, name: &str) -> Self {
+        JsFunctionStats {
+            kind,
+            name: name.to_string(),
+            calls: Default::default(),
+            nanos: Default::default(),
+        }
+    }
+
+    /// Count one call that took `took`.
+    pub fn record(&self, took: std::time::Duration) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.calls.fetch_add(1, Relaxed);
+        self.nanos
+            .fetch_add(u64::try_from(took.as_nanos()).unwrap_or(u64::MAX), Relaxed);
+    }
+
+    pub fn calls(&self) -> u64 {
+        self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Total time spent in calls, in nanoseconds.
+    pub fn nanos(&self) -> u64 {
+        self.nanos.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// A config method the JS config calls that Brrrty doesn't support yet.
+#[derive(Debug, Clone)]
+pub struct JsUnsupported {
+    pub method: String,
+    pub file: Option<String>,
+    pub line: Option<usize>,
 }
 
 /// A filter the JS config added: it runs in Node. Rhai filters of the same
