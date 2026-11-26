@@ -901,3 +901,29 @@ fn an_extensionless_layout_needs_its_format_in_the_list() {
     let out = std::fs::read_to_string(d.path().join("dist/other.html")).unwrap();
     assert!(out.starts_with("LIQUID"), "{out}");
 }
+
+/// `dir.includes` and `dir.layouts` may lead out of the input folder, as
+/// they do in 11ty (they resolve against the input folder).
+#[test]
+fn includes_and_layouts_outside_the_input_folder_build() {
+    let dir = site(&[
+        (
+            "pages/index.md",
+            "---\nlayout: base.njk\n---\nhi {% include \"part.njk\" %}\n",
+        ),
+        ("pages/two.md", "---\nlayout: other.njk\n---\ntwo\n"),
+        ("src/_includes/base.njk", "<html>{{ content | safe }}</html>"),
+        ("src/_includes/part.njk", "[part]"),
+        ("shared/other.njk", "<main>{{ content | safe }}</main>"),
+        (
+            "brrrty.config.rhai",
+            r#"#{ dir: #{ input: "pages", output: "_site", includes: "../src/_includes", layouts: "../shared" } }"#,
+        ),
+    ]);
+    let out = run_in(dir.path(), &["build"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let index = std::fs::read_to_string(dir.path().join("_site/index.html")).unwrap();
+    assert_eq!(index, "<html><p>hi [part]</p>\n</html>");
+    let two = std::fs::read_to_string(dir.path().join("_site/two/index.html")).unwrap();
+    assert_eq!(two, "<main><p>two</p>\n</main>");
+}
