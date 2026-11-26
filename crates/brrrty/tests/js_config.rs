@@ -870,3 +870,47 @@ fn a_feed_is_refused_while_the_config_has_transforms() {
     assert!(!t.path().join("_site/feed.xml").exists());
     assert!(t.path().join("_site/ok/index.html").exists());
 }
+
+// 11ty 3.1.8 `UserConfig.addPlugin`: a plugin is a function (or `{ configFunction }`) called
+// with the config and its options, after the config function returns, in the order added.
+#[test]
+fn add_plugin_runs_local_plugins_against_the_recorder() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"const local = require("./plugins/local.js");
+module.exports = function (c) {
+  c.addPlugin(local, { word: "hi" });
+  c.addPlugin({ configFunction(cfg, opts) { cfg.addFilter("viaObject", (s) => s + (opts.tag || "?")); } }, { tag: "!" });
+  c.addTransform("direct", (content) => content + "[direct]");
+  c.addGlobalData("order", "after");
+  return { dir: { input: "src" } };
+};
+"#,
+            ),
+            (
+                "plugins/local.js",
+                r#"module.exports = function (cfg, opts) {
+  cfg.addFilter("greet", (s) => opts.word + " " + s);
+  cfg.addPassthroughCopy({ "assets": "static" }, { expand: false });
+  cfg.addTransform("fromPlugin", (content) => content + "[plugin]");
+};
+"#,
+            ),
+            ("assets/a.txt", "asset"),
+            ("src/a.njk", "{{ 'x' | greet }}|{{ 'y' | viaObject }}|{{ order }}"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let a = fs::read_to_string(t.path().join("_site/a/index.html")).unwrap();
+    assert_eq!(a, "hi x|y!|after[direct][plugin]");
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/static/a.txt")).unwrap(),
+        "asset"
+    );
+}
