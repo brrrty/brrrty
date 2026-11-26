@@ -49,9 +49,9 @@ pub fn discover(opts: &BuildOptions) -> Result<Discovery, Problem> {
     let rules = Arc::new(rules);
 
     // 11ty never reads its includes and layouts folders as templates.
-    let includes = input.join(opts.config.includes_dir());
-    let layouts = input.join(opts.config.layouts_dir());
-    let data = input.join(opts.config.data_dir());
+    let includes = crate::options::normalize(&input.join(opts.config.includes_dir()));
+    let layouts = crate::options::normalize(&input.join(opts.config.layouts_dir()));
+    let data = crate::options::normalize(&input.join(opts.config.data_dir()));
 
     let out_dir = output.clone();
     let filter_rules = Arc::clone(&rules);

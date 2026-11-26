@@ -124,8 +124,26 @@ fn includes_and_layouts_folders_are_read() {
     let c = ok(r#"#{ dir: #{ includes: "parts" } }"#);
     assert_eq!(c.build_options().layouts_dir(), "parts");
     assert_eq!(ok("").build_options().layouts_dir(), "_includes");
+    let c = ok(r#"#{ dir: #{ includes: "../src/_includes/", layouts: "../../x" } }"#);
+    assert_eq!(c.build_options().includes_dir(), "../src/_includes");
+    assert_eq!(c.build_options().layouts_dir(), "../../x");
+    let p = err(r#"#{ dir: #{ data: "../_data" } }"#);
+    assert!(
+        p.message.contains("inside the input folder"),
+        "{}",
+        p.message
+    );
+    let p = err(r#"#{ dir: #{ includes: "../" } }"#);
+    assert!(
+        p.message.contains("contains the input folder"),
+        "{}",
+        p.message
+    );
+    let p = err(r#"#{ dir: #{ data: "../_data" } }"#);
+    assert!(!p.help.unwrap_or_default().contains("../src"));
     for (v, part) in [
-        ("../shared", "inside the input folder"),
+        ("..", "contains the input folder"),
+        ("../a/../b", "inside the input folder"),
         ("/abs", "inside the input folder"),
         ("", "inside the input folder"),
         (".", "inside the input folder"),

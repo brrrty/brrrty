@@ -901,3 +901,50 @@ fn an_extensionless_layout_needs_its_format_in_the_list() {
     let out = std::fs::read_to_string(d.path().join("dist/other.html")).unwrap();
     assert!(out.starts_with("LIQUID"), "{out}");
 }
+
+/// `dir.includes` and `dir.layouts` may lead out of the input folder, as
+/// they do in 11ty (they resolve against the input folder).
+#[test]
+fn includes_and_layouts_outside_the_input_folder_build() {
+    let dir = site(&[
+        (
+            "pages/index.md",
+            "---\nlayout: base.njk\n---\nhi {% include \"part.njk\" %}\n",
+        ),
+        ("pages/two.md", "---\nlayout: other.njk\n---\ntwo\n"),
+        ("shared/base.njk", "<html>{{ content | safe }}</html>"),
+        ("src/_includes/part.njk", "[part]"),
+        ("shared/other.njk", "<main>{{ content | safe }}</main>"),
+        (
+            "brrrty.config.rhai",
+            r#"#{ dir: #{ input: "pages", output: "_site", includes: "../src/_includes", layouts: "../shared" } }"#,
+        ),
+    ]);
+    let out = run_in(dir.path(), &["build"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let index = std::fs::read_to_string(dir.path().join("_site/index.html")).unwrap();
+    assert_eq!(index, "<html><p>hi [part]</p>\n</html>");
+    let two = std::fs::read_to_string(dir.path().join("_site/two/index.html")).unwrap();
+    assert_eq!(two, "<main><p>two</p>\n</main>");
+}
+
+/// A `..` path that leads back into the input folder names the same folder as
+/// the plain one: it is never read as pages (11ty normalizes its directories).
+#[test]
+fn includes_and_layouts_leading_back_into_the_input_are_not_pages() {
+    let dir = site(&[
+        ("pages/index.md", "---\nlayout: base.njk\n---\nhi\n"),
+        ("pages/_layouts/base.njk", "BASE {{ content | safe }}"),
+        ("pages/_includes/x.md", "should-not-be-page"),
+        ("pages/_layouts/y.md", "should-not-be-page"),
+        (
+            "brrrty.config.rhai",
+            r#"#{ dir: #{ input: "pages", output: "_site", includes: "../pages/_includes", layouts: "../pages/_layouts" } }"#,
+        ),
+    ]);
+    let out = run_in(dir.path(), &["build"]);
+    let s = stderr(&out);
+    assert!(!dir.path().join("_site/_includes").exists(), "{s}");
+    assert!(!dir.path().join("_site/_layouts").exists(), "{s}");
+    assert!(dir.path().join("_site/index.html").exists(), "{s}");
+}

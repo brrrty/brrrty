@@ -709,8 +709,8 @@ impl Session {
         };
         self.refresh(&opts);
         self.template_dirs = vec![
-            self.input.join(opts.config.includes_dir()),
-            self.input.join(opts.config.layouts_dir()),
+            brrrty_core::options::normalize(&self.input.join(opts.config.includes_dir())),
+            brrrty_core::options::normalize(&self.input.join(opts.config.layouts_dir())),
         ];
         let now = stamps(&self.passthrough);
         let first = self.next_build == 0;

@@ -617,6 +617,18 @@ fn has_path_date(path: &str) -> bool {
     })
 }
 
+/// `folder` under the input folder `input` (`./src/`), as 11ty writes its
+/// `directories`: with `..` resolved and a trailing slash.
+fn dir_under(input: &str, folder: &str) -> String {
+    let joined = crate::options::normalize(&Path::new(input).join(folder));
+    let shown = joined.to_string_lossy().replace('\\', "/");
+    if input.starts_with("./") && !shown.starts_with("..") {
+        format!("./{shown}/")
+    } else {
+        format!("{shown}/")
+    }
+}
+
 /// The data 11ty gives every page: `eleventy`, then `pkg` (the project's
 /// `package.json`, or `{}`).
 fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String) {
@@ -628,14 +640,14 @@ fn globals(opts: &BuildOptions, root: &Path, input_rel: &Path) -> (Data, String)
     directories.insert("input".into(), input.clone().into());
     directories.insert(
         "data".into(),
-        format!("{input}{}/", opts.config.data_dir()).into(),
+        dir_under(&input, opts.config.data_dir()).into(),
     );
     directories.insert(
         "includes".into(),
-        format!("{input}{}/", opts.config.includes_dir()).into(),
+        dir_under(&input, opts.config.includes_dir()).into(),
     );
     if let Some(layouts) = &opts.config.layouts {
-        directories.insert("layouts".into(), format!("{input}{layouts}/").into());
+        directories.insert("layouts".into(), dir_under(&input, layouts).into());
     }
     directories.insert("output".into(), output_shown.clone().into());
     let eleventy = serde_json::json!({

@@ -593,7 +593,7 @@ pub struct PassthroughEntry {
 }
 
 /// Resolve `.` and `..` lexically, without touching the filesystem.
-pub(crate) fn normalize(path: &Path) -> PathBuf {
+pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in path.components() {
         match c {
