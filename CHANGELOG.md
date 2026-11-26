@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8 - 2026-11-26
+
+- `dir.includes` and `dir.layouts` can now lead out of the input folder with leading `..` parts (like `../src`), resolved against the input folder as in 11ty. Before this, Brrrty refused such a site before building anything. A `..` path that leads back into the input folder (`../pages/_includes`) names the same folder as the plain one, so its files are never built as pages, and `eleventy.directories` shows the resolved folders. An absolute path, a `..` after a folder name, and a folder that contains the input folder are still refused, and so is `dir.data` outside the input folder.
+
 ## 0.1.7 - 2026-11-26
 
 - With `set_js_config("node")`, plugins added in the 11ty config with `addPlugin` (a function, or an object with `configFunction`) now run, as in 11ty: after the config function returns, in the order added, or at once with `{ immediate: true }`. The filters, passthrough copies and transforms a plugin adds take effect, and a plugin's transforms run after the config's own. Before this, a plugin's transforms were dropped without a message. Brrrty's own stand-ins for the RSS and syntax highlight plugins are not part of this yet.
