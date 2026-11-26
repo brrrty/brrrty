@@ -2,8 +2,7 @@
 //! recording `eleventyConfig`, and apply what it recorded where the Rhai config's own
 //! settings land. Rhai lines win over the JS config for the same setting.
 //!
-//! Recorded functions (filters, shortcodes, transforms, plugins) are not callable yet: pages
-//! that use them refuse as they do with the config off.
+//! Plugins run against the recorder after the config function returns (11ty's order).
 
 use std::path::{Path, PathBuf};
 
