@@ -213,6 +213,8 @@ pub struct ConfigOptions {
     pub js_shortcodes: Vec<JsConfigShortcode>,
     /// Shortcodes from the JS config for Liquid, in the order added.
     pub js_liquid_shortcodes: Vec<JsLiquidShortcode>,
+    /// Transforms from the JS config, in the order 11ty runs them.
+    pub js_transforms: Vec<JsConfigTransform>,
     /// The Node that loaded the JS config, when it did.
     pub js_started: Option<StartedJs>,
     /// `config.set_order_check(...)`, when the config calls it.
@@ -461,6 +463,26 @@ impl std::fmt::Debug for JsConfigShortcode {
             .field("name", &self.name)
             .field("paired", &self.paired)
             .field("engine", &self.engine)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A transform the JS config added (`addTransform`): `run(content, page)` calls it in Node with
+/// 11ty's `this` built from the page's `page` data, and gives the text it returns.
+#[derive(Clone)]
+pub struct JsConfigTransform {
+    pub name: String,
+    pub run: TransformFn,
+}
+
+/// `(content, page) -> transformed content`.
+pub type TransformFn =
+    std::sync::Arc<dyn Fn(&str, &brrrty_js::Value) -> Result<String, String> + Send + Sync>;
+
+impl std::fmt::Debug for JsConfigTransform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsConfigTransform")
+            .field("name", &self.name)
             .finish_non_exhaustive()
     }
 }

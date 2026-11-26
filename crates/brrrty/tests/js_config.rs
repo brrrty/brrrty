@@ -771,3 +771,102 @@ fn nunjucks_paired_shortcode_array_and_object_return_print_escaped_to_string() {
         "&lt;b&gt;,2|[object Object]|undefined|1,2"
     );
 }
+
+// Expected from 11ty 3.1.8: src/Util/TransformsUtil.js `runAll` calls each transform in
+// registration order with `this = { inputPath, outputPath, url, page }` and `(content,
+// outputPath)`, awaiting it (`page.outputFileExtension` is the engine's, `html` for njk, Template.js:449); src/Template.js `#renderPageEntryWithLayoutsAndTransforms` runs
+// them on the layout-wrapped content of every output.
+const TRANSFORM_CONFIG: &str = r#"module.exports = function (eleventyConfig) {
+  eleventyConfig.addTransform("stamp", function (content, outputPath) {
+    return content + "<!--" + this.page.outputPath + "|" + outputPath + "|" + this.page.url + "|" + this.page.inputPath + "|" + this.page.outputFileExtension + "-->";
+  });
+  eleventyConfig.addTransform("shout", async function (content, outputPath) {
+    await null;
+    return this.outputPath.endsWith(".html") ? content.toUpperCase() : content;
+  });
+  eleventyConfig.addTransform("boom", function (content) {
+    if (content.includes("EXPLODE")) throw new Error("nope");
+    return content;
+  });
+  return { dir: { input: "src" } };
+};
+"#;
+
+#[test]
+fn transforms_run_in_order_on_every_output() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("eleventy.config.js", TRANSFORM_CONFIG),
+            ("src/a.njk", "a{{ 1 + 1 }}"),
+            ("src/b.md", "# b"),
+            ("src/feed.njk", "---\npermalink: feed.xml\n---\nx<y>"),
+            ("src/off.njk", "---\npermalink: false\n---\nnope"),
+        ],
+        &[],
+    );
+    assert!(o.status.success(), "{}", text(&o));
+    let read = |p: &str| fs::read_to_string(t.path().join(p)).unwrap();
+    assert_eq!(
+        read("_site/a/index.html"),
+        "A2<!--./_SITE/A/INDEX.HTML|./_SITE/A/INDEX.HTML|/A/|./SRC/A.NJK|HTML-->"
+    );
+    assert_eq!(
+        read("_site/b/index.html"),
+        "<H1>B</H1>\n<!--./_SITE/B/INDEX.HTML|./_SITE/B/INDEX.HTML|/B/|./SRC/B.MD|HTML-->"
+    );
+    assert_eq!(
+        read("_site/feed.xml"),
+        "x<y><!--./_site/feed.xml|./_site/feed.xml|/feed.xml|./src/feed.njk|html-->"
+    );
+    assert!(!t.path().join("_site/off").exists());
+}
+
+#[test]
+fn a_throwing_transform_refuses_its_page_naming_the_transform() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            ("eleventy.config.js", TRANSFORM_CONFIG),
+            ("src/bad.njk", "EXPLODE"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(
+        s.contains("boom") && s.contains("nope") && s.contains("eleventy.config.js"),
+        "{s}"
+    );
+    assert!(!t.path().join("_site/bad/index.html").exists());
+    assert!(t.path().join("_site/ok/index.html").exists());
+}
+
+// The feed plugin's `renderTransforms` runs the site's transforms on every entry (11ty
+// 3.1.8 `@11ty/eleventy-plugin-rss`); Brrrty can't yet, so it refuses the feed, not the build.
+#[test]
+fn a_feed_is_refused_while_the_config_has_transforms() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "brrrty.config.rhai",
+                "config.set_js_config(\"node\");\nconfig.add_plugin(\"rss\", #{ type: \"atom\", output_path: \"/feed.xml\", collection: #{ name: \"posts\" }, metadata: #{ title: \"T\", base: \"https://example.com/\" } });\n",
+            ),
+            ("eleventy.config.js", TRANSFORM_CONFIG),
+            ("src/p.md", "---\ntags: posts\n---\nhi"),
+            ("src/ok.njk", "fine"),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(s.contains("renderTransforms"), "{s}");
+    assert!(!t.path().join("_site/feed.xml").exists());
+    assert!(t.path().join("_site/ok/index.html").exists());
+}
