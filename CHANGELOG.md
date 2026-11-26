@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6 - 2026-11-26
+
+- With `set_js_config("node")`, transforms added in the 11ty config (`addTransform`) now run in Node on every page Brrrty writes, after layouts. They run in 11ty's order: names that look like integers first, then the order they were added, and a name added again keeps its place. Each one gets 11ty's `this` (`inputPath`, `outputPath`, `url`, `page`) and `(content, outputPath)`, and async ones are awaited. A transform that throws or doesn't return text refuses that page, naming the transform and the config file. While the config has transforms, RSS feeds are refused: 11ty also runs the transforms on each feed entry (`renderTransforms`), which Brrrty doesn't do yet. Before this, Brrrty ignored these transforms without saying so.
+
 ## 0.1.5 - 2026-11-25
 
 - With `set_js_config("node")`, shortcodes added in the 11ty config (`addShortcode`, `addPairedShortcode`, `addAsyncShortcode`, `addPairedAsyncShortcode`, and the Nunjucks- and Liquid-only forms) now run in Node from Nunjucks and Liquid templates. Nunjucks parses arguments like 11ty, with keyword arguments as a last object. Liquid uses 11ty's argument parsing, with values separated by commas or spaces. A paired shortcode gets its rendered body as the first argument. Return values print as 11ty prints them, including falsy and non-string returns. A shortcode that throws refuses its page, naming the shortcode and the config file and line. Shortcodes that read `this.ctx`/`this.env` refuse, as filters do.
