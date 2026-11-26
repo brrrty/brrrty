@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7 - 2026-11-26
+
+- With `set_js_config("node")`, plugins added in the 11ty config with `addPlugin` (a function, or an object with `configFunction`) now run, as in 11ty: after the config function returns, in the order added, or at once with `{ immediate: true }`. The filters, passthrough copies and transforms a plugin adds take effect, and a plugin's transforms run after the config's own. Before this, a plugin's transforms were dropped without a message. Brrrty's own stand-ins for the RSS and syntax highlight plugins are not part of this yet.
+
 ## 0.1.6 - 2026-11-26
 
 - With `set_js_config("node")`, transforms added in the 11ty config (`addTransform`) now run in Node on every page Brrrty writes, after layouts. They run in 11ty's order: names that look like integers first, then the order they were added, and a name added again keeps its place. Each one gets 11ty's `this` (`inputPath`, `outputPath`, `url`, `page`) and `(content, outputPath)`, and async ones are awaited. A transform that throws or doesn't return text refuses that page, naming the transform and the config file. While the config has transforms, RSS feeds are refused: 11ty also runs the transforms on each feed entry (`renderTransforms`), which Brrrty doesn't do yet. Before this, Brrrty ignored these transforms without saying so.
