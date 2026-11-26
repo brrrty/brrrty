@@ -927,3 +927,24 @@ fn includes_and_layouts_outside_the_input_folder_build() {
     let two = std::fs::read_to_string(dir.path().join("_site/two/index.html")).unwrap();
     assert_eq!(two, "<main><p>two</p>\n</main>");
 }
+
+/// A `..` path that leads back into the input folder names the same folder as
+/// the plain one: it is never read as pages (11ty normalizes its directories).
+#[test]
+fn includes_and_layouts_leading_back_into_the_input_are_not_pages() {
+    let dir = site(&[
+        ("pages/index.md", "---\nlayout: base.njk\n---\nhi\n"),
+        ("pages/_layouts/base.njk", "BASE {{ content | safe }}"),
+        ("pages/_includes/x.md", "should-not-be-page"),
+        ("pages/_layouts/y.md", "should-not-be-page"),
+        (
+            "brrrty.config.rhai",
+            r#"#{ dir: #{ input: "pages", output: "_site", includes: "../pages/_includes", layouts: "../pages/_layouts" } }"#,
+        ),
+    ]);
+    let out = run_in(dir.path(), &["build"]);
+    let s = stderr(&out);
+    assert!(!dir.path().join("_site/_includes").exists(), "{s}");
+    assert!(!dir.path().join("_site/_layouts").exists(), "{s}");
+    assert!(dir.path().join("_site/index.html").exists(), "{s}");
+}
