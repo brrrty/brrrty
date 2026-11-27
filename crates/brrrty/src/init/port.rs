@@ -56,6 +56,7 @@ const JS_RUNS: &[&str] = &[
     "addTransform",
     "addGlobalData",
     "addPassthroughCopy",
+    "addBundle",
     "ignores",
     "setTemplateFormats",
     "addTemplateFormats",

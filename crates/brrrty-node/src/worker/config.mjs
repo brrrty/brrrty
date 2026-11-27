@@ -100,6 +100,11 @@ function configRecorder() {
   methods.addTemplateFormats = (formats) => {
     (values.templateFormatsAdded = values.templateFormatsAdded || []).push(formats);
   };
+  // 11ty's bundle plugin: only `addBundle(name)`; options are recorded as unsupported.
+  methods.addBundle = (name, options) => {
+    if (options && Object.keys(options).length > 0) return notedAt("addBundle (with options)");
+    (values.bundles = values.bundles || []).push(String(name));
+  };
   methods.versionCheck = () => {};
   for (const [method, key] of Object.entries(CONFIG_DIRS)) {
     methods[method] = (dir) => {

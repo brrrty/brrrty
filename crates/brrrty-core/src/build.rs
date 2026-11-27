@@ -2464,6 +2464,11 @@ fn build_once(
     for s in &opts.config.js_liquid_shortcodes {
         engine.register_shortcode(&s.name, s.paired, s.run.clone());
     }
+    let bundles = (!opts.config.js_bundles.is_empty())
+        .then(|| crate::plugins::bundle::Bundles::new(opts.config.js_bundles.clone()));
+    if let Some(b) = &bundles {
+        b.register_liquid_refusals(&mut engine);
+    }
     for f in &opts.config.js_filters {
         if f.engine != crate::options::FilterEngine::Nunjucks {
             engine.register_args_filter(&f.name, f.run.clone());
@@ -2537,6 +2542,9 @@ fn build_once(
         &opts.config.filters,
         rss,
     );
+    if let Some(b) = &bundles {
+        b.register(&mut nunjucks);
+    }
     crate::filters::register_nunjucks_shortcodes(&mut nunjucks, &opts.config.js_shortcodes);
     let includes_rel = opts.config.includes_dir();
     let includes = input.join(includes_rel);
@@ -3444,6 +3452,24 @@ fn build_once(
             }
             // 11ty runs the config's transforms, in order, on what the layouts gave.
             let mut html = rendered.html;
+            if let Some(b) = &bundles {
+                let url = match p.data.get("page").map(|pg| pg.get("url")) {
+                    Some(Value::String(u)) => u.to_string(),
+                    _ => String::new(),
+                };
+                let out_path = output_rel.to_string_lossy();
+                html = match crate::plugins::bundle::prune_empty(b.resolve(&url, html), &out_path)
+                {
+                    Ok(h) => h,
+                    Err(why) => {
+                        let problem = Problem::error(codes::JS_DATA_FUNCTION, why).with_path(shown);
+                        if let Some(log) = log {
+                            log.problem(shown, &problem);
+                        }
+                        return Err(Refused::Page(problem, None));
+                    }
+                };
+            }
             for t in &opts.config.js_transforms {
                 let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
                 match (t.run)(&html, &page) {
