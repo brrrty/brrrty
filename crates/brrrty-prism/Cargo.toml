@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-prism"
-version = "0.1.10"
+version = "0.1.11"
 description = "Prism-compatible syntax highlighting for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
@@ -23,7 +23,7 @@ exclude = [
 ]
 
 [dependencies]
-brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.1.10" }
+brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.1.11" }
 fancy-regex = { version = "=0.20.0", default-features = false, features = ["std", "perf", "unicode", "variable-lookbehinds"] }
 regex = "1.13.1"
 regex-automata = { version = "0.4.18", default-features = false, features = ["std", "syntax", "perf", "unicode", "hybrid", "nfa-thompson"] }
