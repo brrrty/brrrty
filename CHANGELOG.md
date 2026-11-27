@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.12 - 2026-11-27
+
+- Passthrough copy now takes globs. `config.add_passthrough_copy("src/posts/**/*.{png,jpg}")` copies every matching file to its path minus the input folder, as in 11ty: braces, `**` and `?` work, matching ignores case and includes dotfiles, and a glob that matches nothing is fine. Before this, Brrrty refused the glob. `brrrty init` ports plain glob strings now; negated globs and extglob groups (`@(a|b)`) keep their TODO. A glob with a target (`#{ "src/**/*.png": "img" }`) is still refused, and the error says so.
+
 ## 0.1.11 - 2026-11-27
 
 - With `set_js_config("node")`, 11ty's bundle plugin works in Nunjucks. `addBundle(name)` adds the `{% name %}...{% endname %}` paired tag, and `{% getBundle "name" %}` prints what the page collected, code added after the call included. Entries are trimmed, empty ones dropped, kept once each and joined with a newline; buckets can be comma lists, as in 11ty. Once any bundle is added, every `.html` page goes through the same pass as 11ty's html transformer, before the config's transforms. That pass drops an empty `<style>`, a `<script>` with no text and no `src`, and a `<link rel="stylesheet">` with no `href` (`eleventy:keep` keeps one), and re-serializes the page as 11ty does (`<br/>` becomes `<br>`, `disabled` becomes `disabled=""`). Still refused by name: `addBundle` with options, `getBundleFileUrl`, and bundle tags in Liquid.
