@@ -123,16 +123,10 @@ fn a_liquid_error_in_a_computed_value_refuses_the_page() {
 /// (A computed `permalink` is followed: see `tests/permalinks.rs`.)
 #[test]
 fn computed_keys_that_change_the_build_are_refused() {
-    assert_refused("  layout: base\n", codes::COMPUTED_UNSUPPORTED, "`layout`");
     assert_refused(
         "  templateEngineOverride: md\n",
         codes::COMPUTED_UNSUPPORTED,
         "`templateEngineOverride`",
-    );
-    assert_refused(
-        "  layout:\n    x: 1\n",
-        codes::COMPUTED_UNSUPPORTED,
-        "`layout`",
     );
     assert_refused(
         "  eleventy:\n    x: 1\n",
@@ -180,10 +174,6 @@ fn a_computed_value_reading_collections_is_refused() {
 #[test]
 fn refusals_say_what_to_do() {
     for (front, help) in [
-        (
-            "  layout: base\n",
-            "Set `layout` in front matter or a data file instead of computing it.",
-        ),
         (
             "  permalink:\n    build: /x/\n",
             "Set the `permalink` map in front matter or a data file, or compute `permalink` as a string.",
@@ -346,4 +336,54 @@ fn computed_data_reaches_layouts_and_empty_or_odd_values_add_nothing() {
     assert_eq!(read(t.path(), "a/index.html"), "<body|c-T>");
     assert_eq!(read(t.path(), "e/index.html"), "empty");
     assert_eq!(read(t.path(), "s/index.html"), "string");
+}
+
+/// Probed: 11ty renders a page with the layout its computed data gives
+/// (the layout's own front matter still joins the data by the layout named
+/// before computing). The value may read another computed value, and the
+/// layout may have a layout of its own.
+#[test]
+fn a_computed_layout_picks_the_layout() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "src/_includes/a.njk", "A[{{ content | safe }}]");
+    write(t.path(), "src/_includes/b.njk", "B[{{ content | safe }}]");
+    write(
+        t.path(),
+        "src/_includes/c.njk",
+        "---\nlayout: a.njk\n---\nC[{{ content | safe }}]",
+    );
+    write(
+        t.path(),
+        "src/index.md",
+        "---\nlayout: a.njk\ndeleted: true\neleventyComputed:\n  layout: \"{{ 'b.njk' if deleted else 'a.njk' }}\"\n---\nhi",
+    );
+    write(t.path(), "src/ok.md", "---\nlayout: a.njk\n---\nok");
+    write(
+        t.path(),
+        "src/dep.md",
+        "---\nlayout: a.njk\nkind: c\neleventyComputed:\n  name: \"{{ kind }}.njk\"\n  layout: \"{{ name }}\"\n---\ndep",
+    );
+    let r = run(t.path());
+    assert!(errors(&r).is_empty(), "{:?}", r.problems);
+    assert_eq!(read(t.path(), "index.html"), "B[<p>hi</p>\n]");
+    assert_eq!(read(t.path(), "ok/index.html"), "A[<p>ok</p>\n]");
+    assert_eq!(read(t.path(), "dep/index.html"), "A[C[<p>dep</p>\n]]");
+}
+
+/// A computed layout that names no layout is the page's problem, and the
+/// rest of the site builds.
+#[test]
+fn a_computed_layout_naming_no_layout_refuses_the_page() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "src/_includes/a.njk", "A[{{ content | safe }}]");
+    write(
+        t.path(),
+        "src/bad.md",
+        "---\nlayout: a.njk\neleventyComputed:\n  layout: nope.njk\n---\nbad",
+    );
+    write(t.path(), "src/ok.md", "---\nlayout: a.njk\n---\nok");
+    let r = run(t.path());
+    let p = only_error(&r);
+    assert!(p.message.contains("nope.njk"), "{}", p.message);
+    assert_eq!(read(t.path(), "ok/index.html"), "A[<p>ok</p>\n]");
 }
