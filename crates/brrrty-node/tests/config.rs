@@ -136,3 +136,23 @@ fn a_config_that_throws_refuses_with_the_file_and_line() {
         other => panic!("{other:?}"),
     }
 }
+
+/// 11ty's `processPlugins` runs after the config merged, with `userConfig.pathPrefix` set to
+/// the merged `pathPrefix` (default `/`), so plugins like HtmlBasePlugin see a string.
+#[test]
+fn plugins_see_the_merged_path_prefix() {
+    let Some(node) = node() else { return };
+    for (returned, want) in [("{}", "/"), (r#"{ pathPrefix: "/blog/" }"#, "/blog/")] {
+        let cfg = format!(
+            "module.exports = (c) => {{\n  c.addPlugin((p) => {{\n    if (p.pathPrefix === undefined) throw new Error(\"The `baseHref` option is required\");\n    p.addGlobalData(\"seen\", p.pathPrefix);\n  }});\n  return {returned};\n}};\n"
+        );
+        let t = site(&[("eleventy.config.js", &cfg)]);
+        let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+        let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+            JsResult::Ok(d) => d,
+            other => panic!("{other:?}"),
+        };
+        let seen = get(get(&d.value, "values"), "globalData");
+        assert_eq!(get(seen, "seen"), &s(want));
+    }
+}
