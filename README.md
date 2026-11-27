@@ -26,7 +26,7 @@ Brrrty is a static site generator written in Rust that builds your existing 11ty
 - [brrrty.com](https://brrrty.com/) is built with Brrrty, from [`site/`](site/) in this repo.
 - [joshtronic.com](https://joshtronic.com/), a 2,272-file blog, is built with Brrrty in GitLab CI on every push. It moved over from 11ty with no changes to its templates, and its output was compared file by file with 11ty's before the switch.
 
-It's early (0.0.x), so try it on a copy of your site first. `brrrty doctor --verify` builds the site with both and tells you whether every file matches.
+It's early (0.1.x), so try it on a copy of your site first. `brrrty doctor --verify` builds the site with both and tells you whether every file matches.
 
 ## Try it on your site
 
@@ -81,6 +81,12 @@ The [differences from 11ty](https://brrrty.com/docs/differences/) page lists eve
 ## How it's checked
 
 Output is compared byte for byte against real 11ty 3.1.8. Test fixtures get their expected output from 11ty itself, run in Docker with no network, and the suite has over 1,400 tests. Parts of 11ty and its dependencies (LiquidJS, Nunjucks, markdown-it, Prism, Luxon and others) are ported closely enough to match their output, each credited in [NOTICE](NOTICE). Brrrty was built with [Claude Code](https://claude.com/claude-code): Claude wrote the code and Josh steered, with an independent review and a file-by-file comparison against 11ty before every merge. [How it was built](https://brrrty.com/#built) has the story and what it cost.
+
+### On sites it wasn't built for
+
+Every day, Brrrty's `main` builds a set of public 11ty sites with no hand edits (`brrrty init`, then `brrrty build`) and compares every file with the site's own 11ty build, in [brrrty/corpus](https://github.com/brrrty/corpus). The chart shows how far each site gets. The goal for 1.0 is about 80% of them byte-identical.
+
+<img src="https://raw.githubusercontent.com/brrrty/corpus/progress/progress/compat.svg" width="760" alt="Corpus compatibility: how many public 11ty sites reach each stage with Brrrty, from config not loading to byte-identical output, per daily run. The numbers are in progress/history.csv in brrrty/corpus.">
 
 ## Docs
 
