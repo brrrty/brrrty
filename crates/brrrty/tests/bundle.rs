@@ -97,3 +97,92 @@ fn bundle_options_are_refused_by_name() {
     assert!(!o.status.success(), "{}", text(&o));
     assert!(text(&o).contains("addBundle"), "{}", text(&o));
 }
+
+fn bundle_site(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let mut all = vec![
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        ("package.json", "{}"),
+    ];
+    all.extend_from_slice(files);
+    site(&all)
+}
+
+const BOTH: &str = "eleventyConfig.addBundle(\"css\"); eleventyConfig.addBundle(\"js\");";
+
+#[test]
+fn entries_are_trimmed_empty_ones_dropped_and_deduplicated_after_the_trim() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        (
+            "index.njk",
+            "{% css %}\n  a { color: red }\n{% endcss %}{% css %}   {% endcss %}{% css %} a { color: red } {% endcss %}<style>{% getBundle \"css\" %}</style>",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "<style>a { color: red }</style>"
+    );
+}
+
+#[test]
+fn empty_bundle_tags_are_pruned_unless_kept() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        (
+            "index.njk",
+            "<style>{% getBundle \"css\" %}</style><script>{% getBundle \"js\" %}</script><style eleventy:keep>{% getBundle \"css\" %}</style><script src=\"a.js\"></script><script src=\"\"></script><link rel=\"stylesheet\" href=\"\"><p>x</p>",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "<style></style><script src=\"a.js\"></script><p>x</p>"
+    );
+}
+
+#[test]
+fn comma_buckets_add_to_each_and_get_returns_each() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        (
+            "index.njk",
+            "{% css \"a,b\" %}x{}{% endcss %}{% css \"b\" %}y{}{% endcss %}[{% getBundle \"css\", \"a\" %}][{% getBundle \"css\", \"b\" %}][{% getBundle \"css\", \"a,b\" %}]",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "[x{}][x{}\ny{}][x{}\ny{}]"
+    );
+}
+
+#[test]
+fn liquid_bundles_are_refused_by_name() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        ("index.liquid", "{% css %}a{}{% endcss %}"),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(!o.status.success(), "{}", text(&o));
+    assert!(text(&o).contains("Nunjucks-only"), "{}", text(&o));
+}
