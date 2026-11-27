@@ -61,6 +61,17 @@ function configRecorder() {
   const ignores = new Set();
   const notedAt = (method) => unsupported.push({ method, at: configPlace() });
   const methods = {};
+  // 11ty's `eleventyConfig.htmlTransformer` (plugins call `addUrlTransform` and
+  // `addPosthtmlPlugin`): not run by Brrrty's JS config, so each call is recorded as
+  // unsupported instead of throwing a TypeError at config load.
+  const htmlTransformer = new Proxy({}, {
+    get(_t, key) {
+      if (typeof key === "symbol" || key === "then") return undefined;
+      return () => {
+        notedAt(`htmlTransformer.${key}`);
+      };
+    },
+  });
   for (const [method, [kind, engine, asyncFlag]] of Object.entries(CONFIG_FUNCTIONS)) {
     methods[method] = (name, fn, flag) => {
       if (typeof fn !== "function") {
@@ -117,6 +128,7 @@ function configRecorder() {
       if (typeof key === "symbol" || key === "then") return undefined;
       if (Object.hasOwn(methods, key)) return methods[key].bind(proxy);
       if (key === "ignores") return ignores;
+      if (key === "htmlTransformer") return htmlTransformer;
       if (CONFIG_PROPS.has(key)) return t[key];
       return (...rest) => {
         notedAt(key);
