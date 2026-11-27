@@ -41,7 +41,6 @@ use crate::templates::{Lang, Langs, TplError, nunjucks_problem};
 /// built, or 11ty owns them. `date`, `tags` and `eleventyExcludeFromCollections`
 /// are data only (probed: `page.date` keeps the original date).
 const REFUSED_ROOTS: &[&str] = &[
-    "layout",
     "templateEngineOverride",
     "eleventyComputed",
     "eleventyDataSchema",
