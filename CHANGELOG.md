@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.10 - 2026-11-27
+
+- `eleventyComputed` can now set `layout`. Brrrty used to refuse every page whose computed data set it. Now each page renders with the layout named in its final data, as in 11ty. The computed value may read other computed values, and the layout it names may have a layout of its own. A computed `layout` that is empty or `null` means no layout. The layout's front matter data still comes from the layout named before computing, as in 11ty. A computed layout that names a missing layout, or isn't a name, fails only that page.
+
 ## 0.1.9 - 2026-11-27
 
 - `brrrty init` now writes `config.set_js_config("node")` when the 11ty config has something it can't port to Rhai. It no longer leaves blocking TODOs, or gives up on the whole config, for what the JS config runs: filters, shortcodes, transforms, plugins, passthrough copy, ignores, template formats, global data, and the folders and engines the config returns. What Rhai can port is still ported and wins. Collections, preprocessors, events, `amendLibrary` and the like keep their TODOs. At build time, any config method the JS config doesn't run now refuses every page, wherever it's called (a plugin or helper in `node_modules` included). The exceptions are the ones that never change output (watch targets, dev server options, quiet mode, linters), which stay warnings. `brrrty doctor` (text and `--json`) gains a `jsConfig` section: the mode, the config file, each JS function with its kind, name, calls and time (hottest first), and each unsupported method with file and line. When the config throws, `doctor --json` still reports, with the error as the blocker.
