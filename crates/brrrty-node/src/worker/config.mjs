@@ -171,9 +171,12 @@ async function loadConfig(file) {
   }
   const rec = configRecorder();
   let returned = await fn(rec.proxy);
-  await rec.runPlugins();
   if (exported && typeof exported === "object") {
     returned = deepMerge(returned && typeof returned === "object" ? returned : {}, exported);
   }
+  // 11ty's `processPlugins` runs after the config merged, with `userConfig.pathPrefix` set to
+  // the merged value (default "/"); plugins such as HtmlBasePlugin read it.
+  rec.proxy.pathPrefix = (returned && returned.pathPrefix) || "/";
+  await rec.runPlugins();
   return rec.done(returned);
 }
