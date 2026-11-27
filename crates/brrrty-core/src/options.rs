@@ -180,6 +180,8 @@ pub struct ConfigOptions {
     /// The RSS plugin's filters without a feed (its default export,
     /// `rssPlugin`). A feed adds them too.
     pub rss_filters: bool,
+    /// `addPlugin(EleventyHtmlBasePlugin)`: its filters (a feed or the RSS filters add them too).
+    pub html_base: bool,
     /// `dir.includes`, relative to the input folder; `None` is `_includes`.
     pub includes: Option<String>,
     /// `dir.layouts`, relative to the input folder; `None` is the includes folder.

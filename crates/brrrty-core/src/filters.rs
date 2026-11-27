@@ -44,6 +44,7 @@ pub fn register_nunjucks_filters(
     js: &[JsConfigFilter],
     config: &[ConfigFilter],
     rss: bool,
+    html_base: bool,
 ) {
     engine.register_eleventy_filters();
     for f in js {
@@ -60,6 +61,10 @@ pub fn register_nunjucks_filters(
         }
         for (name, f) in rss::nunjucks_filters() {
             engine.register_filter(name, f);
+        }
+    } else if html_base {
+        for (name, f) in rss::html_base_filters() {
+            engine.register_filter(name, shared(name, f));
         }
     }
 }

@@ -2530,6 +2530,11 @@ fn build_once(
             engine.register_args_filter(name, f);
         }
     }
+    if opts.config.html_base && !rss {
+        for (name, f) in crate::plugins::rss::html_base_filters() {
+            engine.register_args_filter(name, f);
+        }
+    }
     // 11ty gives Nunjucks the same filters, and the RSS plugin's
     // Nunjucks-only ones.
     let mut nunjucks = brrrty_nunjucks::Engine::new(NunjucksOptions {
@@ -2541,6 +2546,7 @@ fn build_once(
         &opts.config.js_filters,
         &opts.config.filters,
         rss,
+        opts.config.html_base,
     );
     if let Some(b) = &bundles {
         b.register(&mut nunjucks);

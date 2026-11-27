@@ -217,7 +217,7 @@ fn sets_up_an_esm_site() {
     for want in [
         "from eleventy.config.mjs",
         "Brrrty copies files and folders, not globs",
-        "//     \televentyConfig.addPlugin(EleventyHtmlBasePlugin);\n",
+        "config.add_plugin(\"htmlbase\");\n",
         "config.add_plugin(\"rss\", #{\n    type: \"atom\",\n    output_path: \"/feed.xml\",\n    collection: #{ name: \"post\", limit: 10 },\n    metadata: #{ title: \"Blog\", base: \"https://example.com/\" },\n});\n",
         "#{\n    dir: #{\n        input: \"content\",\n    },\n    htmlTemplateEngine: false,\n    templateFormats: [\"md\", \"html\"],\n}\n",
     ] {

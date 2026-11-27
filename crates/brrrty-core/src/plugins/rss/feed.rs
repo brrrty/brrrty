@@ -707,6 +707,14 @@ fn wrap(f: fn(&Value, &[Value]) -> Res) -> brrrty_liquid::ArgsFilterFn {
     Arc::new(move |input, args, _ctx| f(input, args))
 }
 
+/// The HTML `<base>` plugin's two filters, without the RSS plugin's.
+pub(crate) fn html_base_filters() -> Vec<(&'static str, brrrty_liquid::ArgsFilterFn)> {
+    vec![
+        ("addPathPrefixToFullUrl", wrap(add_path_prefix_to_full_url)),
+        ("htmlBaseUrl", wrap(html_base_url)),
+    ]
+}
+
 pub(crate) fn universal_filters() -> Vec<(&'static str, brrrty_liquid::ArgsFilterFn)> {
     vec![
         ("addPathPrefixToFullUrl", wrap(add_path_prefix_to_full_url)),

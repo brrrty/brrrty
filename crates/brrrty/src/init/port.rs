@@ -3767,6 +3767,26 @@ impl<'o, 'l> Reader<'o, 'l> {
             Some(Binding::Export(m, e)) if m == RSS && e == "rssPlugin" => {
                 return self.rss_filters(options.as_deref(), a, b);
             }
+            // 11ty's HTML `<base>` plugin: with Brrrty's `pathPrefix` (`/`) it
+            // adds two filters and changes no page. Its options would.
+            Some(Binding::Export(m, e))
+                if m == "@11ty/eleventy"
+                    && (e == "HtmlBasePlugin" || e == "EleventyHtmlBasePlugin") =>
+            {
+                if options.as_deref() != Some(&[]) {
+                    self.todo(
+                        a,
+                        b,
+                        "port this plugin's options: Brrrty's `htmlbase` plugin takes none yet, and `baseHref` and `extensions` change the URLs the plugin writes",
+                        link,
+                    );
+                    return false;
+                }
+                self.out
+                    .items
+                    .push(Item::Rhai("config.add_plugin(\"htmlbase\");".into()));
+                return true;
+            }
             _ => {
                 self.todo(
                     a,
@@ -4485,7 +4505,8 @@ module.exports = function (eleventyConfig) {
         );
         // Without the plugin's version, its filters are a TODO.
         assert!(t.contains("which version of the RSS plugin"), "{t}");
-        assert!(t.contains("eleventy.config.mjs, line 9:"), "{t}");
+        assert!(t.contains("eleventy.config.mjs, line 8:"), "{t}");
+        assert!(t.contains("config.add_plugin(\"htmlbase\");"), "{t}");
         // Version 3's filters are ported.
         let site = Site {
             rss: Some(3),
@@ -4498,14 +4519,14 @@ module.exports = function (eleventyConfig) {
             "{}",
             p3.text
         );
-        assert_eq!(p3.todos, 1, "{}", p3.text);
+        assert_eq!(p3.todos, 0, "{}", p3.text);
         assert!(
             t.contains(
                 "    dir: #{\n        input: \"content\",\n    },\n    htmlTemplateEngine: false,\n"
             ),
             "{t}"
         );
-        assert_eq!(p.todos, 2, "{t}");
+        assert_eq!(p.todos, 1, "{t}");
     }
 
     #[test]
