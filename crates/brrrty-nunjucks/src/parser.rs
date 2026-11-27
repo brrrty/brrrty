@@ -720,7 +720,7 @@ impl Parser<'_> {
             "from" => self.parse_from()?,
             "filter" => self.parse_filter_statement()?,
             "switch" => self.parse_switch()?,
-            name if ELEVENTY_TAGS.contains(&name) => {
+            name if ELEVENTY_TAGS.contains(&name) && !self.shortcodes.contains_key(name) => {
                 let mut e = Fail::template(
                     format!("Brrrty does not support the {name} tag"),
                     Some(tok.at()),

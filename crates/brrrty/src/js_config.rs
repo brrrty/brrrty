@@ -166,6 +166,12 @@ pub fn apply(
     ignores.append(&mut config.ignores);
     config.ignores = ignores;
 
+    for name in strings(val("bundles")) {
+        if !config.js_bundles.contains(&name) {
+            config.js_bundles.push(name);
+        }
+    }
+
     if let Some(Value::Object(o)) = val("globalData") {
         for (k, x) in o.iter() {
             config

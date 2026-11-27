@@ -51,7 +51,10 @@ fn a_page_prints_the_css_it_collected() {
     }
     let t = site(&[
         ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
-        ("eleventy.config.js", &config("eleventyConfig.addBundle(\"css\");")),
+        (
+            "eleventy.config.js",
+            &config("eleventyConfig.addBundle(\"css\");"),
+        ),
         ("package.json", "{}"),
         (
             "index.njk",

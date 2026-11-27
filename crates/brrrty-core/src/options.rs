@@ -213,6 +213,8 @@ pub struct ConfigOptions {
     pub js_shortcodes: Vec<JsConfigShortcode>,
     /// Shortcodes from the JS config for Liquid, in the order added.
     pub js_liquid_shortcodes: Vec<JsLiquidShortcode>,
+    /// Bundles the JS config added with `addBundle`, by name.
+    pub js_bundles: Vec<String>,
     /// Transforms from the JS config, in the order 11ty runs them.
     pub js_transforms: Vec<JsConfigTransform>,
     /// The Node that loaded the JS config, when it did.

@@ -261,6 +261,7 @@ impl SiteConfig {
             js_shortcodes: Vec::new(),
             js_liquid_shortcodes: Vec::new(),
             js_transforms: Vec::new(),
+            js_bundles: Vec::new(),
             js_started: None,
             js_config_file: None,
             js_functions: Vec::new(),

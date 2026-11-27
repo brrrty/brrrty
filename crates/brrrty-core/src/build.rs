@@ -2537,6 +2537,11 @@ fn build_once(
         &opts.config.filters,
         rss,
     );
+    let bundles = (!opts.config.js_bundles.is_empty())
+        .then(|| crate::plugins::bundle::Bundles::new(opts.config.js_bundles.clone()));
+    if let Some(b) = &bundles {
+        b.register(&mut nunjucks);
+    }
     crate::filters::register_nunjucks_shortcodes(&mut nunjucks, &opts.config.js_shortcodes);
     let includes_rel = opts.config.includes_dir();
     let includes = input.join(includes_rel);
@@ -3444,6 +3449,13 @@ fn build_once(
             }
             // 11ty runs the config's transforms, in order, on what the layouts gave.
             let mut html = rendered.html;
+            if let Some(b) = &bundles {
+                let url = match p.data.get("page").map(|pg| pg.get("url")) {
+                    Some(Value::String(u)) => u.to_string(),
+                    _ => String::new(),
+                };
+                html = b.resolve(&url, html);
+            }
             for t in &opts.config.js_transforms {
                 let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
                 match (t.run)(&html, &page) {
