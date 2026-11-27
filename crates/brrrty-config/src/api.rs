@@ -81,6 +81,8 @@ pub struct State {
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
     /// `add_plugin("rss", #{ feed: false })`: the plugin's filters, without a feed.
     pub rss_filters: bool,
+    /// `add_plugin("htmlbase")`.
+    pub html_base: bool,
     /// `add_layout_alias(from, to)`, by alias; a later one replaces an earlier one.
     pub layout_aliases: IndexMap<String, String>,
     /// `set_template_formats(...)`: the last call's list.
@@ -719,7 +721,7 @@ fn register_text(e: &mut Engine) {
 }
 
 /// The plugins `add_plugin` knows, by the name a script gives.
-pub const PLUGINS: [&str; 2] = ["rss", "syntaxhighlight"];
+pub const PLUGINS: [&str; 3] = ["rss", "syntaxhighlight", "htmlbase"];
 
 /// `eleventyConfig.addPlugin(plugin, options)` for a plugin Brrrty has its
 /// own version of, named as in [`PLUGINS`].
@@ -741,6 +743,21 @@ fn add_plugin(
             let plugin = crate::highlight::syntax_highlight(options.as_ref())
                 .map_err(|why| invalid(why, pos))?;
             state.syntax_highlight = Some(plugin);
+            Ok(())
+        }
+        // `@11ty/eleventy`'s `HtmlBasePlugin`. Brrrty's `pathPrefix` is
+        // always `/`, which turns its page transform off, so it adds two
+        // filters. Its options (`baseHref`, `extensions`) change the pages.
+        "htmlbase" => {
+            if let Some(key) = options.as_ref().and_then(|o| o.keys().next()) {
+                return Err(invalid(
+                    format!(
+                        "add_plugin(\"htmlbase\", ...) takes no options yet: Brrrty doesn't support `{key}`, which changes the URLs the plugin writes"
+                    ),
+                    pos,
+                ));
+            }
+            state.html_base = true;
             Ok(())
         }
         // `@11ty/eleventy-plugin-rss`'s `feedPlugin`: one feed per call.

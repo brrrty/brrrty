@@ -98,6 +98,13 @@ impl FeedOptions {
     }
 }
 
+/// The filters `addPlugin(EleventyHtmlBasePlugin)` adds: `htmlBaseUrl` and
+/// `addPathPrefixToFullUrl`. With 11ty's default `pathPrefix` (`/`) the
+/// plugin rewrites no URL in a page, so these are all it does.
+pub fn html_base_filters() -> Vec<(&'static str, brrrty_liquid::ArgsFilterFn)> {
+    feed::html_base_filters()
+}
+
 /// The filters the plugin, and the HTML `<base>` plugin it adds, register
 /// for every template language. The rest (`dateToRfc3339`,
 /// `dateToRfc822`, `getNewestCollectionItemDate`, `absoluteUrl`,

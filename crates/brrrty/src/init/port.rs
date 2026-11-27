@@ -3767,6 +3767,26 @@ impl<'o, 'l> Reader<'o, 'l> {
             Some(Binding::Export(m, e)) if m == RSS && e == "rssPlugin" => {
                 return self.rss_filters(options.as_deref(), a, b);
             }
+            // 11ty's HTML `<base>` plugin: with Brrrty's `pathPrefix` (`/`) it
+            // adds two filters and changes no page. Its options would.
+            Some(Binding::Export(m, e))
+                if m == "@11ty/eleventy"
+                    && (e == "HtmlBasePlugin" || e == "EleventyHtmlBasePlugin") =>
+            {
+                if options.as_deref() != Some(&[]) {
+                    self.todo(
+                        a,
+                        b,
+                        "port this plugin's options: Brrrty's `htmlbase` plugin takes none yet, and `baseHref` and `extensions` change the URLs the plugin writes",
+                        link,
+                    );
+                    return false;
+                }
+                self.out
+                    .items
+                    .push(Item::Rhai("config.add_plugin(\"htmlbase\");".into()));
+                return true;
+            }
             _ => {
                 self.todo(
                     a,
@@ -4452,6 +4472,27 @@ module.exports = function (eleventyConfig) {
     }
 
     #[test]
+    fn ports_the_html_base_plugin_without_options() {
+        for name in ["HtmlBasePlugin", "EleventyHtmlBasePlugin"] {
+            let src = format!(
+                "import {{ {name} }} from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {{\n\televentyConfig.addPlugin({name});\n}}\n"
+            );
+            let p = port(&src, "eleventy.config.js");
+            assert!(
+                p.text.contains("config.add_plugin(\"htmlbase\");"),
+                "{name}\n{}",
+                p.text
+            );
+            assert!(!p.text.contains("TODO(brrrty)"), "{name}\n{}", p.text);
+        }
+        // Options change the URLs it writes: not ported.
+        let src = "import { HtmlBasePlugin } from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {\n\televentyConfig.addPlugin(HtmlBasePlugin, { baseHref: \"https://example.com/\" });\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
+        assert!(!p.text.contains("add_plugin(\"htmlbase\""), "{}", p.text);
+    }
+
+    #[test]
     fn ports_esm_config() {
         let src = "import syntaxHighlight from \"@11ty/eleventy-plugin-syntaxhighlight\";\nimport pluginRss from \"@11ty/eleventy-plugin-rss\";\nimport { EleventyHtmlBasePlugin } from \"@11ty/eleventy\";\n\nexport default async function(eleventyConfig) {\n\televentyConfig.setInputDirectory(\"content\")\n\televentyConfig.addPlugin(syntaxHighlight, { preAttributes: { tabindex: 0 } })\n\televentyConfig.addPlugin(pluginRss)\n\televentyConfig.addPlugin(EleventyHtmlBasePlugin)\n}\n\nexport const config = {\n\thtmlTemplateEngine: false,\n};\n";
         let p = port(src, "eleventy.config.mjs");
@@ -4464,7 +4505,8 @@ module.exports = function (eleventyConfig) {
         );
         // Without the plugin's version, its filters are a TODO.
         assert!(t.contains("which version of the RSS plugin"), "{t}");
-        assert!(t.contains("eleventy.config.mjs, line 9:"), "{t}");
+        assert!(t.contains("eleventy.config.mjs, line 8:"), "{t}");
+        assert!(t.contains("config.add_plugin(\"htmlbase\");"), "{t}");
         // Version 3's filters are ported.
         let site = Site {
             rss: Some(3),
@@ -4477,14 +4519,14 @@ module.exports = function (eleventyConfig) {
             "{}",
             p3.text
         );
-        assert_eq!(p3.todos, 1, "{}", p3.text);
+        assert_eq!(p3.todos, 0, "{}", p3.text);
         assert!(
             t.contains(
                 "    dir: #{\n        input: \"content\",\n    },\n    htmlTemplateEngine: false,\n"
             ),
             "{t}"
         );
-        assert_eq!(p.todos, 2, "{t}");
+        assert_eq!(p.todos, 1, "{t}");
     }
 
     #[test]

@@ -209,6 +209,8 @@ pub struct SiteConfig {
     pub feeds: Vec<brrrty_core::plugins::rss::FeedOptions>,
     /// `add_plugin("rss", #{ feed: false })`: the RSS plugin's filters without a feed.
     pub rss_filters: bool,
+    /// `add_plugin("htmlbase")`: 11ty's HTML `<base>` plugin.
+    pub html_base: bool,
     /// `add_layout_alias` aliases: a layout name and the file it stands for.
     pub layout_aliases: indexmap::IndexMap<String, String>,
     /// Renderer rules `amend_library("md", ...)` set on 11ty's library.
@@ -244,6 +246,7 @@ impl SiteConfig {
             markdown_rules: self.markdown_rules.clone(),
             feeds: self.feeds.clone(),
             rss_filters: self.rss_filters,
+            html_base: self.html_base,
             includes: self.dir.includes.clone(),
             layouts: self.dir.layouts.clone(),
             data_folder: self.dir.data.clone(),
@@ -510,6 +513,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         markdown_rules,
         feeds: state.feeds,
         rss_filters: state.rss_filters,
+        html_base: state.html_base,
         layout_aliases: state.layout_aliases,
         reads,
         late_problems,
