@@ -100,16 +100,20 @@ pub(crate) fn copy_passthrough_avoiding(
     for (entry, to, from_config) in entries {
         let entry: PathBuf = entry;
         if from_config && is_glob(&entry.to_string_lossy()) {
+            if to.is_none_or(str::is_empty) && !entry.to_string_lossy().starts_with('!') {
+                collect_glob(&entry, &input, &mut c, opts);
+                continue;
+            }
             c.problems.push(
                 Problem::error(
                     codes::PASSTHROUGH_UNSUPPORTED,
                     format!(
-                        "passthrough path {} is a glob, which Brrrty doesn't copy yet",
+                        "passthrough path {} is a glob with a target, which Brrrty doesn't copy yet",
                         entry.display()
                     ),
                 )
                 .with_path(config_path(opts, &entry))
-                .with_help("name the files or folders to copy, one entry each"),
+                .with_help("drop the target, or name the files or folders to copy, one entry each"),
             );
             continue;
         }
@@ -217,6 +221,79 @@ pub(crate) fn copy_passthrough_avoiding(
         overridden: c.overridden,
         files: c.files,
         problems: c.problems,
+    }
+}
+
+/// Expand a glob entry (no target) into files, each copied to the same path
+/// minus the input folder, as a plain file entry would be. A glob that matches
+/// nothing copies nothing. Matching ignores case and includes dotfiles.
+fn collect_glob(entry: &Path, input: &Path, c: &mut Copier, opts: &BuildOptions) {
+    let pattern = entry.to_string_lossy().replace('\\', "/");
+    let pattern = pattern.trim_start_matches("./");
+    let matcher = match globset::GlobBuilder::new(pattern)
+        .case_insensitive(true)
+        .literal_separator(true)
+        .build()
+    {
+        Ok(g) => g.compile_matcher(),
+        Err(e) => {
+            c.problems.push(
+                Problem::error(
+                    codes::PASSTHROUGH_UNSUPPORTED,
+                    format!("passthrough glob {} is not valid: {e}", entry.display()),
+                )
+                .with_path(config_path(opts, entry)),
+            );
+            return;
+        }
+    };
+    // Start the walk at the folder before the first glob segment.
+    let mut base = PathBuf::new();
+    for seg in pattern.split('/') {
+        if is_glob(seg) {
+            break;
+        }
+        base.push(seg);
+    }
+    if base.as_os_str() == pattern {
+        base.pop();
+    }
+    let mut found = Vec::new();
+    walk_glob(c.root, &c.root.join(&base), &matcher, c, &mut found);
+    found.sort();
+    for rel in found {
+        let dest = match c.root.join(&rel).strip_prefix(input) {
+            Ok(r) => c.out.join(r),
+            Err(_) => c.out.join(&rel),
+        };
+        collect_entry(&c.root.join(&rel), &dest, c);
+    }
+}
+
+fn walk_glob(
+    root: &Path,
+    dir: &Path,
+    matcher: &globset::GlobMatcher,
+    c: &Copier,
+    found: &mut Vec<PathBuf>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let path = e.path();
+        if path == c.out || path == c.output {
+            continue;
+        }
+        let Ok(t) = e.file_type() else { continue };
+        if t.is_dir() {
+            walk_glob(root, &path, matcher, c, found);
+        } else if path.is_file()
+            && let Ok(rel) = path.strip_prefix(root)
+            && matcher.is_match(rel)
+        {
+            found.push(rel.to_path_buf());
+        }
     }
 }
 

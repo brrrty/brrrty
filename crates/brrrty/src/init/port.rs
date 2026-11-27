@@ -3328,7 +3328,7 @@ impl<'o, 'l> Reader<'o, 'l> {
                     None
                 };
                 match lit {
-                    Some(Lit::Str(path)) if !glob(&path) => {
+                    Some(Lit::Str(path)) if !glob(&path) || copyable_glob(&path) => {
                         self.out.items.push(Item::Rhai(format!(
                             "config.add_passthrough_copy({});",
                             js::rhai_string(&path)
@@ -4365,6 +4365,11 @@ impl Out<'_> {
     }
 }
 
+/// A glob Brrrty's passthrough copy expands: no negation, no extglob groups.
+fn copyable_glob(path: &str) -> bool {
+    !path.starts_with('!') && !path.contains(['(', ')'])
+}
+
 /// A path 11ty would read as a glob.
 fn glob(path: &str) -> bool {
     path.contains(['*', '?', '[', ']', '{', '}', '(', ')']) || path.starts_with('!')
@@ -4382,7 +4387,7 @@ const { feedPlugin } = require("@11ty/eleventy-plugin-rss");
 module.exports = function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy("src/images");
   eleventyConfig.addPassthroughCopy({ "static": "/", "src/a.svg": "a.svg" });
-  eleventyConfig.addPassthroughCopy("src/**/*.png");
+  eleventyConfig.addPassthroughCopy("src/**/@(a|b).png");
   eleventyConfig.addPlugin(syntaxHighlight);
   eleventyConfig.addPlugin(feedPlugin, {
     type: "atom",
@@ -5662,12 +5667,17 @@ module.exports = function (eleventyConfig) {
     }
 
     #[test]
-    fn js_mode_keeps_the_glob_todo_because_the_js_config_copies_no_globs_either() {
+    fn a_plain_glob_is_ported_and_an_extglob_keeps_the_todo() {
         let p = port_js(
-            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s);\n  c.addPassthroughCopy(\"*.png\");\n};\n",
+            "module.exports = function (c) {\n  c.addFilter(\"f\", (s) => s);\n  c.addPassthroughCopy(\"*.{png,jpg}\");\n  c.addPassthroughCopy(\"@(a|b).png\");\n};\n",
             &[],
         );
-        assert!(p.js, "{}", p.text);
+        assert!(
+            p.text
+                .contains("config.add_passthrough_copy(\"*.{png,jpg}\");"),
+            "{}",
+            p.text
+        );
         assert_eq!(todos(&p).len(), 1, "{}", p.text);
         assert!(todos(&p)[0].contains("not globs"), "{}", p.text);
     }
