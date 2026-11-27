@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9 - 2026-11-27
+
+- `brrrty init` now writes `config.set_js_config("node")` when the 11ty config has something it can't port to Rhai. It no longer leaves blocking TODOs, or gives up on the whole config, for what the JS config runs: filters, shortcodes, transforms, plugins, passthrough copy, ignores, template formats, global data, and the folders and engines the config returns. What Rhai can port is still ported and wins. Collections, preprocessors, events, `amendLibrary` and the like keep their TODOs. At build time, any config method the JS config doesn't run now refuses every page, wherever it's called (a plugin or helper in `node_modules` included). The exceptions are the ones that never change output (watch targets, dev server options, quiet mode, linters), which stay warnings. `brrrty doctor` (text and `--json`) gains a `jsConfig` section: the mode, the config file, each JS function with its kind, name, calls and time (hottest first), and each unsupported method with file and line. When the config throws, `doctor --json` still reports, with the error as the blocker.
+
 ## 0.1.8 - 2026-11-26
 
 - `dir.includes` and `dir.layouts` can now lead out of the input folder with leading `..` parts (like `../src`), resolved against the input folder as in 11ty. Before this, Brrrty refused such a site before building anything. A `..` path that leads back into the input folder (`../pages/_includes`) names the same folder as the plain one, so its files are never built as pages, and `eleventy.directories` shows the resolved folders. An absolute path, a `..` after a folder name, and a folder that contains the input folder are still refused, and so is `dir.data` outside the input folder.
