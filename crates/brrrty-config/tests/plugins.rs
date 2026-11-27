@@ -692,3 +692,52 @@ fn a_feed_in_the_includes_folder_is_refused() {
     );
     assert!(load_with(t.path(), Clock::Fixed(NOON_MS)).is_ok());
 }
+
+/// `addPlugin(EleventyHtmlBasePlugin)` with no options: 11ty's `pathPrefix`
+/// is `/` in Brrrty, so the plugin rewrites no URL in a page (its transform
+/// is off for the default base); what it adds is two filters.
+#[test]
+fn the_html_base_plugin_adds_its_filters() {
+    let (t, r) = site(
+        r#"config.add_plugin("htmlbase");"#,
+        &[
+            (
+                "a.liquid",
+                "{{ '/x/' | htmlBaseUrl: 'https://example.com/s/' }} {{ '/y/' | htmlBaseUrl }}",
+            ),
+            (
+                "b.njk",
+                "{{ '/x/' | htmlBaseUrl('https://example.com/s/') }} {{ 'https://example.com' | addPathPrefixToFullUrl }}",
+            ),
+            ("c.md", "[l](/c/) <a href=\"d/\">d</a>\n"),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap(),
+        "https://example.com/x/ /y/"
+    );
+    assert_eq!(
+        out(&t, "b/index.html").unwrap(),
+        "https://example.com/x/ https://example.com/"
+    );
+    assert_eq!(
+        out(&t, "c/index.html").unwrap(),
+        "<p><a href=\"/c/\">l</a> <a href=\"d/\">d</a></p>\n"
+    );
+}
+
+/// Without the plugin the filters don't exist.
+#[test]
+fn the_html_base_filters_need_the_plugin() {
+    let (_t, r) = site("", &[("a.liquid", "{{ '/x/' | htmlBaseUrl }}")]);
+    assert!(!errors(&r).is_empty());
+}
+
+#[test]
+fn the_html_base_plugin_refuses_options_it_does_not_have() {
+    let p = load_err(r#"config.add_plugin("htmlbase", #{ baseHref: "https://example.com/" });"#);
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert!(p.message.contains("htmlbase"), "{}", p.message);
+    assert!(p.message.contains("baseHref"), "{}", p.message);
+}

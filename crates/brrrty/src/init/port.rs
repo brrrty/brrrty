@@ -4452,6 +4452,27 @@ module.exports = function (eleventyConfig) {
     }
 
     #[test]
+    fn ports_the_html_base_plugin_without_options() {
+        for name in ["HtmlBasePlugin", "EleventyHtmlBasePlugin"] {
+            let src = format!(
+                "import {{ {name} }} from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {{\n\televentyConfig.addPlugin({name});\n}}\n"
+            );
+            let p = port(&src, "eleventy.config.js");
+            assert!(
+                p.text.contains("config.add_plugin(\"htmlbase\");"),
+                "{name}\n{}",
+                p.text
+            );
+            assert!(!p.text.contains("TODO(brrrty)"), "{name}\n{}", p.text);
+        }
+        // Options change the URLs it writes: not ported.
+        let src = "import { HtmlBasePlugin } from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {\n\televentyConfig.addPlugin(HtmlBasePlugin, { baseHref: \"https://example.com/\" });\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
+        assert!(!p.text.contains("add_plugin(\"htmlbase\""), "{}", p.text);
+    }
+
+    #[test]
     fn ports_esm_config() {
         let src = "import syntaxHighlight from \"@11ty/eleventy-plugin-syntaxhighlight\";\nimport pluginRss from \"@11ty/eleventy-plugin-rss\";\nimport { EleventyHtmlBasePlugin } from \"@11ty/eleventy\";\n\nexport default async function(eleventyConfig) {\n\televentyConfig.setInputDirectory(\"content\")\n\televentyConfig.addPlugin(syntaxHighlight, { preAttributes: { tabindex: 0 } })\n\televentyConfig.addPlugin(pluginRss)\n\televentyConfig.addPlugin(EleventyHtmlBasePlugin)\n}\n\nexport const config = {\n\thtmlTemplateEngine: false,\n};\n";
         let p = port(src, "eleventy.config.mjs");
