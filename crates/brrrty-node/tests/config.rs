@@ -156,3 +156,29 @@ fn plugins_see_the_merged_path_prefix() {
         assert_eq!(get(seen, "seen"), &s(want));
     }
 }
+
+/// 11ty's plugins (HtmlBasePlugin, InputPathToUrlTransformPlugin) call
+/// `eleventyConfig.htmlTransformer.addUrlTransform(...)`. The recorder must not throw a
+/// TypeError there: it records the call as unsupported, so the build refuses by name.
+#[test]
+fn html_transformer_calls_are_recorded_not_thrown() {
+    let Some(node) = node() else { return };
+    let cfg = "module.exports = (c) => {\n  c.addPlugin((p) => {\n    p.htmlTransformer.addUrlTransform([\"html\"], (u) => u, { priority: -1 });\n    p.htmlTransformer.addPosthtmlPlugin(\"html\", () => {});\n  });\n  return {};\n};\n";
+    let t = site(&[("eleventy.config.js", cfg)]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+        JsResult::Ok(d) => d,
+        other => panic!("{other:?}"),
+    };
+    let methods: Vec<&Value> = list(get(&d.value, "unsupported"))
+        .iter()
+        .map(|u| get(u, "method"))
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            &s("htmlTransformer.addUrlTransform"),
+            &s("htmlTransformer.addPosthtmlPlugin")
+        ]
+    );
+}
