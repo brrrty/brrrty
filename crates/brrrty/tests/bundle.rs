@@ -186,3 +186,66 @@ fn liquid_bundles_are_refused_by_name() {
     assert!(!o.status.success(), "{}", text(&o));
     assert!(text(&o).contains("Nunjucks-only"), "{}", text(&o));
 }
+
+#[test]
+fn pruning_reserializes_html_pages_like_posthtml() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        (
+            "index.njk",
+            "<p>a<br/>b</p><input disabled><img src=x />{% css %}a{}{% endcss %}<style>{% getBundle \"css\" %}</style>",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "<p>a<br>b</p><input disabled=\"\"><img src=\"x\"><style>a{}</style>"
+    );
+}
+
+#[test]
+fn pages_that_are_not_html_are_not_pruned() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        (
+            "feed.njk",
+            "---\npermalink: feed.xml\n---\n<script></script><br/>{% css %}a{}{% endcss %}",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/feed.xml")).unwrap(),
+        "<script></script><br/>"
+    );
+}
+
+#[test]
+fn blank_or_missing_href_and_blank_src_are_pruned() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config(BOTH);
+    let t = bundle_site(&[
+        ("eleventy.config.js", &cfg),
+        (
+            "index.njk",
+            "{% css %}a{}{% endcss %}<link rel=\"stylesheet\"><link rel=\"stylesheet\" href=\" \"><link rel=\"STYLESHEET\" eleventy:keep><link rel=\"stylesheet\" href=\"a.css\"><script src=\" \"></script><script src=\"b.js\"></script><style> </style>",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "<link rel=\"STYLESHEET\" eleventy:keep=\"\"><link rel=\"stylesheet\" href=\"a.css\"><script src=\"b.js\"></script><style> </style>"
+    );
+}
