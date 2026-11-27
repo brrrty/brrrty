@@ -1004,6 +1004,55 @@ fn an_unrun_output_changing_method_blocks_the_build() {
     assert!(!t.path().join("_site/index.html").exists(), "{s}");
 }
 
+/// Any unsupported method blocks unless it's known to leave the pages alone, not only a list of
+/// known bad ones.
+#[test]
+fn an_unlisted_output_changing_method_blocks_the_build() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"const addHelpers = require("eleventy-helpers"); module.exports = function (c) { addHelpers(c); return { dir: { input: "src" } }; };"#,
+            ),
+            (
+                "node_modules/eleventy-helpers/index.js",
+                r#"module.exports = function (c) { c.addFilter("shout", s => s.toUpperCase()); c.addNunjucksGlobal("site", "Hello"); };"#,
+            ),
+            ("src/index.njk", r#"{{ site }}|{{ "x" | shout }}"#),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(!o.status.success(), "{s}");
+    assert!(s.contains("addNunjucksGlobal"), "{s}");
+    assert!(!t.path().join("_site/index.html").exists(), "{s}");
+}
+
+/// A method that leaves the pages alone stays a warning.
+#[test]
+fn a_harmless_unsupported_method_only_warns() {
+    if !has_node() {
+        return;
+    }
+    let (t, o) = build_with(
+        &[
+            (
+                "eleventy.config.js",
+                r#"module.exports = function (c) { c.addFilter("shout", s => s.toUpperCase()); c.addWatchTarget("./x.css"); return { dir: { input: "src" } }; };"#,
+            ),
+            ("src/index.njk", r#"{{ "x" | shout }}"#),
+        ],
+        &[],
+    );
+    let s = text(&o);
+    assert!(o.status.success(), "{s}");
+    assert!(s.contains("addWatchTarget"), "{s}");
+    assert!(t.path().join("_site/index.html").exists(), "{s}");
+}
+
 /// A config that throws still gives doctor a report, with the error as the blocker.
 #[test]
 fn doctor_json_reports_a_config_that_throws() {
