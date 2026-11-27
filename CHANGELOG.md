@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14 - 2026-11-27
+
+- With `set_js_config("node")`, plugins added with `addPlugin` now run after 11ty's config merge, as in 11ty. They see `eleventyConfig.pathPrefix` set to the config's `pathPrefix` (default `/`). Before this, it was `undefined`, so `HtmlBasePlugin` threw ``The `baseHref` option is required`` and the whole config failed to load.
+
 ## 0.1.13 - 2026-11-27
 
 - 11ty's `HtmlBasePlugin` (also exported as `EleventyHtmlBasePlugin`) is now supported as `config.add_plugin("htmlbase")`, and `brrrty init` ports `addPlugin(HtmlBasePlugin)` to it instead of leaving a TODO. Brrrty's `pathPrefix` is always `/`, so, as in 11ty, the plugin rewrites no URL in a page. It adds the `htmlBaseUrl` and `addPathPrefixToFullUrl` filters to Liquid and Nunjucks. The `baseHref` and `extensions` options are refused by name. 11ty's `IdAttributePlugin` and `InputPathToUrlTransformPlugin` aren't supported yet.
