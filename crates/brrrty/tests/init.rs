@@ -200,7 +200,7 @@ fn sets_up_an_esm_site() {
         ),
         (
             "eleventy.config.mjs",
-            "import { feedPlugin } from \"@11ty/eleventy-plugin-rss\";\nimport { EleventyHtmlBasePlugin } from \"@11ty/eleventy\";\n\nexport default async function (eleventyConfig) {\n\televentyConfig.setInputDirectory(\"content\");\n\televentyConfig.addPassthroughCopy(\"content/**/*.jpg\");\n\televentyConfig.addPlugin(EleventyHtmlBasePlugin);\n\televentyConfig.addPlugin(feedPlugin, {\n\t\ttype: \"atom\",\n\t\toutputPath: \"/feed.xml\",\n\t\tcollection: { name: \"post\", limit: 10 },\n\t\tmetadata: { title: \"Blog\", base: \"https://example.com/\" },\n\t});\n\televentyConfig.addCollection(\"post\", (api) => api.getFilteredByTag(\"post\"));\n}\n\nexport const config = {\n\thtmlTemplateEngine: false,\n\ttemplateFormats: [\"md\", \"html\"],\n};\n",
+            "import { feedPlugin } from \"@11ty/eleventy-plugin-rss\";\nimport { EleventyHtmlBasePlugin } from \"@11ty/eleventy\";\n\nexport default async function (eleventyConfig) {\n\televentyConfig.setInputDirectory(\"content\");\n\televentyConfig.addPassthroughCopy(\"content/**/@(a|b).jpg\");\n\televentyConfig.addPlugin(EleventyHtmlBasePlugin);\n\televentyConfig.addPlugin(feedPlugin, {\n\t\ttype: \"atom\",\n\t\toutputPath: \"/feed.xml\",\n\t\tcollection: { name: \"post\", limit: 10 },\n\t\tmetadata: { title: \"Blog\", base: \"https://example.com/\" },\n\t});\n\televentyConfig.addCollection(\"post\", (api) => api.getFilteredByTag(\"post\"));\n}\n\nexport const config = {\n\thtmlTemplateEngine: false,\n\ttemplateFormats: [\"md\", \"html\"],\n};\n",
         ),
         ("content/index.md", "# Hi\n"),
     ]);

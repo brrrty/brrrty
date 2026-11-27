@@ -124,7 +124,7 @@ fn passthrough_targets_that_cant_be_copied_are_refused() {
     write(root, "src/b.txt", "b");
     let config = ConfigOptions {
         passthrough: vec![
-            entry("src/*.txt", None),
+            entry("src/*.txt", Some("out")),
             entry("src/a.txt", Some("../escaped.txt")),
             entry("src/b.txt", Some("/")),
         ],
@@ -148,6 +148,30 @@ fn passthrough_targets_that_cant_be_copied_are_refused() {
     );
     assert!(!root.join("escaped.txt").exists());
     assert!(files(&root.join("_site")).is_empty());
+}
+
+#[test]
+fn passthrough_globs_copy_every_match_keeping_their_paths() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    write(root, "src/index.md", "hi");
+    write(root, "src/posts/a/p.png", "x");
+    write(root, "src/posts/b/c/q.JPG", "y");
+    write(root, "src/posts/a/notes.txt", "z");
+    write(root, "src/other/r.png", "w");
+    let config = ConfigOptions {
+        passthrough: vec![
+            entry("src/posts/**/*.{png,jpg}", None),
+            entry("src/nothing/**/*.gif", None),
+        ],
+        ..Default::default()
+    };
+    let r = build(&opts(root, config), &MarkdownIt::new());
+    assert!(!r.has_errors(), "{:?}", r.problems);
+    assert_eq!(
+        files(&root.join("_site")),
+        ["index.html", "posts/a/p.png", "posts/b/c/q.JPG"]
+    );
 }
 
 #[test]
