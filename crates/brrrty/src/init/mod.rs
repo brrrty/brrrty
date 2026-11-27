@@ -15,7 +15,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 pub use brrrty_config::CONFIG_FILE;
-pub(crate) use port::JS_NOT_RUN;
+pub(crate) use port::js_blocks;
 
 /// 11ty's config file names, in the order 11ty looks for them.
 pub const ELEVENTY_CONFIGS: [&str; 4] = [

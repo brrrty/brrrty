@@ -313,7 +313,7 @@ pub fn apply(
             let method = text(get(u, "method")).unwrap_or_default();
             let at = text(get(u, "at")).unwrap_or_default();
             // What changes the output refuses every page, as `init`'s TODOs do.
-            if crate::init::JS_NOT_RUN.contains(&method.trim_end_matches(" = ")) {
+            if crate::init::js_blocks(&method) {
                 blocking.push(format!("{at}: eleventyConfig.{method}"));
             }
             let mut p = Problem::warning(

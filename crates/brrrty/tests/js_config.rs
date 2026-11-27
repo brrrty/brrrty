@@ -45,7 +45,7 @@ fn text(o: &Output) -> String {
 const CONFIG: &str = r#"module.exports = function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy("a").addPassthroughCopy("b");
   eleventyConfig.addGlobalData("who", "world");
-  eleventyConfig.setSomethingNew(true);
+  eleventyConfig.setQuietMode(true);
   return { dir: { input: "src" } };
 };
 "#;
@@ -124,7 +124,7 @@ fn doctor_lists_unsupported_methods_with_file_and_line() {
     let t = fixture("config.set_js_config(\"node\");\n");
     let o = run(t.path(), "doctor", &[]);
     let s = text(&o);
-    assert!(s.contains("setSomethingNew"), "{s}");
+    assert!(s.contains("setQuietMode"), "{s}");
     assert!(s.contains("eleventy.config.js:4"), "{s}");
 }
 

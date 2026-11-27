@@ -66,24 +66,43 @@ const JS_RUNS: &[&str] = &[
     "setDataDirectory",
     "setLayoutsDirectory",
 ];
-/// Config methods it records as unsupported: a TODO stays for them.
-pub(crate) const JS_NOT_RUN: &[&str] = &[
-    "addCollection",
-    "addPreprocessor",
-    "addExtension",
-    "addDataExtension",
-    "addJavaScriptFunction",
-    "addBundle",
-    "addTemplate",
-    "setLibrary",
-    "amendLibrary",
-    "setFrontMatterParsingOptions",
-    "setDataFileBaseName",
-    "on",
-    "htmlTransformer",
-    "addLayoutAlias",
+/// Config methods it records as unsupported that leave the written pages alone: only
+/// these stay a warning. Every other unsupported method blocks (a TODO when ported,
+/// a refusal at build time).
+const JS_HARMLESS: &[&str] = &[
+    "addWatchTarget",
+    "setWatchThrottleWaitTime",
+    "setWatchJavaScriptDependencies",
+    "setChokidarConfig",
+    "setServerOptions",
+    "setServerPassthroughCopyBehavior",
+    "setBrowserSyncConfig",
+    "setQuietMode",
+    "setFreezeReservedData",
     "addLinter",
 ];
+
+/// The recorder reports `method` as unsupported: it changes what pages are written
+/// unless it's known harmless, and the JS config doesn't apply it.
+pub(crate) fn js_blocks(method: &str) -> bool {
+    let m = method.trim_end_matches(" = ");
+    !JS_HARMLESS.contains(&m) && !JS_RUNS.contains(&m) && !is_shortcode(m)
+}
+
+fn is_shortcode(m: &str) -> bool {
+    (m.starts_with("add") && m.ends_with("Shortcode"))
+        || (m.starts_with("addPaired") && m.contains("Shortcode"))
+}
+
+/// An identifier that reads like a config method call (`addX`, `setX`, `amendX`), plus `on`.
+fn config_method_like(i: &str) -> bool {
+    i == "on"
+        || i == "htmlTransformer"
+        || ["add", "set", "amend"].iter().any(|p| {
+            i.strip_prefix(p)
+                .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()))
+        })
+}
 
 /// How deep helpers, plugins and modules are followed.
 const MAX_FOLLOW: usize = 16;
@@ -1448,12 +1467,8 @@ impl<'o, 'l> Reader<'o, 'l> {
                 .iter()
                 .filter_map(|t| t.ident())
         };
-        let runs = idents().any(|i| {
-            JS_RUNS.contains(&i)
-                || (i.starts_with("add") && i.ends_with("Shortcode"))
-                || (i.starts_with("addPaired") && i.contains("Shortcode"))
-        });
-        if !runs || idents().any(|i| JS_NOT_RUN.contains(&i)) {
+        let runs = idents().any(|i| JS_RUNS.contains(&i) || is_shortcode(i));
+        if !runs || idents().any(|i| config_method_like(i) && js_blocks(i)) {
             return false;
         }
         self.js_note(a, b);
