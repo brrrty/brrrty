@@ -1,6 +1,6 @@
 [package]
 name = "brrty"
-version = "0.1.9"
+version = "0.1.10"
 description = "Did you mean brrrty? (three Rs, like \"go brrr\")"
 edition.workspace = true
 rust-version.workspace = true
