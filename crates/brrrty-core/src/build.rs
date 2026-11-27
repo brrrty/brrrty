@@ -152,9 +152,17 @@ struct Prepared {
     /// What placing it (its permalink and computed data) did that makes
     /// its data random.
     drawn: Drawn,
+    /// The layouts computed data chose, when they differ from the
+    /// template's own.
+    layouts: Option<Vec<Arc<LayoutFile>>>,
 }
 
 impl Prepared {
+    /// The layouts that wrap the page.
+    fn layouts(&self) -> &[Arc<LayoutFile>] {
+        self.layouts.as_deref().unwrap_or(&self.source.layouts)
+    }
+
     /// The page as problems name it.
     fn label(&self) -> String {
         match self.page_number {
@@ -1296,6 +1304,7 @@ fn load_page_inner(
         drop(unit);
         let (data, permalink) = located?;
         place.check_undefined(&undefined)?;
+        let layouts = place.computed_layouts(&data)?;
         let output_rel = match permalink {
             Permalink::Write { output_rel, .. } => Some(output_rel),
             Permalink::Skip => None,
@@ -1306,6 +1315,7 @@ fn load_page_inner(
             data,
             page_number: None,
             drawn,
+            layouts,
         }]));
     };
     let pagination_line = key_line(&text, "pagination");
@@ -1432,6 +1442,19 @@ fn with_location(mut data: Data, found: &Located) -> Data {
 }
 
 impl Place<'_, '_> {
+    /// The layouts a computed `layout` chose, as 11ty renders the page with
+    /// the `layout` of its final data. `None` when nothing computes it.
+    fn computed_layouts(&self, data: &Data) -> Result<Option<Vec<Arc<LayoutFile>>>, Problem> {
+        if !self.plan.is_some_and(|p| p.sets_root("layout")) {
+            return Ok(None);
+        }
+        match layout_chain(self.shared, data.get("layout"), &self.source.shown, "")? {
+            Ok(chain) => Ok(Some(chain)),
+            Err(Loaded::LayoutFailed(p) | Loaded::Failed(p) | Loaded::DataFailed(p)) => Err(p),
+            Err(Loaded::Template(_)) => Ok(None),
+        }
+    }
+
     /// Locate the page with `locator` and set `page.url` and
     /// `page.outputPath`: computed data does it as its first entries, in
     /// their place in the order.
@@ -1598,12 +1621,14 @@ impl Place<'_, '_> {
                 drawn.add(draws.finish());
                 // A page of a collection reads the collections.
                 drawn.touched |= expand_from.is_some();
+                let layouts = self.computed_layouts(&data).map_err(on_page(n))?;
                 let page = Some(Prepared {
                     source: self.source.clone(),
                     output_rel,
                     data,
                     page_number: Some(n),
                     drawn,
+                    layouts,
                 });
                 Ok((page, undefined))
             })
@@ -3145,8 +3170,7 @@ fn build_once(
             // A JavaScript template or layout keeps the key, in its place,
             // as a marker it can't read (see `render::js_traps`).
             None if matches!(p.source.engines, Engines::Js(_))
-                || p.source
-                    .layouts
+                || p.layouts()
                     .iter()
                     .any(|l| matches!(l.kind, crate::layout::Kind::Js(_))) =>
             {
@@ -3203,13 +3227,8 @@ fn build_once(
     };
     // A page whose layout Brrrty can't render yet is refused when it would
     // be written; its content still serves the pages that read it.
-    let unsupported_layout = |p: &Prepared| {
-        p.source
-            .layouts
-            .iter()
-            .find_map(|l| l.unrenderable())
-            .cloned()
-    };
+    let unsupported_layout =
+        |p: &Prepared| p.layouts().iter().find_map(|l| l.unrenderable()).cloned();
     if strict && has_error(&report) {
         return finish(report, strict, start);
     }
@@ -3243,7 +3262,7 @@ fn build_once(
                 body_line: p.source.body_line,
                 engines: p.source.engines,
                 data: &p.data,
-                layouts: &p.source.layouts,
+                layouts: p.layouts(),
                 feed: p.source.feed.as_deref(),
                 first: first_pages.get(&Arc::as_ptr(&p.source)).copied(),
                 traps: &p.source.traps,
@@ -3356,8 +3375,7 @@ fn build_once(
             let mut drawn = draws.finish();
             // A JavaScript layout may read the collections, in Node.
             drawn.touched |= p
-                .source
-                .layouts
+                .layouts()
                 .iter()
                 .any(|l| matches!(l.kind, crate::layout::Kind::Js(_)));
             let layout_drawn = LayoutDrawn {
