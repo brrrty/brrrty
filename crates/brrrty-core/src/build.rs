@@ -2464,6 +2464,11 @@ fn build_once(
     for s in &opts.config.js_liquid_shortcodes {
         engine.register_shortcode(&s.name, s.paired, s.run.clone());
     }
+    let bundles = (!opts.config.js_bundles.is_empty())
+        .then(|| crate::plugins::bundle::Bundles::new(opts.config.js_bundles.clone()));
+    if let Some(b) = &bundles {
+        b.register_liquid_refusals(&mut engine);
+    }
     for f in &opts.config.js_filters {
         if f.engine != crate::options::FilterEngine::Nunjucks {
             engine.register_args_filter(&f.name, f.run.clone());
@@ -2537,8 +2542,6 @@ fn build_once(
         &opts.config.filters,
         rss,
     );
-    let bundles = (!opts.config.js_bundles.is_empty())
-        .then(|| crate::plugins::bundle::Bundles::new(opts.config.js_bundles.clone()));
     if let Some(b) = &bundles {
         b.register(&mut nunjucks);
     }
@@ -3454,7 +3457,7 @@ fn build_once(
                     Some(Value::String(u)) => u.to_string(),
                     _ => String::new(),
                 };
-                html = b.resolve(&url, html);
+                html = crate::plugins::bundle::prune_empty(&b.resolve(&url, html));
             }
             for t in &opts.config.js_transforms {
                 let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
