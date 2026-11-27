@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.13 - 2026-11-27
+
+- 11ty's `HtmlBasePlugin` (also exported as `EleventyHtmlBasePlugin`) is now supported as `config.add_plugin("htmlbase")`, and `brrrty init` ports `addPlugin(HtmlBasePlugin)` to it instead of leaving a TODO. Brrrty's `pathPrefix` is always `/`, so, as in 11ty, the plugin rewrites no URL in a page. It adds the `htmlBaseUrl` and `addPathPrefixToFullUrl` filters to Liquid and Nunjucks. The `baseHref` and `extensions` options are refused by name. 11ty's `IdAttributePlugin` and `InputPathToUrlTransformPlugin` aren't supported yet.
+
 ## 0.1.12 - 2026-11-27
 
 - Passthrough copy now takes globs. `config.add_passthrough_copy("src/posts/**/*.{png,jpg}")` copies every matching file to its path minus the input folder, as in 11ty: braces, `**` and `?` work, matching ignores case and includes dotfiles, and a glob that matches nothing is fine. Before this, Brrrty refused the glob. `brrrty init` ports plain glob strings now; negated globs and extglob groups (`@(a|b)`) keep their TODO. A glob with a target (`#{ "src/**/*.png": "img" }`) is still refused, and the error says so.
