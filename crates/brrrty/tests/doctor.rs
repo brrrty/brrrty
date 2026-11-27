@@ -116,9 +116,8 @@ fn a_site_that_builds_exits_0() {
     assert!(!dir.path().join("_site").exists());
 }
 
-/// The corpus run's first repro: `brrrty init` can't port the 11ty config at all (it hands
-/// `eleventyConfig` to a package's function, which could do anything), so the folders it
-/// sets are lost. 11ty writes `<h1>Hello</h1>`;
+/// The corpus run's first repro: `brrrty init` can't read the 11ty config at all, so the
+/// folders it sets are lost. 11ty writes `<h1>Hello</h1>`;
 /// with default folders Brrrty would write `<h1></h1>`.
 #[test]
 fn a_config_init_could_not_port_blocks_every_page() {
@@ -129,7 +128,7 @@ fn a_config_init_could_not_port_blocks_every_page() {
         ),
         (
             "eleventy.config.js",
-            "const addHelpers = require(\"eleventy-helpers\");\n\nmodule.exports = function (eleventyConfig) {\n  addHelpers(eleventyConfig);\n  return { dir: { input: \"src\", data: \"data\" } };\n};\n",
+            "module.exports = function (eleventyConfig) {\n  return { dir: { input: \"src\", data: \"data\" } };\n};\n// caf\u{e9}: a non-ASCII character outside a string or comment is below\n\u{e9}\n",
         ),
         ("src/data/site.json", "{\"title\":\"Hello\"}\n"),
         (
@@ -175,7 +174,7 @@ fn a_todo_init_left_blocks_every_page_and_comes_first() {
         ),
         (
             "eleventy.config.js",
-            "module.exports = function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"src/style.css\");\n  eleventyConfig.addTransform(\"shout\", function (content) {\n    return content.toUpperCase();\n  });\n  return { dir: { input: \"src\" } };\n};\n",
+            "module.exports = function (eleventyConfig) {\n  eleventyConfig.addPassthroughCopy(\"src/style.css\");\n  eleventyConfig.addPreprocessor(\"shout\", \"md\", function (data, content) {\n    return content.toUpperCase();\n  });\n  return { dir: { input: \"src\" } };\n};\n",
         ),
         ("src/index.md", "# hi\n"),
         ("src/other.njk", "{{ 1 | usd }}\n"),
@@ -618,7 +617,7 @@ fn the_build_scripts_flags_are_ported_or_marked() {
         ),
         (
             "site.config.js",
-            "module.exports = function (eleventyConfig) {\n  eleventyConfig.addTransform(\"up\", (c) => c.toUpperCase());\n};\n",
+            "module.exports = function (eleventyConfig) {\n  eleventyConfig.addPreprocessor(\"up\", \"md\", (data, c) => c.toUpperCase());\n};\n",
         ),
         ("src/index.md", "# Hi\n\n{{ \"/x/\" | url }}\n"),
     ]);

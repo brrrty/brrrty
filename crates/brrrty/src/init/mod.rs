@@ -15,6 +15,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 pub use brrrty_config::CONFIG_FILE;
+pub(crate) use port::js_blocks;
 
 /// 11ty's config file names, in the order 11ty looks for them.
 pub const ELEVENTY_CONFIGS: [&str; 4] = [
@@ -355,8 +356,17 @@ pub fn plan(dir: &Path) -> Result<Plan, Refusal> {
                         cli,
                         load: Some(&load),
                         rss: rss.as_deref().and_then(brrrty_config::rss_version::major),
+                        js: false,
                     };
-                    let mut p = port::port_site(src.strip_prefix(BOM).unwrap_or(&src), name, site);
+                    let text = src.strip_prefix(BOM).unwrap_or(&src);
+                    let mut p = port::port_site(text, name, site);
+                    // What Rhai can't hold, the JS config runs in the site's own Node.
+                    if p.todos > 0 {
+                        let js = port::port_site(text, name, port::Site { js: true, ..site });
+                        if js.js && js.todos < p.todos {
+                            p = js;
+                        }
+                    }
                     record_source(&mut p.text, name, src.as_bytes());
                     for (module, text) in &p.modules {
                         record_module(&mut p.text, module, text.as_bytes());

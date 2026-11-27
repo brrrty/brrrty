@@ -423,6 +423,17 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
         Ok(opts) => opts,
         Err(problems) => {
             report::print_problems(&problems, &root, color);
+            if args.json {
+                let on = flags.js_config == Some(brrrty_core::JsData::Node)
+                    || matches!(
+                        brrrty_config::load(&root),
+                        Ok(Some(s)) if matches!(
+                            s.build_options().js_config,
+                            Some((brrrty_core::JsData::Node, _))
+                        )
+                    );
+                brrrty::say!("{:#}", doctor::config_failed_json(&problems, on));
+            }
             return ExitCode::from(1);
         }
     };
@@ -454,6 +465,7 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
             .map_err(|m| m.to_string())
     });
     let js_report = doctor::JsReport::new(&opts.js, &diagnosis, &root, node_when_off);
+    let js_config_report = doctor::JsConfigReport::new(&opts.config);
     let mut verified = None;
     if let (Some(e), Some(t)) = (&eleventy, &temp) {
         let shim = t.path().join("freeze-time.cjs");
@@ -490,9 +502,13 @@ fn run_doctor(args: DoctorArgs) -> ExitCode {
             Ok(v) => verify::json(v),
             Err(why) => serde_json::json!({ "error": why }),
         });
-        brrrty::say!("{:#}", doctor::json(&diagnosis, v, js_report.json()));
+        brrrty::say!(
+            "{:#}",
+            doctor::json(&diagnosis, v, js_report.json(), js_config_report.json())
+        );
     } else {
-        let mut out = js_report.text();
+        let mut out = js_config_report.text();
+        out.push_str(&js_report.text());
         out.push_str(&doctor::text(&diagnosis));
         if let Some(Ok(v)) = &verified {
             out.push('\n');

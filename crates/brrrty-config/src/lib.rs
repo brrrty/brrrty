@@ -262,6 +262,9 @@ impl SiteConfig {
             js_liquid_shortcodes: Vec::new(),
             js_transforms: Vec::new(),
             js_started: None,
+            js_config_file: None,
+            js_functions: Vec::new(),
+            js_unsupported: Vec::new(),
             order_check: self.order_check,
         }
     }

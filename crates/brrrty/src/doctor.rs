@@ -141,7 +141,7 @@ fn problem_json(p: &Problem) -> Value {
 }
 
 /// The JSON report. `verify` is the `--verify` part, when it ran.
-pub fn json(d: &Diagnosis, verify: Option<Value>, js: Value) -> Value {
+pub fn json(d: &Diagnosis, verify: Option<Value>, js: Value, js_config: Value) -> Value {
     let groups: Vec<Value> = d
         .groups
         .iter()
@@ -179,7 +179,55 @@ pub fn json(d: &Diagnosis, verify: Option<Value>, js: Value) -> Value {
         "groups": groups,
         "notes": d.notes.iter().map(problem_json).collect::<Vec<_>>(),
         "jsData": js,
+        "jsConfig": js_config,
         "verify": verify,
+    })
+}
+
+/// The JSON report for a site whose config failed to load: the errors are the blockers, and
+/// they cover every page, which can't be counted. `js_config_on` says the JS config was on.
+pub fn config_failed_json(problems: &[Problem], js_config_on: bool) -> Value {
+    let groups: Vec<Value> = problems
+        .iter()
+        .filter(|p| p.severity == Severity::Error)
+        .map(|p| {
+            json!({
+                "cause": cause_json(&Cause::Other { code: p.code, message: p.message.clone() }),
+                "blocker": true,
+                "title": p.message,
+                "help": p.help,
+                "pages": 0,
+                "pages_exact": false,
+                "hides_pages": true,
+                "also_blocks": { "pages": 0, "pages_exact": false, "templates": [] },
+                "templates": [],
+                "locations": [{
+                    "path": p.path,
+                    "line": p.line,
+                    "column": p.column,
+                    "message": p.message,
+                }],
+            })
+        })
+        .collect();
+    json!({
+        "schema": 1,
+        "brrrty": env!("CARGO_PKG_VERSION"),
+        "verdict": "blocked",
+        "builds": false,
+        "pages": { "total": 0, "building": 0, "exact": false },
+        "blockers": groups.len(),
+        "groups": groups,
+        "notes": problems.iter().filter(|p| p.severity != Severity::Error).map(problem_json).collect::<Vec<_>>(),
+        "jsData": Value::Null,
+        "jsConfig": {
+            "mode": if js_config_on { "node" } else { "off" },
+            "file": Value::Null,
+            "functions": [],
+            "unsupported": [],
+            "error": problems.iter().find(|p| p.severity == Severity::Error).map(|p| p.message.clone()),
+        },
+        "verify": Value::Null,
     })
 }
 
@@ -379,6 +427,94 @@ impl JsReport {
                 }
                 o
             }).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// The "JavaScript config" part of the report: whether the site's 11ty config ran in Node,
+/// which file, each function it added (hottest first) and each method Brrrty skipped.
+pub struct JsConfigReport {
+    pub on: bool,
+    pub file: Option<String>,
+    /// `(kind, name, calls, nanos)`, most time first.
+    pub functions: Vec<(&'static str, String, u64, u64)>,
+    /// `(method, file, line)`.
+    pub unsupported: Vec<(String, Option<String>, Option<usize>)>,
+}
+
+impl JsConfigReport {
+    pub fn new(config: &brrrty_core::ConfigOptions) -> Self {
+        let on = config.js_config_file.is_some()
+            || matches!(config.js_config, Some((brrrty_core::JsData::Node, _)));
+        let mut functions: Vec<_> = config
+            .js_functions
+            .iter()
+            .map(|f| (f.kind, f.name.clone(), f.calls(), f.nanos()))
+            .collect();
+        functions.sort_by(|a, b| b.3.cmp(&a.3).then(b.2.cmp(&a.2)));
+        JsConfigReport {
+            on,
+            file: config.js_config_file.clone(),
+            functions,
+            unsupported: config
+                .js_unsupported
+                .iter()
+                .map(|u| (u.method.clone(), u.file.clone(), u.line))
+                .collect(),
+        }
+    }
+
+    fn ms(nanos: u64) -> f64 {
+        (nanos as f64 / 1e6 * 10.0).round() / 10.0
+    }
+
+    /// The text section, or nothing when the JS config is off.
+    pub fn text(&self) -> String {
+        if !self.on {
+            return String::new();
+        }
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "JavaScript config: on, {}",
+            self.file.as_deref().unwrap_or("no 11ty config file found")
+        );
+        for (kind, name, calls, nanos) in &self.functions {
+            let _ = writeln!(
+                out,
+                "  {kind} {name}: {}, {} ms",
+                count(*calls as usize, "call", "calls"),
+                Self::ms(*nanos)
+            );
+        }
+        for (method, file, line) in &self.unsupported {
+            let at = match (file, line) {
+                (Some(f), Some(l)) => format!("{f}:{l}"),
+                (Some(f), None) => f.clone(),
+                _ => "the config".to_string(),
+            };
+            let _ = writeln!(out, "  not supported yet: eleventyConfig.{method} at {at}");
+        }
+        out.push('\n');
+        out
+    }
+
+    /// The `jsConfig` object of `--json`.
+    pub fn json(&self) -> Value {
+        json!({
+            "mode": if self.on { "node" } else { "off" },
+            "file": self.file,
+            "functions": self.functions.iter().map(|(kind, name, calls, nanos)| json!({
+                "kind": kind,
+                "name": name,
+                "calls": calls,
+                "ms": Self::ms(*nanos),
+            })).collect::<Vec<_>>(),
+            "unsupported": self.unsupported.iter().map(|(method, file, line)| json!({
+                "method": method,
+                "file": file,
+                "line": line,
+            })).collect::<Vec<_>>(),
         })
     }
 }

@@ -126,6 +126,7 @@ pub fn apply(
         }
     };
     let v = &loaded.value;
+    config.js_config_file = Some(shown.display().to_string());
     add_filters(v, &shown, root, run_mode, config);
     let values = get(v, "values");
     let val = |k: &str| values.and_then(|x| get(x, k));
@@ -306,15 +307,29 @@ pub fn apply(
     config.layouts = dir.layouts.clone();
     config.data_folder = dir.data.clone();
 
+    let mut blocking: Vec<String> = Vec::new();
     if let Some(Value::Array(un)) = get(v, "unsupported") {
         for u in un.iter() {
             let method = text(get(u, "method")).unwrap_or_default();
             let at = text(get(u, "at")).unwrap_or_default();
+            // What changes the output refuses every page, as `init`'s TODOs do.
+            if crate::init::js_blocks(&method) {
+                blocking.push(format!("{at}: eleventyConfig.{method}"));
+            }
             let mut p = Problem::warning(
                 codes::CONFIG_UNSUPPORTED,
                 format!("{at}: eleventyConfig.{method} is not supported by Brrrty yet, so it was skipped"),
             )
             .with_help("pages that need it may differ from 11ty's, or refuse");
+            let (file, line) = match at.rsplit_once(':') {
+                Some((f, l)) => (Some(f.to_string()), l.parse::<usize>().ok()),
+                None => (None, None),
+            };
+            config.js_unsupported.push(brrrty_core::JsUnsupported {
+                method: method.trim_end_matches(" = ").to_string(),
+                file,
+                line,
+            });
             if let Some((f, l)) = at.rsplit_once(':') {
                 p = p.with_path(PathBuf::from(f));
                 if let Ok(l) = l.parse::<usize>() {
@@ -323,6 +338,18 @@ pub fn apply(
             }
             config.problems.push(p);
         }
+    }
+    if !blocking.is_empty() && config.unported.is_none() {
+        config.unported = Some(
+            Problem::error(
+                codes::CONFIG_TODO,
+                format!(
+                    "the 11ty config uses what Brrrty can't run, and it changes what 11ty writes: {}",
+                    blocking.join(", ")
+                ),
+            )
+            .with_help("remove it, or port it by hand; until then every page is refused"),
+        );
     }
     // The 11ty config ran: nothing is left unchecked against it.
     config
@@ -380,7 +407,10 @@ fn add_filters(
     for f in fns.iter() {
         if text(get(f, "kind")).as_deref() == Some("transform") {
             if let (Some(name), Some(Value::Function(h))) = (text(get(f, "name")), get(f, "fn")) {
-                let t = transform(*h, &name, shown);
+                let stats =
+                    std::sync::Arc::new(brrrty_core::JsFunctionStats::new("transform", &name));
+                config.js_functions.push(stats.clone());
+                let t = transform(*h, &name, shown, stats);
                 // 11ty keeps transforms in an object: a name added again replaces the
                 // function and keeps its place.
                 match transforms.iter_mut().find(|(n, _)| *n == name) {
@@ -391,10 +421,10 @@ fn add_filters(
             continue;
         }
         // `Some(paired)` for a shortcode, `None` for a filter.
-        let (what, shortcode) = match text(get(f, "kind")).as_deref() {
-            Some("filter") => ("filter", None),
-            Some("shortcode") => ("shortcode", Some(false)),
-            Some("pairedShortcode") => ("shortcode", Some(true)),
+        let (what, shortcode, kind) = match text(get(f, "kind")).as_deref() {
+            Some("filter") => ("filter", None, "filter"),
+            Some("shortcode") => ("shortcode", Some(false), "shortcode"),
+            Some("pairedShortcode") => ("shortcode", Some(true), "pairedShortcode"),
             _ => continue,
         };
         let (Some(name), Some(Value::Function(h))) = (text(get(f, "name")), get(f, "fn")) else {
@@ -408,15 +438,18 @@ fn add_filters(
             _ => continue,
         };
         let is_async = matches!(get(f, "async"), Some(Value::Bool(true)));
+        let stats = std::sync::Arc::new(brrrty_core::JsFunctionStats::new(kind, &name));
+        config.js_functions.push(stats.clone());
         let make = |settle: Settle,
                     guard: &'static [(&'static str, &'static str)]|
          -> brrrty_liquid::ShortcodeFn {
-            let (h, n, eleventy, shown, what) = (
+            let (h, n, eleventy, shown, what, stats) = (
                 *h,
                 name.clone(),
                 eleventy.clone(),
                 shown.display().to_string(),
                 what,
+                stats.clone(),
             );
             std::sync::Arc::new(move |all: &[Value], _| {
                 let Some(caller) = brrrty_js::functions::installed() else {
@@ -426,14 +459,15 @@ fn add_filters(
                     ));
                 };
                 let this = filter_this(&eleventy);
-                caller
-                    .call(h, This::Guarded(&this, guard), all, settle)
-                    .map_err(|why| {
-                        format!(
-                            "{}the {what} `{n}` (from {shown}) failed: {why}",
-                            brrrty_js::REFUSAL_PREFIX
-                        )
-                    })
+                let started = std::time::Instant::now();
+                let result = caller.call(h, This::Guarded(&this, guard), all, settle);
+                stats.record(started.elapsed());
+                result.map_err(|why| {
+                    format!(
+                        "{}the {what} `{n}` (from {shown}) failed: {why}",
+                        brrrty_js::REFUSAL_PREFIX
+                    )
+                })
             })
         };
         // Liquid awaits a returned promise; Nunjucks takes what the function returns, unless
@@ -499,7 +533,12 @@ fn add_filters(
 
 /// A transform from the JS config, called as 11ty's `TransformsUtil.runAll` does: with
 /// `this = { inputPath, outputPath, url, page }` and `(content, outputPath)`, awaited.
-fn transform(h: brrrty_js::FnHandle, name: &str, shown: &Path) -> brrrty_core::JsConfigTransform {
+fn transform(
+    h: brrrty_js::FnHandle,
+    name: &str,
+    shown: &Path,
+    stats: std::sync::Arc<brrrty_core::JsFunctionStats>,
+) -> brrrty_core::JsConfigTransform {
     use brrrty_js::functions::{Settle, This};
     let (name, shown) = (name.to_string(), shown.display().to_string());
     let n = name.clone();
@@ -523,7 +562,10 @@ fn transform(h: brrrty_js::FnHandle, name: &str, shown: &Path) -> brrrty_core::J
         o.insert("baseHref".to_string(), Value::Undefined);
         let this = Value::Object(std::sync::Arc::new(o));
         let args = [Value::String(content.into()), output];
-        match caller.call(h, This::Value(&this), &args, Settle::Await) {
+        let started = std::time::Instant::now();
+        let called = caller.call(h, This::Value(&this), &args, Settle::Await);
+        stats.record(started.elapsed());
+        match called {
             Ok(Value::String(s)) => Ok(s.to_string()),
             Ok(other) => Err(fail(format!(
                 "it gave {}, not text, and 11ty can't write that",
