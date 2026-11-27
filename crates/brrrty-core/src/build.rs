@@ -3457,7 +3457,18 @@ fn build_once(
                     Some(Value::String(u)) => u.to_string(),
                     _ => String::new(),
                 };
-                html = crate::plugins::bundle::prune_empty(&b.resolve(&url, html));
+                let out_path = output_rel.to_string_lossy();
+                html = match crate::plugins::bundle::prune_empty(b.resolve(&url, html), &out_path)
+                {
+                    Ok(h) => h,
+                    Err(why) => {
+                        let problem = Problem::error(codes::JS_DATA_FUNCTION, why).with_path(shown);
+                        if let Some(log) = log {
+                            log.problem(shown, &problem);
+                        }
+                        return Err(Refused::Page(problem, None));
+                    }
+                };
             }
             for t in &opts.config.js_transforms {
                 let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
