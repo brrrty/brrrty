@@ -185,7 +185,8 @@ fn transliterate(text: &str) -> String {
     s.nfd().filter(|c| !is_diacritic(*c)).nfc().collect()
 }
 
-fn slugify(text: &str) -> String {
+/// `@sindresorhus/slugify` 2.2.1 with `{ decamelize: false }`: 11ty's `slugify` filter.
+pub fn slugify(text: &str) -> String {
     let lowered = transliterate(text).to_lowercase();
     let lowered = drop_contraction_apostrophes(&lowered);
     // `[^a-z\d]+` becomes one separator, and a separator at either end goes.

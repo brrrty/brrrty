@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- 11ty's `IdAttributePlugin` is now supported as `config.add_plugin("idattribute")`, and `brrrty init` ports `addPlugin(IdAttributePlugin)` without options to it. Headings without an `id` get one from their text (`slugify`, numbered when repeated) on pages written to `.html`, and those pages are printed the way 11ty's HTML transformer prints them. Its options are refused by name. `InputPathToUrlTransformPlugin` isn't supported yet.
+
 ## 0.1.14 - 2026-11-27
 
 - With `set_js_config("node")`, plugins added with `addPlugin` now run after 11ty's config merge, as in 11ty. They see `eleventyConfig.pathPrefix` set to the config's `pathPrefix` (default `/`). Before this, it was `undefined`, so `HtmlBasePlugin` threw ``The `baseHref` option is required`` and the whole config failed to load.

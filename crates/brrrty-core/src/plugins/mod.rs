@@ -2,5 +2,6 @@
 //! `config.add_plugin`.
 
 pub mod bundle;
+pub mod id_attribute;
 pub mod rss;
 pub mod syntaxhighlight;

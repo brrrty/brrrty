@@ -3787,6 +3787,22 @@ impl<'o, 'l> Reader<'o, 'l> {
                     .push(Item::Rhai("config.add_plugin(\"htmlbase\");".into()));
                 return true;
             }
+            // 11ty's heading `id` plugin: default options only.
+            Some(Binding::Export(m, e)) if m == "@11ty/eleventy" && e == "IdAttributePlugin" => {
+                if options.as_deref() != Some(&[]) {
+                    self.todo(
+                        a,
+                        b,
+                        "port this plugin's options: Brrrty's `idattribute` plugin takes none yet, and `selector`, `slugify`, `decodeEntities`, `checkDuplicates` and `filter` change the ids the plugin writes",
+                        link,
+                    );
+                    return false;
+                }
+                self.out
+                    .items
+                    .push(Item::Rhai("config.add_plugin(\"idattribute\");".into()));
+                return true;
+            }
             _ => {
                 self.todo(
                     a,
@@ -4490,6 +4506,22 @@ module.exports = function (eleventyConfig) {
         let p = port(src, "eleventy.config.js");
         assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
         assert!(!p.text.contains("add_plugin(\"htmlbase\""), "{}", p.text);
+    }
+
+    #[test]
+    fn ports_the_id_attribute_plugin_without_options() {
+        let src = "import { IdAttributePlugin } from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {\n\televentyConfig.addPlugin(IdAttributePlugin);\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_plugin(\"idattribute\");"),
+            "{}",
+            p.text
+        );
+        assert!(!p.text.contains("TODO(brrrty)"), "{}", p.text);
+        let src = "import { IdAttributePlugin } from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {\n\televentyConfig.addPlugin(IdAttributePlugin, { selector: \"h2\" });\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
+        assert!(!p.text.contains("add_plugin(\"idattribute\""), "{}", p.text);
     }
 
     #[test]
