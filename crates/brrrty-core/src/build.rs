@@ -2676,12 +2676,21 @@ fn build_once(
     );
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
     js.filters = Some((js_names, js_filter_fns.clone()));
-    // A filter added in Rhai of the same name replaces the config's.
+    // A filter of the same name added in Rhai or by a plugin replaces the
+    // config's, as in the template engines.
+    let plugin_names: Vec<&str> = plugin_filters(rss, opts.config.html_base)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     js.node_filters = opts
         .config
         .js_filters
         .iter()
-        .filter(|f| f.universal && !opts.config.filters.iter().any(|c| c.name == f.name))
+        .filter(|f| {
+            f.universal
+                && !opts.config.filters.iter().any(|c| c.name == f.name)
+                && !plugin_names.contains(&f.name.as_str())
+        })
         .map(|f| (f.name.clone(), f.handle))
         .collect();
     js.again = rerun.clone();
