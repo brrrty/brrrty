@@ -573,6 +573,29 @@ fn a_local_data_function_that_changes_between_templates_is_refused() {
 }
 
 #[test]
+fn a_data_function_returning_eleventy_computed_closures_is_pure() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", ON),
+        (
+            "src/posts/posts.11tydata.js",
+            "module.exports = () => ({ eleventyComputed: { permalink: (d) => \"/x/\" + d.page.fileSlug + \"/\" } });",
+        ),
+        ("src/posts/a.md", "hi"),
+        ("src/posts/b.md", "ho"),
+    ]);
+    let o = build(t.path(), &[], &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    let a = fs::read_to_string(t.path().join("_site/x/a/index.html")).unwrap();
+    let b = fs::read_to_string(t.path().join("_site/x/b/index.html")).unwrap();
+    assert!(a.contains("hi"), "{a}");
+    assert!(b.contains("ho"), "{b}");
+}
+
+#[test]
 fn a_local_data_file_that_is_not_an_object_is_skipped_with_a_warning() {
     if !has_node() {
         return;
