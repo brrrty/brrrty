@@ -87,6 +87,8 @@ pub struct Cli {
     /// scripts that couldn't be read and the API files with their hashes. No
     /// script names, so `init` renaming `build` to `build:11ty` changes nothing.
     facts: Vec<String>,
+    /// Non-blocking: what else runs 11ty, for the config to mention.
+    pub notes: Vec<String>,
     /// Where the facts come from, as messages name them.
     pub sources: Vec<String>,
 }
@@ -2766,6 +2768,27 @@ mod tests {
             find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()),
             None
         );
+    }
+
+    #[test]
+    fn a_helper_that_runs_11ty_again_after_the_plain_run_is_a_post_build_step() {
+        let t = site();
+        write(
+            &t,
+            "tools/wrap.js",
+            "require('child_process').execSync('npx @11ty/eleventy', { env: { ...process.env, INCLUDE_ADMIN: 'true' }, stdio: 'inherit' });\n",
+        );
+        let pkg = json!({ "scripts": { "build": "npx @11ty/eleventy && node tools/wrap.js" } });
+        let c = find(&pkg, t.path());
+        let c = c.expect("the helper's second run is noted");
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        assert_eq!(c.script, "build");
+        assert_eq!(c.notes.len(), 1, "{:?}", c.notes);
+        assert!(c.notes[0].contains("tools/wrap.js"), "{:?}", c.notes);
+        // Run before the plain one, it isn't known to be a post-build step.
+        let pkg = json!({ "scripts": { "build": "node tools/wrap.js && npx @11ty/eleventy" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert!(c.todos[0].why.contains("both run 11ty"), "{:?}", c.todos);
     }
 
     #[test]
