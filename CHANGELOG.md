@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.27 - 2026-11-28
+
+- 11ty's built-in `RenderPlugin` is now supported as `config.add_plugin("render")`. It adds the paired `renderTemplate` tag, the `renderFile` shortcode and the `renderContent` filter in Liquid and Nunjucks. The nested template sees only the data it is given, plus the caller's `page` and `eleventy`, as in 11ty. `brrrty init` ports `addPlugin(RenderPlugin)` with no options, and a JS config's own `RenderPlugin` runs natively. Before this, `init` left a TODO and the site built no pages. Plugin options (`tagName`, `tagNameFile`, `filterName`, `accessGlobalData`) are refused by name. `this.renderTemplate` in `.11ty.js` templates and `renderFile` of a `.11ty.js` file are not supported yet.
+
 ## 0.1.26 - 2026-11-28
 
 - A quoted front matter value (`"..."` or `'...'`) whose continuation line is indented less than its key, down to column 0, now builds, as in 11ty (js-yaml only warns). The line break folds to a space as usual. Before this, the page was refused with `invalid indentation in quoted scalar`. This works at any depth: top level, under a nested key, or in a list item.

@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-compat"
-version = "0.1.26"
+version = "0.1.27"
 description = "Compare Brrrty output folders against Eleventy output."
 edition.workspace = true
 rust-version.workspace = true
