@@ -1224,3 +1224,82 @@ fn input_path_to_url_filter_refuses_an_unknown_file() {
         text(&o)
     );
 }
+
+/// `this.inputPathToUrl` on a JavaScript template is 11ty's own filter.
+#[test]
+fn input_path_to_url_is_on_this_of_a_javascript_template() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_data(\"node\");\n"),
+        (
+            "src/j.11ty.js",
+            "module.exports = function () { return this.inputPathToUrl('b.md'); };\n",
+        ),
+        ("src/b.md", "b"),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "j/index.html"), "/b/");
+}
+
+fn input_path_to_url_override_site(config: &[(&str, &str)]) -> tempfile::TempDir {
+    let mut files = vec![
+        ("src/a.liquid", "{{ 'b.md' | inputPathToUrl }}"),
+        ("src/n.njk", "{{ 'b.md' | inputPathToUrl }}"),
+        (
+            "src/j.11ty.js",
+            "module.exports = function () { return this.inputPathToUrl('b.md'); };\n",
+        ),
+        ("src/b.md", "b"),
+    ];
+    files.extend_from_slice(config);
+    site(&files)
+}
+
+/// 11ty adds its `inputPathToUrl` before the user's config runs, so a
+/// filter of that name in the config replaces it in every template language.
+#[test]
+fn a_config_filter_named_input_path_to_url_wins() {
+    if !has_node() {
+        return;
+    }
+    let t = input_path_to_url_override_site(&[(
+        "brrrty.config.rhai",
+        "config.set_js_data(\"node\");\nconfig.add_filter(\"inputPathToUrl\", |s| `mine ${s}`);\n",
+    )]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "a/index.html"), "mine b.md");
+    assert_eq!(read(t.path(), "n/index.html"), "mine b.md");
+    assert_eq!(read(t.path(), "j/index.html"), "mine b.md");
+}
+
+/// The same for a JS config's filter: it wins in Liquid and Nunjucks, and
+/// on a JavaScript template's `this` it is refused by name.
+#[test]
+fn a_js_config_filter_named_input_path_to_url_wins() {
+    if !has_node() {
+        return;
+    }
+    let t = input_path_to_url_override_site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('inputPathToUrl', (s) => 'js ' + s); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("`this.inputPathToUrl`") && out.contains("filter the JS config added"),
+        "{out}"
+    );
+    assert_eq!(read(t.path(), "a/index.html"), "js b.md");
+    assert_eq!(read(t.path(), "n/index.html"), "js b.md");
+}
