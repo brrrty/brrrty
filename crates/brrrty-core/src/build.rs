@@ -3554,7 +3554,7 @@ fn build_once(
             // then the config's transforms, in order.
             let mut html = rendered.html;
             for t in opts.config.js_transforms.iter().filter(|t| t.early) {
-                if bundles.is_some() && crate::plugins::bundle::Bundles::has_placeholder(&html) {
+                if bundles.as_ref().is_some_and(|b| b.has_placeholder(&html)) {
                     let problem = Problem::error(
                         codes::JS_DATA_FUNCTION,
                         format!(
@@ -3562,7 +3562,8 @@ fn build_once(
                             t.name
                         ),
                     )
-                    .with_path(shown);
+                    .with_path(shown)
+                    .with_help("This happens for an integer-named transform (like `addTransform(\"0\", ...)`) on a page, or a layout, that calls `getBundle`. Rename the transform to a non-numeric name to run it after the bundles are in.");
                     if let Some(log) = log {
                         log.problem(shown, &problem);
                     }

@@ -197,9 +197,21 @@ impl Bundles {
         engine.register_shortcode("getBundle", false, f);
     }
 
-    /// Whether `html` still holds a `getBundle` placeholder (Brrrty's differs from 11ty's text).
-    pub fn has_placeholder(html: &str) -> bool {
-        html.contains(OPEN)
+    /// Whether `html` still holds a `getBundle` placeholder (Brrrty's differs from 11ty's text):
+    /// `OPEN`, `kind:buckets` with a known `kind`, then `CLOSE`. A lone private-use glyph isn't one.
+    pub fn has_placeholder(&self, html: &str) -> bool {
+        let mut rest = html;
+        while let Some(start) = rest.find(OPEN) {
+            let after = &rest[start + OPEN.len_utf8()..];
+            if let Some(end) = after.find(CLOSE)
+                && let Some((kind, _)) = after[..end].split_once(':')
+                && self.names.iter().any(|n| n == kind)
+            {
+                return true;
+            }
+            rest = after;
+        }
+        false
     }
 
     /// `html` with each `getBundle` placeholder replaced by what the page at `url` collected,
