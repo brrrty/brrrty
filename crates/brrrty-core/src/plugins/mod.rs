@@ -3,5 +3,6 @@
 
 pub mod bundle;
 pub mod id_attribute;
+pub mod input_path_to_url;
 pub mod rss;
 pub mod syntaxhighlight;

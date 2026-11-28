@@ -184,6 +184,9 @@ pub struct ConfigOptions {
     pub html_base: bool,
     /// `addPlugin(IdAttributePlugin)`: headings get `id`s on pages written to `.html`.
     pub id_attribute: bool,
+    /// `addPlugin(InputPathToUrlTransformPlugin)`: links to source files become page URLs on
+    /// pages written to `.html`.
+    pub input_path_to_url: bool,
     /// `dir.includes`, relative to the input folder; `None` is `_includes`.
     pub includes: Option<String>,
     /// `dir.layouts`, relative to the input folder; `None` is the includes folder.

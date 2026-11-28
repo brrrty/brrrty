@@ -54,8 +54,8 @@ function configPlace() {
   return "the config";
 }
 
-// The Brrrty-native name of 11ty 3.1.8's built-in plugins (src/Plugins/IdAttributePlugin.js and
-// HtmlBasePlugin.js), told by function name and the source each has; null for any other.
+// The Brrrty-native name of 11ty 3.1.8's built-in plugins (src/Plugins/IdAttributePlugin.js,
+// HtmlBasePlugin.js and InputPathToUrl.js), told by function name and the source each has; null for any other.
 function nativePlugin(fn) {
   let src;
   try {
@@ -65,6 +65,7 @@ function nativePlugin(fn) {
   }
   // The posthtml plugin's name is a module-level const, so match what its body has.
   if (fn.name === "IdAttributePlugin" && src.includes("[id],h1,h2,h3,h4,h5,h6") && src.includes("checkDuplicates")) return "idattribute";
+  if (fn.name === "TransformPlugin" && src.includes("the `pathToUrl` Transform") && src.includes("eleventy.contentMap")) return "inputpathtourl";
   if (fn.name === "eleventyHtmlBasePlugin" && src.includes("addPathPrefixToFullUrl")) return "htmlbase";
   return null;
 }
@@ -104,7 +105,7 @@ function configRecorder() {
   methods.addPlugin = (plugin, options = {}) => {
     const fn = typeof plugin === "function" ? plugin : plugin && plugin.configFunction;
     if (typeof fn !== "function") return notedAt("addPlugin");
-    // 11ty's own IdAttributePlugin and HtmlBasePlugin, with no options: Brrrty runs them
+    // 11ty's own IdAttributePlugin, HtmlBasePlugin and InputPathToUrlTransformPlugin, with no options: Brrrty runs them
     // natively, so their `htmlTransformer` calls are not recorded (they would refuse every page).
     const native = nativePlugin(fn);
     if (native && !(options && Object.keys(options).length > 0)) {

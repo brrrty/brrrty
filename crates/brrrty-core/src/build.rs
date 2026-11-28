@@ -2971,8 +2971,11 @@ fn build_once(
     // Each template's collection items, in page order: a page's content is
     // what its item's `templateContent` reads.
     let mut slot_items: Vec<Vec<Value>> = Vec::new();
+    // Every template's input path: 11ty's content map has them all, pages or not.
+    let mut template_inputs: Vec<String> = Vec::new();
     for t in templates {
         let input_path = format!("{input_dot}{}", slash_path(&t.rel));
+        template_inputs.push(input_path.clone());
         let (pages, slot) = match t.pages {
             Pages::Ready(p) => {
                 let items: Vec<Page> = p
@@ -3330,6 +3333,29 @@ fn build_once(
         Some(j) => log.needs(shown, p, &prepared[j].source.shown),
         None => log.problem(shown, p),
     };
+    // 11ty's content map for the InputPathToUrlTransformPlugin: each template's pages' URLs
+    // by input path, `false` (a `permalink: false` page) printed as JavaScript does.
+    let content_map = if opts.config.input_path_to_url {
+        let mut map = crate::plugins::input_path_to_url::ContentMap::new(dot_dir(shared.input_rel));
+        for input_path in &template_inputs {
+            map.known(input_path);
+        }
+        for p in &prepared {
+            let page = p.data.get("page");
+            let get = |k: &str| page.map(|pg| pg.get(k));
+            let Some(Value::String(input_path)) = get("inputPath") else {
+                continue;
+            };
+            let url = match get("url") {
+                Some(Value::String(u)) => u.to_string(),
+                _ => "false".to_string(),
+            };
+            map.push(&input_path, url);
+        }
+        Some(map)
+    } else {
+        None
+    };
     let ready: Vec<Ready<'_>> = (0..prepared.len())
         .into_par_iter()
         .filter(|&i| writes(&prepared[i]))
@@ -3468,7 +3494,9 @@ fn build_once(
                 };
                 html = b.resolve(&url, html);
             }
-            if is_html && (bundles.is_some() || opts.config.id_attribute) {
+            if is_html
+                && (bundles.is_some() || opts.config.id_attribute || content_map.is_some())
+            {
                 let input_path = match p.data.get("page").map(|pg| pg.get("inputPath")) {
                     Some(Value::String(u)) => u.to_string(),
                     _ => String::new(),
@@ -3479,6 +3507,10 @@ fn build_once(
                     }
                     if opts.config.id_attribute {
                         crate::plugins::id_attribute::apply(&mut tree, &input_path)?;
+                    }
+                    // The URL callbacks run after the posthtml plugins.
+                    if let Some(map) = &content_map {
+                        crate::plugins::input_path_to_url::apply(&mut tree, map, &input_path)?;
                     }
                     Ok(crate::plugins::rss::posthtml::render(
                         &tree,
