@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-nunjucks"
-version = "0.1.17"
+version = "0.1.18"
 description = "A Nunjucks template engine that matches Nunjucks 3.2.4 as Eleventy configures it, for an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
@@ -13,8 +13,8 @@ readme = false
 exclude = ["tests/conformance.rs", "tests/render.rs", "tests/filters.rs", "tests/probes/conformance_parse_errors.json", "tests/probes/render.json", "tests/probes/filters.json", "tests/symbols.rs", "tests/probes/symbols.json", "tools"]
 
 [dependencies]
-brrrty-js = { version = "0.1.17", path = "../brrrty-js" }
-brrrty-jsregex = { version = "0.1.17", path = "../brrrty-jsregex" }
+brrrty-js = { version = "0.1.18", path = "../brrrty-js" }
+brrrty-jsregex = { version = "0.1.18", path = "../brrrty-jsregex" }
 indexmap = "2"
 stacker = "0.1.25"
 
