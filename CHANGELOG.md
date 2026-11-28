@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.24 - 2026-11-28
+
+- With `set_js_data("node")`, a JavaScript directory data file that exports a function returning `eleventyComputed` functions (`module.exports = () => ({ eleventyComputed: { permalink: (d) => ... } })`) now builds, as in 11ty. Before this, each call's functions were new closures, so Brrrty wrongly refused the file as returning different data for different templates (`js-data-impure`). A file whose plain values differ between calls is still refused.
+
 ## 0.1.23 - 2026-11-28
 
 - A filter added with `addFilter` or `addAsyncFilter` in a JS config now runs when a `.11ty.js` template calls `this.f(...)`, as in 11ty. Before this, it was refused by name. As in 11ty's `augmentFunction`, a filter taken off `this` and called detached (`const { f } = this; f()`) still sees `this.page` and `this.eleventy`. A plugin or Rhai filter of the same name still wins. A config filter that throws now fails the build with its own error.
