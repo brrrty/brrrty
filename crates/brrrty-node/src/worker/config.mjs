@@ -147,7 +147,40 @@ function configRecorder() {
       (values.dir = values.dir || {})[key] = dir;
     };
   }
-  const target = { ignores, plugins: [], dir: undefined, pathPrefix: undefined };
+  // 11ty's userspace `directories` (ProjectDirectories): normalized `./x/` paths, read live.
+  // Precedence: defaults, the exported `config.dir`, the set-directory calls, the returned `dir`.
+  const dirSources = { exported: {}, returned: {} };
+  // Like 11ty's `setViaConfigObject`: an `undefined` key, or a falsy `input`, is skipped.
+  const dirValue = (key) => {
+    let out;
+    for (const src of [dirSources.exported, values.dir, dirSources.returned]) {
+      const v = src?.[key];
+      if (v !== undefined && (key !== "input" || v)) out = v;
+    }
+    return out;
+  };
+  const norm = (...parts) => {
+    let p = path.posix.normalize(path.posix.join(...parts));
+    if (p === ".") return "./";
+    if (!p.startsWith("/") && !p.startsWith("../")) p = `./${p}`;
+    return p.endsWith("/") ? p : `${p}/`;
+  };
+  const input = () => norm(dirValue("input") ?? ".");
+  const layoutsDir = () => {
+    const v = dirValue("layouts");
+    // No fallback: 11ty leaves `layouts` undefined unless a source sets it.
+    return v === undefined ? undefined : norm(input(), v);
+  };
+  const directories = {
+    get input() { return input(); },
+    get inputFile() { return undefined; },
+    get inputGlob() { return undefined; },
+    get data() { return norm(input(), dirValue("data") ?? "_data"); },
+    get includes() { return norm(input(), dirValue("includes") ?? "_includes"); },
+    get layouts() { return layoutsDir(); },
+    get output() { return norm(dirValue("output") ?? "_site"); },
+  };
+  const target = { ignores, plugins: [], dir: undefined, pathPrefix: undefined, directories };
   const proxy = new Proxy(target, {
     get(t, key) {
       if (typeof key === "symbol" || key === "then") return undefined;
@@ -168,6 +201,11 @@ function configRecorder() {
   });
   return {
     proxy,
+    values,
+    setDirSources(exported, returned) {
+      dirSources.exported = exported || {};
+      dirSources.returned = returned || {};
+    },
     async runPlugins() {
       for (let i = 0; i < queue.length; i++) {
         const { fn, options, native } = queue[i];
@@ -216,6 +254,8 @@ async function loadConfig(file) {
     throw new Error(`The config ${relFile(file)} must export a function, as 11ty's does`);
   }
   const rec = configRecorder();
+  const plainDir = (o) => (o && typeof o === "object" && o.dir && typeof o.dir === "object" ? o.dir : {});
+  rec.setDirSources(plainDir(exported), {});
   let returned = await fn(rec.proxy);
   if (exported && typeof exported === "object") {
     returned = deepMerge(returned && typeof returned === "object" ? returned : {}, exported);
@@ -223,6 +263,11 @@ async function loadConfig(file) {
   // 11ty's `processPlugins` runs after the config merged, with `userConfig.pathPrefix` set to
   // the merged value (default "/"); plugins such as HtmlBasePlugin read it.
   rec.proxy.pathPrefix = (returned && returned.pathPrefix) || "/";
+  // Likewise `userConfig.dir`: the defaults deep-merged with the returned and exported `dir`.
+  // The set-directory calls do not touch it (11ty applies them only to `directories`).
+  const merged = plainDir(returned);
+  rec.proxy.dir = { input: ".", includes: "_includes", data: "_data", output: "_site", ...merged };
+  rec.setDirSources(plainDir(exported), merged);
   await rec.runPlugins();
   return rec.done(returned);
 }

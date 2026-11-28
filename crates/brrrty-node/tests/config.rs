@@ -157,6 +157,93 @@ fn plugins_see_the_merged_path_prefix() {
     }
 }
 
+/// 11ty's `processPlugins` also sets `userConfig.dir` to the merged `dir` (defaults plus the
+/// returned and exported `dir`), so plugins can read `dir.output` and `dir.input`.
+#[test]
+fn plugins_see_the_merged_dir() {
+    let Some(node) = node() else { return };
+    for (returned, want_out, want_in) in [
+        ("{}", "_site", "."),
+        (
+            r#"{ dir: { input: "src", output: "dist" } }"#,
+            "dist",
+            "src",
+        ),
+    ] {
+        let cfg = format!(
+            "module.exports = (c) => {{\n  c.addPlugin((p) => {{\n    p.addGlobalData(\"out\", p.dir.output);\n    p.addGlobalData(\"inp\", p.dir.input);\n  }});\n  return {returned};\n}};\n"
+        );
+        let t = site(&[("eleventy.config.js", &cfg)]);
+        let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+        let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+            JsResult::Ok(d) => d,
+            other => panic!("{other:?}"),
+        };
+        let seen = get(get(&d.value, "values"), "globalData");
+        assert_eq!(get(seen, "out"), &s(want_out));
+        assert_eq!(get(seen, "inp"), &s(want_in));
+    }
+}
+
+/// `setOutputDirectory` and friends never reach `userConfig.dir` in 11ty: a plugin sees the
+/// defaults plus the returned `dir` only.
+#[test]
+fn set_directory_calls_do_not_leak_into_dir() {
+    let Some(node) = node() else { return };
+    let cfg = "module.exports = (c) => {\n  c.setOutputDirectory(\"dist\");\n  c.setLayoutsDirectory(\"lay\");\n  c.addPlugin((p) => {\n    p.addGlobalData(\"out\", p.dir.output);\n    p.addGlobalData(\"inp\", p.dir.input);\n    p.addGlobalData(\"lay\", String(p.dir.layouts));\n  });\n  return { dir: { input: \"src\" } };\n};\n";
+    let t = site(&[("eleventy.config.js", cfg)]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+        JsResult::Ok(d) => d,
+        other => panic!("{other:?}"),
+    };
+    let seen = get(get(&d.value, "values"), "globalData");
+    assert_eq!(get(seen, "out"), &s("_site"));
+    assert_eq!(get(seen, "inp"), &s("src"));
+    assert_eq!(get(seen, "lay"), &s("undefined"));
+}
+
+/// `eleventyConfig.directories` is 11ty's userspace `Directories`: `./x/` paths, with the
+/// set-directory calls, the exported and the returned `dir` all applied.
+#[test]
+fn plugins_see_the_directories() {
+    let Some(node) = node() else { return };
+    let plugin = "c.addPlugin((p) => {\n    const d = p.directories;\n    p.addGlobalData(\"seen\", [d.input, d.output, d.data, d.includes, String(d.layouts)].join(\" \"));\n  });";
+    for (body, want) in [
+        ("return {};", "./ ./_site/ ./_data/ ./_includes/ undefined"),
+        (
+            "return { dir: { input: \"src\", output: \"dist\" } };",
+            "./src/ ./dist/ ./src/_data/ ./src/_includes/ undefined",
+        ),
+        (
+            "c.setOutputDirectory(\"out\"); return {};",
+            "./ ./out/ ./_data/ ./_includes/ undefined",
+        ),
+        (
+            "c.setLayoutsDirectory(\"lay\"); return { dir: { input: \"src\" } };",
+            "./src/ ./_site/ ./src/_data/ ./src/_includes/ ./src/lay/",
+        ),
+        (
+            "c.setOutputDirectory(\"dist\"); c.setInputDirectory(\"src\"); return { dir: { output: undefined, input: \"\" } };",
+            "./src/ ./dist/ ./src/_data/ ./src/_includes/ undefined",
+        ),
+    ] {
+        let (setup, ret) = match body.find("return") {
+            Some(i) => body.split_at(i),
+            None => (body, ""),
+        };
+        let cfg = format!("module.exports = (c) => {{\n  {setup}\n  {plugin}\n  {ret}\n}};\n");
+        let t = site(&[("eleventy.config.js", &cfg)]);
+        let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+        let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+            JsResult::Ok(d) => d,
+            other => panic!("{other:?}"),
+        };
+        let seen = get(get(&d.value, "values"), "globalData");
+        assert_eq!(get(seen, "seen"), &s(want), "{body}");
+    }
+}
+
 /// 11ty's plugins (HtmlBasePlugin, InputPathToUrlTransformPlugin) call
 /// `eleventyConfig.htmlTransformer.addUrlTransform(...)`. The recorder must not throw a
 /// TypeError there: it records the call as unsupported, so the build refuses by name.
