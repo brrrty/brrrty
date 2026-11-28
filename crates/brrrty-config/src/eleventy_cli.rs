@@ -87,6 +87,8 @@ pub struct Cli {
     /// scripts that couldn't be read and the API files with their hashes. No
     /// script names, so `init` renaming `build` to `build:11ty` changes nothing.
     facts: Vec<String>,
+    /// Non-blocking: what else runs 11ty, for the config to mention.
+    pub notes: Vec<String>,
     /// Where the facts come from, as messages name them.
     pub sources: Vec<String>,
 }
@@ -1266,6 +1268,8 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         .unwrap_or(&empty);
     let mut tiers: [Vec<Run>; 3] = Default::default();
     let mut unreadable: Vec<(String, String)> = Vec::new();
+    // 11ty runs a helper makes after the script's own plain run: not a build of their own.
+    let mut notes: Vec<String> = Vec::new();
     // (script, chain, command, fact, why)
     let mut js: Vec<(String, String, String, String, String)> = Vec::new();
     let package = scripts
@@ -1309,16 +1313,20 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
         // A step that isn't on the short list of harmless ones (`export`, `cd site`,
         // `source`, an unknown command) may change what a later 11ty step runs with.
         let mut unknown = false;
-        let mut local_runs: Vec<(usize, Run)> = Vec::new();
+        let mut local_runs: Vec<(usize, Run, usize)> = Vec::new();
+        let mut found_at = 0;
         let mut local_js: Vec<(String, String, String, String, String)> = Vec::new();
-        for step in steps(cmd) {
+        for (at, step) in steps(cmd).into_iter().enumerate() {
             match classify(&step, scripts) {
                 // Command substitution or a variable in 11ty's own step: its flags can't
                 // be read.
                 Step::Eleventy(_) if !legacy && (step.contains('$') || step.contains('`')) => {
                     bad = true
                 }
-                Step::Eleventy(args) => found.push(args),
+                Step::Eleventy(args) => {
+                    found_at = at;
+                    found.push(args)
+                }
                 Step::Runs(file) if legacy => {
                     if let Some(hash) = uses_api(root, &file) {
                         local_js.push((
@@ -1362,6 +1370,7 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
                                     sig: significant(&args),
                                     same_env: false,
                                 },
+                                at,
                             ));
                         }
                     }
@@ -1389,8 +1398,20 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
             continue;
         }
         js.extend(local_js);
-        for (t, r) in local_runs {
-            tiers[t].push(r);
+        // The script's own plain 11ty command defines the build; a helper it runs
+        // afterwards that starts 11ty again (say with another environment) is a step
+        // after the build, which can't say which flags build the site.
+        let post = !legacy && found.len() == 1;
+        for (t, r, at) in local_runs {
+            if post && at > found_at {
+                notes.push(format!(
+                    "{} runs 11ty again after its own 11ty command, in {}; Brrrty ported the flags of that first command, so check the second run doesn't write other pages",
+                    place(name),
+                    r.chain.rsplit(" → ").next().unwrap_or(&r.chain)
+                ));
+            } else {
+                tiers[t].push(r);
+            }
         }
         let Some(args) = found.pop() else { continue };
         // A deploy config's command builds the site, as `build` does (Netlify's
@@ -1424,7 +1445,10 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
     }
     let is_build = |n: &str| n == "build" || n == "build:11ty" || is_deploy(n);
     let builds = !tiers[0].is_empty();
-    let mut cli = Cli::default();
+    let mut cli = Cli {
+        notes,
+        ..Cli::default()
+    };
     for (name, cmd) in unreadable.iter().filter(|(n, _)| !builds || is_build(n)) {
         cli.facts.push(format!("unreadable {cmd}"));
         cli.sources.push(place(name));
@@ -1725,11 +1749,18 @@ fn find_mode(pkg: &serde_json::Value, root: &Path, legacy: bool) -> Option<Cli> 
     }
     // A run's environment counts even when Brrrty gets it too: a later change to it is
     // a change (0.0.19 didn't read it, so its hashes leave it out).
+    let facts = cli
+        .notes
+        .iter()
+        .map(|n| format!("note {n}"))
+        .collect::<Vec<_>>();
+    cli.facts.extend(facts);
     let noted = !legacy && flags.iter().any(|(n, _)| n.starts_with('\0'));
     (cli.input.is_some()
         || cli.output.is_some()
         || cli.config.is_some()
         || !cli.todos.is_empty()
+        || !cli.notes.is_empty()
         || noted)
         .then_some(cli)
 }
@@ -2766,6 +2797,27 @@ mod tests {
             find(&json!({ "scripts": { "build": "node b.mjs" } }), t.path()),
             None
         );
+    }
+
+    #[test]
+    fn a_helper_that_runs_11ty_again_after_the_plain_run_is_a_post_build_step() {
+        let t = site();
+        write(
+            &t,
+            "tools/wrap.js",
+            "require('child_process').execSync('npx @11ty/eleventy', { env: { ...process.env, INCLUDE_ADMIN: 'true' }, stdio: 'inherit' });\n",
+        );
+        let pkg = json!({ "scripts": { "build": "npx @11ty/eleventy && node tools/wrap.js" } });
+        let c = find(&pkg, t.path());
+        let c = c.expect("the helper's second run is noted");
+        assert!(c.todos.is_empty(), "{:?}", c.todos);
+        assert_eq!(c.script, "build");
+        assert_eq!(c.notes.len(), 1, "{:?}", c.notes);
+        assert!(c.notes[0].contains("tools/wrap.js"), "{:?}", c.notes);
+        // Run before the plain one, it isn't known to be a post-build step.
+        let pkg = json!({ "scripts": { "build": "node tools/wrap.js && npx @11ty/eleventy" } });
+        let c = find(&pkg, t.path()).unwrap();
+        assert!(c.todos[0].why.contains("both run 11ty"), "{:?}", c.todos);
     }
 
     #[test]
