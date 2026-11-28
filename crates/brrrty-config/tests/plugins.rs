@@ -922,3 +922,29 @@ fn the_input_path_to_url_plugin_names_a_malformed_escape() {
     assert!(e[0].message.contains("`100%`"), "{}", e[0].message);
     assert!(!e[0].message.contains("src/100%"), "{}", e[0].message);
 }
+
+/// Each refusal names its own cause: a bad escape, bytes that aren't UTF-8, a name JS objects have.
+#[test]
+fn the_input_path_to_url_plugin_gives_each_refusal_its_own_cause() {
+    let msg = |href: &str| {
+        let (_t, r) = site(
+            r#"config.add_plugin("inputpathtourl");"#,
+            &[("z.html", &format!("<a href=\"{href}\">x</a>"))],
+        );
+        let e = errors(&r);
+        assert_eq!(e.len(), 1, "{href}: {:#?}", r.problems);
+        e[0].message.clone()
+    };
+    let m = msg("100%");
+    assert!(m.contains("not followed by two hex digits"), "{m}");
+    assert!(!m.contains("UTF-8"), "{m}");
+
+    let m = msg("%FF");
+    assert!(m.contains("UTF-8"), "{m}");
+    assert!(!m.contains("hex digits"), "{m}");
+
+    let m = msg("constructor");
+    assert!(m.contains("a name JavaScript objects have"), "{m}");
+    assert!(!m.contains('%'), "{m}");
+    assert_eq!(m.matches("constructor").count(), 1, "{m}");
+}
