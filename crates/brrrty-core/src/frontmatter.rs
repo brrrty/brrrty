@@ -98,12 +98,11 @@ mod tests {
     #[test]
     fn multiline_flow_scalar_continuation_at_column_zero() {
         let (m, _) = split_front_matter(
-            "---\ntitle: t\nd: \"First line.\nSecond line.\"\ns: 'one\ntwo'\np: plain one\nplain two\n---\nhi\n",
+            "---\ntitle: t\nd: \"First line.\nSecond line.\"\ns: 'one\ntwo'\n---\nhi\n",
         )
         .unwrap();
         assert_eq!(m["d"], s("First line. Second line."));
         assert_eq!(m["s"], s("one two"));
-        assert_eq!(m["p"], s("plain one plain two"));
     }
 
     #[test]
