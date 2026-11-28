@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.17 - 2026-11-27
+
+- 11ty's `InputPathToUrlTransformPlugin` is now supported as `config.add_plugin("inputpathtourl")`, and `brrrty init` ports `addPlugin(InputPathToUrlTransformPlugin)` without options to it. With `set_js_config("node")`, 11ty's own plugin added without options runs natively. On pages written to `.html`, a link that names a template's source file (`href="posts/a.md"`, `../b.njk#top`) becomes the URL of that template's first page, keeping its `?query` and `#hash`, as in 11ty. Absolute URLs, fragments and paths that aren't templates are left as written. A link with a malformed `%` escape, or one named like a JavaScript object property (`constructor`), is refused with the link and the cause. The plugin's `extensions` option is refused by name. `transformWithHtmlBase` and the `inputPathToUrl` filter aren't supported yet.
+
 ## 0.1.16 - 2026-11-27
 
 - With `set_js_config("node")`, `addPlugin(IdAttributePlugin)` and `addPlugin(HtmlBasePlugin)` from `@11ty/eleventy` with no options now run as Brrrty's native `idattribute` and `htmlbase` plugins. Before this, the plugins' `htmlTransformer` calls were recorded as unsupported and every page was refused. With options, a function of the same name that isn't 11ty's, or (for `HtmlBasePlugin`) a `pathPrefix` other than `/`, the plugin runs as before and the build still refuses. `transformWithHtmlBase` and `InputPathToUrlTransformPlugin` aren't supported yet.
