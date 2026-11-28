@@ -54,6 +54,21 @@ function configPlace() {
   return "the config";
 }
 
+// The Brrrty-native name of 11ty 3.1.8's built-in plugins (src/Plugins/IdAttributePlugin.js and
+// HtmlBasePlugin.js), told by function name and the source each has; null for any other.
+function nativePlugin(fn) {
+  let src;
+  try {
+    src = Function.prototype.toString.call(fn);
+  } catch {
+    return null;
+  }
+  // The posthtml plugin's name is a module-level const, so match what its body has.
+  if (fn.name === "IdAttributePlugin" && src.includes("[id],h1,h2,h3,h4,h5,h6") && src.includes("checkDuplicates")) return "idattribute";
+  if (fn.name === "eleventyHtmlBasePlugin" && src.includes("addPathPrefixToFullUrl")) return "htmlbase";
+  return null;
+}
+
 function configRecorder() {
   const values = { passthroughCopy: [], ignores: [] };
   const functions = [];
@@ -89,6 +104,14 @@ function configRecorder() {
   methods.addPlugin = (plugin, options = {}) => {
     const fn = typeof plugin === "function" ? plugin : plugin && plugin.configFunction;
     if (typeof fn !== "function") return notedAt("addPlugin");
+    // 11ty's own IdAttributePlugin and HtmlBasePlugin, with no options: Brrrty runs them
+    // natively, so their `htmlTransformer` calls are not recorded (they would refuse every page).
+    const native = nativePlugin(fn);
+    if (native && !(options && Object.keys(options).length > 0)) {
+      // Decided when plugins run, once `pathPrefix` is known.
+      queue.push({ fn, options, native });
+      return;
+    }
     if (options && options.immediate) return runPlugin(fn, options);
     queue.push({ fn, options });
   };
@@ -144,7 +167,16 @@ function configRecorder() {
   return {
     proxy,
     async runPlugins() {
-      for (let i = 0; i < queue.length; i++) await runPlugin(queue[i].fn, queue[i].options);
+      for (let i = 0; i < queue.length; i++) {
+        const { fn, options, native } = queue[i];
+        // Native HtmlBase assumes a `/` pathPrefix; with another the real plugin runs, so
+        // its `addUrlTransform` call is recorded and the build refuses, as before.
+        if (native && (native !== "htmlbase" || proxy.pathPrefix === "/")) {
+          (values.nativePlugins = values.nativePlugins || []).push(native);
+        } else {
+          await runPlugin(fn, options);
+        }
+      }
     },
     done(returned) {
       values.ignores = [...ignores];

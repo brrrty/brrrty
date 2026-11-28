@@ -182,3 +182,86 @@ fn html_transformer_calls_are_recorded_not_thrown() {
         ]
     );
 }
+
+/// 11ty's `IdAttributePlugin` and `HtmlBasePlugin` with no options are what Brrrty runs
+/// natively: the recorder records them by name and doesn't run the JS (whose
+/// `htmlTransformer` calls would refuse every page). With options, or for a plugin of the
+/// same name that isn't 11ty's, it runs the function as before.
+#[test]
+fn built_in_plugins_are_recorded_by_name() {
+    let Some(node) = node() else { return };
+    let cfg = r#"const POSTHTML_PLUGIN_NAME = "11ty/eleventy/id-attribute";
+function IdAttributePlugin(c, options = {}) {
+  const sel = "[id],h1,h2,h3,h4,h5,h6", checkDuplicates = "error";
+  c.htmlTransformer.addPosthtmlPlugin("html", () => {}, { name: POSTHTML_PLUGIN_NAME });
+}
+function eleventyHtmlBasePlugin(c, options = {}) {
+  c.addFilter("addPathPrefixToFullUrl", (u) => u);
+  c.htmlTransformer.addUrlTransform(["html"], (u) => u, { priority: -1 });
+}
+function Other(c) {
+  c.htmlTransformer.addPosthtmlPlugin("html", () => {});
+}
+module.exports = (c) => {
+  c.addPlugin(IdAttributePlugin);
+  c.addPlugin(eleventyHtmlBasePlugin, {});
+  c.addPlugin(IdAttributePlugin, { selector: "h2" });
+  c.addPlugin(Other);
+  return {};
+};
+"#;
+    let t = site(&[("eleventy.config.js", cfg)]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+        JsResult::Ok(d) => d,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        list(get(get(&d.value, "values"), "nativePlugins")),
+        [s("idattribute"), s("htmlbase")]
+    );
+    // Only the call with options and the other plugin ran.
+    let methods: Vec<&Value> = list(get(&d.value, "unsupported"))
+        .iter()
+        .map(|u| get(u, "method"))
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            &s("htmlTransformer.addPosthtmlPlugin"),
+            &s("htmlTransformer.addPosthtmlPlugin")
+        ]
+    );
+    assert!(list(get(&d.value, "functions")).is_empty());
+}
+
+/// HtmlBasePlugin is native only under the default `pathPrefix` (`/`): with another, the
+/// real plugin runs and its `addUrlTransform` call is recorded, so the build refuses.
+#[test]
+fn html_base_is_native_only_for_the_default_path_prefix() {
+    let Some(node) = node() else { return };
+    let cfg = r#"function eleventyHtmlBasePlugin(c, options = {}) {
+  c.addFilter("addPathPrefixToFullUrl", (u) => u);
+  c.htmlTransformer.addUrlTransform(["html"], (u) => u, { priority: -1 });
+}
+module.exports = (c) => {
+  c.addPlugin(eleventyHtmlBasePlugin);
+  return { pathPrefix: "/blog/" };
+};
+"#;
+    let t = site(&[("eleventy.config.js", cfg)]);
+    let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+    let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+        JsResult::Ok(d) => d,
+        other => panic!("{other:?}"),
+    };
+    match get(&d.value, "values") {
+        Value::Object(o) => assert!(o.get("nativePlugins").is_none(), "{o:?}"),
+        other => panic!("{other:?}"),
+    }
+    let methods: Vec<&Value> = list(get(&d.value, "unsupported"))
+        .iter()
+        .map(|u| get(u, "method"))
+        .collect();
+    assert_eq!(methods, [&s("htmlTransformer.addUrlTransform")]);
+}

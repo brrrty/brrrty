@@ -1074,3 +1074,28 @@ fn doctor_json_reports_a_config_that_throws() {
     assert!(json.to_string().contains("boom"), "{json}");
     assert!(!json["groups"].as_array().unwrap().is_empty(), "{json}");
 }
+
+/// 11ty's IdAttributePlugin (no options) in the JS config builds natively: headings get ids,
+/// and the plugin's `htmlTransformer` call doesn't refuse the page.
+#[test]
+fn the_id_attribute_plugin_in_the_js_config_runs_natively() {
+    if !has_node() {
+        return;
+    }
+    let plugin = "const POSTHTML_PLUGIN_NAME = \"11ty/eleventy/id-attribute\";\nfunction IdAttributePlugin(c, options = {}) {\n  const sel = \"[id],h1,h2,h3,h4,h5,h6\", checkDuplicates = 1;\n  c.htmlTransformer.addPosthtmlPlugin(\"html\", () => {}, { name: POSTHTML_PLUGIN_NAME });\n}\n";
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        (
+            "eleventy.config.js",
+            &format!(
+                "{plugin}module.exports = (c) => {{ c.addPlugin(IdAttributePlugin); return {{}}; }};\n"
+            ),
+        ),
+        ("index.md", "## Hi there\n"),
+    ]);
+    let o = run(t.path(), "build", &[]);
+    let s = text(&o);
+    assert!(o.status.success(), "{s}");
+    let html = fs::read_to_string(t.path().join("_site/index.html")).expect(&s);
+    assert!(html.contains("<h2 id=\"hi-there\">Hi there</h2>"), "{html}");
+}
