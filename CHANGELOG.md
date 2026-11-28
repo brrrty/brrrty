@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.22 - 2026-11-28
+
+- With bundles on (`addBundle`), a page whose output still holds a `getBundle` placeholder (from the page or its layout) is now refused by name when the JS config has an integer-named transform (`addTransform("0", ...)`). In 11ty such a transform sees the bundle plugin's `/*__EleventyBundle:get:...*/` text, which Brrrty doesn't print yet. Before this, the page was written and could differ from 11ty with no error. Pages without a `getBundle` call build as before.
+
 ## 0.1.21 - 2026-11-28
 
 - A transform added in a JS config with an integer-like name (`addTransform("0", ...)`) now runs before the bundle plugin's swap and 11ty's HTML transformer (`IdAttributePlugin`, `InputPathToUrlTransformPlugin`), as in 11ty, where such names sort first. Before this, it ran after them.
