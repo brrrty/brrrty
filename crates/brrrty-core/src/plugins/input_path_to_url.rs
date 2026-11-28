@@ -51,9 +51,7 @@ impl ContentMap {
             path = self.normalize(&path, source)?;
         }
         if urls::INHERITED.contains(&path.as_str()) {
-            return Err(format!(
-                "a link to `{path}`, a name JavaScript objects have, which the input-path-to-URL plugin can't read the way 11ty does"
-            ));
+            return Err("a name JavaScript objects have, which the input-path-to-URL plugin can't read the way 11ty does".to_string());
         }
         match self.urls.get(&path).and_then(|u| u.first()) {
             Some(url) if !path.is_empty() => Ok(format!("{url}{suffix}")),
@@ -90,11 +88,8 @@ impl ContentMap {
 /// Run the plugin over a page's parsed HTML; `source` is the page's `inputPath`.
 pub fn apply(tree: &mut [Node], map: &ContentMap, source: &str) -> Result<(), String> {
     urls::transform(tree, &mut |u, _, _| {
-        map.rewrite(u, source).map_err(|e| {
-            format!(
-                "InputPathToUrlTransformPlugin can't read the link `{u}`: {e}, a `%` must be followed by two hex digits"
-            )
-        })
+        map.rewrite(u, source)
+            .map_err(|e| format!("InputPathToUrlTransformPlugin can't read the link `{u}`: {e}"))
     })
 }
 
@@ -194,7 +189,9 @@ fn decode_uri_component(s: &str) -> Result<String, String> {
             let digits = hex.filter(|h| h.bytes().all(|c| c.is_ascii_hexdigit()));
             match digits.and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 Some(v) => out.push(v),
-                None => return Err("URI malformed".to_string()),
+                None => {
+                    return Err("URI malformed, a `%` not followed by two hex digits".to_string());
+                }
             }
             i += 3;
         } else {
@@ -202,5 +199,6 @@ fn decode_uri_component(s: &str) -> Result<String, String> {
             i += 1;
         }
     }
-    String::from_utf8(out).map_err(|_| "URI malformed".to_string())
+    String::from_utf8(out)
+        .map_err(|_| "URI malformed, the `%` escapes don't decode to UTF-8 text".to_string())
 }
