@@ -60,6 +60,8 @@ pub(crate) struct Parser<'f> {
     raw_blocks: &'f [String],
     /// The shortcode tags the engine has, and whether each is paired.
     shortcodes: &'f [(String, bool)],
+    /// The paired shortcode tags that take their body as written.
+    raw_shortcodes: &'f [String],
 }
 
 type Res<T> = Result<T, ParseErr>;
@@ -81,12 +83,14 @@ impl<'f> Parser<'f> {
         check: Check<'f>,
         raw_blocks: &'f [String],
         shortcodes: &'f [(String, bool)],
+        raw_shortcodes: &'f [String],
     ) -> Parser<'f> {
         Parser {
             depth: 0,
             check,
             raw_blocks,
             shortcodes,
+            raw_shortcodes,
         }
     }
 
@@ -203,6 +207,9 @@ impl<'f> Parser<'f> {
             "liquid" => self.liquid(src, c),
             "#" => inline_comment(src, t),
             name if self.raw_blocks.iter().any(|b| b == name) => raw_block(src, t, stream),
+            name if self.raw_shortcodes.iter().any(|b| b == name) => {
+                self.raw_shortcode(src, t, c, stream)
+            }
             name if self.shortcodes.iter().any(|(b, _)| b == name) => {
                 let paired = self.shortcodes.iter().any(|(b, p)| b == name && *p);
                 self.shortcode(src, t, c, stream, paired)
@@ -216,37 +223,32 @@ impl<'f> Parser<'f> {
         &mut self,
         src: &Source<'_>,
         t: &TagToken,
-        mut c: Cursor<'_>,
+        c: Cursor<'_>,
         stream: &mut Stream,
         paired: bool,
     ) -> Res<TagKind> {
-        let mut args = Vec::new();
-        loop {
-            while c.peek().is_some_and(|ch| ch == ',' || is_blank(ch)) {
-                c.advance();
-            }
-            if c.end() {
-                break;
-            }
-            match c.read_value()? {
-                Some(e) => args.push(e),
-                None => {
-                    return Err(c
-                        .error(
-                            ErrorKind::Syntax,
-                            format!("invalid argument of the shortcode `{}`", t.name),
-                            c.p,
-                        )
-                        .into());
-                }
-            }
-        }
+        let args = shortcode_args(t, c)?;
         let body = if paired {
             Some(self.body_until(src, t, &format!("end{}", t.name), stream)?)
         } else {
             None
         };
         Ok(TagKind::Shortcode { args, body })
+    }
+
+    /// A paired shortcode whose body is every token up to the first `end<name>`, as written.
+    fn raw_shortcode(
+        &mut self,
+        src: &Source<'_>,
+        t: &TagToken,
+        c: Cursor<'_>,
+        stream: &mut Stream,
+    ) -> Res<TagKind> {
+        let args = shortcode_args(t, c)?;
+        match raw_block(src, t, stream)? {
+            TagKind::RawBlock { body, .. } => Ok(TagKind::RawShortcode { args, body }),
+            other => Ok(other),
+        }
     }
 
     /// The next node of a block body, or `None` when `handle` took the token.
@@ -824,6 +826,33 @@ fn raw(src: &Source<'_>, t: &TagToken, stream: &mut Stream) -> Res<TagKind> {
         text.push_str(slice(src.input, token.begin(), token.end()));
     }
     Err(not_closed(src, t))
+}
+
+/// A shortcode's arguments, as 11ty's legacy argument parsing reads them: values separated by
+/// commas or blanks.
+fn shortcode_args(t: &TagToken, mut c: Cursor<'_>) -> Res<Vec<Expr>> {
+    let mut args = Vec::new();
+    loop {
+        while c.peek().is_some_and(|ch| ch == ',' || is_blank(ch)) {
+            c.advance();
+        }
+        if c.end() {
+            break;
+        }
+        match c.read_value()? {
+            Some(e) => args.push(e),
+            None => {
+                return Err(c
+                    .error(
+                        ErrorKind::Syntax,
+                        format!("invalid argument of the shortcode `{}`", t.name),
+                        c.p,
+                    )
+                    .into());
+            }
+        }
+    }
+    Ok(args)
 }
 
 /// A raw block tag: every token up to the first `end<name>` tag, as

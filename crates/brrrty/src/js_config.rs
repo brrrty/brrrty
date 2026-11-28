@@ -177,6 +177,7 @@ pub fn apply(
             "idattribute" => config.id_attribute = true,
             "inputpathtourl" => config.input_path_to_url = true,
             "htmlbase" => config.html_base = true,
+            "render" => config.render_plugin = true,
             _ => {}
         }
     }

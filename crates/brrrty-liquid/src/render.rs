@@ -252,9 +252,7 @@ impl<'a> Renderer<'a> {
                             .chain(&args)
                             .chain(kwargs.iter().map(|(_, v)| v)),
                     );
-                    let ctx = FilterCtx {
-                        timezone: self.tz(),
-                    };
+                    let ctx = self.filter_ctx();
                     let out = run(&input, &args, &kwargs, &ctx)
                         .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
                     self.check_size(&out)?;
@@ -297,9 +295,7 @@ impl<'a> Renderer<'a> {
                                 _ => None,
                             })),
                     );
-                    let ctx = FilterCtx {
-                        timezone: self.tz(),
-                    };
+                    let ctx = self.filter_ctx();
                     let out = run(&input, &argv, &ctx)
                         .map_err(|message| RenderErr::new(ErrorKind::Render, message))?;
                     self.check_size(&out)?;
@@ -314,6 +310,15 @@ impl<'a> Renderer<'a> {
             v = Val::V(out);
         }
         Ok(v)
+    }
+
+    /// What a filter or shortcode sees of the render: the time zone, and the data's `page` and
+    /// `eleventy`.
+    pub fn filter_ctx(&self) -> FilterCtx {
+        let mut ctx = FilterCtx::new(self.tz());
+        ctx.page = self.ctx.data_get("page");
+        ctx.eleventy = self.ctx.data_get("eleventy");
+        ctx
     }
 
     /// Keeps a filter's result under the output limit, so a loop that

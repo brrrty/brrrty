@@ -51,6 +51,34 @@ pub(super) fn echo(r: &mut Renderer<'_>, value: Option<&FilteredValue>, out: &mu
     r.write_value(out, &v)
 }
 
+/// A raw shortcode: the arguments are evaluated, the body goes as written, and what the function
+/// returns is written as it is.
+pub(super) fn raw_shortcode(
+    r: &mut Renderer<'_>,
+    name: &str,
+    args: &[crate::ast::Expr],
+    body: &str,
+    out: &mut String,
+) -> R<()> {
+    let f = r
+        .engine
+        .raw_shortcodes
+        .get(name)
+        .expect("a raw shortcode is parsed only when the engine has it")
+        .clone();
+    let mut argv = Vec::with_capacity(args.len());
+    for (i, e) in args.iter().enumerate() {
+        let a = r.eval(e)?;
+        crate::render::drop_arg(name, &format!("argument {}", i + 1), &a)?;
+        argv.push(a.to_value());
+    }
+    brrrty_js::functions::check_filter_args(name, argv.iter());
+    let ctx = r.filter_ctx();
+    let text = f(body, &argv, &ctx)
+        .map_err(|m| crate::render::RenderErr::new(crate::ErrorKind::Render, m))?;
+    r.write(out, &text)
+}
+
 /// A shortcode: the arguments are evaluated, a paired one's body is rendered and goes first,
 /// and what the function returns is written as it is.
 pub(super) fn shortcode(
@@ -80,7 +108,7 @@ pub(super) fn shortcode(
         argv.insert(0, Value::String(buf.as_str().into()));
     }
     brrrty_js::functions::check_filter_args(name, argv.iter());
-    let ctx = crate::FilterCtx::new(r.tz());
+    let ctx = r.filter_ctx();
     let v =
         f(&argv, &ctx).map_err(|m| crate::render::RenderErr::new(crate::ErrorKind::Render, m))?;
     // LiquidJS writes the result only when it is truthy: `html && emitter.write(html)`.

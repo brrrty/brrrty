@@ -158,7 +158,12 @@ fn run_user(
     let ops = r.ops();
     // A shortcode: its result is a `SafeString` of the text, and its errors say so.
     let shortcode = name.strip_prefix(crate::parser::SHORTCODE_PREFIX);
-    let paired = shortcode.is_some_and(|n| matches!(r.engine.shortcodes.get(n), Some(Some(_))));
+    let paired = shortcode.is_some_and(|n| {
+        matches!(
+            r.engine.shortcodes.get(n),
+            Some(crate::parser::ShortcodeTag { end: Some(_), .. })
+        )
+    });
     let name = shortcode.unwrap_or(name);
     let mut values = Vec::with_capacity(args.len());
     let mut safe = Vec::with_capacity(args.len());
@@ -188,6 +193,7 @@ fn run_user(
         }
     }
     env.page = page(scope);
+    env.eleventy = top_object(scope, "eleventy");
     let input = values.first().cloned().unwrap_or(Value::Undefined);
     let rest = values.get(1..).unwrap_or(&[]);
     let out = f(&input, rest, &env).map_err(|m| {
@@ -242,8 +248,13 @@ fn run_user(
 /// `this.page`: Eleventy copies the template's data onto a filter's
 /// `this`, so it is the context's `page`.
 fn page(scope: &Rc<Scope>) -> Option<Value> {
+    top_object(scope, "page")
+}
+
+/// The context's object `name`, if it has one.
+fn top_object(scope: &Rc<Scope>, name: &str) -> Option<Value> {
     let vars = scope.tpl.context.vars.borrow();
-    match vars.get_own("page") {
+    match vars.get_own(name) {
         Some(Val::V(v @ Value::Object(_))) => Some(v),
         _ => None,
     }

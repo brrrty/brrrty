@@ -508,7 +508,7 @@ impl Pipeline<'_> {
 
     /// Renders Markdown, turning a panic in the Markdown library into a Problem for this page.
     /// `line` is the line `source` starts after in `file`, when it is the file's own text.
-    fn render_markdown(
+    pub(crate) fn render_markdown(
         &self,
         source: &str,
         file: &Path,

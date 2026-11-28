@@ -215,6 +215,8 @@ pub struct SiteConfig {
     pub id_attribute: bool,
     /// `add_plugin("inputpathtourl")`: 11ty's `InputPathToUrlTransformPlugin`.
     pub input_path_to_url: bool,
+    /// `add_plugin("render")`: 11ty's `RenderPlugin`.
+    pub render_plugin: bool,
     /// `add_layout_alias` aliases: a layout name and the file it stands for.
     pub layout_aliases: indexmap::IndexMap<String, String>,
     /// Renderer rules `amend_library("md", ...)` set on 11ty's library.
@@ -253,6 +255,7 @@ impl SiteConfig {
             html_base: self.html_base,
             id_attribute: self.id_attribute,
             input_path_to_url: self.input_path_to_url,
+            render_plugin: self.render_plugin,
             includes: self.dir.includes.clone(),
             layouts: self.dir.layouts.clone(),
             data_folder: self.dir.data.clone(),
@@ -522,6 +525,7 @@ fn evaluate(src: &str, clock: Clock, root: &Path) -> Result<SiteConfig, Vec<Prob
         html_base: state.html_base,
         id_attribute: state.id_attribute,
         input_path_to_url: state.input_path_to_url,
+        render_plugin: state.render_plugin,
         layout_aliases: state.layout_aliases,
         reads,
         late_problems,

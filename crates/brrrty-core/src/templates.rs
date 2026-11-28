@@ -55,6 +55,14 @@ pub(crate) enum TplError {
 }
 
 impl TplError {
+    /// The engine's message.
+    pub fn message(&self) -> String {
+        match self {
+            TplError::Liquid(e) => e.message.clone(),
+            TplError::Nunjucks(e) => e.message.clone(),
+        }
+    }
+
     /// The name of the template the error is in, as the engine knows it.
     pub fn template(&self) -> &str {
         match self {
