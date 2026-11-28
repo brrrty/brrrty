@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.19 - 2026-11-28
+
+- With `config.add_plugin("htmlbase")` (or 11ty's `HtmlBasePlugin` run natively under `set_js_config("node")`), the `transformWithHtmlBase` filter is now available in Liquid, Nunjucks and on JavaScript templates' `this`. With the default base `/` it returns its content unchanged, as in 11ty. Any other base is refused by name.
+- A filter added with `addFilter` in a JS config and called as `this.f()` from a `.11ty.js` template is now refused by name. Before this, it failed with `this.f is not a function` and was misreported as an order-dependent data file.
+
 ## 0.1.18 - 2026-11-27
 
 - With `config.add_plugin("htmlbase")` (or 11ty's `HtmlBasePlugin` run natively under `set_js_config("node")`), JavaScript templates (`.11ty.js`) now get `this.htmlBaseUrl` and `this.addPathPrefixToFullUrl`, as in 11ty. Before this, they were only there when the RSS plugin was on, and a template that called them threw.
