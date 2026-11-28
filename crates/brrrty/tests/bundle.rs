@@ -339,3 +339,29 @@ fn an_early_transform_on_a_bundle_free_page_with_a_private_use_glyph_still_runs(
         "<i>\u{E000}</i> y"
     );
 }
+
+/// With bundles on, a page that holds a literal U+E000 but no `getBundle` call has no 11ty
+/// placeholder, so an early transform must still run on it.
+#[test]
+fn an_early_transform_on_a_page_with_a_private_use_glyph_and_no_get_bundle_still_runs() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        (
+            "eleventy.config.js",
+            &config(
+                "eleventyConfig.addBundle(\"css\");\n  eleventyConfig.addTransform(\"0\", (s) => s.replace(\"x\", \"y\"));",
+            ),
+        ),
+        ("package.json", "{}"),
+        ("index.njk", "<i>\u{E000}</i> x"),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "<i>\u{E000}</i> y"
+    );
+}
