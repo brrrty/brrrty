@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::rss::posthtml::{Closing, Element, Node, parse, render, walk_mut};
+use super::rss::posthtml::{Element, Node, walk_mut};
 
 const IGNORE: &str = "eleventy:id-ignore";
 
@@ -52,17 +52,16 @@ fn matches(e: &Element) -> bool {
     attr(e, "id").is_some() || matches!(e.tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
 }
 
-/// The page's HTML after the plugin. `input_path` is the page's `page.inputPath`, for 11ty's
+/// Runs the plugin on a parsed page, in place. `input_path` is the page's `page.inputPath`, for 11ty's
 /// error about repeated ids.
-pub fn apply(html: &str, input_path: &str) -> Result<String, String> {
-    let mut tree = parse(html)?;
+pub fn apply(tree: &mut [Node], input_path: &str) -> Result<(), String> {
     let mut count: HashMap<String, usize> = HashMap::new();
     // Headings given an id, by that id, as the position of the element in the walk.
     let mut headings: HashMap<String, usize> = HashMap::new();
     let mut renames: Vec<(usize, String)> = Vec::new();
     let mut error = None;
     let mut at = 0usize;
-    walk_mut(&mut tree, &mut |e| {
+    walk_mut(tree, &mut |e| {
         let me = at;
         at += 1;
         if error.is_some() || !matches(e) {
@@ -109,7 +108,7 @@ pub fn apply(html: &str, input_path: &str) -> Result<String, String> {
     }
     if !renames.is_empty() {
         let mut at = 0usize;
-        walk_mut(&mut tree, &mut |e| {
+        walk_mut(tree, &mut |e| {
             // In the order they were made, so a heading renamed twice ends with the last.
             for (_, id) in renames.iter().filter(|(idx, _)| *idx == at) {
                 set_id(e, id);
@@ -117,7 +116,7 @@ pub fn apply(html: &str, input_path: &str) -> Result<String, String> {
             at += 1;
         });
     }
-    Ok(render(&tree, Closing::Default))
+    Ok(())
 }
 
 /// `decodeHTML` of `entities` (legacy mode): named references, with the semicolon or, for the

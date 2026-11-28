@@ -99,6 +99,8 @@ pub mod codes {
     pub const PERMALINK_INVALID: &str = "permalink-invalid";
     pub const PERMALINK_NO_EXTENSION: &str = "permalink-no-extension";
     pub const PERMALINK_UNSUPPORTED: &str = "permalink-unsupported";
+    /// A built-in plugin of 11ty failed on a page (IdAttributePlugin's repeated-id error).
+    pub const PLUGIN_FAILED: &str = "plugin-failed";
     /// A page calls a filter the config declares random: its output differs
     /// from build to build, as 11ty's does.
     pub const RANDOM_OUTPUT: &str = "random-output";

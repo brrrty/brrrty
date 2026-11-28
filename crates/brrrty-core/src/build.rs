@@ -3456,36 +3456,39 @@ fn build_once(
                 }
                 return Err(Refused::Page(problem.clone(), None));
             }
-            // 11ty's own HTML transformer runs before every transform from the config.
+            // 11ty runs the bundle plugin's transform (placeholders resolved), then its HTML
+            // transformer (one posthtml pass: the bundle's pruning, then IdAttributePlugin),
+            // then the config's transforms, in order.
             let mut html = rendered.html;
-            if opts.config.id_attribute && output_rel.extension().is_some_and(|e| e == "html") {
-                let input_path = match p.data.get("page").map(|pg| pg.get("inputPath")) {
-                    Some(Value::String(u)) => u.to_string(),
-                    _ => String::new(),
-                };
-                html = match crate::plugins::id_attribute::apply(&html, &input_path) {
-                    Ok(h) => h,
-                    Err(why) => {
-                        let problem = Problem::error(codes::JS_DATA_FUNCTION, why).with_path(shown);
-                        if let Some(log) = log {
-                            log.problem(shown, &problem);
-                        }
-                        return Err(Refused::Page(problem, None));
-                    }
-                };
-            }
-            // 11ty runs the config's transforms, in order, on what the layouts gave.
+            let is_html = output_rel.extension().is_some_and(|e| e == "html");
             if let Some(b) = &bundles {
                 let url = match p.data.get("page").map(|pg| pg.get("url")) {
                     Some(Value::String(u)) => u.to_string(),
                     _ => String::new(),
                 };
-                let out_path = output_rel.to_string_lossy();
-                html = match crate::plugins::bundle::prune_empty(b.resolve(&url, html), &out_path)
-                {
+                html = b.resolve(&url, html);
+            }
+            if is_html && (bundles.is_some() || opts.config.id_attribute) {
+                let input_path = match p.data.get("page").map(|pg| pg.get("inputPath")) {
+                    Some(Value::String(u)) => u.to_string(),
+                    _ => String::new(),
+                };
+                let pass = crate::plugins::rss::posthtml::parse(&html).and_then(|mut tree| {
+                    if bundles.is_some() {
+                        crate::plugins::bundle::prune_tree(&mut tree);
+                    }
+                    if opts.config.id_attribute {
+                        crate::plugins::id_attribute::apply(&mut tree, &input_path)?;
+                    }
+                    Ok(crate::plugins::rss::posthtml::render(
+                        &tree,
+                        crate::plugins::rss::posthtml::Closing::Default,
+                    ))
+                });
+                html = match pass {
                     Ok(h) => h,
                     Err(why) => {
-                        let problem = Problem::error(codes::JS_DATA_FUNCTION, why).with_path(shown);
+                        let problem = Problem::error(codes::PLUGIN_FAILED, why).with_path(shown);
                         if let Some(log) = log {
                             log.problem(shown, &problem);
                         }

@@ -68,6 +68,12 @@ pub fn prune_empty(html: String, output_path: &str) -> Result<String, String> {
     Ok(posthtml::render(&tree, posthtml::Closing::Default))
 }
 
+/// [`prune_empty`] on a page already parsed, so a later plugin of 11ty's one posthtml pass
+/// can share the tree.
+pub fn prune_tree(tree: &mut Vec<Node>) {
+    prune_nodes(tree);
+}
+
 fn text_of(nodes: &[Node]) -> String {
     nodes
         .iter()
