@@ -197,6 +197,11 @@ impl Bundles {
         engine.register_shortcode("getBundle", false, f);
     }
 
+    /// Whether `html` still holds a `getBundle` placeholder (Brrrty's differs from 11ty's text).
+    pub fn has_placeholder(html: &str) -> bool {
+        html.contains(OPEN)
+    }
+
     /// `html` with each `getBundle` placeholder replaced by what the page at `url` collected,
     /// which the page then forgets.
     pub fn resolve(&self, url: &str, html: String) -> String {
