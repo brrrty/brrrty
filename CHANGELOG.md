@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.26 - 2026-11-28
+
+- A quoted front matter value (`"..."` or `'...'`) whose continuation line is indented less than its key, down to column 0, now builds, as in 11ty (js-yaml only warns). The line break folds to a space as usual. Before this, the page was refused with `invalid indentation in quoted scalar`. This works at any depth: top level, under a nested key, or in a list item.
+
 ## 0.1.25 - 2026-11-28
 
 - `brrrty init` no longer refuses a `package.json` build script that runs 11ty and then a helper script that starts 11ty again (say with another environment). The script's own plain 11ty command defines the build, and the config gets a note about the second run. A helper that runs 11ty before the plain command still blocks.
