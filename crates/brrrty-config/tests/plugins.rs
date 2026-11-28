@@ -827,3 +827,58 @@ fn the_id_attribute_plugin_renumbers_a_heading_an_id_clashes_with() {
         "<h2 id=\"hi-2\">Hi</h2><p id=\"hi\">x</p>"
     );
 }
+
+/// `addPlugin(InputPathToUrlTransformPlugin)` (11ty 3.1.8, `src/Plugins/InputPathToUrl.js`):
+/// a link to a template's source file becomes that page's URL, keeping its `?query` and
+/// `#hash`; absolute URLs, fragments and paths that match no template are left alone.
+#[test]
+fn the_input_path_to_url_plugin_turns_links_to_source_files_into_urls() {
+    let (t, r) = site(
+        r#"config.add_plugin("inputpathtourl");"#,
+        &[
+            (
+                "a.md",
+                "[b](b.md) [c](c.md#top) [d](d.md?x=1) [e](https://e.com/) [f](#f) [g](missing.md) [h](./b.md) [i](/b/)\n",
+            ),
+            ("b.md", "# B\n"),
+            ("c.md", "# C\n"),
+            ("d.md", "# D\n"),
+            ("e.html", "<img src=\"b.md\"><a href=\"mailto:x@y.z\">m</a>"),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap(),
+        "<p><a href=\"/b/\">b</a> <a href=\"/c/#top\">c</a> <a href=\"/d/?x=1\">d</a> <a href=\"https://e.com/\">e</a> <a href=\"#f\">f</a> <a href=\"missing.md\">g</a> <a href=\"/b/\">h</a> <a href=\"/b/\">i</a></p>\n"
+    );
+    assert_eq!(
+        out(&t, "e/index.html").unwrap(),
+        "<img src=\"/b/\"><a href=\"mailto:x@y.z\">m</a>"
+    );
+}
+
+/// A link relative to the page's own folder is found too, and the plugin takes no options.
+#[test]
+fn the_input_path_to_url_plugin_resolves_links_relative_to_the_page() {
+    let (t, r) = site(
+        r#"config.add_plugin("inputpathtourl");"#,
+        &[
+            ("posts/one.md", "[two](two.md) [up](../top.md)\n"),
+            ("posts/two.md", "# Two\n"),
+            ("top.md", "# Top\n"),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "posts/one/index.html").unwrap(),
+        "<p><a href=\"/posts/two/\">two</a> <a href=\"/top/\">up</a></p>\n"
+    );
+}
+
+#[test]
+fn the_input_path_to_url_plugin_refuses_options_it_does_not_have() {
+    let p = load_err(r#"config.add_plugin("inputpathtourl", #{ extensions: "html,md" });"#);
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert!(p.message.contains("inputpathtourl"), "{}", p.message);
+    assert!(p.message.contains("extensions"), "{}", p.message);
+}
