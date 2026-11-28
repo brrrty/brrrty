@@ -530,7 +530,21 @@ fn same_value(a: &brrrty_js::runtime::Decoded, b: &brrrty_js::runtime::Decoded) 
 /// from `0`, `NaN`, key order, `undefined`, and where the functions are.
 fn fingerprint(d: &brrrty_js::runtime::Decoded) -> String {
     let functions: Vec<_> = d.functions.iter().map(|(p, _)| p).collect();
-    format!("{:?}|{:?}|{:?}", d.value, functions, d.refused)
+    format!("{:?}|{:?}|{:?}", anonymous(&d.value), functions, d.refused)
+}
+
+/// The value with every function handle zeroed: a function is a fresh
+/// closure (a new handle) on each call, and where the functions sit is
+/// already part of the fingerprint.
+fn anonymous(v: &Value) -> Value {
+    match v {
+        Value::Function(_) => Value::Function(brrrty_js::FnHandle(0)),
+        Value::Array(a) => Value::Array(std::sync::Arc::new(a.iter().map(anonymous).collect())),
+        Value::Object(o) => Value::Object(std::sync::Arc::new(
+            o.iter().map(|(k, v)| (k.clone(), anonymous(v))).collect(),
+        )),
+        other => other.clone(),
+    }
 }
 
 fn read_js(full: &Path, shown: &Path) -> LocalFile {
