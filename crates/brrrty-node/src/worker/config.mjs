@@ -150,7 +150,15 @@ function configRecorder() {
   // 11ty's userspace `directories` (ProjectDirectories): normalized `./x/` paths, read live.
   // Precedence: defaults, the exported `config.dir`, the set-directory calls, the returned `dir`.
   const dirSources = { exported: {}, returned: {} };
-  const dirValue = (key) => ({ ...dirSources.exported, ...values.dir, ...dirSources.returned })[key];
+  // Like 11ty's `setViaConfigObject`: an `undefined` key, or a falsy `input`, is skipped.
+  const dirValue = (key) => {
+    let out;
+    for (const src of [dirSources.exported, values.dir, dirSources.returned]) {
+      const v = src?.[key];
+      if (v !== undefined && (key !== "input" || v)) out = v;
+    }
+    return out;
+  };
   const norm = (...parts) => {
     let p = path.posix.normalize(path.posix.join(...parts));
     if (p === ".") return "./";
@@ -158,13 +166,18 @@ function configRecorder() {
     return p.endsWith("/") ? p : `${p}/`;
   };
   const input = () => norm(dirValue("input") ?? ".");
+  const layoutsDir = () => {
+    const v = dirValue("layouts");
+    // No fallback: 11ty leaves `layouts` undefined unless a source sets it.
+    return v === undefined ? undefined : norm(input(), v);
+  };
   const directories = {
     get input() { return input(); },
     get inputFile() { return undefined; },
     get inputGlob() { return undefined; },
     get data() { return norm(input(), dirValue("data") ?? "_data"); },
     get includes() { return norm(input(), dirValue("includes") ?? "_includes"); },
-    get layouts() { return norm(input(), dirValue("layouts") ?? "_layouts"); },
+    get layouts() { return layoutsDir(); },
     get output() { return norm(dirValue("output") ?? "_site"); },
   };
   const target = { ignores, plugins: [], dir: undefined, pathPrefix: undefined, directories };

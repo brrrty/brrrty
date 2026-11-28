@@ -208,30 +208,29 @@ fn set_directory_calls_do_not_leak_into_dir() {
 #[test]
 fn plugins_see_the_directories() {
     let Some(node) = node() else { return };
-    let plugin = "c.addPlugin((p) => {\n    const d = p.directories;\n    p.addGlobalData(\"seen\", [d.input, d.output, d.data, d.includes, d.layouts].join(\" \"));\n  });";
+    let plugin = "c.addPlugin((p) => {\n    const d = p.directories;\n    p.addGlobalData(\"seen\", [d.input, d.output, d.data, d.includes, String(d.layouts)].join(\" \"));\n  });";
     for (body, want) in [
-        (
-            "return {};",
-            "./ ./_site/ ./_data/ ./_includes/ ./_layouts/",
-        ),
+        ("return {};", "./ ./_site/ ./_data/ ./_includes/ undefined"),
         (
             "return { dir: { input: \"src\", output: \"dist\" } };",
-            "./src/ ./dist/ ./src/_data/ ./src/_includes/ ./src/_layouts/",
+            "./src/ ./dist/ ./src/_data/ ./src/_includes/ undefined",
         ),
         (
             "c.setOutputDirectory(\"out\"); return {};",
-            "./ ./out/ ./_data/ ./_includes/ ./_layouts/",
+            "./ ./out/ ./_data/ ./_includes/ undefined",
+        ),
+        (
+            "c.setLayoutsDirectory(\"lay\"); return { dir: { input: \"src\" } };",
+            "./src/ ./_site/ ./src/_data/ ./src/_includes/ ./src/lay/",
+        ),
+        (
+            "c.setOutputDirectory(\"dist\"); c.setInputDirectory(\"src\"); return { dir: { output: undefined, input: \"\" } };",
+            "./src/ ./dist/ ./src/_data/ ./src/_includes/ undefined",
         ),
     ] {
-        let setup = if body.starts_with("c.") {
-            body.replace(" return {};", "")
-        } else {
-            String::new()
-        };
-        let ret = if body.starts_with("c.") {
-            "return {};"
-        } else {
-            body
+        let (setup, ret) = match body.find("return") {
+            Some(i) => body.split_at(i),
+            None => (body, ""),
         };
         let cfg = format!("module.exports = (c) => {{\n  {setup}\n  {plugin}\n  {ret}\n}};\n");
         let t = site(&[("eleventy.config.js", &cfg)]);
