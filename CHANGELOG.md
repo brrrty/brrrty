@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.21 - 2026-11-28
+
+- A transform added in a JS config with an integer-like name (`addTransform("0", ...)`) now runs before the bundle plugin's swap and 11ty's HTML transformer (`IdAttributePlugin`, `InputPathToUrlTransformPlugin`), as in 11ty, where such names sort first. Before this, it ran after them.
+
 ## 0.1.20 - 2026-11-28
 
 - 11ty's `inputPathToUrl` filter, which 11ty adds to every site, is now available in Liquid, Nunjucks and on JavaScript templates' `this`. It turns a template's source path (from the input folder, or relative to the page calling it) into that template's first URL, keeping its `?query` and `#hash`. A full URL is returned as it is, and a path that isn't a template's source file is an error, as in 11ty. A config's own filter of the same name still replaces it.
