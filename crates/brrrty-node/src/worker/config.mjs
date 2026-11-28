@@ -168,6 +168,7 @@ function configRecorder() {
   });
   return {
     proxy,
+    values,
     async runPlugins() {
       for (let i = 0; i < queue.length; i++) {
         const { fn, options, native } = queue[i];
@@ -223,6 +224,16 @@ async function loadConfig(file) {
   // 11ty's `processPlugins` runs after the config merged, with `userConfig.pathPrefix` set to
   // the merged value (default "/"); plugins such as HtmlBasePlugin read it.
   rec.proxy.pathPrefix = (returned && returned.pathPrefix) || "/";
+  // Likewise `userConfig.dir`: the defaults, then the set-directory calls, then the returned
+  // `dir` (11ty applies `directoryAssignments` before it).
+  rec.proxy.dir = {
+    input: ".",
+    includes: "_includes",
+    data: "_data",
+    output: "_site",
+    ...rec.values.dir,
+    ...(returned && typeof returned.dir === "object" ? returned.dir : {}),
+  };
   await rec.runPlugins();
   return rec.done(returned);
 }
