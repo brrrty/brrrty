@@ -22,7 +22,7 @@ pub use ast::Template;
 pub use context::json as json_stringify;
 pub use engine::{
     ArgsFilterFn, Engine, EngineOptions, FilterCtx, FilterFn, LoadError, Loader, RawBlockFn,
-    Rendered, ShortcodeFn, TagError, Tz,
+    RawShortcodeFn, Rendered, ShortcodeFn, TagError, Tz,
 };
 pub use error::{ErrorKind, LiquidError};
 
@@ -31,7 +31,7 @@ pub use error::{ErrorKind, LiquidError};
 /// This checks syntax only. [`Engine::parse`] also rejects unknown filters
 /// when `strict_filters` is on.
 pub fn parse(template_name: &str, source: &str) -> Result<Template, LiquidError> {
-    parse_checked(template_name, source, None, &[], &[])
+    parse_checked(template_name, source, None, &[], &[], &[])
 }
 
 pub(crate) fn parse_checked(
@@ -40,8 +40,9 @@ pub(crate) fn parse_checked(
     check: parser::Check<'_>,
     raw_blocks: &[String],
     shortcodes: &[(String, bool)],
+    raw_shortcodes: &[String],
 ) -> Result<Template, LiquidError> {
-    let mut parser = parser::Parser::new(check, raw_blocks, shortcodes);
+    let mut parser = parser::Parser::new(check, raw_blocks, shortcodes, raw_shortcodes);
     match parser.parse_source(source) {
         Ok(nodes) => Ok(Template {
             name: template_name.to_string(),

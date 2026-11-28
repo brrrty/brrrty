@@ -2571,6 +2571,12 @@ fn build_once(
         timezone: Tz::Local,
         autoescape: true,
     });
+    // 11ty's `RenderPlugin`. Its tags reach the engines through `render_hook`, opened below
+    // once the pipeline exists.
+    let render_hook = crate::plugins::render::Hook::default();
+    if opts.config.render_plugin {
+        crate::plugins::render::register(&mut engine, &mut nunjucks, &render_hook);
+    }
     // Registered first: a later filter of the same name replaces it, as in 11ty.
     nunjucks.register_filter(
         "inputPathToUrl",
@@ -3322,6 +3328,12 @@ fn build_once(
         highlight: highlight.as_ref().filter(|p| p.options.has_format("md")),
         rules: opts.config.markdown_rules.as_ref().map(|r| r.0.as_ref()),
     };
+    let nested = crate::plugins::render::Nested {
+        pipeline: &pipeline,
+        root: &root,
+        engines: template_engines,
+    };
+    let _render_guard = opts.config.render_plugin.then(|| render_hook.open(&nested));
     // Each JavaScript template's first page's `page`, which 11ty's first
     // render of it keeps as `this.page` for every page.
     let mut first_pages: HashMap<*const Source, &Value> = HashMap::new();

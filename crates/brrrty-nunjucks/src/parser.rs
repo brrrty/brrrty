@@ -80,7 +80,15 @@ pub(crate) fn parse(source: &str, shortcodes: &Shortcodes) -> Res<Vec<Node>> {
 
 /// The shortcodes the config added, by name: `None` for a plain one, the names that end the
 /// body (`end<name>`) for a paired one.
-pub type Shortcodes = std::collections::HashMap<String, Option<&'static [&'static str]>>;
+pub type Shortcodes = std::collections::HashMap<String, ShortcodeTag>;
+
+/// A shortcode tag: the names that end it when paired, and whether its body is taken as
+/// written (as 11ty's `renderTemplate` tag reads it) instead of parsed.
+#[derive(Debug, Clone, Copy)]
+pub struct ShortcodeTag {
+    pub end: Option<&'static [&'static str]>,
+    pub raw: bool,
+}
 
 /// What a shortcode's call is named in the tree: a filter of this prefix
 /// and the shortcode's name. The engine registers each shortcode under it.
@@ -744,7 +752,7 @@ impl Parser<'_> {
     /// plain one an empty string argument when there are none, for a paired one the body up
     /// to `end<name>` as the first argument.
     fn parse_shortcode(&mut self, name: &str) -> Res<Node> {
-        let paired = self.shortcodes[name];
+        let ShortcodeTag { end: paired, raw } = self.shortcodes[name];
         let tok = self.peek_known()?;
         self.take()?;
         let mut args = self.parse_signature_no_parens()?;
@@ -757,10 +765,22 @@ impl Parser<'_> {
         }
         self.advance_after_block_end(Some(&tok.value))?;
         if let Some(end) = paired {
-            let body = self.parse_until_blocks(end, span)?;
-            self.advance_after_block_end(None)?;
-            args.positional
-                .insert(0, Expr::Capture(Capture { span, body }));
+            if raw {
+                // As Nunjucks reads a `raw` body, the end tag is read with it.
+                let text = self.raw_text(name)?;
+                args.positional.insert(
+                    0,
+                    Expr::Literal {
+                        span,
+                        value: Literal::String(text),
+                    },
+                );
+            } else {
+                let body = self.parse_until_blocks(end, span)?;
+                self.advance_after_block_end(None)?;
+                args.positional
+                    .insert(0, Expr::Capture(Capture { span, body }));
+            }
         }
         let expr = Expr::Filter {
             span,
@@ -811,6 +831,16 @@ impl Parser<'_> {
 
     fn parse_raw(&mut self, tag_name: &str) -> Res<Node> {
         let begun = self.advance_after_block_end(None)?;
+        let text = self.raw_text(tag_name)?;
+        Ok(Node::Text(Text {
+            span: begun.span,
+            text,
+        }))
+    }
+
+    /// The text up to the `end<tag_name>` tag that closes the one just read, which stays unread;
+    /// a nested `tag_name` tag and its end are part of it.
+    fn raw_text(&mut self, tag_name: &str) -> Res<String> {
         let mut level = 1;
         let mut text = String::new();
         while let Some((pre, tag, opens)) = self.tokens.extract_raw_tag(tag_name) {
@@ -831,10 +861,7 @@ impl Parser<'_> {
                 text.push_str(tag);
             }
         }
-        Ok(Node::Text(Text {
-            span: begun.span,
-            text,
-        }))
+        Ok(text)
     }
 
     fn parse_filter_statement(&mut self) -> Res<Node> {

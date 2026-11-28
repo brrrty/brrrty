@@ -187,6 +187,8 @@ pub struct ConfigOptions {
     /// `addPlugin(InputPathToUrlTransformPlugin)`: links to source files become page URLs on
     /// pages written to `.html`.
     pub input_path_to_url: bool,
+    /// `addPlugin(RenderPlugin)`: the `renderTemplate`, `renderFile` and `renderContent` tags and filter.
+    pub render_plugin: bool,
     /// `dir.includes`, relative to the input folder; `None` is `_includes`.
     pub includes: Option<String>,
     /// `dir.layouts`, relative to the input folder; `None` is the includes folder.

@@ -61,6 +61,9 @@ pub(crate) fn render(r: &mut Renderer<'_>, tag: &Tag, out: &mut String) -> R<()>
             })?;
             r.write(out, &html)
         }
+        TagKind::RawShortcode { args, body } => {
+            variable::raw_shortcode(r, &tag.name, args, body, out)
+        }
         TagKind::Shortcode { args, body } => {
             variable::shortcode(r, &tag.name, args, body.as_deref(), out)
         }

@@ -38,13 +38,21 @@ impl Default for EngineOptions {
 #[non_exhaustive]
 pub struct FilterCtx {
     pub timezone: Tz,
+    /// The data's `page`, which a JavaScript filter reads as `this.page`.
+    pub page: Option<Value>,
+    /// The data's `eleventy`.
+    pub eleventy: Option<Value>,
 }
 
 impl FilterCtx {
     /// The context a filter sees when Liquid's time zone is `timezone`,
     /// for calling a filter outside a render.
     pub fn new(timezone: Tz) -> Self {
-        Self { timezone }
+        Self {
+            timezone,
+            page: None,
+            eleventy: None,
+        }
     }
 }
 
@@ -70,6 +78,13 @@ pub type ArgsFilterFn =
 /// Liquid passes no keyword arguments, so there are none. An `Err` becomes a render error at
 /// the tag.
 pub type ShortcodeFn = Arc<dyn Fn(&[Value], &FilterCtx) -> Result<Value, String> + Send + Sync>;
+
+/// A paired shortcode that takes its body as written: `(body, arguments, context)`. Its tag is
+/// `{% name args %}body{% endname %}`; the body is every token up to the first `endname`, not
+/// rendered, as 11ty's `renderTemplate` tag reads it. The arguments are values separated by
+/// commas or blanks. An `Err` becomes a render error at the tag.
+pub type RawShortcodeFn =
+    Arc<dyn Fn(&str, &[Value], &FilterCtx) -> Result<String, String> + Send + Sync>;
 
 /// A raw block tag's renderer: `(arguments, body) -> output`, each as
 /// written in the template. An `Err` becomes a render error at the tag.
@@ -120,6 +135,9 @@ pub struct Engine {
     /// Shortcode tags, by name, with whether each is paired.
     pub(crate) shortcodes: HashMap<String, (bool, ShortcodeFn)>,
     shortcode_names: Vec<(String, bool)>,
+    /// Paired shortcode tags whose body is passed as written, and their names.
+    pub(crate) raw_shortcodes: HashMap<String, RawShortcodeFn>,
+    raw_shortcode_names: Vec<String>,
 }
 
 /// The most a render may write: 512 MiB.
@@ -137,6 +155,8 @@ impl Engine {
             raw_block_names: Vec::new(),
             shortcodes: HashMap::new(),
             shortcode_names: Vec::new(),
+            raw_shortcodes: HashMap::new(),
+            raw_shortcode_names: Vec::new(),
         }
     }
 
@@ -187,6 +207,15 @@ impl Engine {
         self.shortcode_names.push((name.to_string(), paired));
     }
 
+    /// Adds the paired tag `{% name args %}body{% endname %}`, whose body `f` gets as written
+    /// (see [`RawShortcodeFn`]). What `f` returns is written as it is. Templates parsed before
+    /// this don't have it.
+    pub fn register_raw_shortcode(&mut self, name: &str, f: RawShortcodeFn) {
+        if self.raw_shortcodes.insert(name.to_string(), f).is_none() {
+            self.raw_shortcode_names.push(name.to_string());
+        }
+    }
+
     /// Adds Eleventy's own filters: `slug`, `slugify`, `url` and `log`.
     /// `slugify` replaces the standard Liquid filter of that name, as it
     /// does in Eleventy.
@@ -207,6 +236,7 @@ impl Engine {
                 None,
                 &self.raw_block_names,
                 &self.shortcode_names,
+                &self.raw_shortcode_names,
             );
         }
         let check = |value: &FilteredValue| -> Result<(), ParseErr> {
@@ -228,6 +258,7 @@ impl Engine {
             Some(&check),
             &self.raw_block_names,
             &self.shortcode_names,
+            &self.raw_shortcode_names,
         )
     }
 
@@ -245,6 +276,7 @@ impl Engine {
             None,
             &self.raw_block_names,
             &self.shortcode_names,
+            &self.raw_shortcode_names,
         )
     }
 

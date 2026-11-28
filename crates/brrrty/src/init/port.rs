@@ -3803,6 +3803,25 @@ impl<'o, 'l> Reader<'o, 'l> {
                     .push(Item::Rhai("config.add_plugin(\"idattribute\");".into()));
                 return true;
             }
+            // 11ty's `renderTemplate`, `renderFile` and `renderContent`: default options only.
+            Some(Binding::Export(m, e))
+                if m == "@11ty/eleventy"
+                    && (e == "RenderPlugin" || e == "EleventyRenderPlugin") =>
+            {
+                if options.as_deref() != Some(&[]) {
+                    self.todo(
+                        a,
+                        b,
+                        "port this plugin's options: Brrrty's `render` plugin takes none yet, and `tagName`, `tagNameFile`, `filterName` and `accessGlobalData` change the tags it adds and the data they see",
+                        link,
+                    );
+                    return false;
+                }
+                self.out
+                    .items
+                    .push(Item::Rhai("config.add_plugin(\"render\");".into()));
+                return true;
+            }
             // 11ty's source-file link plugin: default options only.
             Some(Binding::Export(m, e))
                 if m == "@11ty/eleventy" && e == "InputPathToUrlTransformPlugin" =>

@@ -730,6 +730,23 @@ version 3, and a config that adds the `rss` plugin is refused for a site
 that installs another version (feeds too). `init` records the version on a
 `// RSS plugin:` line, and a build warns (`config-stale`) when it changes.
 
+### `render`
+
+`addPlugin(RenderPlugin)` (also exported as `EleventyRenderPlugin`) is
+`config.add_plugin("render")`. It adds, in Liquid and Nunjucks, the paired
+tag `renderTemplate`, the shortcode `renderFile` and the filter
+`renderContent`, as in 11ty: `{% renderTemplate "md", data %}...{% endrenderTemplate %}`
+renders its body (as written, not rendered first) in the language named,
+`renderFile "path", data, lang` renders a file (path from the project
+folder, language from its extension; its front matter is not read) and
+`{{ text | renderContent("md") }}` renders a string. With no language the
+caller's `page.templateSyntax` is used. The nested template sees only the
+`data` given plus the caller's `page` and `eleventy` (11ty's
+`accessGlobalData` is off). It takes no options yet: `tagName`,
+`tagNameFile`, `filterName` and `accessGlobalData` are refused. Not
+supported: calling `renderTemplate` or `renderFile` from a JavaScript
+template (`this.renderTemplate`), and `renderFile` of a `.11ty.js` file.
+
 ## Regular expressions
 
 `regex_replace(s, pattern, replacement, flags)`, `regex_split(s, pattern)`

@@ -1100,6 +1100,34 @@ fn the_id_attribute_plugin_in_the_js_config_runs_natively() {
     assert!(html.contains("<h2 id=\"hi-there\">Hi there</h2>"), "{html}");
 }
 
+/// 11ty's RenderPlugin (no options) in the JS config builds natively: `renderTemplate` renders
+/// its body, and the plugin's own tag registrations aren't run.
+#[test]
+fn the_render_plugin_in_the_js_config_runs_natively() {
+    if !has_node() {
+        return;
+    }
+    let plugin = "function eleventyRenderPlugin(c, options = {}) {\n  async function _renderStringShortcodeFn() {}\n  let opts = { tagName: \"renderTemplate\", tagNameFile: \"renderFile\" };\n  c.addNunjucksTag(opts.tagName, () => ({}));\n}\n";
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        (
+            "eleventy.config.js",
+            &format!(
+                "{plugin}module.exports = (c) => {{ c.addPlugin(eleventyRenderPlugin); return {{}}; }};\n"
+            ),
+        ),
+        (
+            "index.njk",
+            "{% renderTemplate \"md\" %}\n*hi*\n{% endrenderTemplate %}",
+        ),
+    ]);
+    let o = run(t.path(), "build", &[]);
+    let s = text(&o);
+    assert!(o.status.success(), "{s}");
+    let html = fs::read_to_string(t.path().join("_site/index.html")).expect(&s);
+    assert_eq!(html.trim(), "<p><em>hi</em></p>", "{s}");
+}
+
 /// 11ty 3.1.8 keeps transforms in an object, so an integer-like name sorts ahead of the
 /// `@11ty/eleventy/html-transformer` one (which adds heading ids): transform `0` sees the
 /// page before the ids exist, a named one sees them.

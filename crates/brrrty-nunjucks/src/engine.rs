@@ -99,11 +99,24 @@ impl Engine {
     /// the arguments written, with keyword arguments as a last object, and returns what the tag
     /// writes, which is not escaped. A shortcode takes the place of one of the same name.
     pub fn register_shortcode(&mut self, name: &str, paired: bool, f: FilterFn) {
+        self.add_shortcode(name, paired, false, f);
+    }
+
+    /// Adds the paired tag `{% name args %}body{% endname %}` whose body `f` gets as written,
+    /// not parsed or rendered, as the first argument: the way 11ty's `renderTemplate` tag
+    /// reads it (a nested `name` tag and its end are part of the body). What `f` returns is
+    /// written without escaping.
+    pub fn register_raw_shortcode(&mut self, name: &str, f: FilterFn) {
+        self.add_shortcode(name, true, true, f);
+    }
+
+    fn add_shortcode(&mut self, name: &str, paired: bool, raw: bool, f: FilterFn) {
         let end = paired.then(|| {
             let end: &'static str = Box::leak(format!("end{name}").into_boxed_str());
             &*Box::leak(vec![end].into_boxed_slice())
         });
-        self.shortcodes.insert(name.to_string(), end);
+        self.shortcodes
+            .insert(name.to_string(), crate::parser::ShortcodeTag { end, raw });
         self.filters
             .insert(format!("{}{name}", crate::parser::SHORTCODE_PREFIX), f);
     }

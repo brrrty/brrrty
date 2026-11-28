@@ -87,6 +87,8 @@ pub struct State {
     pub id_attribute: bool,
     /// `add_plugin("inputpathtourl")`.
     pub input_path_to_url: bool,
+    /// `add_plugin("render")`.
+    pub render_plugin: bool,
     /// `add_layout_alias(from, to)`, by alias; a later one replaces an earlier one.
     pub layout_aliases: IndexMap<String, String>,
     /// `set_template_formats(...)`: the last call's list.
@@ -725,12 +727,13 @@ fn register_text(e: &mut Engine) {
 }
 
 /// The plugins `add_plugin` knows, by the name a script gives.
-pub const PLUGINS: [&str; 5] = [
+pub const PLUGINS: [&str; 6] = [
     "rss",
     "syntaxhighlight",
     "htmlbase",
     "idattribute",
     "inputpathtourl",
+    "render",
 ];
 
 /// `eleventyConfig.addPlugin(plugin, options)` for a plugin Brrrty has its
@@ -796,6 +799,20 @@ fn add_plugin(
                 ));
             }
             state.input_path_to_url = true;
+            Ok(())
+        }
+        // `@11ty/eleventy`'s `RenderPlugin`. Its options (`tagName`, `tagNameFile`, `filterName`,
+        // `accessGlobalData`) change the tags it adds and the data they see.
+        "render" => {
+            if let Some(key) = options.as_ref().and_then(|o| o.keys().next()) {
+                return Err(invalid(
+                    format!(
+                        "add_plugin(\"render\", ...) takes no options yet: Brrrty doesn't support `{key}`, which changes the tags the plugin adds or the data they see"
+                    ),
+                    pos,
+                ));
+            }
+            state.render_plugin = true;
             Ok(())
         }
         // `@11ty/eleventy-plugin-rss`'s `feedPlugin`: one feed per call.

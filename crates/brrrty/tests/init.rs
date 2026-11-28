@@ -939,3 +939,30 @@ fn init_ports_template_format_calls() {
     assert_eq!(read(dir.path(), "dist/index.html"), "hi");
     assert!(!dir.path().join("dist/raw.html").exists());
 }
+
+#[test]
+fn ports_the_render_plugin() {
+    let dir = site(&[
+        (
+            "package.json",
+            "{\n\t\"type\": \"module\",\n\t\"dependencies\": {\n\t\t\"@11ty/eleventy\": \"^3.1.0\"\n\t}\n}\n",
+        ),
+        (
+            "eleventy.config.js",
+            "import { RenderPlugin } from \"@11ty/eleventy\";\nexport default async function (c) { c.addPlugin(RenderPlugin); }\nexport const config = { dir: { input: \"src\" } };\n",
+        ),
+        (
+            "src/a.njk",
+            "---\ntitle: t\n---\n{% renderTemplate \"md\" %}\n*hi*\n{% endrenderTemplate %}",
+        ),
+    ]);
+    let out = run_in(dir.path(), &["init", "--yes"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let rhai = read(dir.path(), "brrrty.config.rhai");
+    assert!(rhai.contains("config.add_plugin(\"render\");\n"), "{rhai}");
+    assert!(!rhai.contains("TODO(brrrty)"), "{rhai}");
+    let built = run_in(dir.path(), &["build"]);
+    assert_eq!(built.status.code(), Some(0), "{}", stderr(&built));
+    let html = read(dir.path(), "_site/a/index.html");
+    assert_eq!(html.trim(), "<p><em>hi</em></p>");
+}

@@ -150,6 +150,12 @@ pub enum TagKind {
         args: String,
         body: String,
     },
+    /// A paired shortcode the embedder added with [`crate::Engine::register_raw_shortcode`]: its
+    /// arguments, and its body as written.
+    RawShortcode {
+        args: Vec<Expr>,
+        body: String,
+    },
     /// A shortcode the embedder added with [`crate::Engine::register_shortcode`]: its
     /// arguments, and its body when paired.
     Shortcode {

@@ -47,6 +47,8 @@ pub struct FilterEnv {
     pub timezone: Tz,
     /// The page's data, which a JavaScript filter reads as `this.page`.
     pub page: Option<Value>,
+    /// The page's `eleventy` data.
+    pub eleventy: Option<Value>,
     /// The keyword arguments of the call, in the order written. Nunjucks
     /// also passes them as a last object argument, with `__keywords: true`,
     /// which stays in the arguments a filter gets; this is the same data
@@ -65,6 +67,7 @@ impl FilterEnv {
         FilterEnv {
             timezone,
             page: None,
+            eleventy: None,
             kwargs: Vec::new(),
             input_safe: false,
             args_safe: Vec::new(),

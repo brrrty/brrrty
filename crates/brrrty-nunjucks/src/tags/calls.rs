@@ -293,7 +293,12 @@ impl Renderer<'_> {
         // A paired shortcode's body is the first argument, but 11ty evaluates it last.
         let paired = name
             .strip_prefix(crate::parser::SHORTCODE_PREFIX)
-            .is_some_and(|n| matches!(self.engine.shortcodes.get(n), Some(Some(_))));
+            .is_some_and(|n| {
+                matches!(
+                    self.engine.shortcodes.get(n),
+                    Some(crate::parser::ShortcodeTag { end: Some(_), .. })
+                )
+            });
         let argv = if paired && !args.is_empty() {
             let mut argv = self.eval_args(&args[1..], kwargs, scope)?;
             argv.insert(0, self.eval(&args[0], scope)?);

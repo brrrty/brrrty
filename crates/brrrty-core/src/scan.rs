@@ -431,6 +431,11 @@ mod liquid {
                     value(v, f);
                 }
             }
+            TagKind::RawShortcode { args: a, .. } => {
+                for e in a {
+                    expr(e, f);
+                }
+            }
             TagKind::Shortcode { args: a, body } => {
                 for e in a {
                     expr(e, f);
