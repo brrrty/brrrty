@@ -1326,3 +1326,58 @@ fn a_plugin_filter_wins_over_a_js_config_filter_on_this() {
     assert_eq!(read(t.path(), "n/index.html"), "x");
     assert_eq!(read(t.path(), "j/index.html"), "x");
 }
+
+/// 11ty calls each `this` function with `this || {}` (`augmentFunction`),
+/// so a filter taken off `this` and called detached still sees `this.page`.
+#[test]
+fn a_detached_config_filter_call_sees_page() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('pg', function () { return this.page.url; }); };\n",
+        ),
+        (
+            "src/d.11ty.js",
+            "module.exports = function () { const { pg } = this; return pg(); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "d/index.html"), "/d/");
+}
+
+/// A config filter that throws fails the build with its own error, not
+/// as an order-dependent render.
+#[test]
+fn a_throwing_config_filter_on_this_reports_its_error() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('boom', function () { throw new Error('kaboom'); }); };\n",
+        ),
+        (
+            "src/d.11ty.js",
+            "module.exports = function () { return this.boom(); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(out.contains("kaboom"), "{out}");
+    assert!(!out.contains("js-data-impure"), "{out}");
+    assert!(out.contains("js-data-error"), "{out}");
+}
