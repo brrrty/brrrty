@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.23 - 2026-11-28
+
+- A filter added with `addFilter` or `addAsyncFilter` in a JS config now runs when a `.11ty.js` template calls `this.f(...)`, as in 11ty. Before this, it was refused by name. As in 11ty's `augmentFunction`, a filter taken off `this` and called detached (`const { f } = this; f()`) still sees `this.page` and `this.eleventy`. A plugin or Rhai filter of the same name still wins. A config filter that throws now fails the build with its own error.
+
 ## 0.1.22 - 2026-11-28
 
 - With bundles on (`addBundle`), a page whose output still holds a `getBundle` placeholder (from the page or its layout) is now refused by name when the JS config has an integer-named transform (`addTransform("0", ...)`). In 11ty such a transform sees the bundle plugin's `/*__EleventyBundle:get:...*/` text, which Brrrty doesn't print yet. Before this, the page was written and could differ from 11ty with no error. Pages without a `getBundle` call build as before.
