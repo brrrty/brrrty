@@ -514,6 +514,7 @@ fn add_filters(
                 None => config.js_filters.push(JsConfigFilter {
                     name: name.clone(),
                     engine: FilterEngine::Nunjucks,
+                    universal: false,
                     run: as_filter(run),
                 }),
             }
@@ -529,6 +530,7 @@ fn add_filters(
                 None => config.js_filters.push(JsConfigFilter {
                     name,
                     engine: FilterEngine::Liquid,
+                    universal: engine == FilterEngine::All,
                     run: as_filter(run),
                 }),
             }

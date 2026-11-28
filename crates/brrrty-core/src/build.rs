@@ -309,6 +309,7 @@ fn plugin_filters(rss: bool, html_base: bool) -> Vec<(&'static str, brrrty_liqui
 /// an earlier one of the same name, as in the template engines. 11ty's
 /// others (`getCollectionItem`, `getBundle`, ...) refuse the render.
 fn js_filters(
+    js_config: &[crate::options::JsConfigFilter],
     config: &[crate::options::ConfigFilter],
     rss: bool,
     html_base: bool,
@@ -320,6 +321,13 @@ fn js_filters(
             Arc::new(move |input, args| f(input, args, &brrrty_js::FilterEnv::new(Tz::Local)));
         table.insert(name.to_string(), run);
     }
+    // A filter that runs in Node can't be called from a template that is
+    // running in Node (the call would wait on itself): refused by name.
+    let mut node_filters: std::collections::HashSet<String> = js_config
+        .iter()
+        .filter(|f| f.universal)
+        .map(|f| f.name.clone())
+        .collect();
     let args_filters = config
         .iter()
         .map(|f| (f.name.clone(), f.run.clone()))
@@ -331,9 +339,16 @@ fn js_filters(
     for (name, f) in args_filters {
         let run: Run =
             Arc::new(move |input, args| f(input, args, &brrrty_liquid::FilterCtx::new(Tz::Local)));
+        node_filters.remove(&name);
         table.insert(name, run);
     }
     Arc::new(move |name: &str, args: &[Value]| {
+        if node_filters.contains(name) {
+            return Err(format!(
+                "calls `this.{name}`, a filter the JS config added, and Brrrty {}",
+                "can't run it from inside a JavaScript template yet"
+            ));
+        }
         let Some(f) = table.get(name) else {
             return Err(format!(
                 "calls `this.{name}`, one of the filters 11ty gives a JavaScript template, which Brrrty doesn't have yet"
@@ -2628,7 +2643,13 @@ fn build_once(
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let config = opts.config.filters.iter().map(|f| f.name.clone());
+        let config = opts
+            .config
+            .js_filters
+            .iter()
+            .filter(|f| f.universal)
+            .map(|f| f.name.clone())
+            .chain(opts.config.filters.iter().map(|f| f.name.clone()));
         let plugin = plugin_filters(rss, opts.config.html_base)
             .into_iter()
             .map(|(n, _)| n.to_string());
@@ -2639,7 +2660,12 @@ fn build_once(
         }
         names
     };
-    let js_filter_fns = js_filters(&opts.config.filters, rss, opts.config.html_base);
+    let js_filter_fns = js_filters(
+        &opts.config.js_filters,
+        &opts.config.filters,
+        rss,
+        opts.config.html_base,
+    );
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
     js.filters = Some((js_names, js_filter_fns.clone()));
     js.again = rerun.clone();
