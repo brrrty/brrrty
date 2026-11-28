@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.25 - 2026-11-28
+
+- `brrrty init` no longer refuses a `package.json` build script that runs 11ty and then a helper script that starts 11ty again (say with another environment). The script's own plain 11ty command defines the build, and the config gets a note about the second run. A helper that runs 11ty before the plain command still blocks.
+
 ## 0.1.24 - 2026-11-28
 
 - With `set_js_data("node")`, a JavaScript directory data file that exports a function returning `eleventyComputed` functions (`module.exports = () => ({ eleventyComputed: { permalink: (d) => ... } })`) now builds, as in 11ty. Before this, each call's functions were new closures, so Brrrty wrongly refused the file as returning different data for different templates (`js-data-impure`). A file whose plain values differ between calls is still refused.
