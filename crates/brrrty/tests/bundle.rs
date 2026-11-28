@@ -286,3 +286,32 @@ fn the_id_attribute_plugin_runs_after_bundles_are_resolved_and_pruned() {
         "<p id=\"x\">kept</p>"
     );
 }
+
+/// An integer-named config transform runs in 11ty before the bundle placeholders are swapped,
+/// so it sees `/*__EleventyBundle:get:...*/` text. Brrrty's placeholder is different, so a page
+/// with a `getBundle` call and such a transform is refused by name, not built differently.
+#[test]
+fn an_early_transform_on_a_page_with_a_get_bundle_call_is_refused_by_name() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        (
+            "eleventy.config.js",
+            &config(
+                "eleventyConfig.addBundle(\"css\");\n  eleventyConfig.addTransform(\"0\", (s) => s.replace(\"x\", \"y\"));",
+            ),
+        ),
+        ("package.json", "{}"),
+        (
+            "index.njk",
+            "{% css %}a{color:red}{% endcss %}\n<style>{% getBundle \"css\" %}</style>",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    let s = text(&o);
+    assert!(!t.path().join("_site/index.html").exists(), "{s}");
+    assert!(s.contains("getBundle"), "{s}");
+    assert!(s.contains("transform"), "{s}");
+}
