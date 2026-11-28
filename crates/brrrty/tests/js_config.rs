@@ -1099,3 +1099,27 @@ fn the_id_attribute_plugin_in_the_js_config_runs_natively() {
     let html = fs::read_to_string(t.path().join("_site/index.html")).expect(&s);
     assert!(html.contains("<h2 id=\"hi-there\">Hi there</h2>"), "{html}");
 }
+
+/// 11ty 3.1.8 keeps transforms in an object, so an integer-like name sorts ahead of the
+/// `@11ty/eleventy/html-transformer` one (which adds heading ids): transform `0` sees the
+/// page before the ids exist, a named one sees them.
+#[test]
+fn an_integer_named_transform_runs_before_the_html_transformer() {
+    if !has_node() {
+        return;
+    }
+    let plugin = "const POSTHTML_PLUGIN_NAME = \"11ty/eleventy/id-attribute\";\nfunction IdAttributePlugin(c, options = {}) {\n  const sel = \"[id],h1,h2,h3,h4,h5,h6\", checkDuplicates = 1;\n  c.htmlTransformer.addPosthtmlPlugin(\"html\", () => {}, { name: POSTHTML_PLUGIN_NAME });\n}\n";
+    let config = format!(
+        "{plugin}module.exports = (c) => {{\n  c.addPlugin(IdAttributePlugin);\n  c.addTransform(\"late\", (s) => s.replace(\"<h2 id=\\\"hi\\\">\", \"<h2 late>\"));\n  c.addTransform(\"0\", (s) => s.replace(\"<h2 id=\\\"hi\\\">\", \"<h2 early>\"));\n  return {{}};\n}};\n"
+    );
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
+        ("eleventy.config.js", &config),
+        ("index.md", "## Hi\n"),
+    ]);
+    let o = run(t.path(), "build", &[]);
+    let s = text(&o);
+    assert!(o.status.success(), "{s}");
+    let html = fs::read_to_string(t.path().join("_site/index.html")).expect(&s);
+    assert!(html.contains("<h2 late>Hi</h2>"), "{html}");
+}

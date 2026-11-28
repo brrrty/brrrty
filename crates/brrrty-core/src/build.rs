@@ -3553,6 +3553,25 @@ fn build_once(
             // transformer (one posthtml pass: the bundle's pruning, then IdAttributePlugin),
             // then the config's transforms, in order.
             let mut html = rendered.html;
+            for t in opts.config.js_transforms.iter().filter(|t| t.early) {
+                let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
+                match (t.run)(&html, &page) {
+                    Ok(out) => html = out,
+                    Err(why) => {
+                        let problem = Problem::error(
+                            codes::JS_DATA_FUNCTION,
+                            why.strip_prefix(brrrty_js::REFUSAL_PREFIX)
+                                .unwrap_or(&why)
+                                .to_string(),
+                        )
+                        .with_path(shown);
+                        if let Some(log) = log {
+                            log.problem(shown, &problem);
+                        }
+                        return Err(Refused::Page(problem, None));
+                    }
+                }
+            }
             let is_html = output_rel.extension().is_some_and(|e| e == "html");
             if let Some(b) = &bundles {
                 let url = match p.data.get("page").map(|pg| pg.get("url")) {
@@ -3595,7 +3614,7 @@ fn build_once(
                     }
                 };
             }
-            for t in &opts.config.js_transforms {
+            for t in opts.config.js_transforms.iter().filter(|t| !t.early) {
                 let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
                 match (t.run)(&html, &page) {
                     Ok(out) => html = out,
