@@ -3554,7 +3554,7 @@ fn build_once(
             // then the config's transforms, in order.
             let mut html = rendered.html;
             for t in opts.config.js_transforms.iter().filter(|t| t.early) {
-                if crate::plugins::bundle::Bundles::has_placeholder(&html) {
+                if bundles.is_some() && crate::plugins::bundle::Bundles::has_placeholder(&html) {
                     let problem = Problem::error(
                         codes::JS_DATA_FUNCTION,
                         format!(
