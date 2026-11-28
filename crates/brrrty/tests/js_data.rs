@@ -1994,7 +1994,8 @@ fn the_order_check_can_be_skipped_and_doctor_still_runs_it() {
 /// site's problem, the function that changed its data, not with a
 /// stopped worker.
 ///
-/// Here the changing call takes a while, and the other pages meanwhile
+/// Here the changing call takes a while (a fixed sleep, not a CPU loop,
+/// so a slow runner cannot stretch it past the replay check's limit), and the other pages meanwhile
 /// define `site`, which refers to `site.o` as an earlier call defined
 /// it. Without the fix about four builds in ten ended with "the worker
 /// refused a request: definition 12: no kept value 1".
@@ -2011,7 +2012,7 @@ fn a_definition_written_before_brrrty_hears_of_a_change_is_not_a_protocol_error(
         ),
         (
             "src/_data/h.js".into(),
-            "module.exports = {\n  key(o) { return o.k; },\n  size(s) { return s.list.length; },\n  poke(o) { let x = 0; for (let i = 0; i < 2e8; i++) x = (x + i) | 0; o.k = 2 + (x & 0); return \"\"; },\n};\n".into(),
+            "module.exports = {\n  key(o) { return o.k; },\n  size(s) { return s.list.length; },\n  poke(o) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); o.k = 2; return \"\"; },\n};\n".into(),
         ),
         ("src/p0.njk".into(), "{{ h.poke(site.o) }}".into()),
     ];
