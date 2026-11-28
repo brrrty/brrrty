@@ -536,6 +536,9 @@ impl std::fmt::Debug for JsConfigShortcode {
 #[derive(Clone)]
 pub struct JsConfigTransform {
     pub name: String,
+    /// An integer-like name: 11ty's object puts it ahead of the built-in bundle and HTML
+    /// transforms, so it runs before Brrrty's native passes.
+    pub early: bool,
     pub run: TransformFn,
 }
 

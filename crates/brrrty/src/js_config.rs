@@ -591,5 +591,8 @@ fn transform(
             Err(why) => Err(fail(why)),
         }
     });
-    brrrty_core::JsConfigTransform { name, run }
+    let early = name
+        .parse::<u32>()
+        .is_ok_and(|i| i.to_string() == name && i != u32::MAX);
+    brrrty_core::JsConfigTransform { name, early, run }
 }
