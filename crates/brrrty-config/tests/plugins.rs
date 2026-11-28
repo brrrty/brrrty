@@ -914,7 +914,11 @@ fn the_input_path_to_url_plugin_names_a_malformed_escape() {
     );
     let e = errors(&r);
     assert_eq!(e.len(), 1, "{:#?}", r.problems);
-    assert!(e[0].message.contains("InputPathToUrlTransformPlugin"), "{}", e[0].message);
+    assert!(
+        e[0].message.contains("InputPathToUrlTransformPlugin"),
+        "{}",
+        e[0].message
+    );
     assert!(e[0].message.contains("`100%`"), "{}", e[0].message);
     assert!(!e[0].message.contains("src/100%"), "{}", e[0].message);
 }

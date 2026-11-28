@@ -2971,8 +2971,11 @@ fn build_once(
     // Each template's collection items, in page order: a page's content is
     // what its item's `templateContent` reads.
     let mut slot_items: Vec<Vec<Value>> = Vec::new();
+    // Every template's input path: 11ty's content map has them all, pages or not.
+    let mut template_inputs: Vec<String> = Vec::new();
     for t in templates {
         let input_path = format!("{input_dot}{}", slash_path(&t.rel));
+        template_inputs.push(input_path.clone());
         let (pages, slot) = match t.pages {
             Pages::Ready(p) => {
                 let items: Vec<Page> = p
@@ -3334,6 +3337,9 @@ fn build_once(
     // by input path, `false` (a `permalink: false` page) printed as JavaScript does.
     let content_map = if opts.config.input_path_to_url {
         let mut map = crate::plugins::input_path_to_url::ContentMap::new(dot_dir(shared.input_rel));
+        for input_path in &template_inputs {
+            map.known(input_path);
+        }
         for p in &prepared {
             let page = p.data.get("page");
             let get = |k: &str| page.map(|pg| pg.get(k));

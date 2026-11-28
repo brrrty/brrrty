@@ -35,6 +35,11 @@ impl ContentMap {
             .push(url);
     }
 
+    /// A template with no pages still has an (empty) entry in 11ty's map.
+    pub fn known(&mut self, input_path: &str) {
+        self.urls.entry(input_path.to_string()).or_default();
+    }
+
     /// What the plugin's URL callback returns for `target` found on the page `source`.
     fn rewrite(&self, target: &str, source: &str) -> Result<String, String> {
         if Url::parse(target).is_ok() {
@@ -84,7 +89,13 @@ impl ContentMap {
 
 /// Run the plugin over a page's parsed HTML; `source` is the page's `inputPath`.
 pub fn apply(tree: &mut [Node], map: &ContentMap, source: &str) -> Result<(), String> {
-    urls::transform(tree, &mut |u, _, _| map.rewrite(u, source))
+    urls::transform(tree, &mut |u, _, _| {
+        map.rewrite(u, source).map_err(|e| {
+            format!(
+                "InputPathToUrlTransformPlugin can't read the link `{u}`: {e}, a `%` must be followed by two hex digits"
+            )
+        })
+    })
 }
 
 /// `parseFilePath`: the `?query#hash` suffix, and the path without it.
@@ -183,7 +194,7 @@ fn decode_uri_component(s: &str) -> Result<String, String> {
             let digits = hex.filter(|h| h.bytes().all(|c| c.is_ascii_hexdigit()));
             match digits.and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 Some(v) => out.push(v),
-                None => return Err(format!("URI malformed: `{s}`")),
+                None => return Err("URI malformed".to_string()),
             }
             i += 3;
         } else {
@@ -191,5 +202,5 @@ fn decode_uri_component(s: &str) -> Result<String, String> {
             i += 1;
         }
     }
-    String::from_utf8(out).map_err(|_| format!("URI malformed: `{s}`"))
+    String::from_utf8(out).map_err(|_| "URI malformed".to_string())
 }
