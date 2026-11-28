@@ -1188,3 +1188,39 @@ fn transform_with_html_base_is_a_no_op_for_the_default_base() {
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(read(t.path(), "t/index.html"), "<a href=\"x\">y</a>");
 }
+
+/// 11ty adds the `inputPathToUrl` filter to every site: a source file's
+/// path becomes that template's URL, with its `?query` and `#hash` kept,
+/// found from the input folder or relative to the page calling it.
+#[test]
+fn input_path_to_url_filter_maps_a_source_file_to_its_url() {
+    let t = site(&[
+        (
+            "src/a.liquid",
+            "{{ 'b.md' | inputPathToUrl }}|{{ './src/b.md#x' | inputPathToUrl }}|{{ 'https://e.com/z' | inputPathToUrl }}",
+        ),
+        ("src/n.njk", "{{ 'b.md?q=1' | inputPathToUrl }}"),
+        ("src/sub/c.liquid", "{{ 'd.md' | inputPathToUrl }}"),
+        ("src/sub/d.md", "d"),
+        ("src/b.md", "b"),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "a/index.html"), "/b/|/b/#x|https://e.com/z");
+    assert_eq!(read(t.path(), "n/index.html"), "/b/?q=1");
+    assert_eq!(read(t.path(), "sub/c/index.html"), "/sub/d/");
+}
+
+/// A path that is no template's source file is an error in the filter (the
+/// transform leaves such links alone).
+#[test]
+fn input_path_to_url_filter_refuses_an_unknown_file() {
+    let t = site(&[("src/a.liquid", "{{ 'nope.md' | inputPathToUrl }}")]);
+    let o = build(t.path(), &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        text(&o).contains("could not find a matching target for nope.md"),
+        "{}",
+        text(&o)
+    );
+}
