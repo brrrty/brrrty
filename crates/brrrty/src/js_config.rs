@@ -172,6 +172,14 @@ pub fn apply(
         }
     }
 
+    for name in strings(val("nativePlugins")) {
+        match name.as_str() {
+            "idattribute" => config.id_attribute = true,
+            "htmlbase" => config.html_base = true,
+            _ => {}
+        }
+    }
+
     if let Some(Value::Object(o)) = val("globalData") {
         for (k, x) in o.iter() {
             config
