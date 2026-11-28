@@ -124,7 +124,7 @@ impl Engine {
     /// Eleventy's other filters are not added to either engine:
     /// `getCollectionItemIndex`, `getCollectionItem`,
     /// `getPreviousCollectionItem`, `getNextCollectionItem`,
-    /// `renderTransforms` (async) and `inputPathToUrl`.
+    /// `renderTransforms` (async).
     pub fn register_eleventy_filters(&mut self) {
         for (name, f) in brrrty_js::eleventy_filters() {
             if name == "slug" || name == "slugify" {

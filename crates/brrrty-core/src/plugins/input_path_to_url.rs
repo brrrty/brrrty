@@ -40,10 +40,11 @@ impl ContentMap {
         self.urls.entry(input_path.to_string()).or_default();
     }
 
-    /// What the plugin's URL callback returns for `target` found on the page `source`.
-    fn rewrite(&self, target: &str, source: &str) -> Result<String, String> {
+    /// The suffix (`?query#hash`) and the input path a link names, as both of 11ty's
+    /// callbacks find them; `None` for a full URL, which they return as it is.
+    fn resolve(&self, target: &str, source: &str) -> Result<Option<(String, String)>, String> {
         if Url::parse(target).is_ok() {
-            return Ok(target.to_string());
+            return Ok(None);
         }
         let (suffix, path) = parse_file_path(target);
         let mut path = path;
@@ -53,9 +54,31 @@ impl ContentMap {
         if urls::INHERITED.contains(&path.as_str()) {
             return Err("a name JavaScript objects have, which the input-path-to-URL plugin can't read the way 11ty does".to_string());
         }
+        Ok(Some((suffix, path)))
+    }
+
+    /// What the plugin's URL callback returns for `target` found on the page `source`.
+    fn rewrite(&self, target: &str, source: &str) -> Result<String, String> {
+        let Some((suffix, path)) = self.resolve(target, source)? else {
+            return Ok(target.to_string());
+        };
         match self.urls.get(&path).and_then(|u| u.first()) {
             Some(url) if !path.is_empty() => Ok(format!("{url}{suffix}")),
             _ => Ok(format!("{path}{suffix}")),
+        }
+    }
+
+    /// What the `inputPathToUrl` filter returns for `target` called from the page `source`:
+    /// the transform's answer, but a file that isn't a template's is an error.
+    fn lookup(&self, target: &str, source: &str) -> Result<String, String> {
+        let Some((suffix, path)) = self.resolve(target, source)? else {
+            return Ok(target.to_string());
+        };
+        match self.urls.get(&path).and_then(|u| u.first()) {
+            Some(url) if !path.is_empty() => Ok(format!("{url}{suffix}")),
+            _ => Err(format!(
+                "`inputPathToUrl` filter could not find a matching target for {path}"
+            )),
         }
     }
 
@@ -83,6 +106,27 @@ impl ContentMap {
         }
         Ok(target.to_string())
     }
+}
+
+/// The build's content map, set once the pages' URLs are known, for the filter.
+pub type Shared = std::sync::Arc<std::sync::OnceLock<ContentMap>>;
+
+/// 11ty's `inputPathToUrl` filter (added to every site): the page it is called from is the
+/// one being rendered on this thread.
+pub fn filter(map: Shared) -> brrrty_liquid::ArgsFilterFn {
+    std::sync::Arc::new(move |input, _args, _ctx| {
+        let Some(map) = map.get() else {
+            return Err(
+                "Internal error: contentMap not available for `inputPathToUrl` filter.".into(),
+            );
+        };
+        let source = match brrrty_js::functions::own_page().map(|(page, _)| page.get("inputPath")) {
+            Some(brrrty_js::Value::String(p)) => p.to_string(),
+            _ => String::new(),
+        };
+        map.lookup(&input.to_js_string(), &source)
+            .map(|u| brrrty_js::Value::String(u.into()))
+    })
 }
 
 /// Run the plugin over a page's parsed HTML; `source` is the page's `inputPath`.

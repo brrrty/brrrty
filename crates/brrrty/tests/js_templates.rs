@@ -1188,3 +1188,118 @@ fn transform_with_html_base_is_a_no_op_for_the_default_base() {
     assert!(o.status.success(), "{}", text(&o));
     assert_eq!(read(t.path(), "t/index.html"), "<a href=\"x\">y</a>");
 }
+
+/// 11ty adds the `inputPathToUrl` filter to every site: a source file's
+/// path becomes that template's URL, with its `?query` and `#hash` kept,
+/// found from the input folder or relative to the page calling it.
+#[test]
+fn input_path_to_url_filter_maps_a_source_file_to_its_url() {
+    let t = site(&[
+        (
+            "src/a.liquid",
+            "{{ 'b.md' | inputPathToUrl }}|{{ './src/b.md#x' | inputPathToUrl }}|{{ 'https://e.com/z' | inputPathToUrl }}",
+        ),
+        ("src/n.njk", "{{ 'b.md?q=1' | inputPathToUrl }}"),
+        ("src/sub/c.liquid", "{{ 'd.md' | inputPathToUrl }}"),
+        ("src/sub/d.md", "d"),
+        ("src/b.md", "b"),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "a/index.html"), "/b/|/b/#x|https://e.com/z");
+    assert_eq!(read(t.path(), "n/index.html"), "/b/?q=1");
+    assert_eq!(read(t.path(), "sub/c/index.html"), "/sub/d/");
+}
+
+/// A path that is no template's source file is an error in the filter (the
+/// transform leaves such links alone).
+#[test]
+fn input_path_to_url_filter_refuses_an_unknown_file() {
+    let t = site(&[("src/a.liquid", "{{ 'nope.md' | inputPathToUrl }}")]);
+    let o = build(t.path(), &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        text(&o).contains("could not find a matching target for nope.md"),
+        "{}",
+        text(&o)
+    );
+}
+
+/// `this.inputPathToUrl` on a JavaScript template is 11ty's own filter.
+#[test]
+fn input_path_to_url_is_on_this_of_a_javascript_template() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        ("brrrty.config.rhai", "config.set_js_data(\"node\");\n"),
+        (
+            "src/j.11ty.js",
+            "module.exports = function () { return this.inputPathToUrl('b.md'); };\n",
+        ),
+        ("src/b.md", "b"),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "j/index.html"), "/b/");
+}
+
+fn input_path_to_url_override_site(config: &[(&str, &str)]) -> tempfile::TempDir {
+    let mut files = vec![
+        ("src/a.liquid", "{{ 'b.md' | inputPathToUrl }}"),
+        ("src/n.njk", "{{ 'b.md' | inputPathToUrl }}"),
+        (
+            "src/j.11ty.js",
+            "module.exports = function () { return this.inputPathToUrl('b.md'); };\n",
+        ),
+        ("src/b.md", "b"),
+    ];
+    files.extend_from_slice(config);
+    site(&files)
+}
+
+/// 11ty adds its `inputPathToUrl` before the user's config runs, so a
+/// filter of that name in the config replaces it in every template language.
+#[test]
+fn a_config_filter_named_input_path_to_url_wins() {
+    if !has_node() {
+        return;
+    }
+    let t = input_path_to_url_override_site(&[(
+        "brrrty.config.rhai",
+        "config.set_js_data(\"node\");\nconfig.add_filter(\"inputPathToUrl\", |s| `mine ${s}`);\n",
+    )]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "a/index.html"), "mine b.md");
+    assert_eq!(read(t.path(), "n/index.html"), "mine b.md");
+    assert_eq!(read(t.path(), "j/index.html"), "mine b.md");
+}
+
+/// The same for a JS config's filter: it wins in Liquid and Nunjucks, and
+/// on a JavaScript template's `this` it is refused by name.
+#[test]
+fn a_js_config_filter_named_input_path_to_url_wins() {
+    if !has_node() {
+        return;
+    }
+    let t = input_path_to_url_override_site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('inputPathToUrl', (s) => 'js ' + s); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("`this.inputPathToUrl`") && out.contains("filter the JS config added"),
+        "{out}"
+    );
+    assert_eq!(read(t.path(), "a/index.html"), "js b.md");
+    assert_eq!(read(t.path(), "n/index.html"), "js b.md");
+}
