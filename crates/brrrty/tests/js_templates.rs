@@ -1172,3 +1172,19 @@ fn config_filters_on_this_of_a_javascript_template_are_refused_by_name() {
     assert!(!out.contains("is not a function"), "{out}");
     assert_eq!(read(t.path(), "o/index.html"), "undefined");
 }
+
+/// 11ty's HtmlBasePlugin adds `transformWithHtmlBase`; with the default base
+/// `/` it returns its content unchanged.
+#[test]
+fn transform_with_html_base_is_a_no_op_for_the_default_base() {
+    let t = site(&[
+        ("brrrty.config.rhai", "config.add_plugin(\"htmlbase\");\n"),
+        (
+            "src/t.liquid",
+            "{{ '<a href=\"x\">y</a>' | transformWithHtmlBase }}",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "t/index.html"), "<a href=\"x\">y</a>");
+}

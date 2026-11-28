@@ -661,6 +661,19 @@ fn html_base_url(input: &Value, args: &[Value]) -> Res {
     ))
 }
 
+/// `transformWithHtmlBase(content, baseOverride, pageUrlOverride)`: with the
+/// default base `/` it returns `content` unchanged; any other base rewrites
+/// URLs in the HTML, which Brrrty refuses rather than approximates.
+fn transform_with_html_base(input: &Value, args: &[Value]) -> Res {
+    let base = arg(args, 0);
+    if base.js_truthy() && base.to_js_string() != "/" {
+        return Err(
+            "transformWithHtmlBase with a base other than `/` isn't supported by Brrrty yet".into(),
+        );
+    }
+    Ok(input.clone())
+}
+
 fn add_path_prefix_to_full_url(input: &Value, _args: &[Value]) -> Res {
     let url = input.to_js_string();
     Ok(Value::String(
@@ -712,6 +725,7 @@ pub(crate) fn html_base_filters() -> Vec<(&'static str, brrrty_liquid::ArgsFilte
     vec![
         ("addPathPrefixToFullUrl", wrap(add_path_prefix_to_full_url)),
         ("htmlBaseUrl", wrap(html_base_url)),
+        ("transformWithHtmlBase", wrap(transform_with_html_base)),
     ]
 }
 
@@ -719,6 +733,7 @@ pub(crate) fn universal_filters() -> Vec<(&'static str, brrrty_liquid::ArgsFilte
     vec![
         ("addPathPrefixToFullUrl", wrap(add_path_prefix_to_full_url)),
         ("htmlBaseUrl", wrap(html_base_url)),
+        ("transformWithHtmlBase", wrap(transform_with_html_base)),
         ("eleventyFeedHasUrl", wrap(feed_has_url)),
         ("eleventyFeedSortByDate", wrap(feed_sort_by_date)),
         ("eleventyFeedHead", wrap(feed_head)),
