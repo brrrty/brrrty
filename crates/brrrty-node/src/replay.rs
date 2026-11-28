@@ -373,7 +373,7 @@ fn loads_reordered(
             .to_string()
         };
         let got = send(w, &r.text, Some(&rest))?;
-        if got.body != r.body {
+        if !same_body(&got.body, &r.body) {
             let shown = Path::new(&r.path)
                 .strip_prefix(&log.root)
                 .map(|p| p.display().to_string())
@@ -636,7 +636,7 @@ fn ahead(w: &mut Worker, calls: &Calls, sequence: &[usize]) -> Result<(), Failur
                     Ok(got) => got,
                     Err(e) => break 'all Err(e),
                 };
-                if got.body != r.body {
+                if !same_body(&got.body, &r.body) {
                     break 'all Err(Failure::Differs(
                         difference(r, &got.body),
                         r.handle.map(u64::from),
@@ -793,7 +793,7 @@ impl State<'_> {
         } else if r.made || got.made {
             self.same(&parse(&r.body), &parse(&got.body))
         } else {
-            got.body == r.body
+            same_body(&got.body, &r.body)
         };
         if !same {
             return Err(Failure::Differs(
@@ -839,6 +839,24 @@ impl State<'_> {
             }
             (x, y) => x == y,
         }
+    }
+}
+
+/// Whether two replies are the same. A thrown error is its name and
+/// message: its stack names positions in code each worker wraps its own
+/// way, which says nothing about the order the code ran in.
+fn same_body(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let (x, y) = (parse(a), parse(b));
+    let key = |j: &Json| {
+        let t = j.get("thrown")?;
+        Some((t.get("name").cloned(), t.get("message").cloned()))
+    };
+    match (key(&x), key(&y)) {
+        (Some(p), Some(q)) => p == q,
+        _ => false,
     }
 }
 
