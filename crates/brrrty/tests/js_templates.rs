@@ -1134,3 +1134,35 @@ fn requests_sent_together_come_back_in_order() {
         assert_eq!(read(t.path(), &format!("p{i}/index.html")), "2/1");
     }
 }
+
+/// 11ty adds every `addFilter` to a JavaScript template's `this`; one added
+/// for a single engine (`addLiquidFilter`) stays off it.
+#[test]
+fn config_filters_are_on_this_of_a_javascript_template() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => {\n  c.addFilter('shout', (x) => String(x).toUpperCase() + '!');\n  c.addLiquidFilter('only', (x) => x);\n};\n",
+        ),
+        (
+            "src/h.11ty.js",
+            "module.exports = function () { return this.shout('a'); };\n",
+        ),
+        (
+            "src/o.11ty.js",
+            "module.exports = function () { return typeof this.only; };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert_eq!(read(t.path(), "h/index.html"), "A!");
+    assert_eq!(read(t.path(), "o/index.html"), "undefined");
+}
