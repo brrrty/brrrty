@@ -3554,6 +3554,21 @@ fn build_once(
             // then the config's transforms, in order.
             let mut html = rendered.html;
             for t in opts.config.js_transforms.iter().filter(|t| t.early) {
+                if bundles.as_ref().is_some_and(|b| b.has_placeholder(&html)) {
+                    let problem = Problem::error(
+                        codes::JS_DATA_FUNCTION,
+                        format!(
+                            "the config transform `{}` runs before 11ty swaps in `getBundle` code and would see 11ty's `/*__EleventyBundle:get:...*/` text, which Brrrty doesn't print yet, so Brrrty can't match 11ty here",
+                            t.name
+                        ),
+                    )
+                    .with_path(shown)
+                    .with_help("This happens for an integer-named transform (like `addTransform(\"0\", ...)`) on a page, or a layout, that calls `getBundle`. Rename the transform to a non-numeric name to run it after the bundles are in.");
+                    if let Some(log) = log {
+                        log.problem(shown, &problem);
+                    }
+                    return Err(Refused::Page(problem, None));
+                }
                 let page = p.data.get("page").cloned().unwrap_or(Value::Undefined);
                 match (t.run)(&html, &page) {
                     Ok(out) => html = out,
