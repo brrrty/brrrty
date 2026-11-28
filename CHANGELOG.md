@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.15 - 2026-11-27
 
 - 11ty's `IdAttributePlugin` is now supported as `config.add_plugin("idattribute")`, and `brrrty init` ports `addPlugin(IdAttributePlugin)` without options to it. Headings without an `id` get one from their text (`slugify`, numbered when repeated) on pages written to `.html`, and those pages are printed the way 11ty's HTML transformer prints them. Its options are refused by name. `InputPathToUrlTransformPlugin` isn't supported yet.
 
