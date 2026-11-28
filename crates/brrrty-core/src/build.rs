@@ -292,11 +292,27 @@ const ELEVENTY_JS_FUNCTIONS: &[&str] = &[
     "renderTransforms",
 ];
 
+/// The filters 11ty's plugins add for every template language: the RSS
+/// plugin's, or the HTML `<base>` plugin's two alone.
+fn plugin_filters(rss: bool, html_base: bool) -> Vec<(&'static str, brrrty_liquid::ArgsFilterFn)> {
+    if rss {
+        crate::plugins::rss::universal_filters()
+    } else if html_base {
+        crate::plugins::rss::html_base_filters()
+    } else {
+        Vec::new()
+    }
+}
+
 /// Brrrty's filters by name, as a JavaScript template calls them on `this`:
 /// 11ty's own, the config's, then the RSS plugin's, a later one replacing
 /// an earlier one of the same name, as in the template engines. 11ty's
 /// others (`getCollectionItem`, `getBundle`, ...) refuse the render.
-fn js_filters(config: &[crate::options::ConfigFilter], rss: bool) -> crate::data::JsFilters {
+fn js_filters(
+    config: &[crate::options::ConfigFilter],
+    rss: bool,
+    html_base: bool,
+) -> crate::data::JsFilters {
     type Run = Arc<dyn Fn(&Value, &[Value]) -> Result<Value, String> + Send + Sync>;
     let mut table: HashMap<String, Run> = HashMap::new();
     for (name, f) in brrrty_js::eleventy_filters() {
@@ -308,9 +324,8 @@ fn js_filters(config: &[crate::options::ConfigFilter], rss: bool) -> crate::data
         .iter()
         .map(|f| (f.name.clone(), f.run.clone()))
         .chain(
-            rss.then(crate::plugins::rss::universal_filters)
+            plugin_filters(rss, html_base)
                 .into_iter()
-                .flatten()
                 .map(|(n, f)| (n.to_string(), f)),
         );
     for (name, f) in args_filters {
@@ -2614,10 +2629,8 @@ fn build_once(
             .map(|s| s.to_string())
             .collect();
         let config = opts.config.filters.iter().map(|f| f.name.clone());
-        let plugin = rss
-            .then(crate::plugins::rss::universal_filters)
+        let plugin = plugin_filters(rss, opts.config.html_base)
             .into_iter()
-            .flatten()
             .map(|(n, _)| n.to_string());
         for n in config.chain(plugin) {
             if !names.contains(&n) {
@@ -2626,7 +2639,7 @@ fn build_once(
         }
         names
     };
-    let js_filter_fns = js_filters(&opts.config.filters, rss);
+    let js_filter_fns = js_filters(&opts.config.filters, rss, opts.config.html_base);
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
     js.filters = Some((js_names, js_filter_fns.clone()));
     js.again = rerun.clone();

@@ -549,6 +549,28 @@ fn filters_on_this_are_brrrtys_own() {
     assert_eq!(read(t.path(), "f/index.html"), "a-b /x/ HI!");
 }
 
+/// 11ty's HtmlBasePlugin puts `htmlBaseUrl` and `addPathPrefixToFullUrl` on a
+/// JavaScript template's `this`, with or without the RSS plugin.
+#[test]
+fn html_base_filters_are_on_this_without_rss() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_data(\"node\");\nconfig.add_plugin(\"htmlbase\");\n",
+        ),
+        (
+            "src/h.11ty.js",
+            "module.exports = function () { return [this.htmlBaseUrl('/a/'), this.addPathPrefixToFullUrl('https://x.org/')].join(' '); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "h/index.html"), "/a/ https://x.org/");
+}
+
 /// A random filter called from a JavaScript template's `render` and its
 /// permalink function runs, notes its pages, and passes the replay check:
 /// the replays get the first run's answers.
