@@ -329,13 +329,16 @@ fn js_filters(
         .filter(|f| f.universal)
         .map(|f| f.name.clone())
         .collect();
+    // 11ty's own comes first, so the config's filter of the same name wins.
+    table.insert(
+        "inputPathToUrl".to_string(),
+        Arc::new(move |input, args| {
+            input_path_to_url(input, args, &brrrty_liquid::FilterCtx::new(Tz::Local))
+        }),
+    );
     let args_filters = config
         .iter()
         .map(|f| (f.name.clone(), f.run.clone()))
-        .chain(std::iter::once((
-            "inputPathToUrl".to_string(),
-            input_path_to_url,
-        )))
         .chain(
             plugin_filters(rss, html_base)
                 .into_iter()
@@ -2504,6 +2507,13 @@ fn build_once(
     if let Some(b) = &bundles {
         b.register_liquid_refusals(&mut engine);
     }
+    // 11ty's own `inputPathToUrl` filter needs the content map, built once the pages' URLs are.
+    // Registered first: the config's filter of the same name replaces it, as in 11ty.
+    let shared_map: crate::plugins::input_path_to_url::Shared = Default::default();
+    engine.register_args_filter(
+        "inputPathToUrl",
+        crate::plugins::input_path_to_url::filter(shared_map.clone()),
+    );
     for f in &opts.config.js_filters {
         if f.engine != crate::options::FilterEngine::Nunjucks {
             engine.register_args_filter(&f.name, f.run.clone());
@@ -2560,12 +2570,6 @@ fn build_once(
     // 11ty runs a config's plugins after the config, so a plugin's filters
     // win over the config's own of the same name.
     let rss = opts.config.rss_filters || !opts.config.feeds.is_empty();
-    // 11ty's own `inputPathToUrl` filter needs the content map, built once the pages' URLs are.
-    let shared_map: crate::plugins::input_path_to_url::Shared = Default::default();
-    engine.register_args_filter(
-        "inputPathToUrl",
-        crate::plugins::input_path_to_url::filter(shared_map.clone()),
-    );
     if rss {
         for (name, f) in crate::plugins::rss::universal_filters() {
             engine.register_args_filter(name, f);
