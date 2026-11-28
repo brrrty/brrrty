@@ -61,7 +61,7 @@ fn start(t: &tempfile::TempDir, filters: &[&str]) -> Worker {
     let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
     ok(w.set_argument(&json(serde_json::json!({}))));
     let names: Vec<String> = filters.iter().map(|s| s.to_string()).collect();
-    ok(w.template_setup(&names));
+    ok(w.template_setup(&names, &[]));
     w
 }
 

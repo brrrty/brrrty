@@ -1135,12 +1135,12 @@ fn requests_sent_together_come_back_in_order() {
     }
 }
 
-/// 11ty adds every `addFilter` to a JavaScript template's `this`; one added
-/// for a single engine (`addLiquidFilter`) stays off it. A filter that runs
-/// in Node can't be called from a template in Node, so the page is refused
-/// by name rather than failing with `is not a function`.
+/// 11ty adds every `addFilter` to a JavaScript template's `this` (called with
+/// the template as `this`, so `this.page` is the page); one added for a
+/// single engine (`addLiquidFilter`) stays off it. An async one hands the
+/// template a promise.
 #[test]
-fn config_filters_on_this_of_a_javascript_template_are_refused_by_name() {
+fn config_filters_run_on_this_of_a_javascript_template() {
     if !has_node() {
         return;
     }
@@ -1151,11 +1151,11 @@ fn config_filters_on_this_of_a_javascript_template_are_refused_by_name() {
         ),
         (
             "eleventy.config.js",
-            "module.exports = (c) => {\n  c.addFilter('shout', (x) => String(x).toUpperCase() + '!');\n  c.addLiquidFilter('only', (x) => x);\n};\n",
+            "module.exports = (c) => {\n  c.addFilter('shout', (x) => String(x).toUpperCase() + '!');\n  c.addFilter('where', function () { return this.page.url; });\n  c.addAsyncFilter('later', async (x) => x + '?');\n  c.addLiquidFilter('only', (x) => x);\n};\n",
         ),
         (
             "src/h.11ty.js",
-            "module.exports = function () { return this.shout('a'); };\n",
+            "module.exports = async function () { return this.shout('a') + this.where() + (await this.later('b')); };\n",
         ),
         (
             "src/o.11ty.js",
@@ -1164,12 +1164,8 @@ fn config_filters_on_this_of_a_javascript_template_are_refused_by_name() {
     ]);
     let o = build(t.path(), &[]);
     let out = text(&o);
-    assert_eq!(o.status.code(), Some(1), "{out}");
-    assert!(
-        out.contains("`this.shout`") && out.contains("filter the JS config added"),
-        "{out}"
-    );
-    assert!(!out.contains("is not a function"), "{out}");
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert_eq!(read(t.path(), "h/index.html"), "A!/h/b?");
     assert_eq!(read(t.path(), "o/index.html"), "undefined");
 }
 
@@ -1276,8 +1272,8 @@ fn a_config_filter_named_input_path_to_url_wins() {
     assert_eq!(read(t.path(), "j/index.html"), "mine b.md");
 }
 
-/// The same for a JS config's filter: it wins in Liquid and Nunjucks, and
-/// on a JavaScript template's `this` it is refused by name.
+/// The same for a JS config's filter: it wins in Liquid, Nunjucks and on a
+/// JavaScript template's `this`.
 #[test]
 fn a_js_config_filter_named_input_path_to_url_wins() {
     if !has_node() {
@@ -1295,11 +1291,93 @@ fn a_js_config_filter_named_input_path_to_url_wins() {
     ]);
     let o = build(t.path(), &[]);
     let out = text(&o);
-    assert_eq!(o.status.code(), Some(1), "{out}");
-    assert!(
-        out.contains("`this.inputPathToUrl`") && out.contains("filter the JS config added"),
-        "{out}"
-    );
+    assert_eq!(o.status.code(), Some(0), "{out}");
     assert_eq!(read(t.path(), "a/index.html"), "js b.md");
     assert_eq!(read(t.path(), "n/index.html"), "js b.md");
+    assert_eq!(read(t.path(), "j/index.html"), "js b.md");
+}
+
+/// A plugin's filter (here HtmlBasePlugin's `htmlBaseUrl`) wins over a JS
+/// config's of the same name in every language, `this` included.
+#[test]
+fn a_plugin_filter_wins_over_a_js_config_filter_on_this() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.add_plugin(\"htmlbase\");\nconfig.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('htmlBaseUrl', (s) => 'js ' + s); };\n",
+        ),
+        ("src/a.liquid", "{{ 'x' | htmlBaseUrl }}"),
+        ("src/n.njk", "{{ 'x' | htmlBaseUrl }}"),
+        (
+            "src/j.11ty.js",
+            "module.exports = function () { return this.htmlBaseUrl('x'); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "a/index.html"), "x");
+    assert_eq!(read(t.path(), "n/index.html"), "x");
+    assert_eq!(read(t.path(), "j/index.html"), "x");
+}
+
+/// 11ty calls each `this` function with `this || {}` (`augmentFunction`),
+/// so a filter taken off `this` and called detached still sees `this.page`.
+#[test]
+fn a_detached_config_filter_call_sees_page() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('pg', function () { return this.page.url; }); };\n",
+        ),
+        (
+            "src/d.11ty.js",
+            "module.exports = function () { const { pg } = this; return pg(); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(read(t.path(), "d/index.html"), "/d/");
+}
+
+/// A config filter that throws fails the build with its own error, not
+/// as an order-dependent render.
+#[test]
+fn a_throwing_config_filter_on_this_reports_its_error() {
+    if !has_node() {
+        return;
+    }
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.set_js_data(\"node\");\n",
+        ),
+        (
+            "eleventy.config.js",
+            "module.exports = (c) => { c.addFilter('boom', function () { throw new Error('kaboom'); }); };\n",
+        ),
+        (
+            "src/d.11ty.js",
+            "module.exports = function () { return this.boom(); };\n",
+        ),
+    ]);
+    let o = build(t.path(), &[]);
+    let out = text(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(out.contains("kaboom"), "{out}");
+    assert!(!out.contains("js-data-impure"), "{out}");
+    assert!(out.contains("js-data-error"), "{out}");
 }

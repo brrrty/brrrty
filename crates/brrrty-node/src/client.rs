@@ -2093,10 +2093,21 @@ impl JsRuntime for Worker {
         self.filters = Some(filters);
     }
 
-    fn template_setup(&mut self, filters: &[String]) -> JsResult<()> {
+    fn template_setup(&mut self, filters: &[String], node: &[(String, u32)]) -> JsResult<()> {
         let text = op_text("templateSetup", |t| {
             t.push_str(",\"filters\":");
             crate::wire::strings(t, filters);
+            // The config's own filters, which Node runs itself.
+            t.push_str(",\"node\":[");
+            for (i, (name, handle)) in node.iter().enumerate() {
+                if i > 0 {
+                    t.push(',');
+                }
+                t.push('[');
+                crate::wire::string(t, name);
+                let _ = write!(t, ",{handle}]");
+            }
+            t.push(']');
         });
         unit(self.request(
             Request::new("templateSetup", text),

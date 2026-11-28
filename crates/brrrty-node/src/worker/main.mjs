@@ -2611,6 +2611,9 @@ const templates = [];
 // The names 11ty puts on a template's `this` as functions, in its order:
 // its own filters, then the config's (`templateSetup`).
 let filterNames = [];
+// The JS config's own filters (name -> function), which run right here with
+// the template as `this`, as 11ty's `augmentFunction` does.
+let nodeFilters = new Map();
 
 // `EleventyImport(inputPath, isEsm ? "esm" : "cjs", { cacheBust: true })`:
 // the engine isn't cacheable, so each template's URL is busted, and the
@@ -2814,9 +2817,26 @@ function askFilter(name, args) {
 
 // The functions 11ty puts on `this` for a render (`getJavaScriptFunctions`):
 // one new wrapper per name, each render; each runs Brrrty's own filter.
-function filterFunctions() {
+// With a template `inst`, a config filter is called as 11ty's
+// `augmentFunction` does: on `this || {}`, with the instance's `page` and
+// `eleventy` copied on when it lacks them, so a detached call still sees
+// them.
+function filterFunctions(inst) {
   const out = {};
   for (const name of filterNames) {
+    const own = nodeFilters.get(name);
+    if (own !== undefined) {
+      out[name] = function (...args) {
+        const ctx = this || {};
+        if (inst) {
+          for (const k of ["page", "eleventy"]) {
+            if (!(k in ctx) && inst[k] !== undefined) ctx[k] = inst[k];
+          }
+        }
+        return own.apply(ctx, args);
+      };
+      continue;
+    }
     out[name] = function (...args) {
       return askFilter(name, args);
     };
@@ -2854,7 +2874,7 @@ async function renderTemplate(t, data, first) {
       const eleventy = wdata.eleventy;
       if (eleventy) inst.eleventy = eleventy;
     }
-    Object.assign(inst, filterFunctions());
+    Object.assign(inst, filterFunctions(inst));
     value = inst.render.call(inst, wdata);
     if (Buffer.isBuffer(value)) value = value.toString();
     if (value && typeof value.then === "function") {
@@ -3403,6 +3423,7 @@ async function handle(req) {
     }
     case "templateSetup": {
       filterNames = (req.filters || []).map(String);
+      nodeFilters = new Map((req.node || []).map(([n, h]) => [String(n), getHandle(h)]));
       return { ok: null };
     }
     case "templateLoad":
