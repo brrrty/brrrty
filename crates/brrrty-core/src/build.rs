@@ -3456,8 +3456,25 @@ fn build_once(
                 }
                 return Err(Refused::Page(problem.clone(), None));
             }
-            // 11ty runs the config's transforms, in order, on what the layouts gave.
+            // 11ty's own HTML transformer runs before every transform from the config.
             let mut html = rendered.html;
+            if opts.config.id_attribute && output_rel.extension().is_some_and(|e| e == "html") {
+                let input_path = match p.data.get("page").map(|pg| pg.get("inputPath")) {
+                    Some(Value::String(u)) => u.to_string(),
+                    _ => String::new(),
+                };
+                html = match crate::plugins::id_attribute::apply(&html, &input_path) {
+                    Ok(h) => h,
+                    Err(why) => {
+                        let problem = Problem::error(codes::JS_DATA_FUNCTION, why).with_path(shown);
+                        if let Some(log) = log {
+                            log.problem(shown, &problem);
+                        }
+                        return Err(Refused::Page(problem, None));
+                    }
+                };
+            }
+            // 11ty runs the config's transforms, in order, on what the layouts gave.
             if let Some(b) = &bundles {
                 let url = match p.data.get("page").map(|pg| pg.get("url")) {
                     Some(Value::String(u)) => u.to_string(),

@@ -16,7 +16,7 @@ mod zones;
 
 pub use collate::{CollationRefusal, js_locale_compare};
 pub use eleventy::{
-    FilterEnv, FilterFn, FilterImpl, REFUSAL_PREFIX, console_format, eleventy_filters,
+    FilterEnv, FilterFn, FilterImpl, REFUSAL_PREFIX, console_format, eleventy_filters, slugify,
 };
 pub use loader::{LoadError, Loader};
 pub use number::{

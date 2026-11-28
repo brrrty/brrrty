@@ -182,6 +182,8 @@ pub struct ConfigOptions {
     pub rss_filters: bool,
     /// `addPlugin(EleventyHtmlBasePlugin)`: its filters (a feed or the RSS filters add them too).
     pub html_base: bool,
+    /// `addPlugin(IdAttributePlugin)`: headings get `id`s on pages written to `.html`.
+    pub id_attribute: bool,
     /// `dir.includes`, relative to the input folder; `None` is `_includes`.
     pub includes: Option<String>,
     /// `dir.layouts`, relative to the input folder; `None` is the includes folder.

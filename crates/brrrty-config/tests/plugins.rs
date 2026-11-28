@@ -763,7 +763,7 @@ fn the_id_attribute_plugin_gives_headings_ids() {
     assert!(errors(&r).is_empty(), "{:#?}", r.problems);
     assert_eq!(
         out(&t, "a/index.html").unwrap(),
-        "<h2 id=\"hi\">Hi</h2>\n<p>text</p>\n<h2 id=\"hi-2\">Hi</h2>\n<h3 id=\"fish-chips\">Fish &amp; Chips</h3>\n<h4 id=\"code-and-em\"><code>code</code> and <em>em</em></h4>\n"
+        "<h2 id=\"hi\">Hi</h2>\n<p>text</p>\n<h2 id=\"hi-2\">Hi</h2>\n<h3 id=\"fish-and-chips\">Fish &amp; Chips</h3>\n<h4 id=\"code-and-em\"><code>code</code> and <em>em</em></h4>\n"
     );
     assert_eq!(
         out(&t, "b/index.html").unwrap(),
@@ -776,10 +776,7 @@ fn the_id_attribute_plugin_gives_headings_ids() {
 fn the_id_attribute_plugin_leaves_other_outputs_alone() {
     let (t, r) = site(
         r#"config.add_plugin("idattribute");"#,
-        &[(
-            "c.html",
-            "---\npermalink: c.xml\n---\n<h2>Hi</h2>",
-        )],
+        &[("c.html", "---\npermalink: c.xml\n---\n<h2>Hi</h2>")],
     );
     assert!(errors(&r).is_empty(), "{:#?}", r.problems);
     assert_eq!(out(&t, "c.xml").unwrap(), "<h2>Hi</h2>");
@@ -790,7 +787,7 @@ fn the_id_attribute_plugin_leaves_other_outputs_alone() {
 fn the_id_attribute_plugin_refuses_a_clashing_id() {
     let (t, r) = site(
         r#"config.add_plugin("idattribute");"#,
-        &[("d.html", "<h2>Hi</h2><p id=\"hi\">x</p>")],
+        &[("d.html", "<p id=\"hi\">x</p><p id=\"hi\">y</p>")],
     );
     let e = errors(&r);
     assert_eq!(e.len(), 1, "{:#?}", r.problems);
@@ -815,4 +812,18 @@ fn the_id_attribute_plugin_refuses_options_it_does_not_have() {
     assert_eq!(p.code, codes::CONFIG_INVALID);
     assert!(p.message.contains("idattribute"), "{}", p.message);
     assert!(p.message.contains("selector"), "{}", p.message);
+}
+
+/// An explicit `id` that matches a heading's assigned one wins; the heading is renumbered.
+#[test]
+fn the_id_attribute_plugin_renumbers_a_heading_an_id_clashes_with() {
+    let (t, r) = site(
+        r#"config.add_plugin("idattribute");"#,
+        &[("e.html", "<h2>Hi</h2><p id=\"hi\">x</p>")],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "e/index.html").unwrap(),
+        "<h2 id=\"hi-2\">Hi</h2><p id=\"hi\">x</p>"
+    );
 }
