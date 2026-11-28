@@ -1136,9 +1136,11 @@ fn requests_sent_together_come_back_in_order() {
 }
 
 /// 11ty adds every `addFilter` to a JavaScript template's `this`; one added
-/// for a single engine (`addLiquidFilter`) stays off it.
+/// for a single engine (`addLiquidFilter`) stays off it. A filter that runs
+/// in Node can't be called from a template in Node, so the page is refused
+/// by name rather than failing with `is not a function`.
 #[test]
-fn config_filters_are_on_this_of_a_javascript_template() {
+fn config_filters_on_this_of_a_javascript_template_are_refused_by_name() {
     if !has_node() {
         return;
     }
@@ -1162,7 +1164,11 @@ fn config_filters_are_on_this_of_a_javascript_template() {
     ]);
     let o = build(t.path(), &[]);
     let out = text(&o);
-    assert_eq!(o.status.code(), Some(0), "{out}");
-    assert_eq!(read(t.path(), "h/index.html"), "A!");
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("`this.shout`") && out.contains("filter the JS config added"),
+        "{out}"
+    );
+    assert!(!out.contains("is not a function"), "{out}");
     assert_eq!(read(t.path(), "o/index.html"), "undefined");
 }

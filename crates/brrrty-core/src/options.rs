@@ -496,6 +496,9 @@ pub struct JsUnsupported {
 pub struct JsConfigFilter {
     pub name: String,
     pub engine: FilterEngine,
+    /// Set on one entry of each `addFilter` / `addAsyncFilter`: 11ty also
+    /// puts those on a JavaScript template's `this`.
+    pub universal: bool,
     pub run: brrrty_liquid::ArgsFilterFn,
 }
 
