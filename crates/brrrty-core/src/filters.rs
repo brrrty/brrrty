@@ -21,7 +21,7 @@ use crate::plugins::rss;
 /// A `SafeString` (from `safe`, `escape` or a macro) is an object in
 /// JavaScript, which a filter written in Rhai or Rust can't tell from a
 /// string, so a call that passes one is refused.
-fn shared(name: &str, f: brrrty_liquid::ArgsFilterFn) -> FilterFn {
+pub(crate) fn shared(name: &str, f: brrrty_liquid::ArgsFilterFn) -> FilterFn {
     let name = name.to_string();
     Arc::new(move |input, args, env| {
         if env.any_safe() {

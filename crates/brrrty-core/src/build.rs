@@ -313,6 +313,7 @@ fn js_filters(
     config: &[crate::options::ConfigFilter],
     rss: bool,
     html_base: bool,
+    input_path_to_url: brrrty_liquid::ArgsFilterFn,
 ) -> crate::data::JsFilters {
     type Run = Arc<dyn Fn(&Value, &[Value]) -> Result<Value, String> + Send + Sync>;
     let mut table: HashMap<String, Run> = HashMap::new();
@@ -331,6 +332,10 @@ fn js_filters(
     let args_filters = config
         .iter()
         .map(|f| (f.name.clone(), f.run.clone()))
+        .chain(std::iter::once((
+            "inputPathToUrl".to_string(),
+            input_path_to_url,
+        )))
         .chain(
             plugin_filters(rss, html_base)
                 .into_iter()
@@ -2555,6 +2560,12 @@ fn build_once(
     // 11ty runs a config's plugins after the config, so a plugin's filters
     // win over the config's own of the same name.
     let rss = opts.config.rss_filters || !opts.config.feeds.is_empty();
+    // 11ty's own `inputPathToUrl` filter needs the content map, built once the pages' URLs are.
+    let shared_map: crate::plugins::input_path_to_url::Shared = Default::default();
+    engine.register_args_filter(
+        "inputPathToUrl",
+        crate::plugins::input_path_to_url::filter(shared_map.clone()),
+    );
     if rss {
         for (name, f) in crate::plugins::rss::universal_filters() {
             engine.register_args_filter(name, f);
@@ -2571,6 +2582,14 @@ fn build_once(
         timezone: Tz::Local,
         autoescape: true,
     });
+    // Registered first: a later filter of the same name replaces it, as in 11ty.
+    nunjucks.register_filter(
+        "inputPathToUrl",
+        crate::filters::shared(
+            "inputPathToUrl",
+            crate::plugins::input_path_to_url::filter(shared_map.clone()),
+        ),
+    );
     crate::filters::register_nunjucks_filters(
         &mut nunjucks,
         &opts.config.js_filters,
@@ -2665,6 +2684,7 @@ fn build_once(
         &opts.config.filters,
         rss,
         opts.config.html_base,
+        crate::plugins::input_path_to_url::filter(shared_map.clone()),
     );
     let mut js = JsSession::new(&opts.js, opts.run_mode, &root, js_argument(&initial, &root));
     js.filters = Some((js_names, js_filter_fns.clone()));
@@ -3344,6 +3364,28 @@ fn build_once(
         missing_data_problem(undefined, &src.withheld, &data_dir, state)
             .map(|p| p.with_path(&src.shown))
     };
+    // 11ty's content map for the InputPathToUrlTransformPlugin: each template's pages' URLs
+    // by input path, `false` (a `permalink: false` page) printed as JavaScript does.
+    let content_map_built = {
+        let mut map = crate::plugins::input_path_to_url::ContentMap::new(dot_dir(shared.input_rel));
+        for input_path in &template_inputs {
+            map.known(input_path);
+        }
+        for p in &prepared {
+            let page = p.data.get("page");
+            let get = |k: &str| page.map(|pg| pg.get(k));
+            let Some(Value::String(input_path)) = get("inputPath") else {
+                continue;
+            };
+            let url = match get("url") {
+                Some(Value::String(u)) => u.to_string(),
+                _ => "false".to_string(),
+            };
+            map.push(&input_path, url);
+        }
+        map
+    };
+    let _ = shared_map.set(content_map_built);
     let contents = content::render_all(&pipeline, &jobs, &check);
     let settled = contents.settled_source();
 
@@ -3372,29 +3414,11 @@ fn build_once(
         Some(j) => log.needs(shown, p, &prepared[j].source.shown),
         None => log.problem(shown, p),
     };
-    // 11ty's content map for the InputPathToUrlTransformPlugin: each template's pages' URLs
-    // by input path, `false` (a `permalink: false` page) printed as JavaScript does.
-    let content_map = if opts.config.input_path_to_url {
-        let mut map = crate::plugins::input_path_to_url::ContentMap::new(dot_dir(shared.input_rel));
-        for input_path in &template_inputs {
-            map.known(input_path);
-        }
-        for p in &prepared {
-            let page = p.data.get("page");
-            let get = |k: &str| page.map(|pg| pg.get(k));
-            let Some(Value::String(input_path)) = get("inputPath") else {
-                continue;
-            };
-            let url = match get("url") {
-                Some(Value::String(u)) => u.to_string(),
-                _ => "false".to_string(),
-            };
-            map.push(&input_path, url);
-        }
-        Some(map)
-    } else {
-        None
-    };
+    let content_map = opts
+        .config
+        .input_path_to_url
+        .then(|| shared_map.get())
+        .flatten();
     let ready: Vec<Ready<'_>> = (0..prepared.len())
         .into_par_iter()
         .filter(|&i| writes(&prepared[i]))
@@ -3548,7 +3572,7 @@ fn build_once(
                         crate::plugins::id_attribute::apply(&mut tree, &input_path)?;
                     }
                     // The URL callbacks run after the posthtml plugins.
-                    if let Some(map) = &content_map {
+                    if let Some(map) = content_map {
                         crate::plugins::input_path_to_url::apply(&mut tree, map, &input_path)?;
                     }
                     Ok(crate::plugins::rss::posthtml::render(
