@@ -4153,6 +4153,9 @@ impl Out<'_> {
                 one_line(&t.command)
             ));
         }
+        for n in &cli.notes {
+            out.push_str(&format!("\n// Note: {}.\n", one_line(n)));
+        }
         todos.len()
     }
 
