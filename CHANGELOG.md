@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.20 - 2026-11-28
+
+- 11ty's `inputPathToUrl` filter, which 11ty adds to every site, is now available in Liquid, Nunjucks and on JavaScript templates' `this`. It turns a template's source path (from the input folder, or relative to the page calling it) into that template's first URL, keeping its `?query` and `#hash`. A full URL is returned as it is, and a path that isn't a template's source file is an error, as in 11ty. A config's own filter of the same name still replaces it.
+
 ## 0.1.19 - 2026-11-28
 
 - With `config.add_plugin("htmlbase")` (or 11ty's `HtmlBasePlugin` run natively under `set_js_config("node")`), the `transformWithHtmlBase` filter is now available in Liquid, Nunjucks and on JavaScript templates' `this`. With the default base `/` it returns its content unchanged, as in 11ty. Any other base is refused by name.

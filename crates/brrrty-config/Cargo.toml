@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-config"
-version = "0.1.19"
+version = "0.1.20"
 description = "Reads brrrty.config.rhai, the Rhai config for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
@@ -13,11 +13,11 @@ readme = false
 exclude = ["tools/", "tests/regex_probes.rs", "tests/sort_probes.rs", "tests/csv_probes.rs", "tests/markdown_rules.rs", "tests/probes/"]
 
 [dependencies]
-brrrty-core = { path = "../brrrty-core", version = "0.1.19" }
-brrrty-markdown = { path = "../brrrty-markdown", version = "0.1.19" }
-brrrty-liquid = { path = "../brrrty-liquid", version = "0.1.19" }
-brrrty-js = { path = "../brrrty-js", version = "0.1.19" }
-brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.1.19" }
+brrrty-core = { path = "../brrrty-core", version = "0.1.20" }
+brrrty-markdown = { path = "../brrrty-markdown", version = "0.1.20" }
+brrrty-liquid = { path = "../brrrty-liquid", version = "0.1.20" }
+brrrty-js = { path = "../brrrty-js", version = "0.1.20" }
+brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.1.20" }
 cap-std = "=4.0.3"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "alloc"] }
 indexmap = "2"
@@ -31,7 +31,7 @@ stacker = "0.1.25"
 url = "2.5.8"
 
 [dev-dependencies]
-brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.1.19" }
+brrrty-nunjucks = { path = "../brrrty-nunjucks", version = "0.1.20" }
 tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
