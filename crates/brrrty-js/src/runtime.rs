@@ -480,7 +480,7 @@ pub trait JsRuntime: Send {
     /// The names 11ty puts on a JavaScript template's `this` as functions
     /// (its filters and shortcodes), in its order. Sent before any template
     /// loads.
-    fn template_setup(&mut self, filters: &[String]) -> JsResult<()>;
+    fn template_setup(&mut self, filters: &[String], node: &[(String, u32)]) -> JsResult<()>;
     /// Import the JavaScript template or layout `file` (absolute) as 11ty
     /// does, make its instance, and read its `data`.
     fn load_template(&mut self, file: &Path, layout: bool) -> JsResult<LoadedTemplate>;

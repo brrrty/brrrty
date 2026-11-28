@@ -499,6 +499,9 @@ pub struct JsConfigFilter {
     /// Set on one entry of each `addFilter` / `addAsyncFilter`: 11ty also
     /// puts those on a JavaScript template's `this`.
     pub universal: bool,
+    /// The config function's handle in Node, to run it on a JavaScript
+    /// template's `this`.
+    pub handle: u32,
     pub run: brrrty_liquid::ArgsFilterFn,
 }
 

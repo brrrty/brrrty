@@ -515,6 +515,7 @@ fn add_filters(
                     name: name.clone(),
                     engine: FilterEngine::Nunjucks,
                     universal: false,
+                    handle: h.0,
                     run: as_filter(run),
                 }),
             }
@@ -531,6 +532,7 @@ fn add_filters(
                     name,
                     engine: FilterEngine::Liquid,
                     universal: engine == FilterEngine::All,
+                    handle: h.0,
                     run: as_filter(run),
                 }),
             }

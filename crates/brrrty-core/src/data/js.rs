@@ -53,6 +53,9 @@ pub(crate) struct JsSession<'a> {
     /// and Brrrty's filters that run them: given to the runtime when it
     /// starts.
     pub filters: Option<(Vec<String>, JsFilters)>,
+    /// The JS config's filters among those names, with their handles in
+    /// Node: Node runs them itself.
+    pub node_filters: Vec<(String, u32)>,
     /// Set when the runtime asks for the build to be run again (see
     /// [`RuntimeFailure::again`]).
     pub again: Arc<std::sync::atomic::AtomicBool>,
@@ -92,6 +95,7 @@ impl<'a> JsSession<'a> {
             files: Vec::new(),
             check_ports: false,
             filters: None,
+            node_filters: Vec::new(),
             again: Arc::default(),
         }
     }
@@ -120,7 +124,7 @@ impl<'a> JsSession<'a> {
                     JsResult::Ok(()) => {
                         if let Some((names, f)) = &self.filters {
                             rt.set_filters(f.clone());
-                            match rt.template_setup(names) {
+                            match rt.template_setup(names, &self.node_filters) {
                                 JsResult::Ok(()) => {}
                                 JsResult::Failed(f) => {
                                     self.failed = Some(worker_failed_with(&f));
