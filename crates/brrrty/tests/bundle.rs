@@ -249,3 +249,40 @@ fn blank_or_missing_href_and_blank_src_are_pruned() {
         "<link rel=\"STYLESHEET\" eleventy:keep=\"\"><link rel=\"stylesheet\" href=\"a.css\"><script src=\"b.js\"></script><style> </style>"
     );
 }
+
+/// 11ty resolves bundle placeholders, then runs one posthtml pass (the bundle's pruning,
+/// then IdAttributePlugin), so a bundled heading gets its id and a pruned element's id
+/// never counts.
+#[test]
+fn the_id_attribute_plugin_runs_after_bundles_are_resolved_and_pruned() {
+    if !has_node() {
+        return;
+    }
+    let cfg = config("eleventyConfig.addBundle(\"html\");");
+    let t = site(&[
+        (
+            "brrrty.config.rhai",
+            "config.set_js_config(\"node\");\nconfig.add_plugin(\"idattribute\");\n",
+        ),
+        ("package.json", "{}"),
+        ("eleventy.config.js", &cfg),
+        (
+            "index.njk",
+            "{% html %}<h2>Inside</h2>{% endhtml %}<h2>Outside</h2>{% getBundle \"html\" %}",
+        ),
+        (
+            "pruned.njk",
+            "<script id=\"x\" src=\"\"></script><p id=\"x\">kept</p>",
+        ),
+    ]);
+    let o = run(t.path(), "build");
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/index.html")).unwrap(),
+        "<h2 id=\"outside\">Outside</h2><h2 id=\"inside\">Inside</h2>"
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("_site/pruned/index.html")).unwrap(),
+        "<p id=\"x\">kept</p>"
+    );
+}
