@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.16 - 2026-11-27
+
+- With `set_js_config("node")`, `addPlugin(IdAttributePlugin)` and `addPlugin(HtmlBasePlugin)` from `@11ty/eleventy` with no options now run as Brrrty's native `idattribute` and `htmlbase` plugins. Before this, the plugins' `htmlTransformer` calls were recorded as unsupported and every page was refused. With options, a function of the same name that isn't 11ty's, or (for `HtmlBasePlugin`) a `pathPrefix` other than `/`, the plugin runs as before and the build still refuses. `transformWithHtmlBase` and `InputPathToUrlTransformPlugin` aren't supported yet.
+
 ## 0.1.15 - 2026-11-27
 
 - 11ty's `IdAttributePlugin` is now supported as `config.add_plugin("idattribute")`, and `brrrty init` ports `addPlugin(IdAttributePlugin)` without options to it. Headings without an `id` get one from their text (`slugify`, numbered when repeated) on pages written to `.html`, and those pages are printed the way 11ty's HTML transformer prints them. Its options are refused by name. `InputPathToUrlTransformPlugin` isn't supported yet.

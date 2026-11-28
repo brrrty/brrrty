@@ -1,6 +1,6 @@
 [package]
 name = "brrrty-markdown"
-version = "0.1.15"
+version = "0.1.16"
 description = "Markdown rendering for Brrrty, an Eleventy-compatible static site generator."
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +13,7 @@ readme = false
 exclude = ["tools/", "tests/probes.rs", "tests/fuzz.rs", "tests/probes/"]
 
 [dependencies]
-brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.1.15" }
+brrrty-jsregex = { path = "../brrrty-jsregex", version = "0.1.16" }
 markdown-it = { version = "=0.6.1", default-features = false }
 regex = "1.13.1"
 
