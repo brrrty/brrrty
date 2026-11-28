@@ -96,6 +96,27 @@ mod tests {
     }
 
     #[test]
+    fn multiline_flow_scalar_continuation_at_column_zero() {
+        let (m, _) = split_front_matter(
+            "---\ntitle: t\nd: \"First line.\nSecond line.\"\ns: 'one\ntwo'\n---\nhi\n",
+        )
+        .unwrap();
+        assert_eq!(m["d"], s("First line. Second line."));
+        assert_eq!(m["s"], s("one two"));
+    }
+
+    #[test]
+    fn multiline_flow_scalar_under_indented_when_nested() {
+        let (m, _) = split_front_matter(
+            "---\nseo:\n  desc: \"First line.\nSecond line.\"\nseo2:\n  desc: \"A.\n B.\"\nlist:\n  - \"one\ntwo\"\n---\nhi\n",
+        )
+        .unwrap();
+        assert_eq!(m["seo"].get("desc"), s("First line. Second line."));
+        assert_eq!(m["seo2"].get("desc"), s("A. B."));
+        assert_eq!(m["list"].index(&Value::Number(0.0)), s("one two"));
+    }
+
+    #[test]
     fn invalid_yaml_message_has_no_relative_positions() {
         let p = split_front_matter("---\ntitle: [oops\n---\nbody\n").unwrap_err();
         assert!(!p.message.contains("at line"), "{}", p.message);

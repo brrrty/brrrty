@@ -28,6 +28,67 @@ type Events<'a> = std::iter::Peekable<Parser<'a, saphyr_parser::StrInput<'a>>>;
 
 /// Parses a single YAML document the way `js-yaml`'s `load` does.
 pub(crate) fn load(text: &str) -> Result<Value, YamlError> {
+    // js-yaml accepts a quoted scalar whose continuation lines are indented
+    // less than the enclosing block (it only warns); saphyr rejects them.
+    // Indenting those lines does not change the
+    // value (flow scalars strip leading blanks on continuation lines), so
+    // retry with them indented, once per offending scalar.
+    let mut text = std::borrow::Cow::Borrowed(text);
+    for _ in 0..1000 {
+        match load_once(&text) {
+            Err(e) if e.message.contains("invalid indentation in quoted scalar") => {
+                match indent_quoted_continuations(&text, e.line, e.column) {
+                    Some(fixed) => text = std::borrow::Cow::Owned(fixed),
+                    None => return Err(e),
+                }
+            }
+            other => return other,
+        }
+    }
+    load_once(&text)
+}
+
+/// Indents every continuation line of the quoted scalar that starts at 1-based
+/// `line` / `column` to at least the column of its opening quote.
+fn indent_quoted_continuations(text: &str, line: usize, column: usize) -> Option<String> {
+    let mut offset = 0;
+    for _ in 1..line {
+        offset += text[offset..].find('\n')? + 1;
+    }
+    let start = offset + text[offset..].char_indices().nth(column.checked_sub(1)?)?.0;
+    let rest = &text[start..];
+    let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let bytes = rest.as_bytes();
+    let mut i = 1;
+    let end = loop {
+        match *bytes.get(i)? {
+            b'\\' if quote == '"' => i += 2,
+            b'\'' if quote == '\'' && bytes.get(i + 1) == Some(&b'\'') => i += 2,
+            b if b as char == quote => break i,
+            _ => i += 1,
+        }
+    };
+    let (body, tail) = rest.split_at(end);
+    let mut out = String::with_capacity(text.len() + 8);
+    out.push_str(&text[..start]);
+    let mut changed = false;
+    for (n, l) in body.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+            let lead = l.bytes().take_while(|b| *b == b' ').count();
+            let blank = l.trim_matches([' ', '\r']).is_empty();
+            if !blank && !l.starts_with('\t') && lead < column {
+                out.extend(std::iter::repeat_n(' ', column - lead));
+                changed = true;
+            }
+        }
+        out.push_str(l);
+    }
+    out.push_str(tail);
+    changed.then_some(out)
+}
+
+fn load_once(text: &str) -> Result<Value, YamlError> {
     let mut events: Events<'_> = Parser::new_from_str(text).peekable();
     let mut builder = Builder::default();
     let mut result = Value::Null;
