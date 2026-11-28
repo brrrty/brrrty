@@ -741,3 +741,78 @@ fn the_html_base_plugin_refuses_options_it_does_not_have() {
     assert!(p.message.contains("htmlbase"), "{}", p.message);
     assert!(p.message.contains("baseHref"), "{}", p.message);
 }
+
+/// `addPlugin(IdAttributePlugin)` (11ty 3.1.8, `src/Plugins/IdAttributePlugin.js`):
+/// every `h1`-`h6` without an `id` gets one from its text with the
+/// `slugify` filter, and the page is printed by posthtml.
+#[test]
+fn the_id_attribute_plugin_gives_headings_ids() {
+    let (t, r) = site(
+        r#"config.add_plugin("idattribute");"#,
+        &[
+            (
+                "a.md",
+                "## Hi\n\ntext\n\n## Hi\n\n### Fish &amp; Chips\n\n#### `code` and *em*\n",
+            ),
+            (
+                "b.html",
+                "<h2 id=\"mine\">Kept</h2><h3 id=\"\">Empty id</h3><h4><span eleventy:id-ignore>skip </span>Rest</h4><h5></h5><p>no</p>",
+            ),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap(),
+        "<h2 id=\"hi\">Hi</h2>\n<p>text</p>\n<h2 id=\"hi-2\">Hi</h2>\n<h3 id=\"fish-chips\">Fish &amp; Chips</h3>\n<h4 id=\"code-and-em\"><code>code</code> and <em>em</em></h4>\n"
+    );
+    assert_eq!(
+        out(&t, "b/index.html").unwrap(),
+        "<h2 id=\"mine\">Kept</h2><h3 id=\"empty-id\">Empty id</h3><h4 id=\"rest\"><span>skip </span>Rest</h4><h5></h5><p>no</p>"
+    );
+}
+
+/// Only pages written to `.html` go through 11ty's HTML transformer.
+#[test]
+fn the_id_attribute_plugin_leaves_other_outputs_alone() {
+    let (t, r) = site(
+        r#"config.add_plugin("idattribute");"#,
+        &[(
+            "c.html",
+            "---\npermalink: c.xml\n---\n<h2>Hi</h2>",
+        )],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(out(&t, "c.xml").unwrap(), "<h2>Hi</h2>");
+}
+
+/// An `id` that clashes with an assigned one is 11ty's error.
+#[test]
+fn the_id_attribute_plugin_refuses_a_clashing_id() {
+    let (t, r) = site(
+        r#"config.add_plugin("idattribute");"#,
+        &[("d.html", "<h2>Hi</h2><p id=\"hi\">x</p>")],
+    );
+    let e = errors(&r);
+    assert_eq!(e.len(), 1, "{:#?}", r.problems);
+    assert!(
+        e[0].message.contains("more than one HTML `id` attribute"),
+        "{}",
+        e[0].message
+    );
+    assert!(out(&t, "d/index.html").is_none());
+}
+
+#[test]
+fn without_the_plugin_headings_are_left_alone() {
+    let (t, r) = site("", &[("a.md", "## Hi\n")]);
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(out(&t, "a/index.html").unwrap(), "<h2>Hi</h2>\n");
+}
+
+#[test]
+fn the_id_attribute_plugin_refuses_options_it_does_not_have() {
+    let p = load_err(r#"config.add_plugin("idattribute", #{ selector: "h2" });"#);
+    assert_eq!(p.code, codes::CONFIG_INVALID);
+    assert!(p.message.contains("idattribute"), "{}", p.message);
+    assert!(p.message.contains("selector"), "{}", p.message);
+}
