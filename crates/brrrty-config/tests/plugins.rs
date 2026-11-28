@@ -948,3 +948,92 @@ fn the_input_path_to_url_plugin_gives_each_refusal_its_own_cause() {
     assert!(!m.contains('%'), "{m}");
     assert_eq!(m.matches("constructor").count(), 1, "{m}");
 }
+
+// 11ty's RenderPlugin: `renderTemplate`, `renderFile` and `renderContent` render a string or a
+// file as a template inside another, with only the data they are given (plus `page` and `eleventy`).
+
+const RENDER: &str = r#"config.add_plugin("render");"#;
+
+#[test]
+fn render_template_renders_its_body_in_another_language() {
+    let (t, r) = site(
+        RENDER,
+        &[
+            (
+                "a.njk",
+                "---\ntitle: t\n---\n{% renderTemplate \"md\" %}\n*hi*\n{% endrenderTemplate %}",
+            ),
+            (
+                "b.liquid",
+                "---\ntitle: t\nd:\n  n: 5\n---\n[{% renderTemplate \"njk\", d %}{{ n }}|{{ title }}|{{ page.url }}{% endrenderTemplate %}]",
+            ),
+            (
+                "c.njk",
+                "---\nd:\n  n: 7\n---\n{% renderTemplate \"liquid\", d %}<{{ n }}> {% raw %}{{ x }}{% endraw %}{% endrenderTemplate %}",
+            ),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap().trim(),
+        "<p><em>hi</em></p>"
+    );
+    // The page's own data is not shared; `page` is.
+    assert_eq!(out(&t, "b/index.html").unwrap(), "[5||/b/]");
+    assert_eq!(out(&t, "c/index.html").unwrap(), "<7> {{ x }}");
+}
+
+#[test]
+fn render_file_and_render_content_render_like_11ty() {
+    let (t, r) = site(
+        RENDER,
+        &[
+            ("_includes/part.njk", "part {{ who }}"),
+            ("_includes/note.md", "*note*"),
+            (
+                "a.njk",
+                "---\nd:\n  who: me\n---\n{% renderFile \"src/_includes/part.njk\", d %}|{% renderFile \"src/_includes/note.md\" %}",
+            ),
+            (
+                "b.njk",
+                "---\nbody: \"**bold**\"\n---\n{{ body | renderContent(\"md\") | safe }}",
+            ),
+            (
+                "c.liquid",
+                "---\nbody: \"**bold**\"\n---\n{{ body | renderContent: \"md\" }}",
+            ),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap().trim(),
+        "part me|<p><em>note</em></p>"
+    );
+    assert_eq!(
+        out(&t, "b/index.html").unwrap().trim(),
+        "<p><strong>bold</strong></p>"
+    );
+    assert_eq!(
+        out(&t, "c/index.html").unwrap().trim(),
+        "<p><strong>bold</strong></p>"
+    );
+}
+
+#[test]
+fn render_file_names_a_missing_file() {
+    let (_t, r) = site(RENDER, &[("a.njk", "{% renderFile \"src/nope.njk\" %}")]);
+    let e = errors(&r);
+    assert_eq!(e.len(), 1, "{:#?}", r.problems);
+    assert!(
+        e[0].message.contains("Could not find render plugin file for the `renderFile` shortcode, looking for: src/nope.njk"),
+        "{}",
+        e[0].message
+    );
+}
+
+#[test]
+fn render_options_brrrty_does_not_have_are_refused() {
+    let p = load_err(r#"config.add_plugin("render", #{ tagName: "tpl" });"#);
+    assert!(p.message.contains("render"), "{}", p.message);
+    assert!(p.message.contains("tagName"), "{}", p.message);
+}
