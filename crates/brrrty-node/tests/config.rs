@@ -157,6 +157,30 @@ fn plugins_see_the_merged_path_prefix() {
     }
 }
 
+/// 11ty's `processPlugins` also sets `userConfig.dir` to the merged `dir` (defaults plus the
+/// returned and exported `dir`), so plugins can read `dir.output` and `dir.input`.
+#[test]
+fn plugins_see_the_merged_dir() {
+    let Some(node) = node() else { return };
+    for (returned, want_out, want_in) in [
+        ("{}", "_site", "."),
+        (r#"{ dir: { input: "src", output: "dist" } }"#, "dist", "src"),
+    ] {
+        let cfg = format!(
+            "module.exports = (c) => {{\n  c.addPlugin((p) => {{\n    p.addGlobalData(\"out\", p.dir.output);\n    p.addGlobalData(\"inp\", p.dir.input);\n  }});\n  return {returned};\n}};\n"
+        );
+        let t = site(&[("eleventy.config.js", &cfg)]);
+        let mut w = Worker::start(&node, t.path(), RunMode::Build).expect("starts");
+        let d = match w.load_config(&t.path().join("eleventy.config.js")) {
+            JsResult::Ok(d) => d,
+            other => panic!("{other:?}"),
+        };
+        let seen = get(get(&d.value, "values"), "globalData");
+        assert_eq!(get(seen, "out"), &s(want_out));
+        assert_eq!(get(seen, "inp"), &s(want_in));
+    }
+}
+
 /// 11ty's plugins (HtmlBasePlugin, InputPathToUrlTransformPlugin) call
 /// `eleventyConfig.htmlTransformer.addUrlTransform(...)`. The recorder must not throw a
 /// TypeError there: it records the call as unsupported, so the build refuses by name.
