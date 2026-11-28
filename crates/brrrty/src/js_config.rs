@@ -175,6 +175,7 @@ pub fn apply(
     for name in strings(val("nativePlugins")) {
         match name.as_str() {
             "idattribute" => config.id_attribute = true,
+            "inputpathtourl" => config.input_path_to_url = true,
             "htmlbase" => config.html_base = true,
             _ => {}
         }

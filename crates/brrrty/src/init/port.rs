@@ -3803,6 +3803,24 @@ impl<'o, 'l> Reader<'o, 'l> {
                     .push(Item::Rhai("config.add_plugin(\"idattribute\");".into()));
                 return true;
             }
+            // 11ty's source-file link plugin: default options only.
+            Some(Binding::Export(m, e))
+                if m == "@11ty/eleventy" && e == "InputPathToUrlTransformPlugin" =>
+            {
+                if options.as_deref() != Some(&[]) {
+                    self.todo(
+                        a,
+                        b,
+                        "port this plugin's options: Brrrty's `inputpathtourl` plugin takes none yet, and `extensions` changes which pages the plugin rewrites",
+                        link,
+                    );
+                    return false;
+                }
+                self.out
+                    .items
+                    .push(Item::Rhai("config.add_plugin(\"inputpathtourl\");".into()));
+                return true;
+            }
             _ => {
                 self.todo(
                     a,
@@ -4506,6 +4524,26 @@ module.exports = function (eleventyConfig) {
         let p = port(src, "eleventy.config.js");
         assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
         assert!(!p.text.contains("add_plugin(\"htmlbase\""), "{}", p.text);
+    }
+
+    #[test]
+    fn ports_the_input_path_to_url_plugin_without_options() {
+        let src = "import { InputPathToUrlTransformPlugin } from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {\n\televentyConfig.addPlugin(InputPathToUrlTransformPlugin);\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(
+            p.text.contains("config.add_plugin(\"inputpathtourl\");"),
+            "{}",
+            p.text
+        );
+        assert!(!p.text.contains("TODO(brrrty)"), "{}", p.text);
+        let src = "import { InputPathToUrlTransformPlugin } from \"@11ty/eleventy\";\nexport default function (eleventyConfig) {\n\televentyConfig.addPlugin(InputPathToUrlTransformPlugin, { extensions: \"html,md\" });\n}\n";
+        let p = port(src, "eleventy.config.js");
+        assert!(p.text.contains("TODO(brrrty)"), "{}", p.text);
+        assert!(
+            !p.text.contains("add_plugin(\"inputpathtourl\""),
+            "{}",
+            p.text
+        );
     }
 
     #[test]

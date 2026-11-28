@@ -199,12 +199,17 @@ function eleventyHtmlBasePlugin(c, options = {}) {
   c.addFilter("addPathPrefixToFullUrl", (u) => u);
   c.htmlTransformer.addUrlTransform(["html"], (u) => u, { priority: -1 });
 }
+function TransformPlugin(c, options = {}) {
+  c.on("eleventy.contentMap", () => {});
+  c.htmlTransformer.addUrlTransform("html", () => { throw new Error("Internal error: contentMap not available for the `pathToUrl` Transform."); });
+}
 function Other(c) {
   c.htmlTransformer.addPosthtmlPlugin("html", () => {});
 }
 module.exports = (c) => {
   c.addPlugin(IdAttributePlugin);
   c.addPlugin(eleventyHtmlBasePlugin, {});
+  c.addPlugin(TransformPlugin);
   c.addPlugin(IdAttributePlugin, { selector: "h2" });
   c.addPlugin(Other);
   return {};
@@ -218,7 +223,7 @@ module.exports = (c) => {
     };
     assert_eq!(
         list(get(get(&d.value, "values"), "nativePlugins")),
-        [s("idattribute"), s("htmlbase")]
+        [s("idattribute"), s("htmlbase"), s("inputpathtourl")]
     );
     // Only the call with options and the other plugin ran.
     let methods: Vec<&Value> = list(get(&d.value, "unsupported"))

@@ -40,7 +40,7 @@ fn is_http_equiv_refresh(el: &Element) -> bool {
 /// Names JavaScript objects inherit, which the plugin's `attrName in
 /// tagGroup` and `filter[node.tag]` find on every object: it would treat
 /// them as URL attributes in ways that make no sense. They are refused.
-const INHERITED: [&str; 12] = [
+pub(crate) const INHERITED: [&str; 12] = [
     "constructor",
     "__defineGetter__",
     "__defineSetter__",
