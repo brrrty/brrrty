@@ -63,7 +63,8 @@ function nativePlugin(fn) {
   } catch {
     return null;
   }
-  if (fn.name === "IdAttributePlugin" && src.includes("11ty/eleventy/id-attribute")) return "idattribute";
+  // The posthtml plugin's name is a module-level const, so match what its body has.
+  if (fn.name === "IdAttributePlugin" && src.includes("[id],h1,h2,h3,h4,h5,h6") && src.includes("checkDuplicates")) return "idattribute";
   if (fn.name === "eleventyHtmlBasePlugin" && src.includes("addPathPrefixToFullUrl")) return "htmlbase";
   return null;
 }
@@ -107,7 +108,8 @@ function configRecorder() {
     // natively, so their `htmlTransformer` calls are not recorded (they would refuse every page).
     const native = nativePlugin(fn);
     if (native && !(options && Object.keys(options).length > 0)) {
-      (values.nativePlugins = values.nativePlugins || []).push(native);
+      // Decided when plugins run, once `pathPrefix` is known.
+      queue.push({ fn, options, native });
       return;
     }
     if (options && options.immediate) return runPlugin(fn, options);
@@ -165,7 +167,16 @@ function configRecorder() {
   return {
     proxy,
     async runPlugins() {
-      for (let i = 0; i < queue.length; i++) await runPlugin(queue[i].fn, queue[i].options);
+      for (let i = 0; i < queue.length; i++) {
+        const { fn, options, native } = queue[i];
+        // Native HtmlBase assumes a `/` pathPrefix; with another the real plugin runs, so
+        // its `addUrlTransform` call is recorded and the build refuses, as before.
+        if (native && (native !== "htmlbase" || proxy.pathPrefix === "/")) {
+          (values.nativePlugins = values.nativePlugins || []).push(native);
+        } else {
+          await runPlugin(fn, options);
+        }
+      }
     },
     done(returned) {
       values.ignores = [...ignores];

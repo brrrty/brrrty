@@ -1082,7 +1082,7 @@ fn the_id_attribute_plugin_in_the_js_config_runs_natively() {
     if !has_node() {
         return;
     }
-    let plugin = "function IdAttributePlugin(c, options = {}) {\n  c.htmlTransformer.addPosthtmlPlugin(\"html\", () => {}, { name: \"11ty/eleventy/id-attribute\" });\n}\n";
+    let plugin = "const POSTHTML_PLUGIN_NAME = \"11ty/eleventy/id-attribute\";\nfunction IdAttributePlugin(c, options = {}) {\n  const sel = \"[id],h1,h2,h3,h4,h5,h6\", checkDuplicates = 1;\n  c.htmlTransformer.addPosthtmlPlugin(\"html\", () => {}, { name: POSTHTML_PLUGIN_NAME });\n}\n";
     let t = site(&[
         ("brrrty.config.rhai", "config.set_js_config(\"node\");\n"),
         (
