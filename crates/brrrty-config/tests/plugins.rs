@@ -882,3 +882,39 @@ fn the_input_path_to_url_plugin_refuses_options_it_does_not_have() {
     assert!(p.message.contains("inputpathtourl"), "{}", p.message);
     assert!(p.message.contains("extensions"), "{}", p.message);
 }
+
+/// 11ty's content map has an entry (possibly empty) for every template, including one that
+/// paginates over nothing; a link to it is the normalized input path, not the link as written.
+#[test]
+fn the_input_path_to_url_plugin_knows_templates_with_no_pages() {
+    let (t, r) = site(
+        r#"config.add_plugin("inputpathtourl");"#,
+        &[
+            (
+                "empty.md",
+                "---\npagination:\n  data: things\n  size: 1\nthings: []\n---\nx\n",
+            ),
+            ("a.md", "[e](empty.md)\n"),
+        ],
+    );
+    assert!(errors(&r).is_empty(), "{:#?}", r.problems);
+    assert_eq!(
+        out(&t, "a/index.html").unwrap(),
+        "<p><a href=\"./src/empty.md\">e</a></p>\n"
+    );
+}
+
+/// A `%` that isn't followed by two hex digits is 11ty's `URIError`; the refusal names the
+/// plugin and the link as written.
+#[test]
+fn the_input_path_to_url_plugin_names_a_malformed_escape() {
+    let (_t, r) = site(
+        r#"config.add_plugin("inputpathtourl");"#,
+        &[("z.html", "<a href=\"100%\">x</a>")],
+    );
+    let e = errors(&r);
+    assert_eq!(e.len(), 1, "{:#?}", r.problems);
+    assert!(e[0].message.contains("InputPathToUrlTransformPlugin"), "{}", e[0].message);
+    assert!(e[0].message.contains("`100%`"), "{}", e[0].message);
+    assert!(!e[0].message.contains("src/100%"), "{}", e[0].message);
+}
